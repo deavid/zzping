@@ -1,0 +1,10 @@
+[package]
+name = "pingmon"
+version = "0.1.0"
+authors = ["David Martinez Marti <deavidsedice@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+fastping-rs = "0.1.6"
