@@ -7,4 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-fastping-rs = "0.1.6"
+env_logger = "0.8.1"
+log = "0.4.11"
+pnet = "0.26"
+pnet_macros_support = "0.26"
+rand = "0.7"
