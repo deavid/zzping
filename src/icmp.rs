@@ -37,11 +37,11 @@ impl PacketData {
 
 #[derive(Debug)]
 pub struct PacketSent {
-    data: PacketData,
-    result: std::io::Result<usize>,
-    sent: Instant,
-    when: SystemTime,
-    received: Option<Duration>,
+    pub data: PacketData,
+    pub result: std::io::Result<usize>,
+    pub sent: Instant,
+    pub when: SystemTime,
+    pub received: Option<Duration>,
 }
 
 impl PacketSent {

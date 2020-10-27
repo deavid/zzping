@@ -11,11 +11,13 @@ use std::time::Instant;
 
 #[derive(Debug)]
 pub struct Destination {
-    addr: IpAddr,
-    interval: Duration,
-    seq: u16,   // Next packet number
-    ident: u16, // Identifier for this queue
-    packets: Vec<icmp::PacketSent>,
+    pub addr: IpAddr,
+    pub interval: Duration,
+    pub seq: u16,   // Next packet number
+    pub ident: u16, // Identifier for this queue
+    pub packets: Vec<icmp::PacketSent>,
+    pub sent_count: u64,
+    pub recv_count: u64,
 }
 
 impl Destination {
@@ -26,11 +28,32 @@ impl Destination {
             seq: 1,
             ident: rand::thread_rng().gen(),
             packets: vec![],
+            sent_count: 0,
+            recv_count: 0,
         }
     }
 
-    pub fn recv(&mut self, packet: icmp::PacketData) {
-        dbg!(self, packet);
+    pub fn recv(&mut self, packet: icmp::PacketData) -> Option<(IpAddr, Duration)> {
+        for sent in &mut self.packets {
+            if sent.data.ident == packet.ident && sent.received.is_none() {
+                sent.received = Some(sent.sent.elapsed());
+                self.recv_count += 1;
+                return Some((packet.addr, sent.received.unwrap()));
+            }
+        }
+        None
+    }
+
+    pub fn send(&mut self, tx: &mut TransportSender) {
+        let packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
+        if self.seq == 65535 {
+            // wrap-around
+            self.seq = 0;
+        } else {
+            self.seq += 1;
+        }
+        self.sent_count += 1;
+        self.packets.push(packet);
     }
 }
 
@@ -57,16 +80,18 @@ impl Comms {
         }
     }
 
-    pub fn add_destination(&mut self, addr: IpAddr, interval: Duration) {
+    pub fn add_destination(&mut self, addr: &str, interval: Duration) {
+        self.add_dest_addr(icmp::ipaddr(addr).unwrap(), interval);
+    }
+
+    pub fn add_dest_addr(&mut self, addr: IpAddr, interval: Duration) {
         self.dest.push(Destination::new(addr, interval))
     }
 
     /// Sends a ping for each destination
     pub fn send_all(&mut self) {
         for dest in &mut self.dest {
-            let packet = icmp::PacketData::new(dest.seq, dest.ident, dest.addr).send(&mut self.tx);
-            dest.seq += 1; // WARN: Should wrap-around
-            dest.packets.push(packet);
+            dest.send(&mut self.tx);
         }
     }
 
@@ -88,11 +113,14 @@ impl Comms {
     /// keeps reading until the buffer is exhausted. If an error occurs, will
     /// return the packets read so far, plus the error. Filters those packets that
     /// do not match the ident variable
-    pub fn read(&mut self, timeout: Duration) -> (Vec<icmp::PacketData>, Option<std::io::Error>) {
+    pub fn recv_all(
+        &mut self,
+        timeout: Duration,
+    ) -> (Vec<(IpAddr, Duration)>, Option<std::io::Error>) {
         // TODO: Rename to recv_all  & change return to Result::Ok(None)
         let mut iter = icmp_packet_iter(&mut self.rx);
-        let mut next_timeout = timeout;
-        let mut vec: Vec<icmp::PacketData> = vec![];
+        let next_timeout = Duration::from_micros(100);
+        let mut vec: Vec<(IpAddr, Duration)> = vec![];
         let starttime = Instant::now();
         loop {
             match iter.next_with_timeout(next_timeout) {
@@ -101,17 +129,14 @@ impl Comms {
                         let packet = icmp::PacketData::parse(packet, addr);
                         for dest in &mut self.dest {
                             if packet.ident == dest.ident {
-                                vec.push(packet.clone()); // DELETE THIS
-                                dest.recv(packet.clone());
+                                if let Some(info) = dest.recv(packet.clone()) {
+                                    vec.push(info);
+                                }
                             }
                         }
-                        let elapsed = starttime.elapsed();
-                        if elapsed + Duration::from_micros(1) > timeout {
-                            break;
-                        }
-                        // TODO: If all packets are already consumed, return early!
-                        next_timeout = timeout - elapsed;
-                    } else {
+                    }
+                    let elapsed = starttime.elapsed();
+                    if elapsed > timeout {
                         break;
                     }
                 }
