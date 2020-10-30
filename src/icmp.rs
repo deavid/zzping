@@ -35,10 +35,10 @@ impl PacketData {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PacketSent {
     pub data: PacketData,
-    pub result: std::io::Result<usize>,
+    // pub result: std::io::Result<usize>,
     pub sent: Instant,
     pub when: SystemTime,
     pub received: Option<Duration>,
@@ -56,10 +56,11 @@ impl PacketSent {
         let csum = icmp_checksum(&echo_packet);
         echo_packet.set_checksum(csum);
 
-        let result = tx.send_to(echo_packet, data.addr);
+        // let result =
+        tx.send_to(echo_packet, data.addr).unwrap();
         Self {
             data,
-            result,
+            // result,
             sent: Instant::now(),
             when: SystemTime::now(),
             received: None,

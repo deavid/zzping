@@ -16,8 +16,11 @@ pub struct Destination {
     pub seq: u16,   // Next packet number
     pub ident: u16, // Identifier for this queue
     pub packets: Vec<icmp::PacketSent>,
+    pub recv_packets: Vec<icmp::PacketSent>,
+    pub lost_packets: Vec<icmp::PacketSent>,
     pub sent_count: u64,
     pub recv_count: u64,
+    pub rng: rand::rngs::ThreadRng,
 }
 
 impl Destination {
@@ -28,24 +31,42 @@ impl Destination {
             seq: 1,
             ident: rand::thread_rng().gen(),
             packets: vec![],
+            recv_packets: vec![],
+            lost_packets: vec![],
             sent_count: 0,
             recv_count: 0,
+            rng: rand::thread_rng(),
         }
     }
 
     pub fn recv(&mut self, packet: icmp::PacketData) -> Option<(IpAddr, Duration)> {
-        for sent in &mut self.packets {
+        let mut ret: Option<(IpAddr, Duration)> = None;
+        for sent in self.packets.iter_mut() {
             if sent.data.ident == packet.ident && sent.received.is_none() {
                 sent.received = Some(sent.sent.elapsed());
                 self.recv_count += 1;
-                return Some((packet.addr, sent.received.unwrap()));
+                self.recv_packets.push(sent.clone());
+                ret = Some((packet.addr, sent.received.unwrap()));
             }
         }
-        None
+        if ret.is_some() {
+            self.packets.retain(|x| x.received.is_none());
+        }
+        ret
     }
 
     pub fn send(&mut self, tx: &mut TransportSender) {
-        let packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
+        let inflight = self.packets.len() as u16;
+        let rnd_num = self.rng.gen_range(16, 64);
+        if rnd_num >= inflight {
+            let packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
+            self.packets.push(packet);
+        } else if rnd_num * 2 >= inflight {
+            // TODO: Seems we have a bug and we don't clean the queue properly... ¿dup packets? hmmm
+            let idx = self.rng.gen_range(0, inflight) as usize;
+            self.packets.remove(idx);
+            return;
+        }
         if self.seq == 65535 {
             // wrap-around
             self.seq = 0;
@@ -53,7 +74,6 @@ impl Destination {
             self.seq += 1;
         }
         self.sent_count += 1;
-        self.packets.push(packet);
     }
 }
 
@@ -69,7 +89,9 @@ pub struct Comms {
 impl Comms {
     pub fn new() -> Self {
         // let ident: u16 = (std::process::id() % 65536) as u16;
-        let (tx, rx) = match transport_channel(65536, icmp::protocol()) {
+        let buf = 65536;
+        // let buf = 1024;
+        let (tx, rx) = match transport_channel(buf, icmp::protocol()) {
             Ok((tx, rx)) => (tx, rx),
             Err(e) => panic!(e.to_string()),
         };
@@ -119,7 +141,8 @@ impl Comms {
     ) -> (Vec<(IpAddr, Duration)>, Option<std::io::Error>) {
         // TODO: Rename to recv_all  & change return to Result::Ok(None)
         let mut iter = icmp_packet_iter(&mut self.rx);
-        let next_timeout = Duration::from_micros(100);
+        let mut next_timeout = Duration::from_micros(1000);
+        let zero = Duration::from_micros(100);
         let mut vec: Vec<(IpAddr, Duration)> = vec![];
         let starttime = Instant::now();
         loop {
@@ -134,10 +157,11 @@ impl Comms {
                                 }
                             }
                         }
-                    }
-                    let elapsed = starttime.elapsed();
-                    if elapsed > timeout {
+                    } else if next_timeout == zero {
                         break;
+                    }
+                    if next_timeout != zero && starttime.elapsed() > timeout {
+                        next_timeout = zero;
                     }
                 }
                 Err(e) => {
