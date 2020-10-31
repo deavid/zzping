@@ -15,7 +15,7 @@ pub struct Destination {
     pub interval: Duration,
     pub seq: u16,   // Next packet number
     pub ident: u16, // Identifier for this queue
-    pub packets: Vec<icmp::PacketSent>,
+    pub inflight_packets: Vec<icmp::PacketSent>,
     pub recv_packets: Vec<icmp::PacketSent>,
     pub lost_packets: Vec<icmp::PacketSent>,
     pub sent_count: u64,
@@ -30,7 +30,7 @@ impl Destination {
             interval,
             seq: 1,
             ident: rand::thread_rng().gen(),
-            packets: vec![],
+            inflight_packets: vec![],
             recv_packets: vec![],
             lost_packets: vec![],
             sent_count: 0,
@@ -41,7 +41,7 @@ impl Destination {
 
     pub fn recv(&mut self, packet: icmp::PacketData) -> Option<(IpAddr, Duration)> {
         let mut ret: Option<(IpAddr, Duration)> = None;
-        for sent in self.packets.iter_mut() {
+        for sent in self.inflight_packets.iter_mut() {
             if sent.data.ident == packet.ident && sent.received.is_none() {
                 sent.received = Some(sent.sent.elapsed());
                 self.recv_count += 1;
@@ -50,21 +50,26 @@ impl Destination {
             }
         }
         if ret.is_some() {
-            self.packets.retain(|x| x.received.is_none());
+            self.inflight_packets.retain(|x| x.received.is_none());
         }
         ret
     }
 
     pub fn send(&mut self, tx: &mut TransportSender) {
-        let inflight = self.packets.len() as u16;
+        let inflight = self.inflight_packets.len() as u16;
+        /*
+         rnd_num and skipping is a hack to avoid a bug creating nasty sizes of
+         the queues. It is currently fixed (by looking and cleaning up >1 pckt
+         on recv), but the hack stays just in case.
+        */
         let rnd_num = self.rng.gen_range(16, 64);
         if rnd_num >= inflight {
             let packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
-            self.packets.push(packet);
+            self.inflight_packets.push(packet);
         } else if rnd_num * 2 >= inflight {
             // TODO: Seems we have a bug and we don't clean the queue properly... ¿dup packets? hmmm
             let idx = self.rng.gen_range(0, inflight) as usize;
-            self.packets.remove(idx);
+            self.inflight_packets.remove(idx);
             return;
         }
         if self.seq == 65535 {
@@ -77,6 +82,13 @@ impl Destination {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct CommConfig {
+    pub forget_lost: Duration,
+    pub forget_inflight: Duration,
+    pub forget_recv: Duration,
+}
+
 pub struct Comms {
     /// Collection of hosts to send pings to
     pub dest: Vec<Destination>,
@@ -84,10 +96,12 @@ pub struct Comms {
     rx: TransportReceiver,
     /// Write channel
     tx: TransportSender,
+    /// Timings Config
+    pub config: CommConfig,
 }
 
 impl Comms {
-    pub fn new() -> Self {
+    pub fn new(config: CommConfig) -> Self {
         // let ident: u16 = (std::process::id() % 65536) as u16;
         let buf = 65536;
         // let buf = 1024;
@@ -99,6 +113,7 @@ impl Comms {
             dest: vec![],
             rx,
             tx,
+            config,
         }
     }
 
@@ -117,6 +132,31 @@ impl Comms {
         }
     }
 
+    pub fn cleanup(&mut self) {
+        let c = self.config.clone();
+        let now = Instant::now();
+        fn sent_before(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
+            now.saturating_duration_since(pck.sent) < wait
+        }
+        fn sent_after(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
+            !sent_before(pck, now, wait)
+        }
+        for dest in self.dest.iter_mut() {
+            for pck in dest
+                .inflight_packets
+                .iter()
+                .filter(|x| sent_after(x, now, c.forget_recv))
+            {
+                dest.lost_packets.push(pck.clone());
+            }
+            dest.inflight_packets
+                .retain(|x| sent_before(x, now, c.forget_inflight));
+            dest.recv_packets
+                .retain(|x| sent_before(x, now, c.forget_recv));
+            dest.lost_packets
+                .retain(|x| sent_before(x, now, c.forget_lost));
+        }
+    }
     pub fn _delay() {
         /*
         The delay could be something evenly spaced. Maybe the formula of:
