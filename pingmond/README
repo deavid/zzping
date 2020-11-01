@@ -2,6 +2,4 @@ Requires sudo or setcap:
 
 sudo setcap cap_net_raw=eip target/debug/pingmon
 
-
-
-Client: Rust: Iced+Canvas
+Use ./run.sh to build + run (debug mode)
