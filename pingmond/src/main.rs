@@ -28,6 +28,7 @@ fn main() {
 
     let pckt_loss_inflight_time = Duration::from_millis(200);
     let pckt_loss_recv_time = Duration::from_millis(500);
+    let time_avg = Duration::from_millis(200);
     let mut last_refresh = Instant::now() - Duration::from_secs(60);
     let mut t = transport::Comms::new(transport::CommConfig {
         forget_lost: Duration::from_millis(10000),
@@ -65,16 +66,18 @@ fn main() {
                 });
                 let packet_loss =
                     (100.0 * packets_lost as f32) / ((packets_lost + packets_recv) as f32);
-                let tot_time: Duration = dest
+                let avg = dest
                     .recv_packets
                     .iter()
-                    .fold(Duration::from_micros(0), |acc, x| {
-                        acc + x.received.unwrap_or_default()
-                    });
+                    .filter(|x| (x.sent + x.received.unwrap()).elapsed() < time_avg);
+                let tot_time: Duration = avg.clone().fold(Duration::from_micros(0), |acc, x| {
+                    acc + x.received.unwrap_or_default()
+                });
+                let avg_len = avg.count().max(1);
                 let avg_time: Duration = if dest.recv_packets.is_empty() {
                     Duration::from_millis(999)
                 } else {
-                    tot_time / (dest.recv_packets.len() as u32)
+                    tot_time / (avg_len as u32)
                 };
                 let last_pckt_received = dest
                     .recv_packets
@@ -114,7 +117,7 @@ fn encode_stats(
     inflight_count: usize,
     avg_time_us: u128,
     last_pckt_ms: u128,
-    packet_loss_x1000: u32,
+    packet_loss_x100_000: u32,
 ) -> Vec<u8> {
     let mut v: Vec<u8> = vec![];
     let addr = addr.to_string();
@@ -123,6 +126,6 @@ fn encode_stats(
     rmp::encode::write_u16(&mut v, inflight_count as u16).unwrap();
     rmp::encode::write_u32(&mut v, avg_time_us as u32).unwrap();
     rmp::encode::write_u32(&mut v, last_pckt_ms as u32).unwrap();
-    rmp::encode::write_u32(&mut v, packet_loss_x1000).unwrap();
+    rmp::encode::write_u32(&mut v, packet_loss_x100_000).unwrap();
     v
 }
