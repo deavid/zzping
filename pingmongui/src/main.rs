@@ -327,7 +327,7 @@ impl Application for PingmonGUI {
             .push(self.graph_canvas.with(&self.graph));
 
         Column::new()
-            .padding(5)
+            .padding(0)
             // .push(ProgressBar::new(0.0..=100.0, self.value))
             // .push(Slider::new(
             //     &mut self.progress_bar_slider,

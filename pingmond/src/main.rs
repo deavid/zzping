@@ -24,10 +24,10 @@ fn main() {
 
     let interval = Duration::from_millis(5);
     let wait = Duration::from_millis(10);
-    let refresh = Duration::from_millis(100);
+    let refresh = Duration::from_millis(200);
 
-    let pckt_loss_inflight_time = Duration::from_millis(200);
-    let pckt_loss_recv_time = Duration::from_millis(500);
+    let pckt_loss_inflight_time = Duration::from_millis(100);
+    let pckt_loss_recv_time = Duration::from_millis(300);
     let time_avg = Duration::from_millis(200);
     let mut last_refresh = Instant::now() - Duration::from_secs(60);
     let mut t = transport::Comms::new(transport::CommConfig {
