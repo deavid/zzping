@@ -1,11 +1,19 @@
+use super::flags::GuiConfig;
 use super::graph_plot::LatencyGraph;
 use super::udp_comm::UdpStats;
 use iced::{canvas, executor, Application, Canvas, Column, Command, Element, Length, Subscription};
 use std::net::UdpSocket;
 use std::time::Instant;
 
+#[derive(Debug, Clone, Copy)]
+pub enum Message {
+    Tick(Instant),
+    Startup,
+}
+
 #[derive(Default)]
 pub struct PingmonGUI {
+    pub config: GuiConfig,
     pub graph: LatencyGraph,
     pub graph_canvas: canvas::layer::Cache<LatencyGraph>,
     pub socket: Option<UdpSocket>,
@@ -13,9 +21,9 @@ pub struct PingmonGUI {
 
 impl PingmonGUI {
     fn startup(&mut self) {
-        let socket = UdpSocket::bind("127.0.0.1:7879").unwrap();
+        let socket = UdpSocket::bind(&self.config.udp_listen_address).unwrap();
         socket.set_nonblocking(true).unwrap();
-        socket.connect("127.0.0.1:7878").unwrap();
+        socket.connect(&self.config.udp_server_address).unwrap();
 
         self.socket = Some(socket);
     }
@@ -35,19 +43,17 @@ impl PingmonGUI {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum Message {
-    Tick(Instant),
-    Startup,
-}
-
 impl Application for PingmonGUI {
     type Message = Message;
     type Executor = executor::Default;
-    type Flags = ();
+    type Flags = GuiConfig;
 
-    fn new(_flags: ()) -> (Self, Command<Message>) {
-        (Self::default(), Command::from(async { Message::Startup }))
+    fn new(flags: GuiConfig) -> (Self, Command<Message>) {
+        let app = Self {
+            config: flags,
+            ..Self::default()
+        };
+        (app, Command::from(async { Message::Startup }))
     }
 
     fn title(&self) -> String {

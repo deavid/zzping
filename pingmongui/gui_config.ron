@@ -1,0 +1,4 @@
+GuiConfig(
+    udp_listen_address: "127.0.0.1:7879",
+    udp_server_address: "127.0.0.1:7878",
+)
