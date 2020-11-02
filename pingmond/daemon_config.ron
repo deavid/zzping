@@ -1,0 +1,8 @@
+ServerConfig(
+    udp_listen_address: "127.0.0.1:7878",
+    udp_client_address: "127.0.0.1:7879",
+    ping_targets: [
+        "192.168.0.232",
+        "192.168.0.1",
+    ],
+)

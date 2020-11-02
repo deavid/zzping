@@ -1,5 +1,5 @@
 [package]
-name = "pingmon"
+name = "pingmond"
 version = "0.1.0"
 authors = ["David Martinez Marti <deavidsedice@gmail.com>"]
 edition = "2018"
@@ -13,3 +13,6 @@ pnet = "0.26"
 pnet_macros_support = "0.26"
 rand = "0.7"
 rmp = "0.8.9"
+ron = "0.6.2"
+clap = "3.0.0-beta.2"
+serde = "1.0.117"

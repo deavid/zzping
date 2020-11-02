@@ -138,12 +138,12 @@ impl LatencyGraph {
         let mut modified = false;
         for s in stats {
             if s.addr == "192.168.0.1" {
-                self.latency_us.push(s.avg_time_us);
+                self.latency_us.push(s.avg_time_us.min(500000));
                 self.packet_loss_x100_000.push(s.packet_loss_x100_000);
                 modified = true;
             }
         }
-        while self.latency_us.len() >= 2000 {
+        while self.latency_us.len() >= 1000 {
             self.latency_us.remove(0);
             self.packet_loss_x100_000.remove(0);
             modified = true;
@@ -207,9 +207,10 @@ impl canvas::Drawable for LatencyGraph {
             .max()
             .unwrap();
         // let len = self.points.len();
-        let len = 2000;
+        let len = 1000;
         let sx = frame.width() / len as f32;
-        let sy = (frame.height() / *max as f32) * 0.8;
+        let max_sy = frame.height() / (300.0 * ms);
+        let sy = ((frame.height() / *max as f32) * 0.8).max(max_sy);
 
         let y3ms = bottom - 3.0 * ms * sy;
         let y10ms = bottom - 10.0 * ms * sy;
