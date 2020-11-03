@@ -5,6 +5,7 @@ use std::fs;
 pub struct GuiConfig {
     pub udp_listen_address: String,
     pub udp_server_address: String,
+    pub display_address: String,
 }
 
 impl GuiConfig {

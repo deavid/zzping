@@ -7,20 +7,22 @@ pub struct LatencyGraph {
     pub latency_us: Vec<u32>,
     pub packet_loss_x100_000: Vec<u32>,
     pub current: Instant,
+    pub display_address: String,
 }
 
 impl LatencyGraph {
-    pub fn new() -> Self {
+    pub fn new(display_address: &str) -> Self {
         Self {
             latency_us: vec![],
             packet_loss_x100_000: vec![],
             current: Instant::now(),
+            display_address: display_address.to_owned(),
         }
     }
     pub fn update(&mut self, now: Instant, stats: Vec<UdpStats>) -> bool {
         let mut modified = false;
         for s in stats {
-            if s.addr == "192.168.0.1" {
+            if s.addr == self.display_address {
                 self.latency_us.push(s.avg_time_us.min(500000));
                 self.packet_loss_x100_000.push(s.packet_loss_x100_000);
                 modified = true;
@@ -44,7 +46,7 @@ impl LatencyGraph {
 
 impl Default for LatencyGraph {
     fn default() -> Self {
-        Self::new()
+        Self::new("")
     }
 }
 

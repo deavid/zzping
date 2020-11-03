@@ -50,6 +50,7 @@ impl Application for PingmonGUI {
 
     fn new(flags: GuiConfig) -> (Self, Command<Message>) {
         let app = Self {
+            graph: LatencyGraph::new(&flags.display_address),
             config: flags,
             ..Self::default()
         };
