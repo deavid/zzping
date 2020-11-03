@@ -1,5 +1,5 @@
 [package]
-name = "pingmond"
+name = "zzping-gui"
 version = "0.1.0"
 authors = ["David Martinez Marti <deavidsedice@gmail.com>"]
 edition = "2018"
@@ -7,11 +7,10 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-env_logger = "0.8.1"
-log = "0.4.11"
-pnet = "0.26"
-pnet_macros_support = "0.26"
-rand = "0.7"
+iced = { version = "0.1.1", features = ["canvas", "debug"] }
+iced_native = { version = "0.2.2" }
+async-std = { version = "1.0", features = ["unstable"] }
+rand = "0.7.3"
 rmp = "0.8.9"
 ron = "0.6.2"
 clap = "3.0.0-beta.2"

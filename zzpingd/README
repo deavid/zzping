@@ -1,5 +1,5 @@
 Requires sudo or setcap:
 
-sudo setcap cap_net_raw=eip target/debug/pingmon
+sudo setcap cap_net_raw=eip target/debug/zzpingd
 
 Use ./run.sh to build + run (debug mode)
