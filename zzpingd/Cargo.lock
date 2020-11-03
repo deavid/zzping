@@ -229,21 +229,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ac6fe3538f701e339953a3ebbe4f39941aababa8a3f6964635b24ab526daeac"
 
 [[package]]
-name = "pingmond"
-version = "0.1.0"
-dependencies = [
- "clap",
- "env_logger",
- "log 0.4.11",
- "pnet",
- "pnet_macros_support",
- "rand",
- "rmp",
- "ron",
- "serde",
-]
-
-[[package]]
 name = "pnet"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -682,4 +667,19 @@ checksum = "d59cefebd0c892fa2dd6de581e937301d8552cb44489cdff035c6187cb63fa5e"
 dependencies = [
  "winapi 0.2.8",
  "winapi-build",
+]
+
+[[package]]
+name = "zzpingd"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "env_logger",
+ "log 0.4.11",
+ "pnet",
+ "pnet_macros_support",
+ "rand",
+ "rmp",
+ "ron",
+ "serde",
 ]
