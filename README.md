@@ -43,13 +43,13 @@ opportunity to learn more and code something useful with it.
 Currently zzping does not have (yet) the functionality needed to be a proper
 monitor of the network. For example, it does not store anything on disk or
 database. If the GUI is not working, that data is simply lost. After 16 seconds,
-the data is no longer viisble on the graph and it's also lost.
+the data is no longer visible on the graph and it's also lost.
 
-There's also other problems, like lack of checking for errors (Ulike division by
+There's also other problems, like lack of checking for errors (like division by
 zero), so both the daemon and gui might segfault at any point.
 
-I only tested this under Debian GNU/Linux bullseye/sid. Should work on other OS
-as well.
+I only tested this under Debian GNU/Linux bullseye/sid, but it should work on
+other OS as well.
 
 ### ICMP permissions
 
