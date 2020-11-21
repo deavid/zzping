@@ -682,4 +682,9 @@ dependencies = [
  "rmp",
  "ron",
  "serde",
+ "zzpinglib",
 ]
+
+[[package]]
+name = "zzpinglib"
+version = "0.1.0"

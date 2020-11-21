@@ -23,6 +23,7 @@ use std::time::{Duration, Instant};
 extern crate log;
 extern crate env_logger;
 extern crate rmp;
+extern crate zzpinglib;
 
 use clap::Clap;
 
@@ -42,7 +43,6 @@ fn clearscreen() {
 fn main() {
     let opts: Opts = Opts::parse();
     let cfg = config::ServerConfig::from_file(&opts.config).unwrap();
-
     let socket = UdpSocket::bind(&cfg.udp_listen_address).unwrap();
     socket.set_nonblocking(true).unwrap();
 
