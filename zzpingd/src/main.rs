@@ -16,6 +16,7 @@ mod config;
 mod icmp;
 mod transport;
 
+use chrono::{DateTime, Utc};
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
@@ -26,6 +27,7 @@ extern crate rmp;
 extern crate zzpinglib;
 
 use clap::Clap;
+use std::io::Write; // Trait write for files
 
 #[derive(Clap)]
 #[clap(
@@ -48,25 +50,36 @@ fn main() {
 
     let interval = Duration::from_millis(5);
     let wait = Duration::from_millis(5);
-    let refresh = Duration::from_millis(200);
+    let refresh = Duration::from_millis(100);
 
     let pckt_loss_inflight_time = Duration::from_millis(150);
     let pckt_loss_recv_time = Duration::from_millis(300);
     let time_avg = Duration::from_millis(200);
     let mut last_refresh = Instant::now() - Duration::from_secs(60);
     let mut t = transport::Comms::new(transport::CommConfig {
-        forget_lost: Duration::from_millis(500),
-        forget_inflight: Duration::from_millis(1000),
-        forget_recv: Duration::from_millis(1000),
+        forget_lost: Duration::from_millis(5000),
+        forget_inflight: Duration::from_millis(5000),
+        forget_recv: Duration::from_millis(5000),
     });
+    let mut time_since_report = Instant::now() - Duration::from_secs(60);
+    let now: DateTime<Utc> = Utc::now();
+    let strnow = now
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        .replace("-", "")
+        .replace(":", "");
+
     for target in cfg.ping_targets {
         t.add_destination(&target, interval);
+    }
+    for dest in t.dest.iter_mut() {
+        dest.create_log_file(&strnow);
     }
     loop {
         t.send_all();
         t.recv_all(wait);
 
-        if last_refresh.elapsed() > refresh {
+        let elapsed = last_refresh.elapsed();
+        if elapsed > refresh {
             last_refresh = Instant::now();
             t.cleanup();
             clearscreen();
@@ -110,7 +123,7 @@ fn main() {
                     .elapsed();
                 let recv_per_sec = recv_count as f32 / t.config.forget_recv.as_secs_f32();
                 println!(
-                    "{:>14?} - {:>4} in-flight - {:>4.2} recv/s - {:>7.2?}ms / {:>4.1?}s - {:>7.2}% loss ({}/{})",
+                    "{:>14?} - {:>4} in-flight - {:>4.2} recv/s - {:>7.2?}ms / {:>4.1?}s - {:>7.2}% loss ({}/{}) ident: {},{}",
                     dest.addr,
                     inflight_count,
                     recv_per_sec,
@@ -119,6 +132,8 @@ fn main() {
                     packet_loss,
                     packets_lost,
                     packets_recv,
+                    dest.ident,
+                    dest.seq,
                 );
                 let msg = encode_stats(
                     dest.addr,
@@ -131,6 +146,33 @@ fn main() {
             }
             if !udp_ok {
                 println!("Error sending via UDP. Client might not be connected.")
+            }
+        }
+        let since_report_elapsed = time_since_report.elapsed();
+        if since_report_elapsed > Duration::from_secs(15) {
+            time_since_report = Instant::now();
+        }
+        for dest in t.dest.iter_mut() {
+            let last_recv = dest.received_last(refresh);
+            let inflight = dest.inflight_after(refresh);
+            let mut last_recv_us: Vec<u128> = last_recv
+                .iter()
+                .map(|p| p.received.unwrap_or_default().as_micros())
+                .collect();
+            last_recv_us.sort_unstable();
+            if let Some(mut f) = dest.logfile.as_mut() {
+                if since_report_elapsed > Duration::from_secs(15) {
+                    let now: DateTime<Utc> = Utc::now();
+                    let strnow = now.to_rfc3339_opts(chrono::SecondsFormat::Micros, false);
+                    rmp::encode::write_str(&mut f, &strnow).unwrap();
+                    rmp::encode::write_u32(&mut f, 0).unwrap();
+                } else {
+                    rmp::encode::write_u32(&mut f, since_report_elapsed.as_micros() as u32)
+                        .unwrap();
+                }
+                rmp::encode::write_u16(&mut f, inflight.len() as u16).unwrap();
+                rmp::encode::write_u16(&mut f, dest.lost_packets.len() as u16).unwrap();
+                encode_latency(&mut f, last_recv_us);
             }
         }
     }
@@ -152,4 +194,11 @@ fn encode_stats(
     rmp::encode::write_u32(&mut v, last_pckt_ms as u32).unwrap();
     rmp::encode::write_u32(&mut v, packet_loss_x100_000).unwrap();
     v
+}
+
+fn encode_latency<W: Write>(wr: &mut W, p: Vec<u128>) {
+    rmp::encode::write_array_len(wr, p.len() as u32).unwrap();
+    for val in p.iter() {
+        rmp::encode::write_u32(wr, *val as u32).unwrap();
+    }
 }
