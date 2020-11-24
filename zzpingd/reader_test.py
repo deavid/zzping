@@ -58,6 +58,8 @@ class Reader:
             items.append(unpacked)
             if isinstance(unpacked, list):
                 break
+        if len(items) == 0:
+            raise StopIteration
         ret = Stats(items, self.last_timestamp)
         self.last_timestamp = ret.timestamp
         return ret
@@ -68,5 +70,5 @@ reader = Reader(filename)
 
 for n, elem in enumerate(reader):
     print(elem)
-    if n > 10000:
-        break
+    # if n > 10000:
+    #     break

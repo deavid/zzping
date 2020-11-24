@@ -63,10 +63,11 @@ fn main() {
     });
     let mut time_since_report = Instant::now() - Duration::from_secs(60);
     let now: DateTime<Utc> = Utc::now();
-    let strnow = now
+    let mut strnow = now
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         .replace("-", "")
         .replace(":", "");
+    strnow.truncate(11);
 
     for target in cfg.ping_targets {
         t.add_destination(&target, interval);
@@ -83,6 +84,21 @@ fn main() {
             last_refresh = Instant::now();
             t.cleanup();
             clearscreen();
+            let since_report_elapsed = time_since_report.elapsed();
+            if since_report_elapsed > Duration::from_secs(15) {
+                time_since_report = Instant::now();
+                let mut newstrnow = Utc::now()
+                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                    .replace("-", "")
+                    .replace(":", "");
+                newstrnow.truncate(11);
+                if newstrnow != strnow {
+                    strnow = newstrnow;
+                    for dest in t.dest.iter_mut() {
+                        dest.create_log_file(&strnow);
+                    }
+                }
+            }
             let mut udp_ok = true;
             for dest in t.dest.iter() {
                 let inflight_count = dest.inflight_packets.len();
@@ -147,32 +163,28 @@ fn main() {
             if !udp_ok {
                 println!("Error sending via UDP. Client might not be connected.")
             }
-        }
-        let since_report_elapsed = time_since_report.elapsed();
-        if since_report_elapsed > Duration::from_secs(15) {
-            time_since_report = Instant::now();
-        }
-        for dest in t.dest.iter_mut() {
-            let last_recv = dest.received_last(refresh);
-            let inflight = dest.inflight_after(refresh);
-            let mut last_recv_us: Vec<u128> = last_recv
-                .iter()
-                .map(|p| p.received.unwrap_or_default().as_micros())
-                .collect();
-            last_recv_us.sort_unstable();
-            if let Some(mut f) = dest.logfile.as_mut() {
-                if since_report_elapsed > Duration::from_secs(15) {
-                    let now: DateTime<Utc> = Utc::now();
-                    let strnow = now.to_rfc3339_opts(chrono::SecondsFormat::Micros, false);
-                    rmp::encode::write_str(&mut f, &strnow).unwrap();
-                    rmp::encode::write_u32(&mut f, 0).unwrap();
-                } else {
-                    rmp::encode::write_u32(&mut f, since_report_elapsed.as_micros() as u32)
-                        .unwrap();
+            for dest in t.dest.iter_mut() {
+                let last_recv = dest.received_last(refresh * 2);
+                let inflight = dest.inflight_after(refresh);
+                let mut last_recv_us: Vec<u128> = last_recv
+                    .iter()
+                    .map(|p| p.received.unwrap_or_default().as_micros())
+                    .collect();
+                last_recv_us.sort_unstable();
+                if let Some(mut f) = dest.logfile.as_mut() {
+                    if since_report_elapsed > Duration::from_secs(15) {
+                        let now: DateTime<Utc> = Utc::now();
+                        let strnow = now.to_rfc3339_opts(chrono::SecondsFormat::Micros, false);
+                        rmp::encode::write_str(&mut f, &strnow).unwrap();
+                        rmp::encode::write_u32(&mut f, 0).unwrap();
+                    } else {
+                        rmp::encode::write_u32(&mut f, since_report_elapsed.as_micros() as u32)
+                            .unwrap();
+                    }
+                    rmp::encode::write_u16(&mut f, inflight.len() as u16).unwrap();
+                    rmp::encode::write_u16(&mut f, dest.lost_packets.len() as u16).unwrap();
+                    encode_latency(&mut f, last_recv_us);
                 }
-                rmp::encode::write_u16(&mut f, inflight.len() as u16).unwrap();
-                rmp::encode::write_u16(&mut f, dest.lost_packets.len() as u16).unwrap();
-                encode_latency(&mut f, last_recv_us);
             }
         }
     }

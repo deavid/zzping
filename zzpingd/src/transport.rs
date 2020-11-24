@@ -17,10 +17,10 @@ use pnet::transport::icmp_packet_iter;
 use pnet::transport::transport_channel;
 use pnet::transport::{TransportReceiver, TransportSender};
 use rand::Rng;
-use std::fs::File;
 use std::io::BufWriter;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
+use std::{fs::File, io::Write};
 
 fn recv_before(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
     let received: Duration = pck.received.unwrap_or_default();
@@ -72,6 +72,10 @@ impl Destination {
     pub fn create_log_file(&mut self, now: &str) {
         let filename = format!("pingd-log-{}-{}.log", self.str_addr, now);
         let f = File::create(filename).unwrap();
+        let mut oldlog = self.logfile.take();
+        if let Some(log) = oldlog.as_mut() {
+            log.flush().unwrap();
+        }
         // Buffering is needed to avoid wearing SSDs by not writting the same
         // sector dozens of times. 8KB by default. It auto-flushes.
         self.logfile = Some(BufWriter::new(f));
