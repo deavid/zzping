@@ -70,7 +70,7 @@ impl Destination {
     }
 
     pub fn create_log_file(&mut self, now: &str) {
-        let filename = format!("pingd-log-{}-{}.log", self.str_addr, now);
+        let filename = format!("logs/pingd-log-{}-{}.log", self.str_addr, now);
         let f = File::create(filename).unwrap();
         let mut oldlog = self.logfile.take();
         if let Some(log) = oldlog.as_mut() {
