@@ -76,7 +76,7 @@ impl Application for PingmonGUI {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        super::subscr_time::every(std::time::Duration::from_millis(200)).map(Message::Tick)
+        super::subscr_time::every(std::time::Duration::from_millis(50)).map(Message::Tick)
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {

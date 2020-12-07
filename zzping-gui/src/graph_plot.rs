@@ -16,6 +16,8 @@ use super::udp_comm::UdpStats;
 use iced::{canvas, Color, Point};
 use std::time::{Duration, Instant};
 
+static SAMPLES: usize = 500;
+
 #[derive(Debug)]
 pub struct LatencyGraph {
     pub latency_us: Vec<u32>,
@@ -42,7 +44,7 @@ impl LatencyGraph {
                 modified = true;
             }
         }
-        while self.latency_us.len() >= 1000 {
+        while self.latency_us.len() >= SAMPLES {
             self.latency_us.remove(0);
             self.packet_loss_x100_000.remove(0);
             modified = true;
@@ -106,8 +108,8 @@ impl canvas::Drawable for LatencyGraph {
             .max()
             .unwrap();
         // let len = self.points.len();
-        let len = 1000;
-        let sx = frame.width() / len as f32;
+        let len = SAMPLES;
+        let sx = frame.width() / (len as f32);
         let max_sy = frame.height() / (300.0 * ms);
         let sy = ((frame.height() / *max as f32) * 0.8).max(max_sy);
 
