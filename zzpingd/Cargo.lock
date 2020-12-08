@@ -729,3 +729,7 @@ dependencies = [
 [[package]]
 name = "zzpinglib"
 version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rmp",
+]

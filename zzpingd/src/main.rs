@@ -27,7 +27,8 @@ extern crate rmp;
 extern crate zzpinglib;
 
 use clap::Clap;
-use std::io::Write; // Trait write for files
+use zzpinglib::framedata::{FrameData, FrameTime};
+use zzpinglib::framestats::FrameStats;
 
 #[derive(Clap)]
 #[clap(
@@ -151,14 +152,18 @@ fn main() {
                     dest.ident,
                     dest.seq,
                 );
-                let msg = encode_stats(
+                match FrameStats::encode_stats(
                     dest.addr,
                     inflight_count,
-                    avg_time.as_micros(),
-                    last_pckt_received.as_millis(),
-                    (packet_loss * 1000.0) as u32,
-                );
-                udp_ok = udp_ok && socket.send_to(&msg, &cfg.udp_client_address).is_ok();
+                    avg_time,
+                    last_pckt_received,
+                    packet_loss,
+                ) {
+                    Ok(msg) => {
+                        udp_ok = udp_ok && socket.send_to(&msg, &cfg.udp_client_address).is_ok()
+                    }
+                    Err(e) => println!("UDP Encode error: {}", e),
+                }
             }
             if !udp_ok {
                 println!("Error sending via UDP. Client might not be connected.")
@@ -172,45 +177,23 @@ fn main() {
                     .collect();
                 last_recv_us.sort_unstable();
                 if let Some(mut f) = dest.logfile.as_mut() {
-                    if since_report_elapsed > Duration::from_secs(15) {
-                        let now: DateTime<Utc> = Utc::now();
-                        let strnow = now.to_rfc3339_opts(chrono::SecondsFormat::Micros, false);
-                        rmp::encode::write_str(&mut f, &strnow).unwrap();
-                        rmp::encode::write_u32(&mut f, 0).unwrap();
+                    // TODO: Extract this as a function!
+                    let time: FrameTime = if since_report_elapsed > Duration::from_secs(15) {
+                        FrameTime::Timestamp(Utc::now())
                     } else {
-                        rmp::encode::write_u32(&mut f, since_report_elapsed.as_micros() as u32)
-                            .unwrap();
+                        FrameTime::Elapsed(since_report_elapsed)
+                    };
+                    let framedata = FrameData {
+                        time,
+                        inflight: inflight.len(),
+                        lost_packets: dest.lost_packets.len(),
+                        recv_us: last_recv_us,
+                    };
+                    if let Err(e) = framedata.encode(&mut f) {
+                        println!("Error writing to file: {:?}", e);
                     }
-                    rmp::encode::write_u16(&mut f, inflight.len() as u16).unwrap();
-                    rmp::encode::write_u16(&mut f, dest.lost_packets.len() as u16).unwrap();
-                    encode_latency(&mut f, last_recv_us);
                 }
             }
         }
-    }
-}
-
-fn encode_stats(
-    addr: std::net::IpAddr,
-    inflight_count: usize,
-    avg_time_us: u128,
-    last_pckt_ms: u128,
-    packet_loss_x100_000: u32,
-) -> Vec<u8> {
-    let mut v: Vec<u8> = vec![];
-    let addr = addr.to_string();
-    rmp::encode::write_array_len(&mut v, 5).unwrap();
-    rmp::encode::write_str(&mut v, &addr).unwrap();
-    rmp::encode::write_u16(&mut v, inflight_count as u16).unwrap();
-    rmp::encode::write_u32(&mut v, avg_time_us as u32).unwrap();
-    rmp::encode::write_u32(&mut v, last_pckt_ms as u32).unwrap();
-    rmp::encode::write_u32(&mut v, packet_loss_x100_000).unwrap();
-    v
-}
-
-fn encode_latency<W: Write>(wr: &mut W, p: Vec<u128>) {
-    rmp::encode::write_array_len(wr, p.len() as u32).unwrap();
-    for val in p.iter() {
-        rmp::encode::write_u32(wr, *val as u32).unwrap();
     }
 }
