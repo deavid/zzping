@@ -53,9 +53,9 @@ impl FrameData {
             .map_err(rmp::encode::ValueWriteError::InvalidDataWrite)?;
         Ok(())
     }
-    pub fn decode<R: std::io::Read>(rd: &mut R) /*-> Self*/
+    pub fn decode<R: std::io::Read>(_rd: &mut R) /*-> Self*/
     {
-        let marker = rmp::decode::read_marker(rd).unwrap();
+        // let marker = rmp::decode::read_marker(rd).unwrap();
 
         /*rmp::decode::read_str(rd, buf)
         match marker {
