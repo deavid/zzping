@@ -730,6 +730,8 @@ dependencies = [
 name = "zzpinglib"
 version = "0.1.0"
 dependencies = [
+ "byteorder",
  "chrono",
+ "num-traits",
  "rmp",
 ]

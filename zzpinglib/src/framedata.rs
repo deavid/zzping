@@ -1,3 +1,17 @@
+// Copyright 2020 Google LLC
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 use chrono::{DateTime, Utc};
 use std::time::Duration;
 
@@ -38,5 +52,14 @@ impl FrameData {
         wr.write(&v)
             .map_err(rmp::encode::ValueWriteError::InvalidDataWrite)?;
         Ok(())
+    }
+    pub fn decode<R: std::io::Read>(rd: &mut R) /*-> Self*/
+    {
+        let marker = rmp::decode::read_marker(rd).unwrap();
+
+        /*rmp::decode::read_str(rd, buf)
+        match marker {
+            rmp::Marker::FixStr(s) => (),
+        }*/
     }
 }
