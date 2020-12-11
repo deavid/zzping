@@ -14,7 +14,7 @@
 use std::hash::{Hash, Hasher};
 use std::{cmp::Ordering, collections::HashMap};
 
-use super::Variant;
+use super::variant::Variant;
 
 /*
   This allows Maps to get Hash, Ord, Eq; even if they don't support it.
