@@ -14,6 +14,7 @@
 
 use super::dynrmp::variant::Variant;
 use chrono::{DateTime, Utc};
+use rmp::decode::ValueReadError;
 use std::time::Duration;
 
 fn custom_error<E>(t: E) -> rmp::decode::ValueReadError
@@ -26,10 +27,13 @@ where
     ))
 }
 
+#[derive(Debug)]
 pub enum FrameTime {
     Timestamp(DateTime<Utc>),
     Elapsed(Duration),
 }
+
+#[derive(Debug)]
 pub struct FrameData {
     pub time: FrameTime,
     pub inflight: usize,
@@ -64,7 +68,7 @@ impl FrameData {
             .map_err(rmp::encode::ValueWriteError::InvalidDataWrite)?;
         Ok(())
     }
-    pub fn decode<R: std::io::Read>(rd: &mut R) -> Result<Self, rmp::decode::ValueReadError> {
+    pub fn decode<R: std::io::Read>(rd: &mut R) -> Result<Self, ValueReadError> {
         let t = Variant::read(rd)?;
         let time: FrameTime = match t {
             Variant::String(s) => {
@@ -94,5 +98,34 @@ impl FrameData {
             lost_packets,
             recv_us,
         })
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct FrameDataVec {
+    pub last_keyframe: Option<DateTime<Utc>>,
+    pub v: Vec<FrameData>,
+}
+
+impl FrameDataVec {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn read<R: std::io::Read>(&mut self, rd: &mut R, count: u64) -> Result<(), ValueReadError> {
+        let err = || ValueReadError::TypeMismatch(rmp::Marker::Str8);
+        for _ in 0..count {
+            let mut fd = FrameData::decode(rd)?;
+            match &fd.time {
+                FrameTime::Timestamp(ts) => self.last_keyframe = Some(*ts),
+                FrameTime::Elapsed(e) => {
+                    fd.time = FrameTime::Timestamp(
+                        self.last_keyframe.ok_or_else(err)?
+                            + chrono::Duration::from_std(*e).unwrap(),
+                    )
+                }
+            }
+            self.v.push(fd);
+        }
+        Ok(())
     }
 }
