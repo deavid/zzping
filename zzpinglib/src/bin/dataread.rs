@@ -17,6 +17,7 @@ use std::io::BufReader;
 
 use clap::Clap;
 
+use zzpinglib::batchdata::BatchData;
 use zzpinglib::framedata::FrameDataVec;
 
 #[derive(Clap, Debug)]
@@ -40,4 +41,25 @@ fn main() {
         dbg!(e);
     }
     dbg!(fdv.v.len());
+
+    let _bd = BatchData::new(fdv.v);
+    /*dbg!(fdv.v.first());
+
+    for v in fdv.v.iter() {
+        let last_recv = &v.recv_us;
+        // dbg!(&last_recv);
+        // = &fdv.v.last().unwrap().recv_us;
+        if last_recv.is_empty() {
+            dbg!("empty");
+            continue;
+        }
+        let midpt = (last_recv.len() - 1) / 2;
+        let avg: u128 = last_recv.iter().copied().sum::<u128>() / last_recv.len() as u128;
+        let median = last_recv[midpt];
+        if avg > 100000 {
+            println!("avg: {} \t median: {}", avg, median);
+        }
+        // let n: Vec<u128> = last_recv.iter().map(|v| *v * 64 / median).collect();
+        // dbg!(n);
+    }*/
 }

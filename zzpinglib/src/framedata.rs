@@ -27,13 +27,13 @@ where
     ))
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FrameTime {
     Timestamp(DateTime<Utc>),
     Elapsed(Duration),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct FrameData {
     pub time: FrameTime,
     pub inflight: usize,
