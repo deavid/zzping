@@ -18,6 +18,7 @@ use std::io::BufReader;
 use clap::Clap;
 
 use zzpinglib::batchdata::BatchData;
+use zzpinglib::compress::{fft, huffman, quantize};
 use zzpinglib::framedata::FrameDataVec;
 
 #[derive(Clap, Debug)]
@@ -42,7 +43,9 @@ fn main() {
     }
     dbg!(fdv.v.len());
 
-    let _bd = BatchData::new(fdv.v);
+    let bd = BatchData::new(fdv.v);
+    bd.test_recv_compression(fft::PolarCompress::default());
+    bd.test_recv_compression(quantize::LogQuantizer::default());
     /*dbg!(fdv.v.first());
 
     for v in fdv.v.iter() {

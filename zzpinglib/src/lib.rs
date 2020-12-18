@@ -13,6 +13,7 @@
 // limitations under the License.
 
 pub mod batchdata;
+pub mod compress;
 pub mod dynrmp;
 pub mod framedata;
 pub mod framestats;
