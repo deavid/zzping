@@ -14,9 +14,7 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::compress::fft;
-use crate::compress::quantize;
-use crate::compress::Compress;
+use crate::compress::{self, Compress};
 use crate::framedata::{FrameData, FrameTime};
 
 #[derive(Debug)]
@@ -92,20 +90,27 @@ impl BatchData {
             recv_us,
         }
     }
-
-    pub fn test_recv_compression<T: Compress<f32>>(&self, mut zipper: T) {
+    // ?Sized is required to use Box<dyn T>
+    pub fn test_recv_compression<T: Compress<f32> + ?Sized>(
+        &self,
+        zipper: &mut T,
+    ) -> Result<(), compress::Error> {
         let mut data_len = self.recv_us.len();
         data_len -= data_len % 2; // FFT only allows for even amounts of data.
 
         let trasposed_recv = Self::transpose(&self.recv_us[..data_len]);
         let origdata = &trasposed_recv[3];
 
-        zipper.compress(origdata);
-        let unzipped = zipper.decompress();
+        zipper.compress(origdata)?;
+        let unzipped = zipper.decompress()?;
 
-        assert_eq!(unzipped.len(), origdata.len());
+        if unzipped.len() != origdata.len() {
+            dbg!(unzipped.len(), origdata.len());
+            return Err(compress::Error::AssertError);
+        }
 
         Self::measure_error(&origdata, &unzipped);
+        Ok(())
     }
 
     pub fn transpose(data: &[[f32; 7]]) -> Vec<Vec<f32>> {

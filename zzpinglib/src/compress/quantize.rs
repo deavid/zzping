@@ -1,4 +1,4 @@
-use super::Compress;
+use super::{Compress, Error};
 
 pub struct LogQuantizer {
     pub data: Vec<u64>,
@@ -40,7 +40,7 @@ impl Default for LogQuantizer {
     fn default() -> Self {
         Self {
             data: vec![],
-            precision: 0.01, // 0.001 => 0.1%
+            precision: 0.001, // 0.001 => 0.1%
             zero_point: 0.0,
             max_value: 0,
             bits: 0,
@@ -51,11 +51,11 @@ impl Compress<f32> for LogQuantizer {
     fn setup(
         &mut self,
         _params: std::collections::HashMap<String, crate::dynrmp::variant::Variant>,
-    ) {
-        todo!()
+    ) -> Result<(), Error> {
+        Err(Error::ToDo)
     }
 
-    fn compress(&mut self, data: &[f32]) {
+    fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
         let log_shift: f32 = self.precision.ln_1p();
         self.zero_point = data.iter().fold(f32::MAX, |a, b| -> f32 { a.min(*b) });
         let lg_zero_point = self.zero_point.ln();
@@ -73,17 +73,18 @@ impl Compress<f32> for LogQuantizer {
         dbg!(self.max_value);
         dbg!(bits);
         dbg!(self.bits);
+        Ok(())
     }
 
-    fn serialize(&self) -> Vec<u8> {
-        todo!()
+    fn serialize(&self) -> Result<Vec<u8>, Error> {
+        Err(Error::ToDo)
     }
 
-    fn deserialize(&mut self, _payload: &[u8]) {
-        todo!()
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        Err(Error::ToDo)
     }
 
-    fn decompress(&self) -> Vec<f32> {
+    fn decompress(&self) -> Result<Vec<f32>, Error> {
         let log_shift: f32 = self.precision.ln_1p();
         let lg_zero_point = self.zero_point.ln();
         let data: Vec<_> = self
@@ -94,6 +95,9 @@ impl Compress<f32> for LogQuantizer {
             .map(|x| x.exp())
             .collect();
 
-        data
+        Ok(data)
+    }
+    fn debug_name(&self) -> String {
+        format!("LogQuantizer<p:{}>", self.precision)
     }
 }

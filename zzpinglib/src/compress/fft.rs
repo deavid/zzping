@@ -1,6 +1,6 @@
 use crate::dynrmp::variant::Variant;
 
-use super::Compress;
+use super::{Compress, Error};
 use rustfft::num_traits::Zero;
 use rustfft::{num_complex::Complex, FFTplanner};
 use std::collections::HashMap;
@@ -145,8 +145,8 @@ impl Default for PolarCompress {
     fn default() -> Self {
         Self {
             data: vec![],
-            q_size_mag: 1 << 7,
-            q_size_ang: (1 << 24) + 1,
+            q_size_mag: 1 << 9,
+            q_size_ang: (1 << 8) + 1,
             q_scale: 0.25,
         }
     }
@@ -159,11 +159,11 @@ impl PolarCompress {
 }
 
 impl Compress<f32> for PolarCompress {
-    fn setup(&mut self, _params: HashMap<String, Variant>) {
-        todo!()
+    fn setup(&mut self, _params: HashMap<String, Variant>) -> Result<(), Error> {
+        Err(Error::ToDo)
     }
 
-    fn compress(&mut self, data: &[f32]) {
+    fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
         let fft_input = fft(data);
         let half_fft = half_fft(&fft_input);
         // In complex numbers, if we do f^(1/4) it should give us angles from -45º to 45º.
@@ -183,23 +183,31 @@ impl Compress<f32> for PolarCompress {
             self.q_size_ang,
         );
         self.data = quantized_m;
+        Ok(())
     }
 
-    fn serialize(&self) -> Vec<u8> {
-        todo!()
+    fn serialize(&self) -> Result<Vec<u8>, Error> {
+        Err(Error::ToDo)
     }
 
-    fn deserialize(&mut self, _payload: &[u8]) {
-        todo!()
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        Err(Error::ToDo)
     }
 
-    fn decompress(&self) -> Vec<f32> {
+    fn decompress(&self) -> Result<Vec<f32>, Error> {
         let data: Vec<(f32, f32)> = self
             .data
             .iter()
             .map(|(m, a)| (m.powf(1. / self.q_scale), *a))
             .collect();
         let dfft = double_fft(&data);
-        inv_fft(&dfft)
+        Ok(inv_fft(&dfft))
+    }
+
+    fn debug_name(&self) -> String {
+        format!(
+            "PolarCompress<qsm:{}, qsa:{}, qsc:{}>",
+            self.q_size_mag, self.q_size_ang, self.q_scale
+        )
     }
 }

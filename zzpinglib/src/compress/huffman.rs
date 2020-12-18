@@ -27,3 +27,35 @@
     be useful.
 
 */
+use super::{Compress, Error};
+
+#[derive(Debug, Default)]
+pub struct Huffman {}
+
+impl Compress<f32> for Huffman {
+    fn setup(
+        &mut self,
+        _params: std::collections::HashMap<String, crate::dynrmp::variant::Variant>,
+    ) -> Result<(), Error> {
+        Err(Error::ToDo)
+    }
+
+    fn compress(&mut self, _data: &[f32]) -> Result<(), Error> {
+        Err(Error::ToDo)
+    }
+
+    fn serialize(&self) -> Result<Vec<u8>, Error> {
+        Err(Error::ToDo)
+    }
+
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        Err(Error::ToDo)
+    }
+
+    fn decompress(&self) -> Result<Vec<f32>, Error> {
+        Err(Error::ToDo)
+    }
+    fn debug_name(&self) -> String {
+        "Huffman<>".to_string()
+    }
+}

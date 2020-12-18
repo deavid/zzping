@@ -17,9 +17,9 @@ use std::io::BufReader;
 
 use clap::Clap;
 
-use zzpinglib::batchdata::BatchData;
 use zzpinglib::compress::{fft, huffman, quantize};
 use zzpinglib::framedata::FrameDataVec;
+use zzpinglib::{batchdata::BatchData, compress::Compress};
 
 #[derive(Clap, Debug)]
 #[clap(
@@ -44,25 +44,16 @@ fn main() {
     dbg!(fdv.v.len());
 
     let bd = BatchData::new(fdv.v);
-    bd.test_recv_compression(fft::PolarCompress::default());
-    bd.test_recv_compression(quantize::LogQuantizer::default());
-    /*dbg!(fdv.v.first());
 
-    for v in fdv.v.iter() {
-        let last_recv = &v.recv_us;
-        // dbg!(&last_recv);
-        // = &fdv.v.last().unwrap().recv_us;
-        if last_recv.is_empty() {
-            dbg!("empty");
-            continue;
+    let tests: Vec<Box<dyn Compress<f32>>> = vec![
+        Box::new(fft::PolarCompress::default()),
+        Box::new(quantize::LogQuantizer::default()),
+        Box::new(huffman::Huffman::default()),
+    ];
+    for mut t in tests {
+        dbg!(t.debug_name());
+        if let Err(e) = bd.test_recv_compression(t.as_mut()) {
+            dbg!(e);
         }
-        let midpt = (last_recv.len() - 1) / 2;
-        let avg: u128 = last_recv.iter().copied().sum::<u128>() / last_recv.len() as u128;
-        let median = last_recv[midpt];
-        if avg > 100000 {
-            println!("avg: {} \t median: {}", avg, median);
-        }
-        // let n: Vec<u128> = last_recv.iter().map(|v| *v * 64 / median).collect();
-        // dbg!(n);
-    }*/
+    }
 }
