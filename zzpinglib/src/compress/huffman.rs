@@ -25,12 +25,40 @@
     -------------
     Quantization is common in all compression libraries. Common utilities might
     be useful.
+    https://docs.rs/huffman-compress/0.6.0/huffman_compress/
+
 
 */
-use super::{Compress, Error};
 
-#[derive(Debug, Default)]
-pub struct Huffman {}
+extern crate bit_vec;
+extern crate huffman_compress;
+
+use bit_vec::BitVec;
+use huffman_compress::CodeBuilder;
+use std::collections::HashMap;
+use std::iter::FromIterator;
+
+use super::{quantize, Compress, Error};
+
+#[derive(Debug)]
+pub struct Huffman {
+    // TODO: We should be able to use any source that compress/decompress into u64
+    quantizer: quantize::LogQuantizer,
+    weights: Vec<(u64, u64)>,
+    data: BitVec,
+    data_len: usize,
+}
+
+impl Default for Huffman {
+    fn default() -> Self {
+        Self {
+            quantizer: quantize::LogQuantizer::default(),
+            weights: vec![],
+            data: BitVec::new(),
+            data_len: 0,
+        }
+    }
+}
 
 impl Compress<f32> for Huffman {
     fn setup(
@@ -40,8 +68,28 @@ impl Compress<f32> for Huffman {
         Err(Error::ToDo)
     }
 
-    fn compress(&mut self, _data: &[f32]) -> Result<(), Error> {
-        Err(Error::ToDo)
+    fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
+        self.quantizer.compress(data)?;
+        let mut weights: HashMap<u64, u64> = HashMap::new();
+        for k in self.quantizer.data.iter() {
+            *weights.entry(*k).or_insert(0) += 1;
+        }
+        self.weights = weights.iter().map(|(k, v)| (*k, *v)).collect();
+        self.weights.sort_unstable_by_key(|(k, _v)| *k);
+
+        let (book, _tree) = CodeBuilder::from_iter(self.weights.iter().copied()).finish();
+        let mut total_bits = 0;
+        for (k, v) in book.iter() {
+            total_bits += v.len() as u64 * weights[k];
+        }
+        dbg!(total_bits as f32 / data.len() as f32);
+        self.data = BitVec::with_capacity(total_bits as usize);
+        self.data_len = self.quantizer.data.len();
+        for symbol in self.quantizer.data.iter() {
+            book.encode(&mut self.data, symbol)
+                .map_err(Error::HuffmanEncodeError)?
+        }
+        Ok(())
     }
 
     fn serialize(&self) -> Result<Vec<u8>, Error> {
@@ -53,7 +101,9 @@ impl Compress<f32> for Huffman {
     }
 
     fn decompress(&self) -> Result<Vec<f32>, Error> {
-        Err(Error::ToDo)
+        let (_book, tree) = CodeBuilder::from_iter(self.weights.iter().copied()).finish();
+        let decoded: Vec<u64> = tree.decoder(&self.data, self.data_len).collect();
+        self.quantizer.decompress_data(&decoded)
     }
     fn debug_name(&self) -> String {
         "Huffman<>".to_string()

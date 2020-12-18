@@ -173,7 +173,6 @@ impl Compress<f32> for PolarCompress {
         // They should have the same probability of landing on the same place.
         // The problem is anything on 180º will land on both 0º and 90º because it has two solutions.
         // The real number part will land in the 45º line.
-        // https://docs.rs/huffman-compress/0.6.0/huffman_compress/
         let quantized_m = quantize(
             &half_fft
                 .iter()

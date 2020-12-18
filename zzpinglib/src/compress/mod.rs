@@ -22,6 +22,11 @@ pub trait Compress<T> {
     fn decompress(&self) -> Result<Vec<T>, Error>;
 }
 
+pub trait CompressTo<T, U>: Compress<T> {
+    fn get_data(&self) -> Result<&[U], Error>;
+    fn decompress_from(&self, srcdata: &[U]) -> Result<Vec<T>, Error>;
+}
+
 // Other compression targets:
 // - Packet loss oriented
 // - Recv size oriented
@@ -30,4 +35,5 @@ pub trait Compress<T> {
 pub enum Error {
     ToDo,
     AssertError,
+    HuffmanEncodeError(huffman_compress::EncodeError),
 }

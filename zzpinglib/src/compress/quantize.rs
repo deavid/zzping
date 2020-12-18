@@ -1,5 +1,6 @@
-use super::{Compress, Error};
+use super::{Compress, CompressTo, Error};
 
+#[derive(Debug)]
 pub struct LogQuantizer {
     pub data: Vec<u64>,
     pub precision: f32,  // Ratio of maximum log deviation (0.01 => 1%)
@@ -18,9 +19,23 @@ Still, encoding positive or negative-only values would be problematic.
 
 WARN: This library also does not encode NaN, Infinity, Sub-normal or any non-real number.
 */
+
 impl LogQuantizer {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn decompress_data(&self, srcdata: &[u64]) -> Result<Vec<f32>, Error> {
+        let log_shift: f32 = self.precision.ln_1p();
+        let lg_zero_point = self.zero_point.ln();
+        let data: Vec<_> = srcdata
+            .iter()
+            .map(|x| *x as f32 * log_shift)
+            .map(|x| x + lg_zero_point)
+            .map(|x| x.exp())
+            .collect();
+
+        Ok(data)
     }
 
     pub fn stats() {
@@ -85,19 +100,19 @@ impl Compress<f32> for LogQuantizer {
     }
 
     fn decompress(&self) -> Result<Vec<f32>, Error> {
-        let log_shift: f32 = self.precision.ln_1p();
-        let lg_zero_point = self.zero_point.ln();
-        let data: Vec<_> = self
-            .data
-            .iter()
-            .map(|x| *x as f32 * log_shift)
-            .map(|x| x + lg_zero_point)
-            .map(|x| x.exp())
-            .collect();
-
-        Ok(data)
+        self.decompress_data(&self.data)
     }
     fn debug_name(&self) -> String {
         format!("LogQuantizer<p:{}>", self.precision)
+    }
+}
+
+impl CompressTo<f32, u64> for LogQuantizer {
+    fn get_data(&self) -> Result<&[u64], Error> {
+        Ok(&self.data)
+    }
+
+    fn decompress_from(&self, srcdata: &[u64]) -> Result<Vec<f32>, Error> {
+        self.decompress_data(&srcdata)
     }
 }
