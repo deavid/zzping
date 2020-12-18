@@ -36,14 +36,33 @@ extern crate huffman_compress;
 use bit_vec::BitVec;
 use huffman_compress::CodeBuilder;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::iter::FromIterator;
 
-use super::{quantize, Compress, Error};
+use super::{quantize, Compress, CompressTo, Error};
+
+pub struct DynQuantizer {
+    pub q: Box<dyn CompressTo<f32, u64>>,
+}
+
+impl DynQuantizer {
+    pub fn new<T: 'static + CompressTo<f32, u64>>(q: T) -> Self {
+        Self { q: Box::new(q) }
+    }
+}
+
+impl Debug for DynQuantizer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DynQuantizer")
+            .field("name", &self.q.debug_name())
+            .finish()
+    }
+}
 
 #[derive(Debug)]
 pub struct Huffman {
-    // TODO: We should be able to use any source that compress/decompress into u64
-    quantizer: quantize::LogQuantizer,
+    // TODO: Actually, move this into a generic type <T>
+    quantizer: DynQuantizer,
     weights: Vec<(u64, u64)>,
     data: BitVec,
     data_len: usize,
@@ -52,7 +71,7 @@ pub struct Huffman {
 impl Default for Huffman {
     fn default() -> Self {
         Self {
-            quantizer: quantize::LogQuantizer::default(),
+            quantizer: DynQuantizer::new(quantize::LogQuantizer::default()),
             weights: vec![],
             data: BitVec::new(),
             data_len: 0,
@@ -69,9 +88,10 @@ impl Compress<f32> for Huffman {
     }
 
     fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
-        self.quantizer.compress(data)?;
+        self.quantizer.q.compress(data)?;
+        let quantizer_data = self.quantizer.q.get_data()?;
         let mut weights: HashMap<u64, u64> = HashMap::new();
-        for k in self.quantizer.data.iter() {
+        for k in quantizer_data.iter() {
             *weights.entry(*k).or_insert(0) += 1;
         }
         self.weights = weights.iter().map(|(k, v)| (*k, *v)).collect();
@@ -84,8 +104,8 @@ impl Compress<f32> for Huffman {
         }
         dbg!(total_bits as f32 / data.len() as f32);
         self.data = BitVec::with_capacity(total_bits as usize);
-        self.data_len = self.quantizer.data.len();
-        for symbol in self.quantizer.data.iter() {
+        self.data_len = quantizer_data.len();
+        for symbol in quantizer_data.iter() {
             book.encode(&mut self.data, symbol)
                 .map_err(Error::HuffmanEncodeError)?
         }
@@ -103,7 +123,7 @@ impl Compress<f32> for Huffman {
     fn decompress(&self) -> Result<Vec<f32>, Error> {
         let (_book, tree) = CodeBuilder::from_iter(self.weights.iter().copied()).finish();
         let decoded: Vec<u64> = tree.decoder(&self.data, self.data_len).collect();
-        self.quantizer.decompress_data(&decoded)
+        self.quantizer.q.decompress_from(&decoded)
     }
     fn debug_name(&self) -> String {
         "Huffman<>".to_string()
