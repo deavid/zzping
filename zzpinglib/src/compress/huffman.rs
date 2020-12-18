@@ -39,39 +39,20 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::iter::FromIterator;
 
-use super::{quantize, Compress, CompressTo, Error};
-
-pub struct DynQuantizer {
-    pub q: Box<dyn CompressTo<f32, u64>>,
-}
-
-impl DynQuantizer {
-    pub fn new<T: 'static + CompressTo<f32, u64>>(q: T) -> Self {
-        Self { q: Box::new(q) }
-    }
-}
-
-impl Debug for DynQuantizer {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DynQuantizer")
-            .field("name", &self.q.debug_name())
-            .finish()
-    }
-}
+use super::{Compress, CompressTo, Error};
 
 #[derive(Debug)]
-pub struct Huffman {
-    // TODO: Actually, move this into a generic type <T>
-    quantizer: DynQuantizer,
+pub struct Huffman<T: CompressTo<f32, u64> + Default> {
+    quantizer: T,
     weights: Vec<(u64, u64)>,
     data: BitVec,
     data_len: usize,
 }
 
-impl Default for Huffman {
+impl<T: CompressTo<f32, u64> + Default> Default for Huffman<T> {
     fn default() -> Self {
         Self {
-            quantizer: DynQuantizer::new(quantize::LogQuantizer::default()),
+            quantizer: T::default(),
             weights: vec![],
             data: BitVec::new(),
             data_len: 0,
@@ -79,7 +60,7 @@ impl Default for Huffman {
     }
 }
 
-impl Compress<f32> for Huffman {
+impl<T: CompressTo<f32, u64> + Default> Compress<f32> for Huffman<T> {
     fn setup(
         &mut self,
         _params: std::collections::HashMap<String, crate::dynrmp::variant::Variant>,
@@ -88,8 +69,8 @@ impl Compress<f32> for Huffman {
     }
 
     fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
-        self.quantizer.q.compress(data)?;
-        let quantizer_data = self.quantizer.q.get_data()?;
+        self.quantizer.compress(data)?;
+        let quantizer_data = self.quantizer.get_data()?;
         let mut weights: HashMap<u64, u64> = HashMap::new();
         for k in quantizer_data.iter() {
             *weights.entry(*k).or_insert(0) += 1;
@@ -123,9 +104,9 @@ impl Compress<f32> for Huffman {
     fn decompress(&self) -> Result<Vec<f32>, Error> {
         let (_book, tree) = CodeBuilder::from_iter(self.weights.iter().copied()).finish();
         let decoded: Vec<u64> = tree.decoder(&self.data, self.data_len).collect();
-        self.quantizer.q.decompress_from(&decoded)
+        self.quantizer.decompress_from(&decoded)
     }
     fn debug_name(&self) -> String {
-        "Huffman<>".to_string()
+        format!("Huffman<{}>", self.quantizer.debug_name())
     }
 }
