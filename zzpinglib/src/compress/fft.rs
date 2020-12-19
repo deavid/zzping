@@ -1,6 +1,6 @@
 use crate::dynrmp::variant::Variant;
 
-use super::{Compress, Error};
+use super::{Compress, CompressTo, Error};
 use rustfft::num_traits::Zero;
 use rustfft::{num_complex::Complex, FFTplanner};
 use std::collections::HashMap;
@@ -208,5 +208,25 @@ impl Compress<f32> for PolarCompress {
             "PolarCompress<qsm:{}, qsa:{}, qsc:{}>",
             self.q_size_mag, self.q_size_ang, self.q_scale
         )
+    }
+}
+
+impl CompressTo<f32, u64> for PolarCompress {
+    fn get_data(&self) -> Result<&[u64], Error> {
+        // Problem: self.data is (f32, f32) magnitude, angle.
+        // This expects u64.
+        // TODO: Step 1 - These values are actually quantized but in float form.
+        //      .. undo the inv_quantization or split it.
+        // TODO: Step 2 - This applies to the PolarCompress (should be named PolarFFT)
+        //      .. ComplexFFT can actually be flattened from (u64, u64) to u64.
+        // Ok(&self.data)
+        todo!()
+    }
+
+    fn decompress_from(&self, _srcdata: &[u64]) -> Result<Vec<f32>, Error> {
+        // Problem: self.data is (f32, f32) magnitude, angle.
+        // This expects u64.
+        // self.decompress_data(&srcdata)
+        todo!()
     }
 }

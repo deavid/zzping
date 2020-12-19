@@ -42,25 +42,21 @@ use std::iter::FromIterator;
 use super::{Compress, CompressTo, Error};
 
 #[derive(Debug)]
-pub struct Huffman<T: CompressTo<f32, u64> + Default> {
+pub struct HuffmanQ<T: CompressTo<f32, u64> + Default> {
     quantizer: T,
-    weights: Vec<(u64, u64)>,
-    data: BitVec,
-    data_len: usize,
+    huffman: Huffman,
 }
 
-impl<T: CompressTo<f32, u64> + Default> Default for Huffman<T> {
+impl<T: CompressTo<f32, u64> + Default> Default for HuffmanQ<T> {
     fn default() -> Self {
         Self {
             quantizer: T::default(),
-            weights: vec![],
-            data: BitVec::new(),
-            data_len: 0,
+            huffman: Huffman::default(),
         }
     }
 }
 
-impl<T: CompressTo<f32, u64> + Default> Compress<f32> for Huffman<T> {
+impl<T: CompressTo<f32, u64> + Default> Compress<f32> for HuffmanQ<T> {
     fn setup(
         &mut self,
         _params: std::collections::HashMap<String, crate::dynrmp::variant::Variant>,
@@ -71,6 +67,54 @@ impl<T: CompressTo<f32, u64> + Default> Compress<f32> for Huffman<T> {
     fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
         self.quantizer.compress(data)?;
         let quantizer_data = self.quantizer.get_data()?;
+        self.huffman.compress(quantizer_data)?;
+        Ok(())
+    }
+
+    fn serialize(&self) -> Result<Vec<u8>, Error> {
+        Err(Error::ToDo)
+    }
+
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        Err(Error::ToDo)
+    }
+
+    fn decompress(&self) -> Result<Vec<f32>, Error> {
+        let decoded: Vec<u64> = self.huffman.decompress()?;
+        self.quantizer.decompress_from(&decoded)
+    }
+    fn debug_name(&self) -> String {
+        format!("Huffman<{}>", self.quantizer.debug_name())
+    }
+}
+
+#[derive(Debug)]
+pub struct Huffman {
+    weights: Vec<(u64, u64)>,
+    data: BitVec,
+    data_len: usize,
+}
+
+impl Default for Huffman {
+    fn default() -> Self {
+        Self {
+            weights: vec![],
+            data: BitVec::new(),
+            data_len: 0,
+        }
+    }
+}
+
+impl Compress<u64> for Huffman {
+    fn setup(
+        &mut self,
+        _params: std::collections::HashMap<String, crate::dynrmp::variant::Variant>,
+    ) -> Result<(), Error> {
+        Err(Error::ToDo)
+    }
+
+    fn compress(&mut self, data: &[u64]) -> Result<(), Error> {
+        let quantizer_data = data;
         let mut weights: HashMap<u64, u64> = HashMap::new();
         for k in quantizer_data.iter() {
             *weights.entry(*k).or_insert(0) += 1;
@@ -101,12 +145,11 @@ impl<T: CompressTo<f32, u64> + Default> Compress<f32> for Huffman<T> {
         Err(Error::ToDo)
     }
 
-    fn decompress(&self) -> Result<Vec<f32>, Error> {
+    fn decompress(&self) -> Result<Vec<u64>, Error> {
         let (_book, tree) = CodeBuilder::from_iter(self.weights.iter().copied()).finish();
-        let decoded: Vec<u64> = tree.decoder(&self.data, self.data_len).collect();
-        self.quantizer.decompress_from(&decoded)
+        Ok(tree.decoder(&self.data, self.data_len).collect())
     }
     fn debug_name(&self) -> String {
-        format!("Huffman<{}>", self.quantizer.debug_name())
+        "Huffman<>".to_string()
     }
 }

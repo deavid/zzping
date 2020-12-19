@@ -48,7 +48,7 @@ fn main() {
     let tests: Vec<Box<dyn Compress<f32>>> = vec![
         Box::new(fft::PolarCompress::default()),
         Box::new(quantize::LogQuantizer::default()),
-        Box::new(huffman::Huffman::<quantize::LogQuantizer>::default()),
+        Box::new(huffman::HuffmanQ::<quantize::LogQuantizer>::default()),
     ];
     for mut t in tests {
         dbg!(t.debug_name());
