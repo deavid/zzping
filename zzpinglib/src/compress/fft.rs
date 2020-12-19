@@ -46,7 +46,7 @@ pub fn quantize(input: &[(f32, f32)], q_m: usize, q_a: usize) -> Vec<(f32, f32)>
         .collect()
 }
 
-pub fn fft(input_v: &[f32]) -> Vec<(f32, f32)> {
+pub fn fft_cmplx(input_v: &[f32]) -> Vec<Complex<f32>> {
     let len = input_v.len();
     let lenf32 = len as f32;
     let mut input: Vec<Complex<f32>> = input_v
@@ -57,16 +57,12 @@ pub fn fft(input_v: &[f32]) -> Vec<(f32, f32)> {
     let mut planner = FFTplanner::new(false);
     let fft = planner.plan_fft(len);
     fft.process(&mut input, &mut output);
-    let polar: Vec<(f32, f32)> = output.into_iter().map(|x| x.to_polar()).collect();
-    polar
+    output
 }
 
-pub fn inv_fft(input_v: &[(f32, f32)]) -> Vec<f32> {
+pub fn inv_fft_cmplx(input_v: &[Complex<f32>]) -> Vec<f32> {
     let len = input_v.len();
-    let mut input: Vec<Complex<f32>> = input_v
-        .iter()
-        .map(|x| Complex::from_polar(x.0, x.1))
-        .collect();
+    let mut input: Vec<Complex<f32>> = input_v.to_vec();
     let mut output: Vec<Complex<f32>> = vec![Complex::zero(); len];
     let mut planner = FFTplanner::new(true);
     let fft = planner.plan_fft(len);
@@ -74,7 +70,24 @@ pub fn inv_fft(input_v: &[(f32, f32)]) -> Vec<f32> {
     let out: Vec<f32> = output.into_iter().map(|x| x.re).collect();
     out
 }
-pub fn half_fft(fft: &[(f32, f32)]) -> &[(f32, f32)] {
+
+pub fn fft_polar(input_v: &[f32]) -> Vec<(f32, f32)> {
+    let polar: Vec<(f32, f32)> = fft_cmplx(input_v)
+        .into_iter()
+        .map(|x| x.to_polar())
+        .collect();
+    polar
+}
+
+pub fn inv_fft_polar(input_v: &[(f32, f32)]) -> Vec<f32> {
+    let input: Vec<Complex<f32>> = input_v
+        .iter()
+        .map(|x| Complex::from_polar(x.0, x.1))
+        .collect();
+    inv_fft_cmplx(&input)
+}
+
+pub fn half_fft_polar(fft: &[(f32, f32)]) -> &[(f32, f32)] {
     let len = fft.len();
     let eps = 0.003;
     let mut errors = 0;
@@ -115,8 +128,8 @@ pub fn double_fft(half_fft: &[(f32, f32)]) -> Vec<(f32, f32)> {
 }
 
 pub fn export_print(mid: &[f32]) {
-    let fft = fft(&mid);
-    let half_fft = half_fft(&fft);
+    let fft = fft_polar(&mid);
+    let half_fft = half_fft_polar(&fft);
     println!("output,--");
     print_polar(half_fft);
 }
@@ -164,8 +177,8 @@ impl Compress<f32> for PolarCompress {
     }
 
     fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
-        let fft_input = fft(data);
-        let half_fft = half_fft(&fft_input);
+        let fft_input = fft_polar(data);
+        let half_fft = half_fft_polar(&fft_input);
         // In complex numbers, if we do f^(1/4) it should give us angles from -45º to 45º.
         // Multiply per 45º to get all values ranging from 0-N, 0i-Xi.
         // Since now all falls into the same range, we can do huffman with symbols (N+X)
@@ -200,7 +213,7 @@ impl Compress<f32> for PolarCompress {
             .map(|(m, a)| (m.powf(1. / self.q_scale), *a))
             .collect();
         let dfft = double_fft(&data);
-        Ok(inv_fft(&dfft))
+        Ok(inv_fft_polar(&dfft))
     }
 
     fn debug_name(&self) -> String {
