@@ -257,6 +257,22 @@ impl Compress<f32> for PolarCompress {
             self.q_size_mag, self.q_size_ang, self.q_scale
         )
     }
+
+    fn serialize_metadata(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn serialize_data(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
 }
 
 impl CompressTo<f32, u64> for PolarCompress {
@@ -364,6 +380,22 @@ impl Compress<f32> for FFTCmplxCompress {
     fn debug_name(&self) -> String {
         format!("FFtCmplxCompress<{}>", self.huffman.debug_name())
     }
+
+    fn serialize_metadata(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn serialize_data(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
 }
 
 #[derive(Debug)]
@@ -463,5 +495,21 @@ impl Compress<f32> for FFTPolarCompress {
             self.huffman_r.debug_name(),
             self.huffman_t.debug_name()
         )
+    }
+
+    fn serialize_metadata(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn serialize_data(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
     }
 }

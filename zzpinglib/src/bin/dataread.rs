@@ -17,7 +17,9 @@ use std::io::BufReader;
 
 use clap::Clap;
 
+#[allow(unused_imports)]
 use zzpinglib::compress::{fft, huffman, quantize};
+
 use zzpinglib::framedata::FrameDataVec;
 use zzpinglib::{batchdata::BatchData, compress::Compress};
 
@@ -50,8 +52,8 @@ fn main() {
         // Box::new(quantize::LogQuantizer::default()),
         // Box::new(quantize::LinearQuantizer::default()),
         Box::new(huffman::HuffmanQ::<quantize::LogQuantizer>::default()),
-        Box::new(huffman::HuffmanQ::<quantize::LinearQuantizer>::default()),
-        Box::new(fft::FFTCmplxCompress::default()),
+        //Box::new(huffman::HuffmanQ::<quantize::LinearQuantizer>::default()),
+        //Box::new(fft::FFTCmplxCompress::default()),
         // Box::new(fft::FFTPolarCompress::default()),
     ];
     for mut t in tests {

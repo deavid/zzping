@@ -86,6 +86,22 @@ impl<T: CompressTo<f32, u64> + Default> Compress<f32> for HuffmanQ<T> {
     fn debug_name(&self) -> String {
         format!("Huffman<{}>", self.quantizer.debug_name())
     }
+
+    fn serialize_metadata(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn serialize_data(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
 }
 
 #[derive(Debug)]
@@ -162,5 +178,21 @@ impl Compress<u64> for Huffman {
     }
     fn debug_name(&self) -> String {
         "Huffman<>".to_string()
+    }
+
+    fn serialize_metadata(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn serialize_data(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
     }
 }

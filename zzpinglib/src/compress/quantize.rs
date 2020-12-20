@@ -43,7 +43,7 @@ impl Default for LogQuantizer {
     fn default() -> Self {
         Self {
             data: vec![],
-            precision: 0.002, // 0.001 => 0.1%
+            precision: 0.01, // 0.001 => 0.1%
             zero_point: 0.0,
             max_value: 0,
             bits: 0,
@@ -92,6 +92,22 @@ impl Compress<f32> for LogQuantizer {
     }
     fn debug_name(&self) -> String {
         format!("LogQuantizer<p:{}>", self.precision)
+    }
+
+    fn serialize_metadata(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn serialize_data(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
     }
 }
 
@@ -180,6 +196,22 @@ impl Compress<f32> for LinearQuantizer {
     }
     fn debug_name(&self) -> String {
         format!("LinearQuantizer<v:{}>", self.max_value)
+    }
+
+    fn serialize_metadata(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn serialize_data(&self) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
+
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
+    }
+
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        todo!()
     }
 }
 

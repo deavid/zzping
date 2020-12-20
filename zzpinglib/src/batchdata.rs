@@ -99,7 +99,7 @@ impl BatchData {
         data_len -= data_len % 2; // FFT only allows for even amounts of data.
 
         let trasposed_recv = Self::transpose(&self.recv_us[..data_len]);
-        let origdata = &trasposed_recv[3];
+        let origdata = &trasposed_recv[0];
 
         zipper.compress(origdata)?;
         let unzipped = zipper.decompress()?;
@@ -131,13 +131,13 @@ impl BatchData {
             let v: f32 = vv.iter().sum();
             let i: f32 = ii.iter().sum();
             let mut e: f32 = (v - i) / wide as f32;
+            wmax_error = wmax_error.max(100.0 * e.abs() / v);
             if e.is_nan() {
                 e = v * v;
                 nans += 1;
             } else {
                 e = e * e;
             }
-            wmax_error = wmax_error.max(100.0 * e / v);
             werror += e;
         }
         let sum: f32 = origdata.iter().sum();
@@ -160,13 +160,13 @@ impl BatchData {
         for (v, i) in origdata.iter().zip(unzipped) {
             //dbg!(v, i);
             let mut e: f32 = v - i;
+            max_error = max_error.max(100.0 * e.abs() / v);
             if e.is_nan() {
                 e = v * v;
                 nans += 1;
             } else {
                 e = e * e;
             }
-            max_error = max_error.max(100.0 * e / v);
             error += e;
         }
         let sum: f32 = origdata.iter().sum();
