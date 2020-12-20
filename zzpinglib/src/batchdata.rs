@@ -16,6 +16,7 @@ use chrono::{DateTime, Utc};
 
 use crate::compress::{self, Compress};
 use crate::framedata::{FrameData, FrameTime};
+use std::convert::TryInto;
 
 #[derive(Debug)]
 pub struct BatchData {
@@ -122,6 +123,28 @@ impl BatchData {
         }
         trasposed_recv
     }
+
+    pub fn flatten(data: &[[f32; 7]]) -> Vec<f32> {
+        let mut flat_r: Vec<f32> = Vec::with_capacity(data.len() * 7);
+        for row in data {
+            for v in row {
+                flat_r.push(*v);
+            }
+        }
+        flat_r
+    }
+
+    pub fn unflatten(data: &[f32]) -> Vec<[f32; 7]> {
+        assert_eq!(data.len() % 7, 0);
+        let mut unflat_r: Vec<[f32; 7]> = Vec::with_capacity(data.len() / 7);
+
+        for row in data.chunks_exact(7) {
+            let row: [f32; 7] = row.try_into().unwrap();
+            unflat_r.push(row);
+        }
+        unflat_r
+    }
+
     pub fn measure_window_error(origdata: &[f32], unzipped: &[f32]) {
         let wide = 15;
         let mut werror: f32 = 0.0;

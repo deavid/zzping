@@ -111,7 +111,7 @@ impl Compress<f32> for LogQuantizer {
         let mut buffer = BitVec::with_capacity(total_bits);
         for v in self.data.iter().copied() {
             let b = v.to_be_bytes();
-            let mut vb = BitVec::from_bytes(&b);
+            let mut vb = BitVec::from_bytes(&b); // Most expensive
             vb = vb.split_off(64 - bits);
             buffer.append(&mut vb);
         }
@@ -132,7 +132,6 @@ impl Compress<f32> for LogQuantizer {
         let zero: [u8; 4] = payload[4..8].try_into().unwrap();
         self.precision = f32::from_be_bytes(prec);
         self.zero_point = f32::from_be_bytes(zero);
-        dbg!(self);
         Ok(8)
     }
 
@@ -145,19 +144,18 @@ impl Compress<f32> for LogQuantizer {
         let total_bits: usize = size * bits;
         let total_bytes: usize = (total_bits + 7) / 8;
         let final_bytes = total_bytes + 5; // 5 bytes from header.
-        let mut databits = BitVec::from_bytes(&payload[5..final_bytes]);
+        let databits = BitVec::from_bytes(&payload[5..final_bytes]);
         self.data = Vec::with_capacity(size);
-        dbg!(size);
+        let mut datiter = databits.iter();
         for _ in 0..size {
-            let rem = databits.split_off(bits);
+            let mut valuebits = datiter.by_ref().take(bits).collect(); // <- 2nd most expensive
             let mut bv = BitVec::from_elem(64 - bits, false);
-            bv.append(&mut databits);
-            let vec = bv.to_bytes();
+            bv.append(&mut valuebits);
+            let vec = bv.to_bytes(); // <- Most expensive operation!
             let bytes: [u8; 8] = vec.try_into().unwrap();
             let value: u64 = u64::from_be_bytes(bytes);
             assert!(value < (1 << bits));
             self.data.push(value);
-            databits = rem;
         }
         Ok(final_bytes)
     }

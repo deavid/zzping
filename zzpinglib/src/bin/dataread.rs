@@ -45,8 +45,8 @@ fn main() {
     }
     dbg!(fdv.v.len());
 
-    // test_batchdata_compression(fdv.v);
-    test_serializer(fdv.v);
+    test_batchdata_compression(fdv.v);
+    //test_serializer(fdv.v);
 }
 
 #[allow(dead_code)]
@@ -73,19 +73,19 @@ fn test_batchdata_compression(v: Vec<FrameData>) {
 #[allow(dead_code)]
 fn test_serializer(v: Vec<FrameData>) {
     let bd = BatchData::new(v);
-    let trasposed_recv = BatchData::transpose(&bd.recv_us);
-    let test_vec = &trasposed_recv[3];
+
+    // let trasposed_recv = BatchData::transpose(&bd.recv_us);
+    // let test_vec = &trasposed_recv[3];
+    let test_vec = BatchData::flatten(&bd.recv_us);
 
     let mut serializer = quantize::LogQuantizer::default();
-    serializer.compress(test_vec).unwrap();
+    serializer.compress(&test_vec).unwrap();
     let ser_data = serializer.serialize().unwrap();
     dbg!(ser_data.len());
     dbg!(ser_data.len() as f32 * 8.0 / test_vec.len() as f32);
 
     let mut deserializer = quantize::LogQuantizer::default();
-    dbg!("Deserialize");
     deserializer.deserialize(&ser_data).unwrap();
-    dbg!("Decompress");
     let unzipped = deserializer.decompress().unwrap();
     dbg!(unzipped.len());
     assert_eq!(test_vec.len(), unzipped.len());
