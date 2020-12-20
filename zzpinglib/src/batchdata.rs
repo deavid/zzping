@@ -110,6 +110,7 @@ impl BatchData {
         }
 
         Self::measure_error(&origdata, &unzipped);
+        Self::measure_window_error(&origdata, &unzipped);
         Ok(())
     }
 
@@ -121,13 +122,52 @@ impl BatchData {
         }
         trasposed_recv
     }
+    pub fn measure_window_error(origdata: &[f32], unzipped: &[f32]) {
+        let wide = 15;
+        let mut werror: f32 = 0.0;
+        let mut nans: usize = 0;
+        let mut wmax_error: f32 = 0.0;
+        for (vv, ii) in origdata.windows(wide).zip(unzipped.windows(wide)) {
+            let v: f32 = vv.iter().sum();
+            let i: f32 = ii.iter().sum();
+            let mut e: f32 = (v - i) / wide as f32;
+            if e.is_nan() {
+                e = v * v;
+                nans += 1;
+            } else {
+                e = e * e;
+            }
+            wmax_error = wmax_error.max(100.0 * e / v);
+            werror += e;
+        }
+        let sum: f32 = origdata.iter().sum();
+        let mean = sum / origdata.len() as f32;
+        werror /= origdata.len() as f32;
+        werror = werror.sqrt();
+        werror *= 100.0;
+        werror /= mean;
+
+        dbg!(werror, wmax_error);
+        if nans > 0 {
+            dbg!(nans);
+        }
+    }
 
     pub fn measure_error(origdata: &[f32], unzipped: &[f32]) {
         let mut error: f32 = 0.0;
+        let mut nans: usize = 0;
+        let mut max_error: f32 = 0.0;
         for (v, i) in origdata.iter().zip(unzipped) {
             //dbg!(v, i);
-            let e = v - i;
-            error += e * e;
+            let mut e: f32 = v - i;
+            if e.is_nan() {
+                e = v * v;
+                nans += 1;
+            } else {
+                e = e * e;
+            }
+            max_error = max_error.max(100.0 * e / v);
+            error += e;
         }
         let sum: f32 = origdata.iter().sum();
         let mean = sum / origdata.len() as f32;
@@ -136,7 +176,10 @@ impl BatchData {
         error *= 100.0;
         error /= mean;
 
-        dbg!(error);
+        dbg!(error, max_error);
+        if nans > 0 {
+            dbg!(nans);
+        }
     }
 
     pub fn compute_percentiles(v: &[f32]) -> [f32; 7] {

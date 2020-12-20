@@ -46,9 +46,13 @@ fn main() {
     let bd = BatchData::new(fdv.v);
 
     let tests: Vec<Box<dyn Compress<f32>>> = vec![
-        Box::new(fft::PolarCompress::default()),
-        Box::new(quantize::LogQuantizer::default()),
+        // Box::new(fft::PolarCompress::default()),
+        // Box::new(quantize::LogQuantizer::default()),
+        // Box::new(quantize::LinearQuantizer::default()),
         Box::new(huffman::HuffmanQ::<quantize::LogQuantizer>::default()),
+        Box::new(huffman::HuffmanQ::<quantize::LinearQuantizer>::default()),
+        Box::new(fft::FFTCmplxCompress::default()),
+        // Box::new(fft::FFTPolarCompress::default()),
     ];
     for mut t in tests {
         dbg!(t.debug_name());

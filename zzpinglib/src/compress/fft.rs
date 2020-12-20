@@ -1,6 +1,6 @@
 use crate::dynrmp::variant::Variant;
 
-use super::{Compress, CompressTo, Error};
+use super::{huffman, quantize, Compress, CompressTo, Error};
 use rustfft::num_traits::Zero;
 use rustfft::{num_complex::Complex, FFTplanner};
 use std::collections::HashMap;
@@ -87,6 +87,35 @@ pub fn inv_fft_polar(input_v: &[(f32, f32)]) -> Vec<f32> {
     inv_fft_cmplx(&input)
 }
 
+pub fn half_fft_cmplx(fft: &[Complex<f32>]) -> &[Complex<f32>] {
+    let len = fft.len();
+    let eps = 0.003;
+    let mut errors = 0;
+    assert!(len % 2 == 0); // Odd ffts do not have midpoints
+    for i in 1..len / 2 {
+        let l = fft[i];
+        let r = fft[len - i];
+        let d0 = l.re - r.re;
+        let d1 = l.im + r.im;
+        if d0.abs() > eps || d1.abs() > eps {
+            errors += 1;
+            println!("{}, {:.9} {:.9}", i, d0, d1);
+        }
+    }
+    if errors > 0 {
+        panic!("Found {} errors!", errors);
+    }
+    let mid = fft[len / 2];
+    if mid.im.abs() > eps {
+        dbg!(fft[len / 2 - 1]);
+        dbg!(fft[len / 2]);
+        dbg!(fft[len / 2 + 1]);
+        dbg!(mid);
+        panic!("Mid element should be real with no imaginary part!");
+    }
+    &fft[0..len / 2 + 1]
+}
+
 pub fn half_fft_polar(fft: &[(f32, f32)]) -> &[(f32, f32)] {
     let len = fft.len();
     let eps = 0.003;
@@ -115,13 +144,25 @@ pub fn half_fft_polar(fft: &[(f32, f32)]) -> &[(f32, f32)] {
     }
     &fft[0..len / 2 + 1]
 }
-pub fn double_fft(half_fft: &[(f32, f32)]) -> Vec<(f32, f32)> {
+pub fn double_fft_polar(half_fft: &[(f32, f32)]) -> Vec<(f32, f32)> {
     // This only works for even ffts
     let mut fft = half_fft.to_vec();
     let len = fft.len();
     for i in (1..len - 1).rev() {
         let l = fft[i];
         let r = (l.0, -l.1);
+        fft.push(r);
+    }
+    fft
+}
+
+pub fn double_fft_cmplx(half_fft: &[Complex<f32>]) -> Vec<Complex<f32>> {
+    // This only works for even ffts
+    let mut fft = half_fft.to_vec();
+    let len = fft.len();
+    for i in (1..len - 1).rev() {
+        let l = fft[i];
+        let r = Complex::new(l.re, -l.im);
         fft.push(r);
     }
     fft
@@ -179,13 +220,7 @@ impl Compress<f32> for PolarCompress {
     fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
         let fft_input = fft_polar(data);
         let half_fft = half_fft_polar(&fft_input);
-        // In complex numbers, if we do f^(1/4) it should give us angles from -45º to 45º.
-        // Multiply per 45º to get all values ranging from 0-N, 0i-Xi.
-        // Since now all falls into the same range, we can do huffman with symbols (N+X)
-        // using imaginary numbers and real numbers in the same dict.
-        // They should have the same probability of landing on the same place.
-        // The problem is anything on 180º will land on both 0º and 90º because it has two solutions.
-        // The real number part will land in the 45º line.
+
         let quantized_m = quantize(
             &half_fft
                 .iter()
@@ -212,7 +247,7 @@ impl Compress<f32> for PolarCompress {
             .iter()
             .map(|(m, a)| (m.powf(1. / self.q_scale), *a))
             .collect();
-        let dfft = double_fft(&data);
+        let dfft = double_fft_polar(&data);
         Ok(inv_fft_polar(&dfft))
     }
 
@@ -241,5 +276,192 @@ impl CompressTo<f32, u64> for PolarCompress {
         // This expects u64.
         // self.decompress_data(&srcdata)
         todo!()
+    }
+}
+
+// In complex numbers, if we do f^(1/4) it should give us angles from -45º to 45º.
+// Multiply per 45º to get all values ranging from 0-N, 0i-Xi.
+// Since now all falls into the same range, we can do huffman with symbols (N+X)
+// using imaginary numbers and real numbers in the same dict.
+// They should have the same probability of landing on the same place.
+// The problem is anything on 180º will land on both 0º and 90º because it has two solutions.
+// The real number part will land in the 45º line.
+
+#[derive(Debug)]
+pub struct FFTCmplxCompress {
+    pub huffman: huffman::HuffmanQ<quantize::LinearQuantizer>,
+    pub turn: Complex<f32>,
+    pub complex_pow: f32,
+    pub float_pow: f32,
+    pub eps: f32,
+}
+
+impl Default for FFTCmplxCompress {
+    fn default() -> Self {
+        let mut huffman = huffman::HuffmanQ::<quantize::LinearQuantizer>::default();
+        // huffman.quantizer.precision = 0.01;
+        huffman.quantizer.max_value = 100000;
+        Self {
+            huffman,
+            turn: Complex::from_polar(1.0, 0.0),
+            complex_pow: 1.0,
+            float_pow: 1.0,
+            eps: 0.0,
+            // turn: Complex::from_polar(1.0, std::f32::consts::PI / 4.0),
+            // complex_pow: 4.0,
+            // float_pow: 0.1,
+            // eps: 0.01,
+        }
+    }
+}
+impl Compress<f32> for FFTCmplxCompress {
+    fn setup(&mut self, _params: HashMap<String, Variant>) -> Result<(), Error> {
+        Err(Error::ToDo)
+    }
+
+    fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
+        let fft_input = fft_cmplx(data);
+        let half_fft: Vec<Complex<f32>> = half_fft_cmplx(&fft_input)
+            .iter()
+            .map(|c| c.powf(1.0 / self.complex_pow)) // Raise to 1/4th, maps to -45º to 45º
+            .map(|c| c * self.turn) // Turn 45 degrees, so ends in 0-90º
+            .collect();
+        let mut zipped: Vec<f32> = Vec::with_capacity(half_fft.len() * 2);
+        // dbg!(&half_fft[..100]);
+        for c in half_fft {
+            zipped.push((c.re + self.eps).powf(1.0 / self.float_pow));
+            zipped.push((c.im + self.eps).powf(1.0 / self.float_pow));
+        }
+        self.huffman.compress(&zipped)?;
+        Ok(())
+    }
+
+    fn serialize(&self) -> Result<Vec<u8>, Error> {
+        Err(Error::ToDo)
+    }
+
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        Err(Error::ToDo)
+    }
+
+    fn decompress(&self) -> Result<Vec<f32>, Error> {
+        let unzipped = self.huffman.decompress()?;
+        let half_fft: Vec<Complex<f32>> = unzipped
+            .chunks_exact(2)
+            .map(|c| {
+                Complex::<f32>::new(
+                    c[0].powf(self.float_pow) - self.eps,
+                    c[1].powf(self.float_pow) - self.eps,
+                )
+            })
+            .map(|c| c / self.turn)
+            .map(|c| c.powf(self.complex_pow))
+            .collect();
+        let fft = double_fft_cmplx(&half_fft);
+        Ok(inv_fft_cmplx(&fft))
+    }
+
+    fn debug_name(&self) -> String {
+        format!("FFtCmplxCompress<{}>", self.huffman.debug_name())
+    }
+}
+
+#[derive(Debug)]
+pub struct FFTPolarCompress {
+    pub huffman_r: huffman::HuffmanQ<quantize::LogQuantizer>,
+    pub huffman_t: huffman::HuffmanQ<quantize::LinearQuantizer>,
+    pub min_lin_f: f32,
+}
+
+impl FFTPolarCompress {
+    pub fn get_linear_factor(&self, n: usize, l: usize) -> f32 {
+        let n = n as f32;
+        let l = l as f32;
+        let f: f32 = n / l; // Converts to 0..1
+        let f1 = 1.0 - f; // to 1..0
+        let ff = f1 + self.min_lin_f;
+        ff / (1.0 + self.min_lin_f)
+    }
+
+    pub fn linear_factor(&self, n: usize, l: usize, polar: (f32, f32)) -> (f32, f32) {
+        let ff1 = self.get_linear_factor(n, l);
+        (polar.0 * ff1, polar.1 * ff1)
+    }
+
+    pub fn inv_linear_factor(&self, n: usize, l: usize, polar: (f32, f32)) -> (f32, f32) {
+        let ff1 = self.get_linear_factor(n, l);
+        (polar.0 / ff1, polar.1 / ff1)
+    }
+}
+
+impl Default for FFTPolarCompress {
+    fn default() -> Self {
+        let mut huffman_r = huffman::HuffmanQ::<quantize::LogQuantizer>::default();
+        let mut huffman_t = huffman::HuffmanQ::<quantize::LinearQuantizer>::default();
+        huffman_r.quantizer.precision = 0.01;
+        huffman_t.quantizer.max_value = 10000;
+        Self {
+            huffman_r,
+            huffman_t,
+            min_lin_f: 1.0,
+        }
+    }
+}
+impl Compress<f32> for FFTPolarCompress {
+    fn setup(&mut self, _params: HashMap<String, Variant>) -> Result<(), Error> {
+        Err(Error::ToDo)
+    }
+
+    fn compress(&mut self, data: &[f32]) -> Result<(), Error> {
+        let fft_input = fft_polar(data);
+        let half_fft: &[(f32, f32)] = half_fft_polar(&fft_input);
+        let len = half_fft.len();
+        let hf_adj: Vec<(f32, f32)> = half_fft
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(i, p)| self.linear_factor(i, len, p))
+            .collect();
+        let mut radius: Vec<f32> = Vec::with_capacity(len);
+        let mut theta: Vec<f32> = Vec::with_capacity(len);
+        for (r, t) in hf_adj {
+            radius.push(r);
+            theta.push(t);
+        }
+        self.huffman_r.compress(&radius)?;
+        self.huffman_t.compress(&theta)?;
+        Ok(())
+    }
+
+    fn serialize(&self) -> Result<Vec<u8>, Error> {
+        Err(Error::ToDo)
+    }
+
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+        Err(Error::ToDo)
+    }
+
+    fn decompress(&self) -> Result<Vec<f32>, Error> {
+        let radius = self.huffman_r.decompress()?;
+        let theta = self.huffman_t.decompress()?;
+        let polar_half_fft: Vec<(f32, f32)> = radius.into_iter().zip(theta.into_iter()).collect();
+        let len = polar_half_fft.len();
+        let polar_half_adj: Vec<(f32, f32)> = polar_half_fft
+            .into_iter()
+            .enumerate()
+            .map(|(i, p)| self.inv_linear_factor(i, len, p))
+            .collect();
+        let polar_fft = double_fft_polar(&polar_half_adj);
+        let unzipped = inv_fft_polar(&polar_fft);
+
+        Ok(unzipped)
+    }
+
+    fn debug_name(&self) -> String {
+        format!(
+            "FFtCmplxCompress<r:{},t:{}>",
+            self.huffman_r.debug_name(),
+            self.huffman_t.debug_name()
+        )
     }
 }

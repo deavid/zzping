@@ -43,8 +43,8 @@ use super::{Compress, CompressTo, Error};
 
 #[derive(Debug)]
 pub struct HuffmanQ<T: CompressTo<f32, u64> + Default> {
-    quantizer: T,
-    huffman: Huffman,
+    pub quantizer: T,
+    pub huffman: Huffman,
 }
 
 impl<T: CompressTo<f32, u64> + Default> Default for HuffmanQ<T> {
@@ -121,6 +121,15 @@ impl Compress<u64> for Huffman {
         }
         self.weights = weights.iter().map(|(k, v)| (*k, *v)).collect();
         self.weights.sort_unstable_by_key(|(k, _v)| *k);
+        // println!(
+        //     "K: {:?}",
+        //     self.weights.iter().map(|o| o.0).collect::<Vec<u64>>()
+        // );
+        self.weights.sort_by_key(|(_k, v)| -(*v as i128));
+        // println!(
+        //     "V: {:?}",
+        //     self.weights.iter().map(|o| o.1).collect::<Vec<u64>>()
+        // );
 
         let (book, _tree) = CodeBuilder::from_iter(self.weights.iter().copied()).finish();
         let mut total_bits = 0;
@@ -134,6 +143,8 @@ impl Compress<u64> for Huffman {
             book.encode(&mut self.data, symbol)
                 .map_err(Error::HuffmanEncodeError)?
         }
+        // dbg!(total_bits);
+        // dbg!(self.data.len());
         Ok(())
     }
 
