@@ -237,7 +237,7 @@ impl Compress<f32> for PolarCompress {
         Err(Error::ToDo)
     }
 
-    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         Err(Error::ToDo)
     }
 
@@ -266,11 +266,11 @@ impl Compress<f32> for PolarCompress {
         todo!()
     }
 
-    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 
-    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 }
@@ -356,7 +356,7 @@ impl Compress<f32> for FFTCmplxCompress {
         Err(Error::ToDo)
     }
 
-    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         Err(Error::ToDo)
     }
 
@@ -389,11 +389,11 @@ impl Compress<f32> for FFTCmplxCompress {
         todo!()
     }
 
-    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 
-    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 }
@@ -469,7 +469,7 @@ impl Compress<f32> for FFTPolarCompress {
         Err(Error::ToDo)
     }
 
-    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         Err(Error::ToDo)
     }
 
@@ -505,11 +505,11 @@ impl Compress<f32> for FFTPolarCompress {
         todo!()
     }
 
-    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 
-    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 }

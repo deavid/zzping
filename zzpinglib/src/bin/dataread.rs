@@ -20,7 +20,7 @@ use clap::Clap;
 #[allow(unused_imports)]
 use zzpinglib::compress::{fft, huffman, quantize};
 
-use zzpinglib::framedata::FrameDataVec;
+use zzpinglib::framedata::{FrameData, FrameDataVec};
 use zzpinglib::{batchdata::BatchData, compress::Compress};
 
 #[derive(Clap, Debug)]
@@ -45,7 +45,13 @@ fn main() {
     }
     dbg!(fdv.v.len());
 
-    let bd = BatchData::new(fdv.v);
+    // test_batchdata_compression(fdv.v);
+    test_serializer(fdv.v);
+}
+
+#[allow(dead_code)]
+fn test_batchdata_compression(v: Vec<FrameData>) {
+    let bd = BatchData::new(v);
 
     let tests: Vec<Box<dyn Compress<f32>>> = vec![
         // Box::new(fft::PolarCompress::default()),
@@ -62,4 +68,44 @@ fn main() {
             dbg!(e);
         }
     }
+}
+
+#[allow(dead_code)]
+fn test_serializer(v: Vec<FrameData>) {
+    let bd = BatchData::new(v);
+    let trasposed_recv = BatchData::transpose(&bd.recv_us);
+    let test_vec = &trasposed_recv[3];
+
+    let mut serializer = quantize::LogQuantizer::default();
+    serializer.compress(test_vec).unwrap();
+    let ser_data = serializer.serialize().unwrap();
+    dbg!(ser_data.len());
+    dbg!(ser_data.len() as f32 * 8.0 / test_vec.len() as f32);
+
+    let mut deserializer = quantize::LogQuantizer::default();
+    dbg!("Deserialize");
+    deserializer.deserialize(&ser_data).unwrap();
+    dbg!("Decompress");
+    let unzipped = deserializer.decompress().unwrap();
+    dbg!(unzipped.len());
+    assert_eq!(test_vec.len(), unzipped.len());
+    let mut errors = 0;
+    for (n, (s, d)) in serializer
+        .data
+        .iter()
+        .zip(deserializer.data.iter())
+        .enumerate()
+    {
+        if *s != *d {
+            if errors < 10 {
+                println!("{}: {} != {}", n, s, d);
+            }
+            errors += 1;
+        }
+    }
+    if errors > 0 {
+        dbg!(errors, serializer.data.len());
+    }
+
+    // bd.
 }

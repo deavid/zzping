@@ -1,4 +1,7 @@
+use bit_vec::BitVec;
+
 use super::{Compress, CompressTo, Error};
+use std::convert::TryInto;
 
 #[derive(Debug)]
 pub struct LogQuantizer {
@@ -80,11 +83,11 @@ impl Compress<f32> for LogQuantizer {
     }
 
     fn serialize(&self) -> Result<Vec<u8>, Error> {
-        Err(Error::ToDo)
-    }
-
-    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
-        Err(Error::ToDo)
+        Ok(self
+            .serialize_metadata()?
+            .into_iter()
+            .chain(self.serialize_data()?.into_iter())
+            .collect())
     }
 
     fn decompress(&self) -> Result<Vec<f32>, Error> {
@@ -95,19 +98,74 @@ impl Compress<f32> for LogQuantizer {
     }
 
     fn serialize_metadata(&self) -> Result<Vec<u8>, Error> {
-        todo!()
+        let prec: [u8; 4] = self.precision.to_be_bytes();
+        let zero: [u8; 4] = self.zero_point.to_be_bytes();
+        Ok(prec.iter().chain(zero.iter()).copied().collect())
     }
 
     fn serialize_data(&self) -> Result<Vec<u8>, Error> {
-        todo!()
+        // u32 is enough for >10 years of data. That probably doesn't fit in a single file
+        let size: u32 = self.data.len() as u32;
+        let bits: usize = self.bits as usize;
+        let total_bits: usize = bits * size as usize;
+        let mut buffer = BitVec::with_capacity(total_bits);
+        for v in self.data.iter().copied() {
+            let b = v.to_be_bytes();
+            let mut vb = BitVec::from_bytes(&b);
+            vb = vb.split_off(64 - bits);
+            buffer.append(&mut vb);
+        }
+        assert_eq!(total_bits, buffer.len());
+        let u8buf: Vec<u8> = buffer.to_bytes();
+        let data: Vec<u8> = size
+            .to_be_bytes()
+            .iter()
+            .chain(self.bits.to_be_bytes().iter())
+            .chain(u8buf.iter())
+            .copied()
+            .collect();
+        Ok(data)
     }
 
-    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
-        todo!()
+    fn deserialize_metadata(&mut self, payload: &[u8]) -> Result<usize, Error> {
+        let prec: [u8; 4] = payload[0..4].try_into().unwrap();
+        let zero: [u8; 4] = payload[4..8].try_into().unwrap();
+        self.precision = f32::from_be_bytes(prec);
+        self.zero_point = f32::from_be_bytes(zero);
+        dbg!(self);
+        Ok(8)
     }
 
-    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
-        todo!()
+    fn deserialize_data(&mut self, payload: &[u8]) -> Result<usize, Error> {
+        let bsize: [u8; 4] = payload[0..4].try_into().unwrap();
+        let bbits: [u8; 1] = payload[4..5].try_into().unwrap();
+        let size = u32::from_be_bytes(bsize) as usize;
+        let bits = u8::from_be_bytes(bbits) as usize;
+        self.bits = bits as u8;
+        let total_bits: usize = size * bits;
+        let total_bytes: usize = (total_bits + 7) / 8;
+        let final_bytes = total_bytes + 5; // 5 bytes from header.
+        let mut databits = BitVec::from_bytes(&payload[5..final_bytes]);
+        self.data = Vec::with_capacity(size);
+        dbg!(size);
+        for _ in 0..size {
+            let rem = databits.split_off(bits);
+            let mut bv = BitVec::from_elem(64 - bits, false);
+            bv.append(&mut databits);
+            let vec = bv.to_bytes();
+            let bytes: [u8; 8] = vec.try_into().unwrap();
+            let value: u64 = u64::from_be_bytes(bytes);
+            assert!(value < (1 << bits));
+            self.data.push(value);
+            databits = rem;
+        }
+        Ok(final_bytes)
+    }
+
+    fn deserialize(&mut self, payload: &[u8]) -> Result<usize, Error> {
+        let bits1 = self.deserialize_metadata(payload)?;
+        let bits2 = self.deserialize_data(&payload[bits1..])?;
+        Ok(bits1 + bits2)
     }
 }
 
@@ -187,7 +245,7 @@ impl Compress<f32> for LinearQuantizer {
         Err(Error::ToDo)
     }
 
-    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         Err(Error::ToDo)
     }
 
@@ -206,11 +264,11 @@ impl Compress<f32> for LinearQuantizer {
         todo!()
     }
 
-    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 
-    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 }

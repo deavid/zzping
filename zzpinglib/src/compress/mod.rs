@@ -20,9 +20,9 @@ pub trait Compress<T> {
     fn serialize(&self) -> Result<Vec<u8>, Error>;
     fn serialize_metadata(&self) -> Result<Vec<u8>, Error>;
     fn serialize_data(&self) -> Result<Vec<u8>, Error>;
-    fn deserialize(&mut self, payload: &[u8]) -> Result<(), Error>;
-    fn deserialize_metadata(&mut self, payload: &[u8]) -> Result<(), Error>;
-    fn deserialize_data(&mut self, payload: &[u8]) -> Result<(), Error>;
+    fn deserialize(&mut self, payload: &[u8]) -> Result<usize, Error>;
+    fn deserialize_metadata(&mut self, payload: &[u8]) -> Result<usize, Error>;
+    fn deserialize_data(&mut self, payload: &[u8]) -> Result<usize, Error>;
     fn decompress(&self) -> Result<Vec<T>, Error>;
 }
 

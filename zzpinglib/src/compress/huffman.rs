@@ -75,7 +75,7 @@ impl<T: CompressTo<f32, u64> + Default> Compress<f32> for HuffmanQ<T> {
         Err(Error::ToDo)
     }
 
-    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         Err(Error::ToDo)
     }
 
@@ -95,11 +95,11 @@ impl<T: CompressTo<f32, u64> + Default> Compress<f32> for HuffmanQ<T> {
         todo!()
     }
 
-    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 
-    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 }
@@ -168,7 +168,7 @@ impl Compress<u64> for Huffman {
         Err(Error::ToDo)
     }
 
-    fn deserialize(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         Err(Error::ToDo)
     }
 
@@ -188,11 +188,11 @@ impl Compress<u64> for Huffman {
         todo!()
     }
 
-    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_metadata(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 
-    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<(), Error> {
+    fn deserialize_data(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
     }
 }
