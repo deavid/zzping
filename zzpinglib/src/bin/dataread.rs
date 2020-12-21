@@ -74,9 +74,9 @@ fn test_batchdata_compression(v: Vec<FrameData>) {
 fn test_serializer(v: Vec<FrameData>) {
     let bd = BatchData::new(v);
 
-    // let trasposed_recv = BatchData::transpose(&bd.recv_us);
-    // let test_vec = &trasposed_recv[3];
-    let test_vec = BatchData::flatten(&bd.recv_us);
+    let trasposed_recv = BatchData::transpose(&bd.recv_us);
+    let test_vec = &trasposed_recv[1][..600];
+    // let test_vec = BatchData::flatten(&bd.recv_us[..1]);
 
     let mut serializer = quantize::LogQuantizer::default();
     serializer.compress(&test_vec).unwrap();

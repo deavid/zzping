@@ -109,6 +109,38 @@ pub struct Huffman {
     weights: Vec<(u64, u64)>,
     data: BitVec,
     data_len: usize,
+    fuzzy: bool,
+    max_count: u64,
+}
+
+impl Huffman {
+    fn encode_weights(&self) {
+        println!(
+            "K: {:?}",
+            self.weights.iter().map(|o| o.0).collect::<Vec<u64>>()
+        );
+        let mut buf: Vec<i64> = vec![];
+        let mut pos: u64 = 0;
+        for (k, v) in self.weights.iter().copied() {
+            let mut d = k - pos;
+            while d > 0 {
+                if d >= 64 {
+                    d -= 64;
+                    buf.push(-64);
+                } else if d >= 16 {
+                    d -= 16;
+                    buf.push(-16);
+                } else {
+                    buf.push(-(d as i64));
+                    d = 0;
+                }
+            }
+            buf.push(v as i64);
+            pos = k + 1;
+        }
+        println!("Diff: {:?}", buf);
+        dbg!(buf.len());
+    }
 }
 
 impl Default for Huffman {
@@ -117,6 +149,8 @@ impl Default for Huffman {
             weights: vec![],
             data: BitVec::new(),
             data_len: 0,
+            fuzzy: true,
+            max_count: 16,
         }
     }
 }
@@ -135,32 +169,76 @@ impl Compress<u64> for Huffman {
         for k in quantizer_data.iter() {
             *weights.entry(*k).or_insert(0) += 1;
         }
-        self.weights = weights.iter().map(|(k, v)| (*k, *v)).collect();
+        // Double huffman encoding?
+        let max_w = weights.values().max().copied().unwrap();
+        let max_value = self.max_count;
+        let q = max_w / max_value;
+        if q > 1 {
+            for (_, v) in weights.iter_mut() {
+                *v += q - 1;
+                *v /= q;
+            }
+        }
+        let mut translate: HashMap<u64, u64> = HashMap::new(); // source->dest
+        if self.fuzzy {
+            let keys = weights.keys().copied().collect::<Vec<_>>();
+            for k in keys {
+                let v = weights[&k];
+                if v == 1 {
+                    let kl = k.overflowing_sub(1).0;
+                    let kr = k + 1;
+                    let new = weights
+                        .get_key_value(&kr)
+                        .or_else(|| weights.get_key_value(&kl));
+
+                    if let Some(kv) = new {
+                        if translate.get(kv.0).is_none() {
+                            let dk: u64 = *kv.0;
+                            translate.insert(k, dk);
+                            *weights.get_mut(&k).unwrap() = 0;
+                            *weights.get_mut(&dk).unwrap() += v;
+                        }
+                    }
+                }
+            }
+        }
+        for v in weights.values_mut() {
+            *v = (*v).min(max_value - 1);
+        }
+        let max_w = weights.values().max().copied().unwrap();
+        dbg!(max_w);
+
+        self.weights = weights
+            .iter()
+            .map(|(k, v)| (*k, *v))
+            .filter(|(_k, v)| *v > 0)
+            .collect();
+
         self.weights.sort_unstable_by_key(|(k, _v)| *k);
         // println!(
         //     "K: {:?}",
         //     self.weights.iter().map(|o| o.0).collect::<Vec<u64>>()
         // );
-        self.weights.sort_by_key(|(_k, v)| -(*v as i128));
         // println!(
         //     "V: {:?}",
         //     self.weights.iter().map(|o| o.1).collect::<Vec<u64>>()
         // );
-
+        self.encode_weights();
+        self.weights.sort_by_key(|(_k, v)| -(*v as i128));
+        dbg!(self.weights.len());
         let (book, _tree) = CodeBuilder::from_iter(self.weights.iter().copied()).finish();
-        let mut total_bits = 0;
-        for (k, v) in book.iter() {
-            total_bits += v.len() as u64 * weights[k];
-        }
-        dbg!(total_bits as f32 / data.len() as f32);
-        self.data = BitVec::with_capacity(total_bits as usize);
+        self.data = BitVec::with_capacity(data.len() * 8);
         self.data_len = quantizer_data.len();
-        for symbol in quantizer_data.iter() {
+        for mut symbol in quantizer_data.iter() {
+            if let Some(v) = translate.get(symbol) {
+                symbol = v;
+            }
             book.encode(&mut self.data, symbol)
                 .map_err(Error::HuffmanEncodeError)?
         }
+        dbg!(self.data.len() as f32 / data.len() as f32);
         // dbg!(total_bits);
-        // dbg!(self.data.len());
+        dbg!(self.data.len() / 8);
         Ok(())
     }
 
