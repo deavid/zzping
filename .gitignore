@@ -1,0 +1,10 @@
+target/
+pingd-log*.log
+logs/
+perf.data
+perf.data.old
+.~*#
+test*.csv
+test*.csv.ods
+*.ipynb
+.ipynb_checkpoints

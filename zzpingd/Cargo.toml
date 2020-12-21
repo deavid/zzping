@@ -5,6 +5,7 @@ authors = ["Google LLC", "David Martinez Marti <deavidsedice@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+zzpinglib = { path = "../zzpinglib" }
 env_logger = "0.8.1"
 log = "0.4.11"
 pnet = "0.26"
@@ -14,3 +15,4 @@ rmp = "0.8.9"
 ron = "0.6.2"
 clap = "3.0.0-beta.2"
 serde = "1.0.117"
+chrono = "0.4"

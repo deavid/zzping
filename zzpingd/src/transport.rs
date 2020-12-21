@@ -17,13 +17,28 @@ use pnet::transport::icmp_packet_iter;
 use pnet::transport::transport_channel;
 use pnet::transport::{TransportReceiver, TransportSender};
 use rand::Rng;
+use std::io::BufWriter;
 use std::net::IpAddr;
-use std::time::Duration;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+use std::{fs::File, io::Write};
+
+fn recv_before(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
+    let received: Duration = pck.received.unwrap_or_default();
+    now.saturating_duration_since(pck.sent + received) < wait
+}
+
+fn sent_before(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
+    now.saturating_duration_since(pck.sent) < wait
+}
+
+fn sent_after(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
+    !sent_before(pck, now, wait)
+}
 
 #[derive(Debug)]
 pub struct Destination {
     pub addr: IpAddr,
+    pub str_addr: String,
     pub interval: Duration,
     pub seq: u16,   // Next packet number
     pub ident: u16, // Identifier for this queue
@@ -33,12 +48,14 @@ pub struct Destination {
     pub sent_count: u64,
     pub recv_count: u64,
     pub rng: rand::rngs::ThreadRng,
+    pub logfile: Option<BufWriter<File>>,
 }
 
 impl Destination {
-    pub fn new(addr: IpAddr, interval: Duration) -> Self {
+    pub fn new(str_addr: &str, interval: Duration) -> Self {
         Self {
-            addr,
+            addr: icmp::ipaddr(str_addr).unwrap(),
+            str_addr: str_addr.to_owned(),
             interval,
             seq: 1,
             ident: rand::thread_rng().gen(),
@@ -48,7 +65,20 @@ impl Destination {
             sent_count: 0,
             recv_count: 0,
             rng: rand::thread_rng(),
+            logfile: None,
         }
+    }
+
+    pub fn create_log_file(&mut self, now: &str) {
+        let filename = format!("logs/pingd-log-{}-{}.log", self.str_addr, now);
+        let f = File::create(filename).unwrap();
+        let mut oldlog = self.logfile.take();
+        if let Some(log) = oldlog.as_mut() {
+            log.flush().unwrap();
+        }
+        // Buffering is needed to avoid wearing SSDs by not writting the same
+        // sector dozens of times. 8KB by default. It auto-flushes.
+        self.logfile = Some(BufWriter::new(f));
     }
 
     pub fn recv(&mut self, packet: icmp::PacketData) -> Option<(IpAddr, Duration)> {
@@ -84,13 +114,31 @@ impl Destination {
             self.inflight_packets.remove(idx);
             return;
         }
-        if self.seq == 65535 {
-            // wrap-around
-            self.seq = 0;
-        } else {
-            self.seq += 1;
-        }
+        self.seq = self.rng.gen();
+        // if self.seq == 65535 {
+        //     // wrap-around
+        //     self.seq = 0;
+        // } else {
+        //     self.seq += 1;
+        // }
         self.sent_count += 1;
+    }
+
+    pub fn received_last(&self, wait: Duration) -> Vec<icmp::PacketSent> {
+        let now = Instant::now();
+        self.recv_packets
+            .iter()
+            .filter(|x| recv_before(x, now, wait))
+            .cloned()
+            .collect()
+    }
+    pub fn inflight_after(&self, wait: Duration) -> Vec<icmp::PacketSent> {
+        let now = Instant::now();
+        self.inflight_packets
+            .iter()
+            .filter(|x| !recv_before(x, now, wait))
+            .cloned()
+            .collect()
     }
 }
 
@@ -130,10 +178,6 @@ impl Comms {
     }
 
     pub fn add_destination(&mut self, addr: &str, interval: Duration) {
-        self.add_dest_addr(icmp::ipaddr(addr).unwrap(), interval);
-    }
-
-    pub fn add_dest_addr(&mut self, addr: IpAddr, interval: Duration) {
         self.dest.push(Destination::new(addr, interval))
     }
 
@@ -147,12 +191,6 @@ impl Comms {
     pub fn cleanup(&mut self) {
         let c = self.config.clone();
         let now = Instant::now();
-        fn sent_before(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
-            now.saturating_duration_since(pck.sent) < wait
-        }
-        fn sent_after(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
-            !sent_before(pck, now, wait)
-        }
         for dest in self.dest.iter_mut() {
             for pck in dest
                 .inflight_packets
@@ -169,6 +207,7 @@ impl Comms {
                 .retain(|x| sent_before(x, now, c.forget_lost));
         }
     }
+
     pub fn _delay() {
         /*
         The delay could be something evenly spaced. Maybe the formula of:

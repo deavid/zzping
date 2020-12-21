@@ -16,6 +16,7 @@ mod config;
 mod icmp;
 mod transport;
 
+use chrono::{DateTime, Utc};
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
@@ -23,8 +24,11 @@ use std::time::{Duration, Instant};
 extern crate log;
 extern crate env_logger;
 extern crate rmp;
+extern crate zzpinglib;
 
 use clap::Clap;
+use zzpinglib::framedata::{FrameData, FrameTime};
+use zzpinglib::framestats::FrameStats;
 
 #[derive(Clap)]
 #[clap(
@@ -42,34 +46,60 @@ fn clearscreen() {
 fn main() {
     let opts: Opts = Opts::parse();
     let cfg = config::ServerConfig::from_file(&opts.config).unwrap();
-
     let socket = UdpSocket::bind(&cfg.udp_listen_address).unwrap();
     socket.set_nonblocking(true).unwrap();
 
     let interval = Duration::from_millis(5);
     let wait = Duration::from_millis(5);
-    let refresh = Duration::from_millis(200);
+    let refresh = Duration::from_millis(100);
 
     let pckt_loss_inflight_time = Duration::from_millis(150);
     let pckt_loss_recv_time = Duration::from_millis(300);
     let time_avg = Duration::from_millis(200);
     let mut last_refresh = Instant::now() - Duration::from_secs(60);
     let mut t = transport::Comms::new(transport::CommConfig {
-        forget_lost: Duration::from_millis(500),
-        forget_inflight: Duration::from_millis(1000),
-        forget_recv: Duration::from_millis(1000),
+        forget_lost: Duration::from_millis(5000),
+        forget_inflight: Duration::from_millis(5000),
+        forget_recv: Duration::from_millis(5000),
     });
+    let mut time_since_report = Instant::now() - Duration::from_secs(60);
+    let now: DateTime<Utc> = Utc::now();
+    let mut strnow = now
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        .replace("-", "")
+        .replace(":", "");
+    strnow.truncate(11);
+
     for target in cfg.ping_targets {
         t.add_destination(&target, interval);
+    }
+    for dest in t.dest.iter_mut() {
+        dest.create_log_file(&strnow);
     }
     loop {
         t.send_all();
         t.recv_all(wait);
 
-        if last_refresh.elapsed() > refresh {
+        let elapsed = last_refresh.elapsed();
+        if elapsed > refresh {
             last_refresh = Instant::now();
             t.cleanup();
             clearscreen();
+            let since_report_elapsed = time_since_report.elapsed();
+            if since_report_elapsed > Duration::from_secs(15) {
+                time_since_report = Instant::now();
+                let mut newstrnow = Utc::now()
+                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                    .replace("-", "")
+                    .replace(":", "");
+                newstrnow.truncate(11);
+                if newstrnow != strnow {
+                    strnow = newstrnow;
+                    for dest in t.dest.iter_mut() {
+                        dest.create_log_file(&strnow);
+                    }
+                }
+            }
             let mut udp_ok = true;
             for dest in t.dest.iter() {
                 let inflight_count = dest.inflight_packets.len();
@@ -110,7 +140,7 @@ fn main() {
                     .elapsed();
                 let recv_per_sec = recv_count as f32 / t.config.forget_recv.as_secs_f32();
                 println!(
-                    "{:>14?} - {:>4} in-flight - {:>4.2} recv/s - {:>7.2?}ms / {:>4.1?}s - {:>7.2}% loss ({}/{})",
+                    "{:>14?} - {:>4} in-flight - {:>4.2} recv/s - {:>7.2?}ms / {:>4.1?}s - {:>7.2}% loss ({}/{}) ident: {},{}",
                     dest.addr,
                     inflight_count,
                     recv_per_sec,
@@ -119,37 +149,51 @@ fn main() {
                     packet_loss,
                     packets_lost,
                     packets_recv,
+                    dest.ident,
+                    dest.seq,
                 );
-                let msg = encode_stats(
+                match FrameStats::encode_stats(
                     dest.addr,
                     inflight_count,
-                    avg_time.as_micros(),
-                    last_pckt_received.as_millis(),
-                    (packet_loss * 1000.0) as u32,
-                );
-                udp_ok = udp_ok && socket.send_to(&msg, &cfg.udp_client_address).is_ok();
+                    avg_time,
+                    last_pckt_received,
+                    packet_loss,
+                ) {
+                    Ok(msg) => {
+                        udp_ok = udp_ok && socket.send_to(&msg, &cfg.udp_client_address).is_ok()
+                    }
+                    Err(e) => println!("UDP Encode error: {}", e),
+                }
             }
             if !udp_ok {
                 println!("Error sending via UDP. Client might not be connected.")
             }
+            for dest in t.dest.iter_mut() {
+                let last_recv = dest.received_last(refresh * 2);
+                let inflight = dest.inflight_after(refresh);
+                let mut last_recv_us: Vec<u128> = last_recv
+                    .iter()
+                    .map(|p| p.received.unwrap_or_default().as_micros())
+                    .collect();
+                last_recv_us.sort_unstable();
+                if let Some(mut f) = dest.logfile.as_mut() {
+                    // TODO: Extract this as a function!
+                    let time: FrameTime = if since_report_elapsed > Duration::from_secs(15) {
+                        FrameTime::Timestamp(Utc::now())
+                    } else {
+                        FrameTime::Elapsed(since_report_elapsed)
+                    };
+                    let framedata = FrameData {
+                        time,
+                        inflight: inflight.len(),
+                        lost_packets: dest.lost_packets.len(),
+                        recv_us: last_recv_us,
+                    };
+                    if let Err(e) = framedata.encode(&mut f) {
+                        println!("Error writing to file: {:?}", e);
+                    }
+                }
+            }
         }
     }
-}
-
-fn encode_stats(
-    addr: std::net::IpAddr,
-    inflight_count: usize,
-    avg_time_us: u128,
-    last_pckt_ms: u128,
-    packet_loss_x100_000: u32,
-) -> Vec<u8> {
-    let mut v: Vec<u8> = vec![];
-    let addr = addr.to_string();
-    rmp::encode::write_array_len(&mut v, 5).unwrap();
-    rmp::encode::write_str(&mut v, &addr).unwrap();
-    rmp::encode::write_u16(&mut v, inflight_count as u16).unwrap();
-    rmp::encode::write_u32(&mut v, avg_time_us as u32).unwrap();
-    rmp::encode::write_u32(&mut v, last_pckt_ms as u32).unwrap();
-    rmp::encode::write_u32(&mut v, packet_loss_x100_000).unwrap();
-    v
 }
