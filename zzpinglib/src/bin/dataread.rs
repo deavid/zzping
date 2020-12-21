@@ -25,7 +25,7 @@ use zzpinglib::{batchdata::BatchData, compress::Compress};
 
 #[derive(Clap, Debug)]
 #[clap(
-    version = "0.1.0",
+    version = "0.1.1",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
 )]
 struct Opts {
