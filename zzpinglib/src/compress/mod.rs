@@ -18,6 +18,7 @@ use crate::dynrmp::variant::Variant;
 
 pub mod fft;
 pub mod huffman;
+pub mod predict;
 pub mod quantize;
 
 // Compression for Vec of f32.
