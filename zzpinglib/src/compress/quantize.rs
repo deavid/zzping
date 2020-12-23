@@ -295,3 +295,39 @@ impl CompressTo<f32, u64> for LinearQuantizer {
         self.decompress_data(&srcdata)
     }
 }
+
+pub struct LinearLogQuantizer {
+    precision: f64,
+    ln1p: f64,
+    linear_part: i64,
+}
+
+impl LinearLogQuantizer {
+    pub fn new(precision: f64) -> Self {
+        Self {
+            precision,
+            ln1p: precision.ln_1p(),
+            linear_part: precision.recip().ceil() as i64,
+        }
+    }
+    pub fn encode(&self, value: i64) -> i64 {
+        if value.abs() <= self.linear_part {
+            return value;
+        }
+        let y: f64 = value.abs() as f64 * self.precision;
+        let w = y.ln() / self.ln1p + self.linear_part as f64;
+        let z = w.round() as i64;
+        z * value.signum()
+    }
+    pub fn decode(&self, value: i64) -> i64 {
+        if value.abs() <= self.linear_part {
+            return value;
+        }
+        let z: f64 = value.abs() as f64;
+        let w1 = z - self.linear_part as f64;
+        let w2 = w1 * self.ln1p;
+        let w = w2.exp();
+        let y1: i64 = (w / self.precision) as i64;
+        y1 * value.signum()
+    }
+}
