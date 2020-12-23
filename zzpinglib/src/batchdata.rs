@@ -100,9 +100,15 @@ impl BatchData {
         data_len -= data_len % 2; // FFT only allows for even amounts of data.
 
         let trasposed_recv = Self::transpose(&self.recv_us[..data_len]);
-        let origdata = &trasposed_recv[3];
+        //let origdata = &trasposed_recv[3];
+        let mut origdata: Vec<f32> = vec![];
+        let mut oldvalue: f32 = 1.0;
+        for v in trasposed_recv[3].iter() {
+            origdata.push(v / oldvalue);
+            oldvalue = *v;
+        }
 
-        zipper.compress(origdata)?;
+        zipper.compress(&origdata)?;
         let unzipped = zipper.decompress()?;
 
         if unzipped.len() != origdata.len() {

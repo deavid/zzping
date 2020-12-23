@@ -138,17 +138,21 @@ impl Huffman {
         for (k, v) in self.weights.iter().copied() {
             let mut d = k - pos;
             while d > 0 {
-                if d >= 64 {
-                    d -= 64;
-                    buf.push(-64);
-                } else if d >= 16 {
-                    d -= 16;
-                    buf.push(-16);
-                } else {
-                    buf.push(-(d as i64));
-                    d = 0;
-                }
+                println!("0");
+                buf.push(0);
+                d -= 1;
+                // if d >= 64 {
+                //         d -= 64;
+                //         buf.push(-64);
+                //     } else if d >= 16 {
+                //         d -= 16;
+                //         buf.push(-16);
+                //     } else {
+                //         buf.push(-(d as i64));
+                //         d = 0;
+                //     }
             }
+            println!("{}", v);
             buf.push(v as i64);
             pos = k + 1;
         }
@@ -164,7 +168,7 @@ impl Default for Huffman {
             data: BitVec::new(),
             data_len: 0,
             fuzzy: true,
-            max_count: 16,
+            max_count: 3600,
         }
     }
 }

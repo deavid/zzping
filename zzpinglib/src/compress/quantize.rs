@@ -60,7 +60,7 @@ impl Default for LogQuantizer {
     fn default() -> Self {
         Self {
             data: vec![],
-            precision: 0.001, // 0.001 => 0.1%
+            precision: 0.02, // 0.001 => 0.1%
             zero_point: 0.0,
             max_value: 0,
             bits: 0,
@@ -93,6 +93,7 @@ impl Compress<f32> for LogQuantizer {
         dbg!(self.max_value);
         dbg!(bits);
         // dbg!(self.bits);
+        // println!("{:?}", self.data);
         Ok(())
     }
 

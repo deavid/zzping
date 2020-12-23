@@ -46,7 +46,7 @@ fn main() {
     dbg!(fdv.v.len());
 
     test_batchdata_compression(fdv.v);
-    //test_serializer(fdv.v);
+    // test_serializer(fdv.v);
 }
 
 #[allow(dead_code)]
@@ -55,7 +55,7 @@ fn test_batchdata_compression(v: Vec<FrameData>) {
 
     let tests: Vec<Box<dyn Compress<f32>>> = vec![
         // Box::new(fft::PolarCompress::default()),
-        // Box::new(quantize::LogQuantizer::default()),
+        //Box::new(quantize::LogQuantizer::default()),
         // Box::new(quantize::LinearQuantizer::default()),
         Box::new(huffman::HuffmanQ::<quantize::LogQuantizer>::default()),
         //Box::new(huffman::HuffmanQ::<quantize::LinearQuantizer>::default()),
