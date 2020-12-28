@@ -16,10 +16,13 @@ use std::collections::HashMap;
 
 use crate::dynrmp::variant::Variant;
 
+pub mod composite;
+pub mod corrector;
 pub mod fft;
 pub mod huffman;
 pub mod predict;
 pub mod quantize;
+pub mod weightfn;
 
 // Compression for Vec of f32.
 pub trait Compress<T> {
