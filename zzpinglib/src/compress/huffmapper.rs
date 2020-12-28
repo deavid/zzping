@@ -24,30 +24,38 @@ pub struct HuffmanMapSBlock {
     end_huffman: i64,
     blocks: i64,
     block_size: i64,
-    block_size_bits: i64,
+    block_size_bits: usize,
 }
 
 impl HuffmanMapSBlock {
     pub fn tr_corrected2hk(&self, vq: i64) -> HuffmanKey {
-        assert!(vq >= self.start_quantized && vq < self.end_quantized);
+        let sign = vq.signum();
+        let vq = vq.abs();
+        assert!(
+            vq >= self.start_quantized && vq < self.end_quantized,
+            format!("{} [{}..{}]", &vq, self.start_quantized, self.end_quantized)
+        );
         let v = vq - self.start_quantized;
         let vb = v / self.block_size;
         let extra = v % self.block_size;
         let huffkey = vb + self.start_huffman;
         HuffmanKey {
             qtype: ValueType::Corrected,
-            key: huffkey,
+            key: huffkey * sign,
             extra_bits: self.block_size_bits as usize,
             extra_data: extra,
             metadata: HKeyMetadata::Block(*self),
         }
     }
     pub fn tr_hk2corrected(&self, hk: HuffmanKey) -> i64 {
+        // TODO: Negative keys are not handled yet!
+        let sign = hk.key.signum();
+        let key = hk.key.abs();
         assert!(hk.qtype == ValueType::Corrected);
-        assert!(hk.key >= self.start_huffman && hk.key < self.end_huffman);
-        let vb = hk.key - self.start_huffman;
+        assert!(key >= self.start_huffman && key < self.end_huffman);
+        let vb = key - self.start_huffman;
         let v = vb * self.block_size + hk.extra_data;
-        v + self.start_quantized
+        (v + self.start_quantized) * sign
     }
 
     pub fn tr_raw2hk(&self, _raw: i64) -> HuffmanKey {
@@ -152,8 +160,8 @@ impl HuffmanMapS {
         cur = self.update_from_fn_range(cur, 16, 1);
         cur = self.update_from_fn_range(cur, 16, 2);
         cur = self.update_from_fn_range(cur, 16, 4);
-        cur = self.update_from_fn_range(cur, 16, 8);
-        dbg!(cur);
+        self.update_from_fn_range(cur, 16, 8);
+        // dbg!(cur);
         for r in self.raw.iter() {
             self.map.insert(r.key, r.freq);
         }
@@ -174,11 +182,11 @@ impl HuffmanMapS {
         &mut self,
         start: (i64, i64),
         blocks: i64,
-        bsize_bits: i64,
+        bsize_bits: usize,
     ) -> (i64, i64) {
         let f = self.f.as_ref().unwrap();
         let bsize = 1 << bsize_bits;
-        dbg!((start, blocks, bsize));
+        // dbg!((start, blocks, bsize));
         for bnum in 0..blocks {
             let from = start.0 + bnum * bsize;
             let to = from + bsize;
@@ -211,8 +219,15 @@ impl HuffmanMapS {
         } else {
             ValueType::Raw
         };
-        let extra_bits = 0;
-        let metadata = HKeyMetadata::None;
+        let metadata = match qtype {
+            ValueType::Raw => HKeyMetadata::Raw(self.get_raw_block(hkey).unwrap()),
+            ValueType::Corrected => HKeyMetadata::Block(self.get_hkey_block(hkey).unwrap()),
+        };
+        let extra_bits = match metadata {
+            HKeyMetadata::Raw(o) => o.bits,
+            HKeyMetadata::Block(o) => o.block_size_bits,
+            HKeyMetadata::None => 0,
+        };
 
         HuffmanPartialKey {
             qtype,
@@ -253,11 +268,20 @@ impl HuffmanMapS {
             }
         }
     }
+    pub fn get_raw_block(&self, qval: i64) -> Option<HuffmanMapSRaw> {
+        for blck in self.raw.iter() {
+            if blck.key == qval {
+                return Some(*blck);
+            }
+        }
+        None
+    }
 
     pub fn get_qval_block(&self, qval: i64) -> Option<HuffmanMapSBlock> {
         let qval = qval.abs();
+        dbg!(qval);
         for blck in self.blocks.iter() {
-            if blck.start_quantized >= qval && blck.end_quantized < qval {
+            if qval >= blck.start_quantized && qval < blck.end_quantized {
                 return Some(*blck);
             }
         }
@@ -266,7 +290,7 @@ impl HuffmanMapS {
     pub fn get_hkey_block(&self, hkey: i64) -> Option<HuffmanMapSBlock> {
         let hkey = hkey.abs();
         for blck in self.blocks.iter() {
-            if blck.start_huffman >= hkey && blck.end_huffman < hkey {
+            if hkey >= blck.start_huffman && hkey < blck.end_huffman {
                 return Some(*blck);
             }
         }

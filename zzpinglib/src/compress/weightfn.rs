@@ -35,7 +35,7 @@ impl Sech2Fn {
     }
     pub fn compute_fn(&mut self, size: usize) {
         self.function = Vec::with_capacity(size);
-        let stdev = self.precision.recip().powf(1.0 / 1.6);
+        let stdev = self.precision.recip().powf(1.0 / 2.0);
         let items: f64 = self.item_count as f64;
         for i in 0..size {
             let v1: f64 = Self::sech2(i as f64 / stdev) * items;
