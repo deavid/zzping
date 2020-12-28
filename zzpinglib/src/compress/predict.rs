@@ -36,7 +36,7 @@ impl WindowMedianPredictor {
             self.buffer.remove(0);
         }
     }
-    pub fn predict(&mut self) -> Option<f64> {
+    pub fn predict(&self) -> Option<f64> {
         let blen = self.buffer.len();
         match blen {
             0 => None,
@@ -52,6 +52,11 @@ impl WindowMedianPredictor {
                 Some(f)
             }
         }
+    }
+    pub fn predict_and_push(&mut self, value: i64) -> Option<f64> {
+        let ret = self.predict();
+        self.push_value(value);
+        ret
     }
 }
 

@@ -20,6 +20,7 @@ pub mod composite;
 pub mod corrector;
 pub mod fft;
 pub mod huffman;
+pub mod huffmapper;
 pub mod predict;
 pub mod quantize;
 pub mod weightfn;
@@ -58,4 +59,5 @@ pub enum Error {
     ToDo,
     AssertError,
     HuffmanEncodeError(huffman_compress::EncodeError),
+    HuffmanDecodeNoItemError,
 }

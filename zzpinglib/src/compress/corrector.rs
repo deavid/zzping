@@ -12,12 +12,48 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum ValueType {
+    Raw,
+    Corrected,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct DiffValue {
+    pub qtype: ValueType,
+    pub value: i64,
+}
+
+impl DiffValue {
+    pub fn new_raw(value: i64) -> Self {
+        Self {
+            qtype: ValueType::Raw,
+            value,
+        }
+    }
+    pub fn new_corrected(value: i64) -> Self {
+        Self {
+            qtype: ValueType::Corrected,
+            value,
+        }
+    }
+}
+
 // Grabs predictor Option<f32> and i64 desired output and encodes the final value
 pub struct BasicCorrector {}
 
 impl BasicCorrector {
     pub fn new() -> Self {
         Self {}
+    }
+    pub fn diff(&self, qval: i64, predicted: Option<f64>) -> DiffValue {
+        match predicted {
+            None => DiffValue::new_raw(qval),
+            Some(f) => {
+                let f = f.round() as i64;
+                DiffValue::new_corrected(qval - f)
+            }
+        }
     }
 }
 
