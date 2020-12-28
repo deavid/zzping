@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use bit_vec::BitVec;
+use std::convert::TryInto;
 
 use super::corrector::BasicCorrector;
 use super::huffman::HuffmanI64;
@@ -52,6 +53,11 @@ impl CompositeStage {
         self.huffman.encode(buffer, hkey.key).unwrap();
         if hkey.extra_bits > 0 {
             // Encode now the extra bits into buffer!
+            let extra: [u8; 8] = hkey.extra_data.to_be_bytes();
+            let mut extravec = BitVec::from_bytes(&extra);
+            let left_bit = 64 - hkey.extra_bits;
+            let mut rhs = extravec.split_off(left_bit);
+            buffer.append(&mut rhs)
         }
     }
     pub fn decode(&mut self, buffer: &mut bit_vec::Iter<u32>) -> i64 {
@@ -59,21 +65,38 @@ impl CompositeStage {
         let symbol = self.huffman.decode(buffer).unwrap();
 
         // 2. Determine the key type to get the number of bits
-
-        // let bits..
+        let partial_key = self.huffmapper.get_partial_hkey(symbol);
+        let extra_bits = partial_key.extra_bits;
 
         // 3. Read the extra data from buffer
+        let extra_data: i64;
+        if extra_bits > 0 {
+            let mut bdata: BitVec = buffer.take(extra_bits).collect();
+            let mut full_data = BitVec::from_elem(64 - extra_bits, false);
+            full_data.append(&mut bdata);
+            let vbytes: Vec<u8> = full_data.to_bytes();
+            let abytes: [u8; 8] = vbytes.try_into().unwrap();
+            extra_data = i64::from_be_bytes(abytes);
+        } else {
+            extra_data = 0;
+        }
+        // 3b. Get the huffmapper key
+        let hkey = partial_key.add_extra_data(extra_data);
 
         // 4. Compose the original DiffValue
+        let diff = self.huffmapper.from_hkey(hkey);
 
         // 5. Obtain the latest prediction (w/o push)
+        let last_pred = self.predictor.predict();
 
         // 6. Use self.correction.undiff(predicted, correction) to get the original value
+        let orig_qval = self.correction.undiff(last_pred, diff);
 
         // 7. Once qval is obtained, push that into the predictor.
+        self.predictor.push_value(orig_qval);
 
         // 8. Quantizer.decode
-        0
+        self.quantizer.decode(orig_qval)
     }
 }
 

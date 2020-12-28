@@ -55,6 +55,16 @@ impl BasicCorrector {
             }
         }
     }
+    pub fn undiff(&self, last_pred: Option<f64>, diff: DiffValue) -> i64 {
+        match diff.qtype {
+            ValueType::Raw => diff.value,
+            ValueType::Corrected => {
+                // If we don't have a prediction, yet this is corrected, panic.
+                let f = last_pred.unwrap().round() as i64;
+                diff.value + f
+            }
+        }
+    }
 }
 
 impl Default for BasicCorrector {

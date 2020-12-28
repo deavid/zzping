@@ -237,6 +237,22 @@ impl HuffmanMapS {
             }
         }
     }
+    /// Given a raw or corrected value, output the hashmap key + extra bits.
+    pub fn from_hkey(&self, hkey: HuffmanKey) -> DiffValue {
+        match hkey.qtype {
+            ValueType::Raw => DiffValue {
+                qtype: ValueType::Raw,
+                value: hkey.extra_data,
+            },
+            ValueType::Corrected => {
+                let hsblock = self.get_hkey_block(hkey.key).unwrap();
+                DiffValue {
+                    qtype: ValueType::Corrected,
+                    value: hsblock.tr_hk2corrected(hkey),
+                }
+            }
+        }
+    }
 
     pub fn get_qval_block(&self, qval: i64) -> Option<HuffmanMapSBlock> {
         let qval = qval.abs();
