@@ -319,15 +319,81 @@ impl LinearLogQuantizer {
         let z = w.round() as i64;
         z * value.signum()
     }
-    pub fn decode(&self, value: i64) -> i64 {
-        if value.abs() <= self.linear_part {
-            return value;
+    pub fn decode(&self, enc_val: i64) -> i64 {
+        self.decode_f64(enc_val as f64)
+    }
+    pub fn decode_f64(&self, enc_val: f64) -> i64 {
+        if enc_val.abs().round() as i64 <= self.linear_part {
+            return enc_val.round() as i64;
         }
-        let z: f64 = value.abs() as f64;
+        let z: f64 = enc_val.abs() as f64;
         let w1 = z - self.linear_part as f64;
         let w2 = w1 * self.ln1p;
         let w = w2.exp();
-        let y1: i64 = (w / self.precision) as i64;
-        y1 * value.signum()
+        let y1: i64 = (w / self.precision).round() as i64;
+        y1 * enc_val.signum() as i64
+    }
+    pub fn bucket_size(&self, enc_val: i64) -> i64 {
+        let mut left = self.decode_f64(enc_val as f64 - 0.5);
+        let mut right = self.decode_f64(enc_val as f64 + 0.5);
+        // l & r just to make clippy happy.
+        let l = left;
+        let r = right;
+        for n in l..=r {
+            if self.encode(n) == enc_val {
+                left = n;
+                break;
+            }
+        }
+        for n in (l..=r).rev() {
+            if self.encode(n) == enc_val {
+                right = n;
+                break;
+            }
+        }
+        right - left + 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::LinearLogQuantizer;
+
+    #[test]
+    fn test1() {
+        let q = LinearLogQuantizer::new(0.1);
+        let limit = 100;
+        let mut hm = HashMap::new();
+        let dlimit = q.decode(limit + 1);
+        dbg!(dlimit);
+        for n in 0..=dlimit {
+            let e = q.encode(n);
+            let entry = hm.entry(e).or_insert(0);
+            *entry += 1;
+        }
+        dbg!("Done");
+        for n in 0..limit {
+            let sz = q.bucket_size(n);
+            let dec = q.decode(n);
+            let pdec = q.decode(n - 1);
+            // let delta = adec - dec;
+            let hsize = hm.get(&n);
+            if let Some(l) = hsize {
+                if *l as i64 != sz {
+                    dbg!(n, l, sz, pdec, dec, &hm[&n]);
+                }
+            } else {
+                dbg!(0, sz);
+            }
+
+            match hsize {
+                Some(l) => assert_eq!(sz, *l as i64),
+                None => assert_eq!(sz, 0),
+            }
+
+            // dbg!(sz, delta);
+        }
     }
 }

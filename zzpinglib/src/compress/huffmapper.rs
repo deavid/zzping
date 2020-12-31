@@ -1,3 +1,5 @@
+use bit_vec::BitVec;
+
 // Copyright 2020 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,8 +15,33 @@
 // limitations under the License.
 use super::corrector::DiffValue;
 use super::corrector::ValueType;
-use super::weightfn::Sech2Fn;
+use super::weightfn::WeightFn;
 use std::collections::HashMap;
+
+// Now we need to compose a HashMap from the above function.
+// This hashmap is:
+// * 0     special, as its frequency is doubled from the original.
+// * 1:1   from -15   to 15.     -- 31 items                  (src: |  0 - 15|)
+// * 1:4   from |16|  to |79|    -- 32 items (2 extra bits)   (src: | 16 - 31|)
+// * 1:16  from |80|  to |335|   -- 32 items (4 extra bits)   (src: | 32 - 47|)
+// * 1:256 from |336| to |4432|  -- 32 items (8 extra bits)   (src: | 48 - 63|)
+//
+// For 0.1% precision:
+//  - 50% is expected to land under 65
+//  - 80% under 162
+//  - 90% under 425
+//  - 95% under 624
+//
+// Then for the other, raw, not-diff values, we need a few tokens:
+// * A: 16 bit value
+// Extra tokens for higher precisions:
+// * B: 32 bit value
+// * C: 64 bit value
+//
+//
+// The raw tokens will be worth frequency 1, while the others will be the sum
+// of the frequency values of the functions. Therefore 'item_count' represents
+// how many items you expect to encode between raw values.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HuffmanMapSBlock {
@@ -107,6 +134,18 @@ pub struct HuffmanKey {
     pub metadata: HKeyMetadata,
 }
 
+impl HuffmanKey {
+    pub fn encode_extra(&self) -> BitVec {
+        if self.extra_bits == 0 {
+            return BitVec::new();
+        }
+        let extra: [u8; 8] = self.extra_data.to_be_bytes();
+        let mut extravec = BitVec::from_bytes(&extra);
+        let left_bit = 64 - self.extra_bits;
+        extravec.split_off(left_bit)
+    }
+}
+
 #[derive(Debug)]
 pub struct HuffmanPartialKey {
     pub qtype: ValueType,
@@ -128,19 +167,36 @@ impl HuffmanPartialKey {
 }
 
 #[derive(Default)]
-pub struct HuffmanMapS {
-    f: Option<Sech2Fn>,
+pub struct HuffmanMapS<T: WeightFn> {
+    f: Option<T>,
     map: HashMap<i64, u64>,
     raw_start: i64,
     raw: Vec<HuffmanMapSRaw>,
     blocks: Vec<HuffmanMapSBlock>,
+    symmetric: bool,
 }
 
-impl HuffmanMapS {
-    pub fn new(f: Sech2Fn) -> Self {
+impl<T: WeightFn> HuffmanMapS<T> {
+    pub fn new(f: T) -> Self {
         let mut m = Self {
             f: Some(f),
-            ..Default::default()
+            map: Default::default(),
+            raw_start: Default::default(),
+            raw: Default::default(),
+            blocks: Default::default(),
+            symmetric: true,
+        };
+        m.update_from_fn();
+        m
+    }
+    pub fn new_unsigned(f: T) -> Self {
+        let mut m = Self {
+            f: Some(f),
+            map: Default::default(),
+            raw_start: Default::default(),
+            raw: Default::default(),
+            blocks: Default::default(),
+            symmetric: false,
         };
         m.update_from_fn();
         m
@@ -148,20 +204,23 @@ impl HuffmanMapS {
     pub fn update_from_fn(&mut self) {
         let f = self.f.as_mut().unwrap();
         // TODO: We should guess which size do we need.
-        f.compute_fn(64000);
+        f.compute_fn(256000);
 
         // Maybe it doesn't make sense to support other stuff. 12 bit raw only.
         self.raw_start = 1_000_000;
-        self.raw = vec![HuffmanMapSRaw::new(1_000_012, 12, 64)];
+        self.raw = vec![HuffmanMapSRaw::new(1_000_012, 12, 32)];
         self.blocks = vec![];
         self.map = HashMap::with_capacity(256);
         let mut cur = (0, 0);
         cur = self.update_from_fn_range(cur, 1, 0);
-        cur = self.update_from_fn_range(cur, 16, 1);
-        cur = self.update_from_fn_range(cur, 16, 2);
-        cur = self.update_from_fn_range(cur, 16, 4);
-        self.update_from_fn_range(cur, 16, 8);
-        // dbg!(cur);
+        cur = self.update_from_fn_range(cur, 64, 0);
+        cur = self.update_from_fn_range(cur, 64, 1);
+        cur = self.update_from_fn_range(cur, 64, 2);
+        cur = self.update_from_fn_range(cur, 128, 3);
+        cur = self.update_from_fn_range(cur, 128, 4);
+        cur = self.update_from_fn_range(cur, 128, 5);
+
+        dbg!(cur);
         for r in self.raw.iter() {
             self.map.insert(r.key, r.freq);
         }
@@ -192,8 +251,20 @@ impl HuffmanMapS {
             let to = from + bsize;
             let k: i64 = start.1 + bnum;
             let v = f.get_range(from as usize, to as usize);
+            if bnum == blocks - 1 {
+                println!(
+                    "{},{} {}/{}:\t{}\t{},{}",
+                    start.0,
+                    bsize,
+                    bnum + 1,
+                    blocks,
+                    v,
+                    from,
+                    to
+                );
+            }
             self.map.insert(k, v);
-            if k > 0 {
+            if k > 0 && self.symmetric {
                 self.map.insert(-k, v);
             }
         }
@@ -279,7 +350,7 @@ impl HuffmanMapS {
 
     pub fn get_qval_block(&self, qval: i64) -> Option<HuffmanMapSBlock> {
         let qval = qval.abs();
-        dbg!(qval);
+        // dbg!(qval);
         for blck in self.blocks.iter() {
             if qval >= blck.start_quantized && qval < blck.end_quantized {
                 return Some(*blck);
@@ -300,15 +371,15 @@ impl HuffmanMapS {
 
 #[cfg(test)]
 mod tests {
+    use super::super::weightfn::Sech2Fn;
     use super::HuffmanMapS;
-    use super::Sech2Fn;
+    use super::WeightFn;
 
     #[test]
     fn test1() {
         let mut f = Sech2Fn::new(0.001, 1000000);
         f.compute_fn(16000);
-        let mut m = HuffmanMapS::default();
-        m.f = Some(f);
+        let mut m = HuffmanMapS::new(f);
         m.update_from_fn();
     }
 }

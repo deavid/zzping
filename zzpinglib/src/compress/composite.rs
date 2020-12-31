@@ -15,26 +15,31 @@
 use bit_vec::BitVec;
 use std::convert::TryInto;
 
-use super::corrector::BasicCorrector;
+use super::corrector::{BasicCorrector, ValueType};
 use super::huffman::HuffmanI64;
 use super::huffmapper::HuffmanMapS;
 use super::predict::WindowMedianPredictor;
 use super::quantize::LinearLogQuantizer;
-use super::weightfn::Sech2Fn;
+// use super::weightfn::Sech2Fn;
+// use super::weightfn::{RecipFn, RP_DEFAULT};
+use super::weightfn::{ManualFn, MN_DEFAULT};
 use super::Error;
 
 pub struct CompositeStage {
     quantizer: LinearLogQuantizer,
     predictor: WindowMedianPredictor,
     correction: BasicCorrector,
-    huffmapper: HuffmanMapS,
+    huffmapper: HuffmanMapS<ManualFn>,
     huffman: HuffmanI64,
+    pub errors: Vec<i64>,
 }
 
 impl CompositeStage {
     pub fn new(precision: f64, window_size: usize) -> Self {
-        let item_count = 1000000;
-        let f = Sech2Fn::new(precision, item_count);
+        let item_count = 100_000_000;
+        // let f = Sech2Fn::new(precision, item_count);
+        // let f = RecipFn::new(RP_DEFAULT, item_count, 1.0);
+        let f = ManualFn::new(MN_DEFAULT, item_count);
         let hmaps = HuffmanMapS::new(f);
         let weights = hmaps.get_huffmap();
         Self {
@@ -43,30 +48,26 @@ impl CompositeStage {
             correction: BasicCorrector::new(),
             huffmapper: hmaps,
             huffman: HuffmanI64::new(weights.into_iter().collect()),
+            errors: vec![],
         }
     }
     pub fn encode(&mut self, buffer: &mut BitVec, value: i64) {
         let qval = self.quantizer.encode(value);
         let predicted = self.predictor.predict_and_push(qval);
         let diff = self.correction.diff(qval, predicted);
-        let hkey = self.huffmapper.to_hkey(diff);
-        dbg!(hkey.key);
-        self.huffman.encode(buffer, hkey.key).unwrap();
-        if hkey.extra_bits > 0 {
-            // Encode now the extra bits into buffer!
-            dbg!(hkey.extra_data, hkey.extra_bits);
-            let extra: [u8; 8] = hkey.extra_data.to_be_bytes();
-            let mut extravec = BitVec::from_bytes(&extra);
-            let left_bit = 64 - hkey.extra_bits;
-            let mut rhs = extravec.split_off(left_bit);
-            buffer.append(&mut rhs)
+        if diff.qtype == ValueType::Corrected {
+            self.errors.push(diff.value);
         }
+        let hkey = self.huffmapper.to_hkey(diff);
+        // dbg!(hkey.key);
+        self.huffman.encode(buffer, hkey.key).unwrap();
+        let mut extra_data = hkey.encode_extra();
+        buffer.append(&mut extra_data);
     }
     pub fn decode(&mut self, buffer: &mut bit_vec::Iter<u32>) -> Result<i64, Error> {
         // 1. read huffman symbol from buffer:
         let symbol = self.huffman.decode(buffer)?; // This actually marks the end of the input!
-        dbg!(symbol);
-        // 2. Determine the key type to get the number of bits
+                                                   // 2. Determine the key type to get the number of bits
         let partial_key = self.huffmapper.get_partial_hkey(symbol);
         let extra_bits = partial_key.extra_bits;
 
@@ -79,7 +80,6 @@ impl CompositeStage {
             let vbytes: Vec<u8> = full_data.to_bytes();
             let abytes: [u8; 8] = vbytes.try_into().unwrap();
             extra_data = i64::from_be_bytes(abytes);
-            dbg!(extra_data, extra_bits);
         } else {
             extra_data = 0;
         }

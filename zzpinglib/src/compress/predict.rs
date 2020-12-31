@@ -48,7 +48,14 @@ impl WindowMedianPredictor {
                 let i1: usize = idx.floor() as usize;
                 let i2: usize = idx.ceil() as usize;
 
-                let f: f64 = (v[i1] + v[i2]) as f64 / 2.0;
+                let median: f64 = (v[i1] + v[i2]) as f64 / 2.0;
+                let last: f64 = *self.buffer.last().unwrap() as f64;
+                let delta = last - median;
+                let f = if delta < 0.0 {
+                    last + delta / 4.0
+                } else {
+                    last + delta / 2.0
+                };
                 Some(f)
             }
         }

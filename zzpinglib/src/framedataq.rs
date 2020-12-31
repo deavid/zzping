@@ -12,21 +12,22 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub mod batchdata;
-pub mod compress;
-pub mod dynrmp;
-pub mod framedata;
-pub mod framedataq;
-pub mod framestats;
+use chrono::{DateTime, NaiveDateTime, Utc};
 
-pub fn test() -> bool {
-    true
+#[derive(Debug, Clone)]
+pub struct FrameDataQ {
+    pub timestamp: Option<i64>,
+    pub subsec_ms: u32,
+    pub inflight: Vec<usize>,
+    pub lost_packets: Vec<usize>,
+    pub recv_us_len: Vec<usize>,
+    pub recv_us: Vec<[f32; 7]>,
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-        assert_eq!(2 + 2, 4);
+impl FrameDataQ {
+    pub fn get_datetime(&self) -> DateTime<Utc> {
+        let ts = self.timestamp.unwrap();
+        let dt = NaiveDateTime::from_timestamp_opt(ts, self.subsec_ms).unwrap();
+        DateTime::from_utc(dt, Utc)
     }
 }
