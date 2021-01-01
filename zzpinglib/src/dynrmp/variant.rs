@@ -22,6 +22,11 @@ use super::{
     read_array, read_bin, read_bool, read_ext, read_float, read_int, read_map, read_nil, read_str,
 };
 
+#[derive(Debug)]
+pub enum Error {
+    UnexpectedType(VType, VType), // want, got
+}
+
 #[derive(Ord, PartialOrd, Eq, Hash, PartialEq, Debug)]
 pub enum Variant {
     String(String),
@@ -40,6 +45,23 @@ impl Variant {
     // We can add convenience functions here!
     // i.e. to ease the craziness of match recursively.
     // pub fn as_f64
+    pub fn get_type(&self) -> VType {
+        match self {
+            Variant::String(_) => VType::String,
+            Variant::Integer(_) => VType::Integer,
+            Variant::Bool(_) => VType::Bool,
+            Variant::Array(_) => VType::Array,
+            Variant::Binary(_) => VType::Binary,
+            Variant::Null(_) => VType::Null,
+            Variant::Float(_) => VType::Float,
+            Variant::Map(_) => VType::Map,
+            Variant::Extension(_) => VType::Extension,
+            Variant::Reserved => VType::Reserved,
+        }
+    }
+    fn err_unexpected<T>(&self, want: VType) -> Result<T, Error> {
+        Err(Error::UnexpectedType(want, self.get_type()))
+    }
     pub fn as_str(&self) -> &str {
         match self {
             Self::String(v) => &v,
@@ -52,6 +74,12 @@ impl Variant {
             _ => panic!("Variant of incorrect type"),
         }
     }
+    pub fn int(&self) -> Result<i128, Error> {
+        match self {
+            Self::Integer(v) => Ok(*v),
+            _ => self.err_unexpected(VType::Integer),
+        }
+    }
     pub fn as_bool(&self) -> bool {
         match self {
             Self::Bool(v) => *v,
@@ -59,9 +87,12 @@ impl Variant {
         }
     }
     pub fn as_slice(&self) -> &[Variant] {
+        self.slice().unwrap()
+    }
+    pub fn slice(&self) -> Result<&[Variant], Error> {
         match self {
-            Self::Array(v) => &v,
-            _ => panic!("Variant of incorrect type"),
+            Self::Array(v) => Ok(&v),
+            _ => self.err_unexpected(VType::Array),
         }
     }
     pub fn as_bin(&self) -> &[u8] {
