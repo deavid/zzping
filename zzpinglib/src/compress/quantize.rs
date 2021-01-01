@@ -296,6 +296,7 @@ impl CompressTo<f32, u64> for LinearQuantizer {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct LinearLogQuantizer {
     precision: f64,
     ln1p: f64,

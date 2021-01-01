@@ -16,6 +16,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use dynrmp::variant::Variant;
 
 use crate::{
+    compress::quantize::LinearLogQuantizer,
     dynrmp,
     framedata::{FrameData, FrameTime},
 };
@@ -56,7 +57,7 @@ pub struct FrameDataQ {
     pub inflight: usize,
     pub lost_packets: usize,
     pub recv_us_len: usize,
-    pub recv_us: [i32; 7],
+    pub recv_us: [i64; 7],
 }
 
 impl FrameDataQ {
@@ -83,8 +84,8 @@ impl FrameDataQ {
         let dt = NaiveDateTime::from_timestamp_opt(ts, subsec_ms).unwrap();
         DateTime::from_utc(dt, Utc)
     }
-    pub fn compute_percentiles(v: &[u128]) -> [i32; 7] {
-        let mut ret = [-1_i32; 7];
+    pub fn compute_percentiles(v: &[u128]) -> [i64; 7] {
+        let mut ret = [-1_i64; 7];
         if v.is_empty() {
             return ret;
         }
@@ -94,11 +95,11 @@ impl FrameDataQ {
             let p = *p * vmax as f32;
             let (pl, pr) = (p.floor() as usize, p.ceil() as usize);
             if pl == pr {
-                ret[i] = v[pl] as i32;
+                ret[i] = v[pl] as i64;
             } else {
                 let fr = p - pl as f32;
                 let fl = 1.0 - fr;
-                ret[i] = (v[pl] as f32 * fl + v[pr] as f32 * fr).round() as i32;
+                ret[i] = (v[pl] as f32 * fl + v[pr] as f32 * fr).round() as i64;
             }
         }
         ret
@@ -107,14 +108,17 @@ impl FrameDataQ {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FDCodecCfg {
-    // Amount of time between to fully encode the timestamp
+    /// Amount of time between to fully encode the timestamp
     pub full_encode_secs: i64,
+    /// Quantization encoding for recv_us
+    pub recv_llq: Option<LinearLogQuantizer>,
 }
 
 impl Default for FDCodecCfg {
     fn default() -> Self {
         Self {
             full_encode_secs: 60,
+            recv_llq: None,
         }
     }
 }
@@ -176,6 +180,13 @@ impl FDCodecState {
                     SubSecType::Delta(extra_subsecs + subsec_ms_part - self.last_subsec_ms);
             }
         };
+        if let Some(llq) = self.cfg.recv_llq {
+            if d.recv_us_len > 0 {
+                for val in d.recv_us.iter_mut() {
+                    *val = llq.encode(*val);
+                }
+            }
+        }
         d
     }
 
@@ -195,6 +206,13 @@ impl FDCodecState {
         ts += ((subsec_ms - subsec_ms_part) / 1000) as i64;
         d.timestamp = Some(ts);
         d.subsec_ms = SubSecType::Abs(subsec_ms_part);
+        if let Some(llq) = self.cfg.recv_llq {
+            if d.recv_us_len > 0 {
+                for val in d.recv_us.iter_mut() {
+                    *val = llq.decode(*val);
+                }
+            }
+        }
 
         d
     }
@@ -330,7 +348,7 @@ impl RMPCodec for FrameDataQ {
         let inflight: usize = rmp::decode::read_int(rd)?;
         let lost_packets: usize = rmp::decode::read_int(rd)?;
         let recv_us_len: usize = rmp::decode::read_int(rd)?;
-        let mut recv_us: [i32; 7] = [-1, -1, -1, -1, -1, -1, -1];
+        let mut recv_us: [i64; 7] = [-1, -1, -1, -1, -1, -1, -1];
         if recv_us_len > 0 {
             let recv_var_t = Variant::read(rd)?;
             let recv_var = recv_var_t.slice()?;
@@ -339,7 +357,7 @@ impl RMPCodec for FrameDataQ {
             for (n, var) in recv_var.iter().enumerate() {
                 let dv = var.int()?;
                 let v = dv + prev;
-                recv_us[n] = v as i32;
+                recv_us[n] = v as i64;
                 prev = v;
             }
         }
