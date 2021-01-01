@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use std::marker::PhantomData;
+
 use chrono::{DateTime, NaiveDateTime, Utc};
 use dynrmp::variant::Variant;
 
@@ -51,7 +53,13 @@ impl SubSecType {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct FrameDataQ {
+pub struct Complete;
+#[derive(Debug, Clone, Copy)]
+pub struct Encoded;
+
+#[derive(Debug, Clone, Copy)]
+pub struct FrameDataQ<T> {
+    phantom: PhantomData<T>,
     pub timestamp: Option<i64>,
     pub subsec_ms: SubSecType,
     pub inflight: usize,
@@ -60,7 +68,7 @@ pub struct FrameDataQ {
     pub recv_us: [i64; 7],
 }
 
-impl FrameDataQ {
+impl<Complete> FrameDataQ<Complete> {
     pub fn from_framedata(fd: &FrameData) -> Self {
         let mut tsv = match fd.time {
             FrameTime::Timestamp(t) => (Some(t), 0),
@@ -70,6 +78,7 @@ impl FrameDataQ {
         let e = tsv.1 + ts.map(|x| x.timestamp_subsec_millis()).unwrap_or_default();
 
         Self {
+            phantom: PhantomData::default(),
             timestamp: ts.map(|x| x.timestamp()),
             subsec_ms: SubSecType::Abs(e),
             inflight: fd.inflight,
@@ -103,6 +112,31 @@ impl FrameDataQ {
             }
         }
         ret
+    }
+    fn into_encoded(self) -> FrameDataQ<Encoded> {
+        FrameDataQ {
+            phantom: PhantomData::default(),
+            timestamp: self.timestamp,
+            subsec_ms: self.subsec_ms,
+            inflight: self.inflight,
+            lost_packets: self.lost_packets,
+            recv_us_len: self.recv_us_len,
+            recv_us: self.recv_us,
+        }
+    }
+}
+
+impl<Encoded> FrameDataQ<Encoded> {
+    fn into_complete(self) -> FrameDataQ<Complete> {
+        FrameDataQ {
+            phantom: PhantomData::default(),
+            timestamp: self.timestamp,
+            subsec_ms: self.subsec_ms,
+            inflight: self.inflight,
+            lost_packets: self.lost_packets,
+            recv_us_len: self.recv_us_len,
+            recv_us: self.recv_us,
+        }
     }
 }
 
@@ -140,7 +174,7 @@ impl FDCodecState {
         self.cfg
     }
 
-    pub fn push(&mut self, d: &FrameDataQ) {
+    pub fn push<T>(&mut self, d: &FrameDataQ<T>) {
         if let Some(ts) = d.timestamp {
             self.last_timestamp = Some(ts);
         }
@@ -149,7 +183,7 @@ impl FDCodecState {
             SubSecType::Delta(v) => self.last_subsec_ms += v,
         };
     }
-    pub fn peek_encode(&self, mut d: FrameDataQ) -> FrameDataQ {
+    pub fn peek_encode(&self, mut d: FrameDataQ<Complete>) -> FrameDataQ<Encoded> {
         let mut d_ts = d.timestamp.unwrap();
         let subsec_ms = match d.subsec_ms {
             SubSecType::Abs(v) => v,
@@ -187,16 +221,16 @@ impl FDCodecState {
                 }
             }
         }
-        d
+        d.into_encoded()
     }
 
-    pub fn encode(&mut self, d: FrameDataQ) -> FrameDataQ {
+    pub fn encode(&mut self, d: FrameDataQ<Complete>) -> FrameDataQ<Encoded> {
         let d = self.peek_encode(d);
         self.push(&d);
         d
     }
 
-    pub fn peek_decode(&self, mut d: FrameDataQ) -> FrameDataQ {
+    pub fn peek_decode(&self, mut d: FrameDataQ<Encoded>) -> FrameDataQ<Complete> {
         let last_ts = self
             .last_timestamp
             .expect("Tried to decode delta without reference timestamp");
@@ -214,10 +248,10 @@ impl FDCodecState {
             }
         }
 
-        d
+        d.into_complete()
     }
 
-    pub fn decode(&mut self, d: FrameDataQ) -> FrameDataQ {
+    pub fn decode(&mut self, d: FrameDataQ<Encoded>) -> FrameDataQ<Complete> {
         let d = self.peek_decode(d);
         self.push(&d);
         d
@@ -300,7 +334,7 @@ pub trait RMPCodec: Sized + std::fmt::Debug {
     }
 }
 
-impl RMPCodec for FrameDataQ {
+impl RMPCodec for FrameDataQ<Encoded> {
     fn try_to_rmp(&self) -> Result<Vec<u8>, Error> {
         let mut data: Vec<u8> = vec![];
         let buf = &mut data;
@@ -368,6 +402,7 @@ impl RMPCodec for FrameDataQ {
             lost_packets,
             recv_us_len,
             recv_us,
+            phantom: PhantomData::default(),
         })
     }
 }
