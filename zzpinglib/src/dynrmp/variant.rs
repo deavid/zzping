@@ -20,12 +20,8 @@ use super::map::Map;
 use super::{float::Float, vtype::VType};
 use super::{
     read_array, read_bin, read_bool, read_ext, read_float, read_int, read_map, read_nil, read_str,
+    Error,
 };
-
-#[derive(Debug)]
-pub enum Error {
-    UnexpectedType(VType, VType), // want, got
-}
 
 #[derive(Ord, PartialOrd, Eq, Hash, PartialEq, Debug, Clone)]
 pub enum Variant {
@@ -131,23 +127,35 @@ impl Variant {
         }
     }
 
-    pub fn read<R: Read>(rd: &mut R) -> Result<Self, ValueReadError> {
-        let marker = read_marker(rd)?;
+    pub fn read_marker<R: Read>(rd: &mut R) -> Result<rmp::Marker, Error> {
+        Ok(read_marker(rd)?)
+    }
+
+    pub fn read_from_marker<R: Read>(rd: &mut R, marker: rmp::Marker) -> Result<Self, Error> {
         let mtype = VType::from_marker(marker);
-        match mtype {
-            VType::Float => read_float(rd, marker).map(Float::new).map(Variant::Float),
-            VType::Integer => read_int(rd, marker).map(Variant::Integer),
-            VType::Bool => read_bool(marker).map(Variant::Bool),
-            VType::String => read_str(rd, marker).map(Variant::String),
-            VType::Null => read_nil(marker).map(Variant::Null),
-            VType::Array => read_array(rd, marker).map(Variant::Array),
+        Ok(match mtype {
+            VType::Float => read_float(rd, marker).map(Float::new).map(Variant::Float)?,
+            VType::Integer => read_int(rd, marker).map(Variant::Integer)?,
+            VType::Bool => read_bool(marker).map(Variant::Bool)?,
+            VType::String => read_str(rd, marker).map(Variant::String)?,
+            VType::Null => read_nil(marker).map(Variant::Null)?,
+            VType::Array => read_array(rd, marker).map(Variant::Array)?,
             VType::Map => read_map(rd, marker)
                 .map(Map::from_hashmap)
-                .map(Variant::Map),
-            VType::Binary => read_bin(rd, marker).map(Variant::Binary),
-            VType::Extension => read_ext(rd, marker).map(Variant::Extension),
+                .map(Variant::Map)?,
+            VType::Binary => read_bin(rd, marker).map(Variant::Binary)?,
+            VType::Extension => read_ext(rd, marker).map(Variant::Extension)?,
             // VType::Reserved,
-            _ => Err(ValueReadError::TypeMismatch(marker)),
-        }
+            _ => {
+                return Err(Error::RMPValueReadError(ValueReadError::TypeMismatch(
+                    marker,
+                )))
+            }
+        })
+    }
+
+    pub fn read<R: Read>(rd: &mut R) -> Result<Self, Error> {
+        let marker = Self::read_marker(rd)?;
+        Self::read_from_marker(rd, marker)
     }
 }

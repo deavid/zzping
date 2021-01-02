@@ -14,7 +14,7 @@
 
 use rmp::Marker;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum VType {
     String,
     Integer,

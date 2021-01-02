@@ -71,6 +71,19 @@ pub struct FrameDataQ<T> {
     pub recv_us: [i64; 7],
 }
 
+impl<Complete> std::fmt::Display for FrameDataQ<Complete> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!(
+            "FrameDataQ<Complete> {} i:{} l:{} sz:{}\t{:?}",
+            self.get_datetime(),
+            self.inflight,
+            self.lost_packets,
+            self.recv_us_len,
+            self.recv_us,
+        ))
+    }
+}
+
 impl<Complete> FrameDataQ<Complete> {
     pub fn from_framedata(fd: &FrameData) -> Self {
         let mut tsv = match fd.time {
@@ -93,7 +106,7 @@ impl<Complete> FrameDataQ<Complete> {
     pub fn get_datetime(&self) -> DateTime<Utc> {
         let ts = self.timestamp.unwrap();
         let subsec_ms = self.subsec_ms.unwrap_abs();
-        let dt = NaiveDateTime::from_timestamp_opt(ts, subsec_ms).unwrap();
+        let dt = NaiveDateTime::from_timestamp_opt(ts, subsec_ms * 1000 * 1000).unwrap();
         DateTime::from_utc(dt, Utc)
     }
     pub fn compute_percentiles(v: &[u128]) -> [i64; 7] {
@@ -318,10 +331,10 @@ impl FDCodecState {
     }
 
     pub fn peek_decode(&self, mut d: FrameDataQ<Encoded>) -> FrameDataQ<Complete> {
-        let last_ts = self
-            .last_timestamp
-            .expect("Tried to decode delta without reference timestamp");
-        let mut ts = d.timestamp.unwrap_or(last_ts);
+        let mut ts = d.timestamp.unwrap_or_else(|| {
+            self.last_timestamp
+                .expect("Tried to decode delta without reference timestamp")
+        });
         let subsec_ms = d.subsec_ms.unwrap_abs_or_add(self.last_subsec_ms);
         let subsec_ms_part = subsec_ms % 1000;
         ts += ((subsec_ms - subsec_ms_part) / 1000) as i64;
@@ -361,10 +374,11 @@ pub enum Error {
     RmpEncodeValue(rmp::encode::ValueWriteError),
     RmpDecodeValue(rmp::decode::ValueReadError),
     RmpDecodeNumValue(rmp::decode::NumValueReadError),
-    Variant(dynrmp::variant::Error),
+    Variant(dynrmp::Error),
     StdIO(std::io::Error),
     UnexpectedData(String),
     HeaderFieldMissing(String),
+    EOF,
 }
 
 impl Error {
@@ -376,8 +390,8 @@ impl Error {
     }
 }
 
-impl From<dynrmp::variant::Error> for Error {
-    fn from(e: dynrmp::variant::Error) -> Self {
+impl From<dynrmp::Error> for Error {
+    fn from(e: dynrmp::Error) -> Self {
         Self::Variant(e)
     }
 }
@@ -474,7 +488,13 @@ impl RMPCodec for FrameDataQ<Encoded> {
     }
 
     fn try_from_rmp<R: std::io::Read>(rd: &mut R) -> Result<Self, Error> {
-        let ts_var = Variant::read(rd)?;
+        let marker = Variant::read_marker(rd).map_err(|e: dynrmp::Error| -> Error {
+            match e.is_marker_eof() {
+                true => Error::EOF,
+                false => e.into(),
+            }
+        })?;
+        let ts_var = Variant::read_from_marker(rd, marker)?;
         let timestamp = match ts_var {
             Variant::Null(_) => None,
             Variant::Integer(v) => Some(v as i64),
