@@ -311,6 +311,9 @@ impl LinearLogQuantizer {
             linear_part: precision.recip().ceil() as i64,
         }
     }
+    pub fn get_precision(&self) -> f64 {
+        self.precision
+    }
     pub fn encode(&self, value: i64) -> i64 {
         if value.abs() <= self.linear_part {
             return value;

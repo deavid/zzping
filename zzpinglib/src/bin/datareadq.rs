@@ -34,8 +34,10 @@ struct Opts {
     output: Option<String>,
     #[clap(short, long)]
     quantize: Option<f64>,
+    #[clap(short, long, default_value = "60")]
+    time: i64,
     #[clap(short, long)]
-    time: Option<i64>,
+    delta_enc: bool,
 }
 
 fn main() {
@@ -47,10 +49,18 @@ fn main() {
 
     let mut handles = vec![];
     let quantizer = opts.quantize.map(LinearLogQuantizer::new);
-    let interval = opts.time.unwrap_or(60);
-
+    let interval = opts.time;
+    let codeccfg = FDCodecCfg {
+        full_encode_secs: interval,
+        recv_llq: quantizer,
+        delta_enc: false,
+    };
+    let header: Vec<u8> = FDCodecState::get_header(codeccfg);
+    if let Some(buf) = obuffer.as_mut() {
+        buf.write_all(&header).unwrap();
+    }
     for input in opts.input {
-        let handle = thread::spawn(move || read_inputfile(&input, quantizer, interval));
+        let handle = thread::spawn(move || read_inputfile(&input, codeccfg));
         handles.push(handle);
         if handles.len() > 7 {
             let data = handles.remove(0).join().unwrap();
@@ -67,17 +77,14 @@ fn main() {
     }
 }
 
-fn read_inputfile(filename: &str, quantizer: Option<LinearLogQuantizer>, interval: i64) -> Vec<u8> {
+fn read_inputfile(filename: &str, cfg: FDCodecCfg) -> Vec<u8> {
     let f = File::open(filename).unwrap();
     let mut reader = BufReader::new(f);
     let mut fdv = FrameDataVec::new();
     if fdv.read(&mut reader, 100000).is_err() {
         // dbg!(e);
     }
-    let mut codec = FDCodecState::new(FDCodecCfg {
-        full_encode_secs: interval,
-        recv_llq: quantizer,
-    });
+    let mut codec = FDCodecState::new(cfg);
     let mut buf = Vec::with_capacity(fdv.v.len() * 12);
     for frame in fdv.v.iter() {
         let fdq: FrameDataQ<Complete> = FrameDataQ::from_framedata(frame);

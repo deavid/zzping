@@ -17,6 +17,9 @@ use std::marker::PhantomData;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use dynrmp::variant::Variant;
 
+#[allow(unused_imports)]
+use crate::dbgf;
+
 use crate::{
     compress::quantize::LinearLogQuantizer,
     dynrmp,
@@ -146,6 +149,8 @@ pub struct FDCodecCfg {
     pub full_encode_secs: i64,
     /// Quantization encoding for recv_us
     pub recv_llq: Option<LinearLogQuantizer>,
+    /// Enable delta encoding
+    pub delta_enc: bool,
 }
 
 impl Default for FDCodecCfg {
@@ -153,6 +158,7 @@ impl Default for FDCodecCfg {
         Self {
             full_encode_secs: 60,
             recv_llq: None,
+            delta_enc: false,
         }
     }
 }
@@ -161,20 +167,95 @@ pub struct FDCodecState {
     cfg: FDCodecCfg,
     pub last_timestamp: Option<i64>,
     pub last_subsec_ms: u32,
+    pub last_recvq_0: i64,
 }
 
 impl FDCodecState {
+    const HEADER_SCHEMA: &'static str = "FDCodec";
+    const HEADER_VERSION: u64 = 101;
+
     pub fn new(cfg: FDCodecCfg) -> Self {
         let mut s = Self::default();
         s.cfg = cfg;
         s
+    }
+    pub fn get_header(cfg: FDCodecCfg) -> Vec<u8> {
+        Self::try_get_header(cfg).unwrap()
+    }
+    pub fn try_get_header(cfg: FDCodecCfg) -> Result<Vec<u8>, Error> {
+        let mut vbuf: Vec<u8> = vec![];
+        let wr = &mut vbuf;
+        rmp::encode::write_map_len(wr, 5)?;
+        rmp::encode::write_str(wr, "schema")?;
+        rmp::encode::write_str(wr, Self::HEADER_SCHEMA)?;
+
+        rmp::encode::write_str(wr, "version")?;
+        rmp::encode::write_uint(wr, Self::HEADER_VERSION)?;
+
+        rmp::encode::write_str(wr, "full_encode_secs")?;
+        rmp::encode::write_uint(wr, cfg.full_encode_secs as u64)?;
+
+        rmp::encode::write_str(wr, "recv_llq")?;
+        match cfg.recv_llq {
+            Some(llq) => rmp::encode::write_f64(wr, llq.get_precision())?,
+            None => rmp::encode::write_nil(wr)?,
+        }
+
+        rmp::encode::write_str(wr, "delta_enc")?;
+        rmp::encode::write_bool(wr, cfg.delta_enc)?;
+
+        Ok(vbuf)
+    }
+    pub fn try_from_header<R: std::io::Read>(rd: &mut R) -> Result<FDCodecCfg, Error> {
+        let header = Variant::read(rd)?.map()?.into_strhashmap()?;
+        let get_header = |field: &str| -> Result<&Variant, Error> {
+            Ok(header
+                .get(field)
+                .ok_or_else(|| Error::header_field_missing(field))?)
+        };
+        let schema = get_header("schema")?.str()?;
+        if schema != Self::HEADER_SCHEMA {
+            return Err(Error::unexpected_data(
+                "Incompatible header, wrong file format",
+            ));
+        }
+        let version = get_header("version")?.int()? as u64;
+        if version > Self::HEADER_VERSION {
+            return Err(Error::unexpected_data(
+                "File format has a newer, unsupported version",
+            ));
+        }
+        let full_encode_secs = get_header("full_encode_secs")?.int()? as i64;
+        let recv_llq = get_header("recv_llq")?;
+        let delta_enc = get_header("delta_enc")?.as_bool();
+        // Extra parameters should have a default to allow for processing older formats!
+
+        let recv_llq = match recv_llq {
+            Variant::Null(_) => Ok(None),
+            Variant::Float(v) => Ok(Some(LinearLogQuantizer::new(v.as_f64()))),
+            _ => Err(Error::unexpected_data(
+                "recv_llq expected to be nil or float type",
+            )),
+        }?;
+        Ok(FDCodecCfg {
+            full_encode_secs,
+            recv_llq,
+            delta_enc,
+        })
+    }
+    pub fn from_header<R: std::io::Read>(rd: &mut R) -> FDCodecCfg {
+        Self::try_from_header(rd).unwrap()
+    }
+
+    pub fn new_from_header<R: std::io::Read>(rd: &mut R) -> Self {
+        Self::new(Self::from_header(rd))
     }
 
     pub fn get_cfg(&self) -> FDCodecCfg {
         self.cfg
     }
 
-    pub fn push<T>(&mut self, d: &FrameDataQ<T>) {
+    pub fn push(&mut self, d: &FrameDataQ<Complete>) {
         if let Some(ts) = d.timestamp {
             self.last_timestamp = Some(ts);
         }
@@ -182,6 +263,12 @@ impl FDCodecState {
             SubSecType::Abs(v) => self.last_subsec_ms = v,
             SubSecType::Delta(v) => self.last_subsec_ms += v,
         };
+        if self.cfg.delta_enc {
+            self.last_recvq_0 = match self.cfg.recv_llq {
+                Some(llq) => llq.encode(d.recv_us[0]),
+                None => d.recv_us[0],
+            }
+        }
     }
     pub fn peek_encode(&self, mut d: FrameDataQ<Complete>) -> FrameDataQ<Encoded> {
         let mut d_ts = d.timestamp.unwrap();
@@ -217,7 +304,7 @@ impl FDCodecState {
         if let Some(llq) = self.cfg.recv_llq {
             if d.recv_us_len > 0 {
                 for val in d.recv_us.iter_mut() {
-                    *val = llq.encode(*val);
+                    *val = llq.encode(*val) - self.last_recvq_0;
                 }
             }
         }
@@ -225,9 +312,9 @@ impl FDCodecState {
     }
 
     pub fn encode(&mut self, d: FrameDataQ<Complete>) -> FrameDataQ<Encoded> {
-        let d = self.peek_encode(d);
+        let dr = self.peek_encode(d);
         self.push(&d);
-        d
+        dr
     }
 
     pub fn peek_decode(&self, mut d: FrameDataQ<Encoded>) -> FrameDataQ<Complete> {
@@ -264,6 +351,7 @@ impl Default for FDCodecState {
             cfg: FDCodecCfg::default(),
             last_timestamp: None,
             last_subsec_ms: 0,
+            last_recvq_0: 0,
         }
     }
 }
@@ -276,11 +364,15 @@ pub enum Error {
     Variant(dynrmp::variant::Error),
     StdIO(std::io::Error),
     UnexpectedData(String),
+    HeaderFieldMissing(String),
 }
 
 impl Error {
     fn unexpected_data(s: &str) -> Self {
         Self::UnexpectedData(s.to_owned())
+    }
+    fn header_field_missing(s: &str) -> Self {
+        Self::HeaderFieldMissing(s.to_owned())
     }
 }
 
@@ -350,17 +442,31 @@ impl RMPCodec for FrameDataQ<Encoded> {
             }
         }
         rmp::encode::write_uint(buf, subsec_ms as u64)?;
-        rmp::encode::write_uint(buf, self.inflight as u64)?;
-        rmp::encode::write_uint(buf, self.lost_packets as u64)?;
+        if self.inflight + self.lost_packets > 0 {
+            rmp::encode::write_uint(buf, self.inflight as u64)?;
+            rmp::encode::write_uint(buf, self.lost_packets as u64)?;
+        } else {
+            rmp::encode::write_nfix(buf, -1)?;
+        }
         rmp::encode::write_uint(buf, self.recv_us_len as u64)?;
         if self.recv_us_len > 0 {
             rmp::encode::write_array_len(buf, 7)?;
-            // TODO: LinearLogQuantizer::encode
             let mut prev = 0;
+            let mut dvvec = vec![];
             for v in &self.recv_us {
                 let dv = *v - prev;
+                // assert!(dv >= 0, "prev {} bigger than new {}", prev, v);
                 prev = *v;
-                rmp::encode::write_uint(buf, dv as u64)?;
+                dvvec.push(dv);
+            }
+            // dbgf!(&dvvec);
+            // dbg!(format!("{:?}", &dvvec));
+            for dv in dvvec {
+                if dv < 0 {
+                    rmp::encode::write_sint(buf, dv)?;
+                } else {
+                    rmp::encode::write_uint(buf, dv as u64)?;
+                }
             }
         }
 
@@ -379,8 +485,13 @@ impl RMPCodec for FrameDataQ<Encoded> {
             Some(_) => SubSecType::Abs(subsec_ms_v as u32),
             None => SubSecType::Delta(subsec_ms_v as u32),
         };
-        let inflight: usize = rmp::decode::read_int(rd)?;
-        let lost_packets: usize = rmp::decode::read_int(rd)?;
+        let ifl: i64 = rmp::decode::read_int(rd)?;
+        let inflight: usize = if ifl == -1 { 0 } else { ifl as usize };
+        let lost_packets: usize = if ifl == -1 {
+            0
+        } else {
+            rmp::decode::read_int(rd)?
+        };
         let recv_us_len: usize = rmp::decode::read_int(rd)?;
         let mut recv_us: [i64; 7] = [-1, -1, -1, -1, -1, -1, -1];
         if recv_us_len > 0 {

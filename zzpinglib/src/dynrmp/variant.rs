@@ -27,7 +27,7 @@ pub enum Error {
     UnexpectedType(VType, VType), // want, got
 }
 
-#[derive(Ord, PartialOrd, Eq, Hash, PartialEq, Debug)]
+#[derive(Ord, PartialOrd, Eq, Hash, PartialEq, Debug, Clone)]
 pub enum Variant {
     String(String),
     Integer(i128),
@@ -62,10 +62,25 @@ impl Variant {
     fn err_unexpected<T>(&self, want: VType) -> Result<T, Error> {
         Err(Error::UnexpectedType(want, self.get_type()))
     }
-    pub fn as_str(&self) -> &str {
+    pub fn map(&self) -> Result<Map, Error> {
         match self {
-            Self::String(v) => &v,
-            _ => panic!("Variant of incorrect type"),
+            Self::Map(v) => Ok(v.clone()),
+            _ => self.err_unexpected(VType::Map),
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        self.str().unwrap()
+    }
+    pub fn str(&self) -> Result<&str, Error> {
+        match self {
+            Self::String(v) => Ok(v),
+            _ => self.err_unexpected(VType::String),
+        }
+    }
+    pub fn string(&self) -> Result<String, Error> {
+        match self {
+            Self::String(v) => Ok(v.to_string()),
+            _ => self.err_unexpected(VType::String),
         }
     }
     pub fn as_int(&self) -> i128 {

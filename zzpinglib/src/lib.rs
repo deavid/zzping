@@ -19,6 +19,25 @@ pub mod framedata;
 pub mod framedataq;
 pub mod framestats;
 
+#[macro_export]
+macro_rules! dbgf {
+    () => {
+        eprintln!("[{}:{}]", file!(), line!());
+    };
+    ($val:expr $(,)?) => {
+        match $val {
+            tmp => {
+                eprintln!("[{}:{}] {} = {:?}",
+                    file!(), line!(), stringify!($val), &tmp);
+                tmp
+            }
+        }
+    };
+    ($($val:expr),+ $(,)?) => {
+        ($($crate::dbgf!($val)),+,)
+    };
+}
+
 pub fn test() -> bool {
     true
 }
