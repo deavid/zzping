@@ -537,3 +537,33 @@ impl RMPCodec for FrameDataQ<Encoded> {
         })
     }
 }
+
+pub struct FDCodecIter<R: std::io::Read> {
+    buf: R,
+    fdcs: FDCodecState,
+}
+
+impl<R: std::io::Read> FDCodecIter<R> {
+    pub fn new(mut buf: R) -> Self {
+        let fdcs = FDCodecState::new_from_header(&mut buf);
+        Self { buf, fdcs }
+    }
+}
+
+impl<R: std::io::Read> Iterator for FDCodecIter<R> {
+    type Item = FrameDataQ<Complete>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let rfde = RMPCodec::try_from_rmp(&mut self.buf);
+        match rfde {
+            Ok(v) => Some(self.fdcs.decode(v)),
+            Err(e) => {
+                if !matches!(e, Error::EOF) {
+                    None
+                } else {
+                    panic!(e);
+                }
+            }
+        }
+    }
+}

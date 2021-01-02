@@ -17,8 +17,7 @@ use std::io::BufReader;
 
 use clap::Clap;
 
-use zzpinglib::framedataq::RMPCodec;
-use zzpinglib::framedataq::{self, FDCodecState};
+use zzpinglib::framedataq::FDCodecIter;
 
 #[derive(Clap, Debug)]
 #[clap(
@@ -38,28 +37,9 @@ fn main() {
 
 fn read_inputfile(filename: &str) {
     let f = File::open(filename).unwrap();
-    let mut buf = BufReader::new(f);
-    let rd = &mut buf;
-    let mut fdcs = FDCodecState::new_from_header(rd);
-    let mut error: Option<framedataq::Error> = None;
-    loop {
-        let rfde = RMPCodec::try_from_rmp(rd);
-        let fdq;
-        match rfde {
-            Ok(v) => {
-                fdq = fdcs.decode(v);
-                println!("{}", fdq);
-            }
-            Err(e) => {
-                if !matches!(e, framedataq::Error::EOF) {
-                    error = Some(e)
-                }
-                break;
-            }
-        }
-    }
-
-    if let Some(error) = error {
-        dbg!(error);
+    let buf = BufReader::new(f);
+    let fdreader = FDCodecIter::new(buf);
+    for fdq in fdreader {
+        println!("{}", fdq);
     }
 }
