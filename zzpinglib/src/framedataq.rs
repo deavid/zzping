@@ -109,6 +109,11 @@ impl<Complete> FrameDataQ<Complete> {
         let dt = NaiveDateTime::from_timestamp_opt(ts, subsec_ms * 1000 * 1000).unwrap();
         DateTime::from_utc(dt, Utc)
     }
+    pub fn get_timestamp_ms(&self) -> i128 {
+        let ts = self.timestamp.unwrap();
+        let subsec_ms = self.subsec_ms.unwrap_abs();
+        ts as i128 * 1000 + subsec_ms as i128
+    }
     pub fn compute_percentiles(v: &[u128]) -> [i64; 7] {
         let mut ret = [-1_i64; 7];
         if v.is_empty() {
@@ -188,9 +193,10 @@ impl FDCodecState {
     const HEADER_VERSION: u64 = 101;
 
     pub fn new(cfg: FDCodecCfg) -> Self {
-        let mut s = Self::default();
-        s.cfg = cfg;
-        s
+        Self {
+            cfg,
+            ..Default::default()
+        }
     }
     pub fn get_header(cfg: FDCodecCfg) -> Vec<u8> {
         Self::try_get_header(cfg).unwrap()
@@ -558,10 +564,11 @@ impl<R: std::io::Read> Iterator for FDCodecIter<R> {
         match rfde {
             Ok(v) => Some(self.fdcs.decode(v)),
             Err(e) => {
-                if !matches!(e, Error::EOF) {
+                if matches!(e, Error::EOF) {
                     None
                 } else {
-                    panic!(e);
+                    dbg!(e);
+                    panic!("Unexpected error ocurred while reading MessagePack from buffer");
                 }
             }
         }

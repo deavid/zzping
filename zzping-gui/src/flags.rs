@@ -15,7 +15,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-#[derive(Default, Serialize, Deserialize, Debug)]
+#[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct GuiConfig {
     pub udp_listen_address: String,
     pub udp_server_address: String,
@@ -27,4 +27,15 @@ impl GuiConfig {
         let contents = fs::read_to_string(filepath)?;
         Ok(ron::de::from_str(&contents)?)
     }
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct OtherOpts {
+    pub input_file: Option<String>,
+}
+
+#[derive(Default, Debug, Clone)]
+pub struct Flags {
+    pub guiconfig: GuiConfig,
+    pub otheropts: OtherOpts,
 }

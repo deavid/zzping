@@ -12,34 +12,57 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::{
+    fdq_graph::FDQGraph,
+    flags::{Flags, OtherOpts},
+};
+
 use super::flags::GuiConfig;
 use super::graph_plot::LatencyGraph;
 use super::udp_comm::UdpStats;
-use iced::{canvas, executor, Application, Canvas, Column, Command, Element, Length, Subscription};
+use iced::{
+    canvas, executor, slider, Application, Canvas, Column, Command, Element, Length, Slider,
+    Subscription,
+};
 use std::net::UdpSocket;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
+    ZoomXSliderChanged(f32),
+    PosXSliderChanged(f32),
     Tick(Instant),
     Startup,
 }
 
 #[derive(Default)]
 pub struct PingmonGUI {
-    pub config: GuiConfig,
+    pub guiconfig: GuiConfig,
+    pub otheropts: OtherOpts,
     pub graph: LatencyGraph,
     pub graph_canvas: canvas::layer::Cache<LatencyGraph>,
     pub socket: Option<UdpSocket>,
+    pub fdqgraph: FDQGraph,
+    pub fdqgraph_canvas: canvas::layer::Cache<FDQGraph>,
+    zoomx_slider_state: slider::State,
+    zoomx_slider: f32,
+    posx_slider_state: slider::State,
+    posx_slider: f32,
 }
 
 impl PingmonGUI {
     fn startup(&mut self) {
-        let socket = UdpSocket::bind(&self.config.udp_listen_address).unwrap();
-        socket.set_nonblocking(true).unwrap();
-        socket.connect(&self.config.udp_server_address).unwrap();
+        let input_file = self.otheropts.input_file.as_ref();
+        match input_file {
+            Some(filename) => self.fdqgraph.load_file(filename),
+            None => {
+                let socket = UdpSocket::bind(&self.guiconfig.udp_listen_address).unwrap();
+                socket.set_nonblocking(true).unwrap();
+                socket.connect(&self.guiconfig.udp_server_address).unwrap();
 
-        self.socket = Some(socket);
+                self.socket = Some(socket);
+            }
+        }
     }
     fn recv(&mut self) -> Result<UdpStats, Box<dyn std::error::Error>> {
         let mut buf: [u8; 65536] = [0; 65536];
@@ -55,24 +78,38 @@ impl PingmonGUI {
         }
         ret
     }
+    fn tick(&mut self, instant: Instant) {
+        if self.otheropts.input_file.is_none() {
+            let stats = self.recv_all();
+            if self.graph.update(instant, stats) {
+                self.graph_canvas.clear();
+            }
+        } else if self.fdqgraph.update(instant) {
+            self.fdqgraph_canvas.clear();
+        }
+    }
 }
 
 impl Application for PingmonGUI {
     type Message = Message;
     type Executor = executor::Default;
-    type Flags = GuiConfig;
+    type Flags = Flags;
 
-    fn new(flags: GuiConfig) -> (Self, Command<Message>) {
+    fn new(flags: Flags) -> (Self, Command<Message>) {
         let app = Self {
-            graph: LatencyGraph::new(&flags.display_address),
-            config: flags,
+            graph: LatencyGraph::new(&flags.guiconfig.display_address),
+            guiconfig: flags.guiconfig,
+            otheropts: flags.otheropts,
             ..Self::default()
         };
         (app, Command::from(async { Message::Startup }))
     }
 
     fn title(&self) -> String {
-        String::from("Ping Monitor")
+        match self.otheropts.input_file.as_ref() {
+            Some(input) => format!("Ping Monitor - File: {}", input),
+            None => "Ping Monitor".to_owned(),
+        }
     }
 
     fn subscription(&self) -> Subscription<Message> {
@@ -81,23 +118,48 @@ impl Application for PingmonGUI {
 
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::Tick(instant) => {
-                let stats = self.recv_all();
-                if self.graph.update(instant, stats) {
-                    self.graph_canvas.clear();
-                }
+            Message::ZoomXSliderChanged(x) => {
+                self.zoomx_slider = x;
+                self.fdqgraph.set_zoomx(x.exp() as f64);
             }
+            Message::PosXSliderChanged(x) => {
+                self.posx_slider = x;
+                self.fdqgraph.set_posx(x as f64);
+            }
+            Message::Tick(instant) => self.tick(instant),
             Message::Startup => self.startup(),
         };
         Command::none()
     }
 
     fn view(&mut self) -> Element<Message> {
-        let graph = Canvas::new()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .push(self.graph_canvas.with(&self.graph));
+        let mut window = Column::new().padding(0);
+        if self.otheropts.input_file.is_none() {
+            let graph = Canvas::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .push(self.graph_canvas.with(&self.graph));
 
-        Column::new().padding(0).push(graph).into()
+            window = window.push(graph);
+        } else {
+            let graph = Canvas::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .push(self.fdqgraph_canvas.with(&self.fdqgraph));
+            window = window.push(graph);
+            window = window.push(Slider::new(
+                &mut self.zoomx_slider_state,
+                0.0..=10.0,
+                self.zoomx_slider,
+                Message::ZoomXSliderChanged,
+            ));
+            window = window.push(Slider::new(
+                &mut self.posx_slider_state,
+                0.0..=1.0,
+                self.posx_slider,
+                Message::PosXSliderChanged,
+            ));
+        }
+        window.into()
     }
 }
