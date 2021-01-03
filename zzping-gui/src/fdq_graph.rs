@@ -15,7 +15,7 @@
 use std::{fs::File, io::BufReader, time::Instant};
 
 use iced::{
-    canvas::{self, Path, Stroke},
+    canvas::{self, path, Path, Stroke},
     Color, Point, Size, Vector,
 };
 use zzpinglib::framedataq::{Complete, FDCodecIter, FrameDataQ};
@@ -141,6 +141,7 @@ impl FDQGraph {
 impl canvas::Drawable for FDQGraph {
     fn draw(&self, frame: &mut canvas::Frame) {
         let f = FrameScaler::new(frame);
+        let green = Color::from_rgba8(0, 255, 0, 1.0);
         let green10 = Color::from_rgba8(0, 255, 0, 0.1);
         let white90 = Color::from_rgba8(255, 255, 255, 0.9);
         let black90 = Color::from_rgba8(0, 0, 0, 0.9);
@@ -155,6 +156,7 @@ impl canvas::Drawable for FDQGraph {
             color: black50,
             ..Stroke::default()
         };
+        // let green_fill = canvas::Fill::Color(green);
 
         let space = Path::rectangle(f.pt(0.0, 0.0), f.sz(1.0, 1.0));
         frame.fill(&space, Color::from_rgba8(100, 100, 100, 1.0));
@@ -198,21 +200,36 @@ impl canvas::Drawable for FDQGraph {
             let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 16.0), f.pt(1.0, 1.0 - 1.0 / 16.0));
             frame.stroke(&line, black_stroke);
 
-            let mut src = pa.pt(points[0]);
+            // let mut src = pa.pt(points[0]);
+            let mut path_bldr = path::Builder::new();
+            path_bldr.move_to(f.pt(0.0, 1.0));
             for p in points.iter() {
                 let dst = pa.pt(*p);
-
-                let line = canvas::Path::line(src, dst);
-                frame.stroke(&line, green_stroke);
-                src = dst;
+                path_bldr.line_to(dst);
+                // let line = canvas::Path::line(src, dst);
+                // frame.stroke(&line, green_stroke);
+                // src = dst;
             }
+            path_bldr.line_to(f.pt(1.0, 1.0));
+            path_bldr.close();
+            let line = path_bldr.build();
+            // frame.fill(&line, green_fill);
+            frame.stroke(&line, green_stroke);
+
             let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 2.0), f.pt(1.0, 1.0 - 1.0 / 2.0));
             frame.stroke(&line, black_stroke);
             let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 4.0), f.pt(1.0, 1.0 - 1.0 / 4.0));
             frame.stroke(&line, black_stroke);
             let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 16.0), f.pt(1.0, 1.0 - 1.0 / 16.0));
             frame.stroke(&line, black_stroke);
-
+            let vw_width = (fd_last.get_datetime() - fd_first.get_datetime())
+                .to_std()
+                .unwrap();
+            let vw_width_text = match vw_width.as_secs() {
+                3601..=u64::MAX => format!("{:.2}h", vw_width.as_secs_f32() / 60.0 / 60.0),
+                120..=3600 => format!("{:.2}min", vw_width.as_secs_f32() / 60.0),
+                _ => format!("{:?}", vw_width),
+            };
             let shadow = Vector::new(2.0, 1.0);
             let text = canvas::Text {
                 content: format!("{}", fd_first.get_datetime()),
@@ -230,12 +247,7 @@ impl canvas::Drawable for FDQGraph {
             });
             frame.fill_text(text);
             let text = canvas::Text {
-                content: format!(
-                    "Viewport width: {:?}",
-                    (fd_last.get_datetime() - fd_first.get_datetime())
-                        .to_std()
-                        .unwrap()
-                ),
+                content: format!("Viewport width: {}", vw_width_text),
                 position: f.pt(0.5, 0.01),
                 color: white90,
                 size: f.ph(0.04),

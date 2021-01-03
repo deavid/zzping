@@ -149,7 +149,7 @@ impl Application for PingmonGUI {
             window = window.push(graph);
             window = window.push(Slider::new(
                 &mut self.zoomx_slider_state,
-                0.0..=10.0,
+                0.0..=6.0,
                 self.zoomx_slider,
                 Message::ZoomXSliderChanged,
             ));
