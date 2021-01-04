@@ -32,13 +32,12 @@ pub enum Message {
     ZoomWSliderChanged(f32),
     ZoomYSliderChanged(f32),
     ZoomXSliderChanged(f32),
-    PosXSliderChanged(f32),
+    // PosXSliderChanged(f32),
     PosDXSliderChanged(f32),
     Tick(Instant),
     Startup,
 }
 
-#[derive(Default)]
 pub struct PingmonGUI {
     pub guiconfig: GuiConfig,
     pub otheropts: OtherOpts,
@@ -53,12 +52,36 @@ pub struct PingmonGUI {
     zoomy_slider: f32,
     zoomx_slider_state: slider::State,
     zoomx_slider: f32,
-    posx_slider_state: slider::State,
+    // posx_slider_state: slider::State,
     posx_slider: f32,
     posdx_slider_state: slider::State,
     posdx_slider: f32,
 }
 
+impl Default for PingmonGUI {
+    fn default() -> Self {
+        Self {
+            posx_slider: 0.5,
+
+            guiconfig: Default::default(),
+            otheropts: Default::default(),
+            graph: Default::default(),
+            graph_canvas: Default::default(),
+            socket: Default::default(),
+            fdqgraph: Default::default(),
+            fdqgraph_canvas: Default::default(),
+            zoomw_slider_state: Default::default(),
+            zoomw_slider: Default::default(),
+            zoomy_slider_state: Default::default(),
+            zoomy_slider: Default::default(),
+            zoomx_slider_state: Default::default(),
+            zoomx_slider: Default::default(),
+            // posx_slider_state: Default::default(),
+            posdx_slider_state: Default::default(),
+            posdx_slider: Default::default(),
+        }
+    }
+}
 impl PingmonGUI {
     fn startup(&mut self) {
         let input_file = self.otheropts.input_file.as_ref();
@@ -151,7 +174,7 @@ impl Application for PingmonGUI {
         match message {
             Message::ZoomWSliderChanged(w) => {
                 self.zoomw_slider = w;
-                self.fdqgraph.set_scalefactor(w.exp() as f64);
+                self.fdqgraph.set_scalefactor((-w).exp() as f64);
             }
             Message::ZoomYSliderChanged(y) => {
                 self.zoomy_slider = y;
@@ -161,10 +184,10 @@ impl Application for PingmonGUI {
                 self.zoomx_slider = x;
                 self.fdqgraph.set_zoomx(x.exp() as f64);
             }
-            Message::PosXSliderChanged(x) => {
-                self.posx_slider = x;
-                self.update_posx();
-            }
+            // Message::PosXSliderChanged(x) => {
+            //     self.posx_slider = x;
+            //     self.update_posx();
+            // }
             Message::PosDXSliderChanged(x) => {
                 self.posdx_slider = x;
                 self.update_posx();
@@ -212,13 +235,13 @@ impl Application for PingmonGUI {
                 self.zoomx_slider,
                 Message::ZoomXSliderChanged,
             ));
-            row2 = row2.push(Text::new("x").size(20).color(Color::BLACK));
-            row2 = row2.push(Slider::new(
-                &mut self.posx_slider_state,
-                0.0..=1.0,
-                self.posx_slider,
-                Message::PosXSliderChanged,
-            ));
+            // row2 = row2.push(Text::new("x").size(20).color(Color::BLACK));
+            // row2 = row2.push(Slider::new(
+            //     &mut self.posx_slider_state,
+            //     0.0..=1.0,
+            //     self.posx_slider,
+            //     Message::PosXSliderChanged,
+            // ));
             row2 = row2.push(Text::new("dx").size(20).color(Color::BLACK));
             row2 = row2.push(Slider::new(
                 &mut self.posdx_slider_state,

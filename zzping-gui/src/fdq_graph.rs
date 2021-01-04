@@ -98,6 +98,10 @@ impl PlotAssist {
         let ptp = self.ptp(p);
         self.cfg.fs.pt(ptp.0 as f32, ptp.1 as f32)
     }
+    pub fn ptx(&self, px: f64, py: f64) -> Point {
+        let ptp = self.ptp((px, py));
+        self.cfg.fs.pt(ptp.0 as f32, py as f32)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -109,6 +113,8 @@ pub struct FDQGraph {
     posx: f64,
     zoomy: f64,
     max_recv: i64,
+    max_inflight: f32,
+    max_lostpackets: f32,
     scale_factor: f64,
 }
 
@@ -122,27 +128,60 @@ impl FDQGraph {
         let fdreader = FDCodecIter::new(buf);
         let mut fd: Vec<FrameDataQ<Complete>> = Vec::with_capacity(10000);
         self.max_recv = 0;
+        self.max_inflight = 0.0;
+        self.max_lostpackets = 0.0;
+        let mut stdmean_inflight: f32 = 0.0;
+        let mut stdmean_lostpackets: f32 = 0.0;
+        let mut timer_rm = Instant::now();
         for mut fdq in fdreader {
+            self.max_inflight = self.max_inflight.max(fdq.inflight);
+            stdmean_inflight += (fdq.inflight as f32).powi(2);
+            self.max_lostpackets = self.max_lostpackets.max(fdq.lost_packets);
+            stdmean_lostpackets += (fdq.lost_packets as f32).powi(2);
             self.max_recv = self.max_recv.max(fdq.recv_us[6]);
             if fdq.recv_us_len == 0 {
                 fdq.recv_us = [0, 0, 0, 0, 0, 0, 0];
             }
+
             fd.push(fdq);
+            if timer_rm.elapsed().as_secs() >= 1 {
+                timer_rm = Instant::now();
+                eprintln!("Still loading... got {} items now.", fd.len());
+            }
         }
+        dbg!(fd.len());
+        stdmean_inflight /= fd.len() as f32;
+        stdmean_inflight = stdmean_inflight.sqrt();
+        dbg!(stdmean_inflight);
+        dbg!(self.max_inflight);
+        dbg!(stdmean_lostpackets);
+        dbg!(self.max_lostpackets);
         self.fd = fd.clone(); // fd.chunks(1000).map(|x| FrameDataQ::fold_vec(x)).collect();
         eprintln!("loaded, caching: {:?}", timer.elapsed());
         let timer = Instant::now();
         self.fdcache.clear();
 
         let mut step = 1;
-        for _ in 0..8 {
+        for _ in 0..16 {
             step *= 2;
             fd = fd.chunks(2).map(|x| FrameDataQ::fold_vec(x)).collect();
             self.fdcache.push((step, fd.clone()));
-            dbg!(step);
+            if timer_rm.elapsed().as_secs() >= 1 {
+                timer_rm = Instant::now();
+                eprintln!(
+                    "Still caching... step {} with {} items now.",
+                    step,
+                    fd.len()
+                );
+            }
+
+            if fd.len() < 1000 {
+                break;
+            }
         }
         self.zoomx = 1.0;
         self.zoomy = 1.0;
+        self.posx = 0.5;
         self.scale_factor = 1.0;
         self.changed = true;
         eprintln!("caching finished: {:?}", timer.elapsed());
@@ -184,6 +223,8 @@ impl canvas::Drawable for FDQGraph {
         let color_r5 = Color::from_rgba8(50, 200, 200, 1.0);
         let color_r6 = Color::from_rgba8(50, 150, 200, 1.0);
         // let color_r6 = Color::from_rgba8(70, 100, 200, 1.0);
+        let color_inflight = Color::from_rgba8(0, 0, 0, 0.3);
+
         let green10 = Color::from_rgba8(0, 255, 0, 0.1);
         let white90 = Color::from_rgba8(255, 255, 255, 0.9);
         let black90 = Color::from_rgba8(0, 0, 0, 0.9);
@@ -208,6 +249,8 @@ impl canvas::Drawable for FDQGraph {
         let fill_recv = vec![
             fill_r0, fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6,
         ];
+        let fill_inflight = canvas::Fill::Color(color_inflight);
+
         let space = Path::rectangle(f.pt(0.0, 0.0), f.sz(1.0, 1.0));
         frame.fill(&space, Color::from_rgba8(100, 100, 100, 1.0));
         if self.fd.is_empty() {
@@ -273,7 +316,7 @@ impl canvas::Drawable for FDQGraph {
             let scale_factor = self.scale_factor;
             let src_left = min_ftime as f64;
             let src_right = max_ftime as f64;
-            let src_top = (self.max_recv as f64 / self.zoomy).powf(scale_factor);
+            let src_top = (self.max_recv as f64 * 1.5 / self.zoomy).powf(scale_factor);
             let src_bottom = 0.0;
 
             let pa = PlotAssist::new(PlotAssistCfg {
@@ -306,10 +349,16 @@ impl canvas::Drawable for FDQGraph {
 
             let mut path_bldr: Vec<_> = (0..7).map(|_| path::Builder::new()).collect();
             path_bldr.iter_mut().for_each(|b| b.move_to(f.pt(0.0, 1.0)));
+            let mut path_inflight = path::Builder::new();
+            path_inflight.move_to(f.pt(0.0, 1.0));
 
             let section_limit = 50;
             let mut line_count = 0;
-            for (n, _) in fd.iter().enumerate() {
+            for (n, fp) in fd.iter().enumerate() {
+                path_inflight.line_to(pa.ptx(
+                    fp.get_timestamp_ms() as f64,
+                    1.0 - (fp.inflight as f64 * 10.0 / self.max_inflight as f64).tanh(),
+                ));
                 path_bldr
                     .iter_mut()
                     .zip(points.iter())
@@ -349,6 +398,10 @@ impl canvas::Drawable for FDQGraph {
                     let polygon = old_b.build();
                     frame.fill(&polygon, *fill);
                 });
+            path_inflight.line_to(f.pt(1.0, 1.0));
+            path_inflight.close();
+            let poly = path_inflight.build();
+            frame.fill(&poly, fill_inflight);
 
             let fd_first = fd.first().unwrap();
             let fd_last = fd.last().unwrap();

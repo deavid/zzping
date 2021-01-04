@@ -65,8 +65,8 @@ pub struct FrameDataQ<T> {
     phantom: PhantomData<T>,
     pub timestamp: Option<i64>,
     pub subsec_ms: SubSecType,
-    pub inflight: usize,
-    pub lost_packets: usize,
+    pub inflight: f32,
+    pub lost_packets: f32,
     pub recv_us_len: usize,
     pub recv_us: [i64; 7],
 }
@@ -97,8 +97,8 @@ impl<Complete> FrameDataQ<Complete> {
             phantom: PhantomData::default(),
             timestamp: ts.map(|x| x.timestamp()),
             subsec_ms: SubSecType::Abs(e),
-            inflight: fd.inflight,
-            lost_packets: fd.lost_packets,
+            inflight: fd.inflight as f32,
+            lost_packets: fd.lost_packets as f32,
             recv_us_len: fd.recv_us.len(),
             recv_us: Self::compute_percentiles(&fd.recv_us),
         }
@@ -155,8 +155,11 @@ impl<Complete> FrameDataQ<Complete> {
 
         let timestamp = Some((mean_ts / 1000) as i64);
         let subsec_ms = SubSecType::Abs((mean_ts % 1000) as u32);
-        let inflight: usize = data.iter().map(|x| x.inflight).sum::<usize>() / datalen;
-        let lost_packets: usize = data.iter().map(|x| x.lost_packets).sum::<usize>() / datalen;
+        // let inflight: usize = data.iter().map(|x| x.inflight).max().unwrap();
+        let inflight: f32 = (data.iter().map(|x| x.inflight.powi(2)).sum::<f32>() as f32
+            / datalen as f32)
+            .powf(2.0_f32.recip());
+        let lost_packets: f32 = data.iter().map(|x| x.lost_packets).sum::<f32>() / datalen as f32;
         let recv_us_len: usize = data.iter().map(|x| x.recv_us_len).sum::<usize>() / datalen;
 
         let mut recv_us_list: Vec<u128> = data
@@ -496,9 +499,9 @@ impl RMPCodec for FrameDataQ<Encoded> {
             }
         }
         rmp::encode::write_uint(buf, subsec_ms as u64)?;
-        if self.inflight + self.lost_packets > 0 {
-            rmp::encode::write_uint(buf, self.inflight as u64)?;
-            rmp::encode::write_uint(buf, self.lost_packets as u64)?;
+        if self.inflight.round() as usize + self.lost_packets.round() as usize > 0 {
+            rmp::encode::write_uint(buf, self.inflight.round() as u64)?;
+            rmp::encode::write_uint(buf, self.lost_packets.round() as u64)?;
         } else {
             rmp::encode::write_nfix(buf, -1)?;
         }
@@ -546,11 +549,11 @@ impl RMPCodec for FrameDataQ<Encoded> {
             None => SubSecType::Delta(subsec_ms_v as u32),
         };
         let ifl: i64 = rmp::decode::read_int(rd)?;
-        let inflight: usize = if ifl == -1 { 0 } else { ifl as usize };
-        let lost_packets: usize = if ifl == -1 {
-            0
+        let inflight: f32 = if ifl == -1 { 0.0 } else { ifl as f32 };
+        let lost_packets: f32 = if ifl == -1 {
+            0.0
         } else {
-            rmp::decode::read_int(rd)?
+            rmp::decode::read_int::<usize, _>(rd)? as f32
         };
         let recv_us_len: usize = rmp::decode::read_int(rd)?;
         let mut recv_us: [i64; 7] = [-1, -1, -1, -1, -1, -1, -1];
