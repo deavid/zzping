@@ -152,7 +152,12 @@ impl canvas::Drawable for FDQGraph {
     fn draw(&self, frame: &mut canvas::Frame) {
         let timer_begin = Instant::now();
         let f = FrameScaler::new(frame);
-        let green50 = Color::from_rgba8(0, 255, 0, 0.5);
+        let color_r6 = Color::from_rgba8(200, 100, 50, 1.0);
+        let color_r5 = Color::from_rgba8(200, 150, 50, 1.0);
+        let color_r4 = Color::from_rgba8(200, 200, 50, 1.0);
+        let color_r3 = Color::from_rgba8(50, 220, 50, 1.0);
+        let color_r2 = Color::from_rgba8(50, 100, 200, 1.0);
+        let color_r1 = Color::from_rgba8(50, 50, 50, 1.0);
         let green10 = Color::from_rgba8(0, 255, 0, 0.1);
         let white90 = Color::from_rgba8(255, 255, 255, 0.9);
         let black90 = Color::from_rgba8(0, 0, 0, 0.9);
@@ -167,15 +172,20 @@ impl canvas::Drawable for FDQGraph {
             color: black50,
             ..Stroke::default()
         };
-        let green_fill = canvas::Fill::Color(green50);
-
+        let fill_r1 = canvas::Fill::Color(color_r1);
+        let fill_r2 = canvas::Fill::Color(color_r2);
+        let fill_r3 = canvas::Fill::Color(color_r3);
+        let fill_r4 = canvas::Fill::Color(color_r4);
+        let fill_r5 = canvas::Fill::Color(color_r5);
+        let fill_r6 = canvas::Fill::Color(color_r6);
+        let fill_recv = vec![fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6];
         let space = Path::rectangle(f.pt(0.0, 0.0), f.sz(1.0, 1.0));
         frame.fill(&space, Color::from_rgba8(100, 100, 100, 1.0));
         if self.fd.is_empty() {
             let line = canvas::Path::line(f.pt(0.0, 0.0), f.pt(1.0, 1.0));
             frame.stroke(&line, green_stroke);
         } else {
-            let total_limit = 20000;
+            let total_limit = 2000;
 
             let zoomx = self.zoomx.min(self.fd.len() as f64 / 2.0);
             let len = (self.fd.len() as f64 / zoomx).round() as usize;
@@ -213,13 +223,18 @@ impl canvas::Drawable for FDQGraph {
                 src_top,
                 src_bottom,
             });
+            let mut points: Vec<_> = vec![];
+            for i in 0..7 {
+                let points_i: Vec<_> = fd
+                    .iter()
+                    .map(|x| (x.get_timestamp_ms() as f64, x.recv_us[i] as f64))
+                    .collect();
+                points.push(points_i)
+            }
+            // let points_3 = &points[3];
+            // let points_6 = &points[6];
 
-            let points: Vec<_> = fd
-                .iter()
-                .map(|x| (x.get_timestamp_ms() as f64, x.recv_us[3] as f64))
-                .collect();
-
-            dbg!(pa.ptp(points[0]), pa.ptp(*points.last().unwrap()));
+            // dbg!(pa.ptp(points[0]), pa.ptp(*points.last().unwrap()));
 
             let fd_first = fd.first().unwrap();
             let fd_last = fd.last().unwrap();
@@ -232,33 +247,92 @@ impl canvas::Drawable for FDQGraph {
             frame.stroke(&line, black_stroke);
 
             // let mut src = pa.pt(points[0]);
-            let mut path_bldr = path::Builder::new();
-            path_bldr.move_to(f.pt(0.0, 1.0));
+            let mut path_bldr: Vec<_> = (0..7).map(|_| path::Builder::new()).collect();
+            path_bldr.iter_mut().for_each(|b| b.move_to(f.pt(0.0, 1.0)));
+
+            // let mut path_bldr_3 = path::Builder::new();
+            // path_bldr_3.move_to(f.pt(0.0, 1.0));
+            // let mut path_bldr_6 = path::Builder::new();
+            // path_bldr_6.move_to(f.pt(0.0, 1.0));
+
             let section_limit = 50;
             let mut line_count = 0;
-            for p in points.iter() {
-                let dst = pa.pt(*p);
-                path_bldr.line_to(dst);
+            for (n, _) in fd.iter().enumerate() {
+                path_bldr
+                    .iter_mut()
+                    .zip(points.iter())
+                    .for_each(|(b, p)| b.line_to(pa.pt(p[n])));
+                // let p3 = points_3[n];
+                // let p6 = points_6[n];
+                // let dst3 = pa.pt(p3);
+                // let dst6 = pa.pt(p6);
+                // path_bldr_3.line_to(dst3);
+                // path_bldr_6.line_to(dst6);
                 line_count += 1;
                 if line_count > section_limit {
-                    let mid = f.pt(pa.ptp(*p).0 as f32, 1.0);
-                    path_bldr.line_to(mid);
-                    path_bldr.close();
-                    let line = path_bldr.build();
-                    frame.fill(&line, green_fill);
-                    path_bldr = path::Builder::new();
-                    path_bldr.move_to(mid);
-                    path_bldr.line_to(dst);
+                    path_bldr
+                        .iter_mut()
+                        .zip(points.iter())
+                        .zip(fill_recv.iter())
+                        .rev()
+                        .for_each(|((b, p), fill)| {
+                            let p = p[n];
+                            let mid = f.pt(pa.ptp(p).0 as f32, 1.0);
+                            b.line_to(mid);
+                            b.close();
+                            let old_b = std::mem::replace(b, path::Builder::new());
+                            let polygon = old_b.build();
+                            frame.fill(&polygon, *fill);
+                            b.move_to(mid);
+                            b.line_to(pa.pt(p));
+                        });
+
+                    // let mid6 = f.pt(pa.ptp(p6).0 as f32, 1.0);
+                    // path_bldr_6.line_to(mid6);
+                    // path_bldr_6.close();
+                    // let line = path_bldr_6.build();
+                    // frame.fill(&line, fill_r6);
+                    // path_bldr_6 = path::Builder::new();
+                    // path_bldr_6.move_to(mid6);
+                    // path_bldr_6.line_to(dst6);
+
+                    // let mid3 = f.pt(pa.ptp(p3).0 as f32, 1.0);
+                    // path_bldr_3.line_to(mid3);
+                    // path_bldr_3.close();
+                    // let line = path_bldr_3.build();
+                    // frame.fill(&line, fill_r3);
+                    // path_bldr_3 = path::Builder::new();
+                    // path_bldr_3.move_to(mid3);
+                    // path_bldr_3.line_to(dst3);
+
                     line_count = 1;
                 }
                 // let line = canvas::Path::line(src, dst);
                 // frame.stroke(&line, green_stroke);
                 // src = dst;
             }
-            path_bldr.line_to(f.pt(1.0, 1.0));
-            path_bldr.close();
-            let line = path_bldr.build();
-            frame.fill(&line, green_fill);
+            path_bldr
+                .iter_mut()
+                .zip(fill_recv.iter())
+                .rev()
+                .for_each(|(b, fill)| {
+                    b.line_to(f.pt(1.0, 1.0));
+                    b.close();
+                    // We need to replace it with a new, even if its not used.
+                    let old_b = std::mem::replace(b, path::Builder::new());
+                    let polygon = old_b.build();
+                    frame.fill(&polygon, *fill);
+                });
+
+            // path_bldr_6.line_to(f.pt(1.0, 1.0));
+            // path_bldr_6.close();
+            // let line = path_bldr_6.build();
+            // frame.fill(&line, fill_r6);
+
+            // path_bldr_3.line_to(f.pt(1.0, 1.0));
+            // path_bldr_3.close();
+            // let line = path_bldr_3.build();
+            // frame.fill(&line, fill_r3);
 
             // frame.stroke(&line, green_stroke);
 

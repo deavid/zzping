@@ -32,6 +32,7 @@ pub enum Message {
     ZoomYSliderChanged(f32),
     ZoomXSliderChanged(f32),
     PosXSliderChanged(f32),
+    PosDXSliderChanged(f32),
     Tick(Instant),
     Startup,
 }
@@ -51,6 +52,8 @@ pub struct PingmonGUI {
     zoomx_slider: f32,
     posx_slider_state: slider::State,
     posx_slider: f32,
+    posdx_slider_state: slider::State,
+    posdx_slider: f32,
 }
 
 impl PingmonGUI {
@@ -87,9 +90,30 @@ impl PingmonGUI {
             if self.graph.update(instant, stats) {
                 self.graph_canvas.clear();
             }
-        } else if self.fdqgraph.update(instant) {
-            self.fdqgraph_canvas.clear();
+        } else {
+            if self.fdqgraph.update(instant) {
+                self.fdqgraph_canvas.clear();
+            }
+            if self.posdx_slider.abs() > 0.01 {
+                let adx = self.posdx_slider.signum() / 200.0;
+                let z = (self.zoomx_slider as f64).exp();
+                let dx = self.posdx_slider as f64 / z;
+                let factor = 1.0 / 50.0;
+                self.posx_slider += dx as f32 * factor;
+                self.posdx_slider -= adx;
+                if self.posdx_slider.abs() < 0.01 {
+                    self.posdx_slider = 0.0;
+                }
+                self.update_posx();
+            }
         }
+    }
+    fn update_posx(&mut self) {
+        let x = self.posx_slider as f64;
+        // let z = (self.zoomx_slider as f64).exp();
+        // let dx = self.posdx_slider as f64 / z;
+        // let fx = x;
+        self.fdqgraph.set_posx(x.max(0.0).min(1.0));
     }
 }
 
@@ -116,7 +140,7 @@ impl Application for PingmonGUI {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        super::subscr_time::every(std::time::Duration::from_millis(50)).map(Message::Tick)
+        super::subscr_time::every(std::time::Duration::from_millis(20)).map(Message::Tick)
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
@@ -131,7 +155,11 @@ impl Application for PingmonGUI {
             }
             Message::PosXSliderChanged(x) => {
                 self.posx_slider = x;
-                self.fdqgraph.set_posx(x as f64);
+                self.update_posx();
+            }
+            Message::PosDXSliderChanged(x) => {
+                self.posdx_slider = x;
+                self.update_posx();
             }
             Message::Tick(instant) => self.tick(instant),
             Message::Startup => self.startup(),
@@ -172,6 +200,12 @@ impl Application for PingmonGUI {
                 0.0..=1.0,
                 self.posx_slider,
                 Message::PosXSliderChanged,
+            ));
+            row2 = row2.push(Slider::new(
+                &mut self.posdx_slider_state,
+                -1.0..=1.0,
+                self.posdx_slider,
+                Message::PosDXSliderChanged,
             ));
             window = window.push(row2);
         }
