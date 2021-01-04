@@ -145,6 +145,35 @@ impl<Complete> FrameDataQ<Complete> {
             recv_us: self.recv_us,
         }
     }
+    pub fn fold_vec(data: Vec<Self>) -> Self {
+        let datalen = data.len();
+        let vtimestamp_ms = data.iter().map(|x| x.get_timestamp_ms());
+        let mean_ts: i128 = vtimestamp_ms.sum::<i128>() / datalen as i128;
+
+        let timestamp = Some((mean_ts / 1000) as i64);
+        let subsec_ms = SubSecType::Abs((mean_ts % 1000) as u32);
+        let inflight: usize = data.iter().map(|x| x.inflight).sum::<usize>() / datalen;
+        let lost_packets: usize = data.iter().map(|x| x.lost_packets).sum::<usize>() / datalen;
+        let recv_us_len: usize = data.iter().map(|x| x.recv_us_len).sum::<usize>() / datalen;
+
+        let recv_us_list: Vec<u128> = data
+            .iter()
+            .map(|x| x.recv_us.iter())
+            .flatten()
+            .map(|x| *x as u128)
+            .collect();
+        let recv_us = Self::compute_percentiles(&recv_us_list);
+
+        FrameDataQ {
+            phantom: PhantomData::default(),
+            timestamp,
+            subsec_ms,
+            inflight,
+            lost_packets,
+            recv_us_len,
+            recv_us,
+        }
+    }
 }
 
 impl<Encoded> FrameDataQ<Encoded> {

@@ -197,7 +197,7 @@ impl canvas::Drawable for FDQGraph {
             } else {
                 1
             };
-
+            dbg!(step);
             let fd: Vec<_> = ifd.iter().step_by(step).collect();
             let min_ftime = fd
                 .iter()
