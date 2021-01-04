@@ -98,10 +98,10 @@ impl PingmonGUI {
                 self.fdqgraph_canvas.clear();
             }
             if self.posdx_slider.abs() > 0.01 {
-                let adx = self.posdx_slider.signum() / 200.0;
+                let adx = self.posdx_slider.signum() / 500.0;
                 let z = (self.zoomx_slider as f64).exp();
                 let dx = self.posdx_slider as f64 / z;
-                let factor = 1.0 / 50.0;
+                let factor = 1.0 / 100.0;
                 self.posx_slider += dx as f32 * factor;
                 self.posdx_slider -= adx;
                 if self.posdx_slider.abs() < 0.01 {

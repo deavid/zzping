@@ -122,8 +122,11 @@ impl FDQGraph {
         let fdreader = FDCodecIter::new(buf);
         let mut fd: Vec<FrameDataQ<Complete>> = Vec::with_capacity(10000);
         self.max_recv = 0;
-        for fdq in fdreader {
+        for mut fdq in fdreader {
             self.max_recv = self.max_recv.max(fdq.recv_us[6]);
+            if fdq.recv_us_len == 0 {
+                fdq.recv_us = [0, 0, 0, 0, 0, 0, 0];
+            }
             fd.push(fdq);
         }
         self.fd = fd.clone(); // fd.chunks(1000).map(|x| FrameDataQ::fold_vec(x)).collect();
@@ -211,8 +214,8 @@ impl canvas::Drawable for FDQGraph {
             let line = canvas::Path::line(f.pt(0.0, 0.0), f.pt(1.0, 1.0));
             frame.stroke(&line, green_stroke);
         } else {
-            let total_sublimit = 4;
-            let total_limit = 1000 * total_sublimit;
+            let total_sublimit = 3;
+            let total_limit = 500 * total_sublimit;
             let total_cache = total_limit * 3 / 2;
             let mut fd = &self.fd;
             let mut cache_step = 1;
@@ -231,16 +234,17 @@ impl canvas::Drawable for FDQGraph {
             let substep = (ifd.len() * total_sublimit / total_limit)
                 .min(total_sublimit)
                 .max(1);
-            eprintln!("cache: {} step: {} substep: {}", cache_step, step, substep);
             // TODO: Grey out areas w/o packets. These appear as lines now and seem to have "data", but they don't.
             let time_chunks = Instant::now();
             let fd: Vec<_> = match step > 1 {
                 // FIXME: if a chunk is all -1, then what happens? think of zooming in a conn-loss.
                 true => ifd.chunks(step).map(|x| FrameDataQ::fold_vec(x)).collect(),
-                false => ifd.iter().filter(|x| x.recv_us_len > 0).copied().collect(),
+                false => ifd.iter().copied().collect(), // .filter(|x| x.recv_us_len > 0)
             };
-
-            dbg!(time_chunks.elapsed());
+            if time_chunks.elapsed().as_millis() > 10 {
+                dbg!(time_chunks.elapsed());
+                eprintln!("cache: {} step: {} substep: {}", cache_step, step, substep);
+            }
             let time_windows = Instant::now();
             let fd: Vec<_> = match substep > 1 {
                 // FIXME: if a window is all -1, then what happens? think of zooming in a conn-loss.
@@ -250,7 +254,9 @@ impl canvas::Drawable for FDQGraph {
                     .collect(),
                 false => fd.iter().copied().collect(),
             };
-            dbg!(time_windows.elapsed());
+            if time_windows.elapsed().as_millis() > 10 {
+                dbg!(time_windows.elapsed());
+            }
 
             let min_ftime = fd
                 .iter()
@@ -284,15 +290,12 @@ impl canvas::Drawable for FDQGraph {
                     .map(|x| {
                         (
                             x.get_timestamp_ms() as f64,
-                            (x.recv_us[i] as f64).powf(scale_factor),
+                            (x.recv_us[i] as f64).max(0.0).powf(scale_factor),
                         )
                     })
                     .collect();
                 points.push(points_i)
             }
-
-            let fd_first = fd.first().unwrap();
-            let fd_last = fd.last().unwrap();
 
             let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 2.0), f.pt(1.0, 1.0 - 1.0 / 2.0));
             frame.stroke(&line, black_stroke);
@@ -301,14 +304,8 @@ impl canvas::Drawable for FDQGraph {
             let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 16.0), f.pt(1.0, 1.0 - 1.0 / 16.0));
             frame.stroke(&line, black_stroke);
 
-            // let mut src = pa.pt(points[0]);
             let mut path_bldr: Vec<_> = (0..7).map(|_| path::Builder::new()).collect();
             path_bldr.iter_mut().for_each(|b| b.move_to(f.pt(0.0, 1.0)));
-
-            // let mut path_bldr_3 = path::Builder::new();
-            // path_bldr_3.move_to(f.pt(0.0, 1.0));
-            // let mut path_bldr_6 = path::Builder::new();
-            // path_bldr_6.move_to(f.pt(0.0, 1.0));
 
             let section_limit = 50;
             let mut line_count = 0;
@@ -353,18 +350,16 @@ impl canvas::Drawable for FDQGraph {
                     frame.fill(&polygon, *fill);
                 });
 
-            // path_bldr_6.line_to(f.pt(1.0, 1.0));
-            // path_bldr_6.close();
-            // let line = path_bldr_6.build();
-            // frame.fill(&line, fill_r6);
+            let fd_first = fd.first().unwrap();
+            let fd_last = fd.last().unwrap();
+            let mid_pos = ((fd.len() - 1) as f32 * self.posx as f32).round();
+            let fd_mid = fd[mid_pos as usize];
 
-            // path_bldr_3.line_to(f.pt(1.0, 1.0));
-            // path_bldr_3.close();
-            // let line = path_bldr_3.build();
-            // frame.fill(&line, fill_r3);
+            // Zoom X locator
+            let line = canvas::Path::line(f.pt(self.posx as f32, 0.0), f.pt(self.posx as f32, 1.0));
+            frame.stroke(&line, black_stroke);
 
-            // frame.stroke(&line, green_stroke);
-
+            // Ping timing lines - vertical
             let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 2.0), f.pt(1.0, 1.0 - 1.0 / 2.0));
             frame.stroke(&line, black_stroke);
             let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 4.0), f.pt(1.0, 1.0 - 1.0 / 4.0));
@@ -396,7 +391,11 @@ impl canvas::Drawable for FDQGraph {
             });
             frame.fill_text(text);
             let text = canvas::Text {
-                content: format!("Viewport width: {}", vw_width_text),
+                content: format!(
+                    "Viewport width: {}\n{}",
+                    vw_width_text,
+                    fd_mid.get_datetime()
+                ),
                 position: f.pt(0.5, 0.01),
                 color: white90,
                 size: f.ph(0.04),
@@ -484,6 +483,8 @@ impl canvas::Drawable for FDQGraph {
             });
             frame.fill_text(text);
         }
-        dbg!(timer_begin.elapsed());
+        if timer_begin.elapsed().as_millis() > 50 {
+            dbg!(timer_begin.elapsed());
+        }
     }
 }
