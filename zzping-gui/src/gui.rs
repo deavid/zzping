@@ -21,8 +21,8 @@ use super::flags::GuiConfig;
 use super::graph_plot::LatencyGraph;
 use super::udp_comm::UdpStats;
 use iced::{
-    canvas, executor, slider, Application, Canvas, Column, Command, Element, Length, Row, Slider,
-    Subscription,
+    canvas, executor, slider, Application, Canvas, Color, Column, Command, Element, Length, Row,
+    Slider, Subscription, Text,
 };
 use std::net::UdpSocket;
 use std::time::Instant;
@@ -183,24 +183,28 @@ impl Application for PingmonGUI {
                 .push(self.fdqgraph_canvas.with(&self.fdqgraph));
             window = window.push(graph);
             let mut row2 = Row::new().padding(4).spacing(5);
+            row2 = row2.push(Text::new("y").size(20).color(Color::BLACK));
             row2 = row2.push(Slider::new(
                 &mut self.zoomy_slider_state,
                 0.0..=8.0,
                 self.zoomy_slider,
                 Message::ZoomYSliderChanged,
             ));
+            row2 = row2.push(Text::new("z").size(20).color(Color::BLACK));
             row2 = row2.push(Slider::new(
                 &mut self.zoomx_slider_state,
                 0.0..=10.0,
                 self.zoomx_slider,
                 Message::ZoomXSliderChanged,
             ));
+            row2 = row2.push(Text::new("x").size(20).color(Color::BLACK));
             row2 = row2.push(Slider::new(
                 &mut self.posx_slider_state,
                 0.0..=1.0,
                 self.posx_slider,
                 Message::PosXSliderChanged,
             ));
+            row2 = row2.push(Text::new("dx").size(20).color(Color::BLACK));
             row2 = row2.push(Slider::new(
                 &mut self.posdx_slider_state,
                 -1.0..=1.0,
