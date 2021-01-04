@@ -104,6 +104,7 @@ impl PingmonGUI {
                 if self.posdx_slider.abs() < 0.01 {
                     self.posdx_slider = 0.0;
                 }
+                self.posx_slider = self.posx_slider.max(0.0).min(1.0);
                 self.update_posx();
             }
         }

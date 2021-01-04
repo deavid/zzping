@@ -114,15 +114,17 @@ impl FDQGraph {
     pub fn load_file(&mut self, filename: &str) {
         let timer = Instant::now();
         eprintln!("Loading file: {}", filename);
-        self.fd.clear();
+        // self.fd.clear();
         let f = File::open(filename).unwrap();
         let buf = BufReader::new(f);
         let fdreader = FDCodecIter::new(buf);
+        let mut fd: Vec<FrameDataQ<Complete>> = Vec::with_capacity(10000);
         self.max_recv = 0;
         for fdq in fdreader {
             self.max_recv = self.max_recv.max(fdq.recv_us[6]);
-            self.fd.push(fdq);
+            fd.push(fdq);
         }
+        self.fd = fd; // fd.chunks(1000).map(|x| FrameDataQ::fold_vec(x)).collect();
         eprintln!("done: {:?}", timer.elapsed());
 
         self.zoomx = 1.0;
@@ -152,12 +154,14 @@ impl canvas::Drawable for FDQGraph {
     fn draw(&self, frame: &mut canvas::Frame) {
         let timer_begin = Instant::now();
         let f = FrameScaler::new(frame);
-        let color_r6 = Color::from_rgba8(200, 100, 50, 1.0);
-        let color_r5 = Color::from_rgba8(200, 150, 50, 1.0);
-        let color_r4 = Color::from_rgba8(200, 200, 50, 1.0);
-        let color_r3 = Color::from_rgba8(50, 220, 50, 1.0);
-        let color_r2 = Color::from_rgba8(50, 100, 200, 1.0);
-        let color_r1 = Color::from_rgba8(50, 50, 50, 1.0);
+        let color_r0 = Color::from_rgba8(100, 50, 50, 1.0);
+        let color_r1 = Color::from_rgba8(220, 50, 50, 1.0);
+        let color_r2 = Color::from_rgba8(200, 150, 50, 1.0);
+        let color_r3 = Color::from_rgba8(200, 200, 50, 1.0);
+        let color_r4 = Color::from_rgba8(50, 220, 50, 1.0);
+        let color_r5 = Color::from_rgba8(50, 200, 200, 1.0);
+        let color_r6 = Color::from_rgba8(50, 150, 200, 1.0);
+        // let color_r6 = Color::from_rgba8(70, 100, 200, 1.0);
         let green10 = Color::from_rgba8(0, 255, 0, 0.1);
         let white90 = Color::from_rgba8(255, 255, 255, 0.9);
         let black90 = Color::from_rgba8(0, 0, 0, 0.9);
@@ -172,33 +176,49 @@ impl canvas::Drawable for FDQGraph {
             color: black50,
             ..Stroke::default()
         };
+        let fill_r0 = canvas::Fill::Color(color_r0);
         let fill_r1 = canvas::Fill::Color(color_r1);
         let fill_r2 = canvas::Fill::Color(color_r2);
         let fill_r3 = canvas::Fill::Color(color_r3);
         let fill_r4 = canvas::Fill::Color(color_r4);
         let fill_r5 = canvas::Fill::Color(color_r5);
         let fill_r6 = canvas::Fill::Color(color_r6);
-        let fill_recv = vec![fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6];
+        let fill_recv = vec![
+            fill_r0, fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6,
+        ];
         let space = Path::rectangle(f.pt(0.0, 0.0), f.sz(1.0, 1.0));
         frame.fill(&space, Color::from_rgba8(100, 100, 100, 1.0));
         if self.fd.is_empty() {
             let line = canvas::Path::line(f.pt(0.0, 0.0), f.pt(1.0, 1.0));
             frame.stroke(&line, green_stroke);
         } else {
-            let total_limit = 2000;
+            let total_sublimit = 4;
+            let total_limit = 1000 * total_sublimit;
 
             let zoomx = self.zoomx.min(self.fd.len() as f64 / 2.0);
             let len = (self.fd.len() as f64 / zoomx).round() as usize;
             let zero = ((self.fd.len() - len) as f64 * self.posx) as usize;
             let ifd = &self.fd[zero..len + zero];
 
-            let step = if ifd.len() > total_limit {
-                ifd.len() / total_limit
-            } else {
-                1
+            let step = (ifd.len() / total_limit).max(1);
+            let substep = (ifd.len() * total_sublimit / total_limit)
+                .min(total_sublimit)
+                .max(1);
+            dbg!(step, substep);
+            // TODO: Grey out areas w/o packets. These appear as lines now and seem to have "data", but they don't.
+
+            let fd: Vec<_> = match step > 1 {
+                true => ifd.chunks(step).map(|x| FrameDataQ::fold_vec(x)).collect(),
+                false => ifd.iter().copied().collect(),
             };
-            dbg!(step);
-            let fd: Vec<_> = ifd.iter().step_by(step).collect();
+            let fd: Vec<_> = match substep > 1 {
+                true => fd
+                    .windows(substep)
+                    .map(|x| FrameDataQ::fold_vec(x))
+                    .collect(),
+                false => fd.iter().copied().collect(),
+            };
+
             let min_ftime = fd
                 .iter()
                 .take(100)
@@ -210,10 +230,10 @@ impl canvas::Drawable for FDQGraph {
                 .map(|x| x.get_timestamp_ms())
                 .max()
                 .unwrap();
-            let max_recv = self.max_recv;
+
             let src_left = min_ftime as f64;
             let src_right = max_ftime as f64;
-            let src_top = max_recv as f64 / self.zoomy;
+            let src_top = self.max_recv as f64 / self.zoomy;
             let src_bottom = 0.0;
 
             let pa = PlotAssist::new(PlotAssistCfg {
@@ -231,10 +251,6 @@ impl canvas::Drawable for FDQGraph {
                     .collect();
                 points.push(points_i)
             }
-            // let points_3 = &points[3];
-            // let points_6 = &points[6];
-
-            // dbg!(pa.ptp(points[0]), pa.ptp(*points.last().unwrap()));
 
             let fd_first = fd.first().unwrap();
             let fd_last = fd.last().unwrap();

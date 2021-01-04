@@ -114,6 +114,7 @@ impl<Complete> FrameDataQ<Complete> {
         let subsec_ms = self.subsec_ms.unwrap_abs();
         ts as i128 * 1000 + subsec_ms as i128
     }
+    // CAUTION:: This function requires the data to be pre-sorted, and all negative values removed!
     pub fn compute_percentiles(v: &[u128]) -> [i64; 7] {
         let mut ret = [-1_i64; 7];
         if v.is_empty() {
@@ -124,13 +125,15 @@ impl<Complete> FrameDataQ<Complete> {
         for (i, p) in percentiles.iter().enumerate() {
             let p = *p * vmax as f32;
             let (pl, pr) = (p.floor() as usize, p.ceil() as usize);
+            let val;
             if pl == pr {
-                ret[i] = v[pl] as i64;
+                val = v[pl] as i64;
             } else {
                 let fr = p - pl as f32;
                 let fl = 1.0 - fr;
-                ret[i] = (v[pl] as f32 * fl + v[pr] as f32 * fr).round() as i64;
+                val = (v[pl] as f32 * fl + v[pr] as f32 * fr).round() as i64;
             }
+            ret[i] = val;
         }
         ret
     }
@@ -145,7 +148,7 @@ impl<Complete> FrameDataQ<Complete> {
             recv_us: self.recv_us,
         }
     }
-    pub fn fold_vec(data: Vec<Self>) -> Self {
+    pub fn fold_vec(data: &[Self]) -> Self {
         let datalen = data.len();
         let vtimestamp_ms = data.iter().map(|x| x.get_timestamp_ms());
         let mean_ts: i128 = vtimestamp_ms.sum::<i128>() / datalen as i128;
@@ -156,12 +159,14 @@ impl<Complete> FrameDataQ<Complete> {
         let lost_packets: usize = data.iter().map(|x| x.lost_packets).sum::<usize>() / datalen;
         let recv_us_len: usize = data.iter().map(|x| x.recv_us_len).sum::<usize>() / datalen;
 
-        let recv_us_list: Vec<u128> = data
+        let mut recv_us_list: Vec<u128> = data
             .iter()
             .map(|x| x.recv_us.iter())
             .flatten()
+            .filter(|x| **x >= 0)
             .map(|x| *x as u128)
             .collect();
+        recv_us_list.sort_unstable();
         let recv_us = Self::compute_percentiles(&recv_us_list);
 
         FrameDataQ {
