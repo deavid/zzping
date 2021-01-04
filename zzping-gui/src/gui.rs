@@ -29,6 +29,7 @@ use std::time::Instant;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
+    ZoomWSliderChanged(f32),
     ZoomYSliderChanged(f32),
     ZoomXSliderChanged(f32),
     PosXSliderChanged(f32),
@@ -46,6 +47,8 @@ pub struct PingmonGUI {
     pub socket: Option<UdpSocket>,
     pub fdqgraph: FDQGraph,
     pub fdqgraph_canvas: canvas::layer::Cache<FDQGraph>,
+    zoomw_slider_state: slider::State,
+    zoomw_slider: f32,
     zoomy_slider_state: slider::State,
     zoomy_slider: f32,
     zoomx_slider_state: slider::State,
@@ -146,6 +149,10 @@ impl Application for PingmonGUI {
 
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
+            Message::ZoomWSliderChanged(w) => {
+                self.zoomw_slider = w;
+                self.fdqgraph.set_scalefactor(w.exp() as f64);
+            }
             Message::ZoomYSliderChanged(y) => {
                 self.zoomy_slider = y;
                 self.fdqgraph.set_zoomy(y.exp() as f64);
@@ -184,6 +191,13 @@ impl Application for PingmonGUI {
                 .push(self.fdqgraph_canvas.with(&self.fdqgraph));
             window = window.push(graph);
             let mut row2 = Row::new().padding(4).spacing(5);
+            row2 = row2.push(Text::new("sf").size(20).color(Color::BLACK));
+            row2 = row2.push(Slider::new(
+                &mut self.zoomw_slider_state,
+                -2.0..=2.0,
+                self.zoomw_slider,
+                Message::ZoomWSliderChanged,
+            ));
             row2 = row2.push(Text::new("y").size(20).color(Color::BLACK));
             row2 = row2.push(Slider::new(
                 &mut self.zoomy_slider_state,

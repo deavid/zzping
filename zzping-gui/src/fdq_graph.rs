@@ -102,12 +102,14 @@ impl PlotAssist {
 
 #[derive(Debug, Default)]
 pub struct FDQGraph {
-    pub fd: Vec<FrameDataQ<Complete>>,
+    fd: Vec<FrameDataQ<Complete>>,
+    fdcache: Vec<(i64, Vec<FrameDataQ<Complete>>)>,
     changed: bool,
     zoomx: f64,
     posx: f64,
     zoomy: f64,
     max_recv: i64,
+    scale_factor: f64,
 }
 
 impl FDQGraph {
@@ -124,12 +126,23 @@ impl FDQGraph {
             self.max_recv = self.max_recv.max(fdq.recv_us[6]);
             fd.push(fdq);
         }
-        self.fd = fd; // fd.chunks(1000).map(|x| FrameDataQ::fold_vec(x)).collect();
-        eprintln!("done: {:?}", timer.elapsed());
+        self.fd = fd.clone(); // fd.chunks(1000).map(|x| FrameDataQ::fold_vec(x)).collect();
+        eprintln!("loaded, caching: {:?}", timer.elapsed());
+        let timer = Instant::now();
+        self.fdcache.clear();
 
+        let mut step = 1;
+        for _ in 0..8 {
+            step *= 2;
+            fd = fd.chunks(2).map(|x| FrameDataQ::fold_vec(x)).collect();
+            self.fdcache.push((step, fd.clone()));
+            dbg!(step);
+        }
         self.zoomx = 1.0;
         self.zoomy = 1.0;
+        self.scale_factor = 1.0;
         self.changed = true;
+        eprintln!("caching finished: {:?}", timer.elapsed());
     }
     pub fn update(&mut self, _now: Instant) -> bool {
         let ret = self.changed;
@@ -145,7 +158,13 @@ impl FDQGraph {
         self.changed = true;
     }
     pub fn set_posx(&mut self, x: f64) {
-        self.posx = x;
+        if (x - self.posx).abs() > 1e-12 {
+            self.posx = x;
+            self.changed = true;
+        }
+    }
+    pub fn set_scalefactor(&mut self, z: f64) {
+        self.scale_factor = z;
         self.changed = true;
     }
 }
@@ -194,30 +213,44 @@ impl canvas::Drawable for FDQGraph {
         } else {
             let total_sublimit = 4;
             let total_limit = 1000 * total_sublimit;
-
-            let zoomx = self.zoomx.min(self.fd.len() as f64 / 2.0);
-            let len = (self.fd.len() as f64 / zoomx).round() as usize;
-            let zero = ((self.fd.len() - len) as f64 * self.posx) as usize;
-            let ifd = &self.fd[zero..len + zero];
+            let total_cache = total_limit * 3 / 2;
+            let mut fd = &self.fd;
+            let mut cache_step = 1;
+            for (s, cache) in self.fdcache.iter() {
+                if cache.len() / self.zoomx as usize > total_cache {
+                    fd = cache;
+                    cache_step = *s;
+                }
+            }
+            let zoomx = self.zoomx.min(fd.len() as f64 / 2.0);
+            let len = (fd.len() as f64 / zoomx).round() as usize;
+            let zero = ((fd.len() - len) as f64 * self.posx) as usize;
+            let ifd = &fd[zero..len + zero];
 
             let step = (ifd.len() / total_limit).max(1);
             let substep = (ifd.len() * total_sublimit / total_limit)
                 .min(total_sublimit)
                 .max(1);
-            dbg!(step, substep);
+            eprintln!("cache: {} step: {} substep: {}", cache_step, step, substep);
             // TODO: Grey out areas w/o packets. These appear as lines now and seem to have "data", but they don't.
-
+            let time_chunks = Instant::now();
             let fd: Vec<_> = match step > 1 {
+                // FIXME: if a chunk is all -1, then what happens? think of zooming in a conn-loss.
                 true => ifd.chunks(step).map(|x| FrameDataQ::fold_vec(x)).collect(),
-                false => ifd.iter().copied().collect(),
+                false => ifd.iter().filter(|x| x.recv_us_len > 0).copied().collect(),
             };
+
+            dbg!(time_chunks.elapsed());
+            let time_windows = Instant::now();
             let fd: Vec<_> = match substep > 1 {
+                // FIXME: if a window is all -1, then what happens? think of zooming in a conn-loss.
                 true => fd
                     .windows(substep)
                     .map(|x| FrameDataQ::fold_vec(x))
                     .collect(),
                 false => fd.iter().copied().collect(),
             };
+            dbg!(time_windows.elapsed());
 
             let min_ftime = fd
                 .iter()
@@ -231,9 +264,10 @@ impl canvas::Drawable for FDQGraph {
                 .max()
                 .unwrap();
 
+            let scale_factor = self.scale_factor;
             let src_left = min_ftime as f64;
             let src_right = max_ftime as f64;
-            let src_top = self.max_recv as f64 / self.zoomy;
+            let src_top = (self.max_recv as f64 / self.zoomy).powf(scale_factor);
             let src_bottom = 0.0;
 
             let pa = PlotAssist::new(PlotAssistCfg {
@@ -247,7 +281,12 @@ impl canvas::Drawable for FDQGraph {
             for i in 0..7 {
                 let points_i: Vec<_> = fd
                     .iter()
-                    .map(|x| (x.get_timestamp_ms() as f64, x.recv_us[i] as f64))
+                    .map(|x| {
+                        (
+                            x.get_timestamp_ms() as f64,
+                            (x.recv_us[i] as f64).powf(scale_factor),
+                        )
+                    })
                     .collect();
                 points.push(points_i)
             }
@@ -278,12 +317,7 @@ impl canvas::Drawable for FDQGraph {
                     .iter_mut()
                     .zip(points.iter())
                     .for_each(|(b, p)| b.line_to(pa.pt(p[n])));
-                // let p3 = points_3[n];
-                // let p6 = points_6[n];
-                // let dst3 = pa.pt(p3);
-                // let dst6 = pa.pt(p6);
-                // path_bldr_3.line_to(dst3);
-                // path_bldr_6.line_to(dst6);
+
                 line_count += 1;
                 if line_count > section_limit {
                     path_bldr
@@ -303,29 +337,8 @@ impl canvas::Drawable for FDQGraph {
                             b.line_to(pa.pt(p));
                         });
 
-                    // let mid6 = f.pt(pa.ptp(p6).0 as f32, 1.0);
-                    // path_bldr_6.line_to(mid6);
-                    // path_bldr_6.close();
-                    // let line = path_bldr_6.build();
-                    // frame.fill(&line, fill_r6);
-                    // path_bldr_6 = path::Builder::new();
-                    // path_bldr_6.move_to(mid6);
-                    // path_bldr_6.line_to(dst6);
-
-                    // let mid3 = f.pt(pa.ptp(p3).0 as f32, 1.0);
-                    // path_bldr_3.line_to(mid3);
-                    // path_bldr_3.close();
-                    // let line = path_bldr_3.build();
-                    // frame.fill(&line, fill_r3);
-                    // path_bldr_3 = path::Builder::new();
-                    // path_bldr_3.move_to(mid3);
-                    // path_bldr_3.line_to(dst3);
-
                     line_count = 1;
                 }
-                // let line = canvas::Path::line(src, dst);
-                // frame.stroke(&line, green_stroke);
-                // src = dst;
             }
             path_bldr
                 .iter_mut()
@@ -398,7 +411,11 @@ impl canvas::Drawable for FDQGraph {
             });
             frame.fill_text(text);
             let text = canvas::Text {
-                content: format!("{} - {:.2}ms", fd_last.get_datetime(), src_top / 1000.0),
+                content: format!(
+                    "{} - {:.2}ms",
+                    fd_last.get_datetime(),
+                    src_top.powf(scale_factor.recip()) / 1000.0
+                ),
                 position: f.pt(0.99, 0.01),
                 color: white90,
                 size: f.ph(0.04),
@@ -413,7 +430,10 @@ impl canvas::Drawable for FDQGraph {
             });
             frame.fill_text(text);
             let text = canvas::Text {
-                content: format!("{:.2}ms", src_top / 2000.0),
+                content: format!(
+                    "{:.2}ms",
+                    (src_top / 2.0).powf(scale_factor.recip()) / 1000.0
+                ),
                 position: f.pt(0.99, 0.5),
                 color: white90,
                 size: f.ph(0.04),
@@ -428,7 +448,10 @@ impl canvas::Drawable for FDQGraph {
             });
             frame.fill_text(text);
             let text = canvas::Text {
-                content: format!("{:.2}ms", src_top / 4000.0),
+                content: format!(
+                    "{:.2}ms",
+                    (src_top / 4.0).powf(scale_factor.recip()) / 1000.0
+                ),
                 position: f.pt(0.99, 0.75),
                 color: white90,
                 size: f.ph(0.04),
@@ -443,7 +466,10 @@ impl canvas::Drawable for FDQGraph {
             });
             frame.fill_text(text);
             let text = canvas::Text {
-                content: format!("{:.2}ms", src_top / 16000.0),
+                content: format!(
+                    "{:.2}ms",
+                    (src_top / 16.0).powf(scale_factor.recip()) / 1000.0
+                ),
                 position: f.pt(0.99, 1.0 - 1.0 / 16.0),
                 color: white90,
                 size: f.ph(0.04),
