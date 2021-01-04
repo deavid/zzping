@@ -18,7 +18,7 @@ use iced::{
     canvas::{self, path, Path, Stroke},
     Color, Point, Size, Vector,
 };
-use zzpinglib::framedataq::{Complete, FDCodecIter, FrameDataQ};
+use zzpinglib::framedataq::{Complete, FDCodecIter, FrameDataQ, SubSecType};
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct FrameScaler {
@@ -128,11 +128,14 @@ impl FDQGraph {
         let fdreader = FDCodecIter::new(buf);
         let mut fd: Vec<FrameDataQ<Complete>> = Vec::with_capacity(10000);
         self.max_recv = 0;
-        self.max_inflight = 0.0;
-        self.max_lostpackets = 0.0;
+        // These should have a min of 1.0 to prevent div/0 err
+        self.max_inflight = 1.0;
+        self.max_lostpackets = 1.0;
         let mut stdmean_inflight: f32 = 0.0;
         let mut stdmean_lostpackets: f32 = 0.0;
         let mut timer_rm = Instant::now();
+        let mut last_ts = 0;
+        let mut last_dt = None;
         for mut fdq in fdreader {
             self.max_inflight = self.max_inflight.max(fdq.inflight);
             stdmean_inflight += (fdq.inflight as f32).powi(2);
@@ -142,12 +145,34 @@ impl FDQGraph {
             if fdq.recv_us_len == 0 {
                 fdq.recv_us = [0, 0, 0, 0, 0, 0, 0];
             }
-
+            let gap = fdq.timestamp.unwrap() - last_ts;
+            if last_ts > 0 && gap > 10 {
+                eprintln!(
+                    "Found a gap of {:.2}h between {} and {}",
+                    gap as f32 / 60.0 / 60.0,
+                    last_dt.unwrap(),
+                    fdq.get_datetime()
+                );
+                for ts in (last_ts + 1)..(fdq.timestamp.unwrap() - 1) {
+                    let new_fdq = FrameDataQ::<Complete> {
+                        phantom: Default::default(),
+                        timestamp: Some(ts),
+                        subsec_ms: SubSecType::Abs(0),
+                        inflight: 0.0,
+                        lost_packets: 1.0,
+                        recv_us_len: 0,
+                        recv_us: [0, 0, 0, 0, 0, 0, 0],
+                    };
+                    fd.push(new_fdq);
+                }
+            }
             fd.push(fdq);
             if timer_rm.elapsed().as_secs() >= 1 {
                 timer_rm = Instant::now();
                 eprintln!("Still loading... got {} items now.", fd.len());
             }
+            last_ts = fdq.timestamp.unwrap();
+            last_dt = Some(fdq.get_datetime());
         }
         dbg!(fd.len());
         stdmean_inflight /= fd.len() as f32;
@@ -224,6 +249,7 @@ impl canvas::Drawable for FDQGraph {
         let color_r6 = Color::from_rgba8(50, 150, 200, 1.0);
         // let color_r6 = Color::from_rgba8(70, 100, 200, 1.0);
         let color_inflight = Color::from_rgba8(0, 0, 0, 0.3);
+        let color_lost = Color::from_rgba8(255, 0, 0, 0.1);
 
         let green10 = Color::from_rgba8(0, 255, 0, 0.1);
         let white90 = Color::from_rgba8(255, 255, 255, 0.9);
@@ -250,6 +276,7 @@ impl canvas::Drawable for FDQGraph {
             fill_r0, fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6,
         ];
         let fill_inflight = canvas::Fill::Color(color_inflight);
+        let fill_lost = canvas::Fill::Color(color_lost);
 
         let space = Path::rectangle(f.pt(0.0, 0.0), f.sz(1.0, 1.0));
         frame.fill(&space, Color::from_rgba8(100, 100, 100, 1.0));
@@ -349,12 +376,20 @@ impl canvas::Drawable for FDQGraph {
 
             let mut path_bldr: Vec<_> = (0..7).map(|_| path::Builder::new()).collect();
             path_bldr.iter_mut().for_each(|b| b.move_to(f.pt(0.0, 1.0)));
+
             let mut path_inflight = path::Builder::new();
             path_inflight.move_to(f.pt(0.0, 1.0));
+
+            let mut path_lost = path::Builder::new();
+            path_lost.move_to(f.pt(0.0, 1.0));
 
             let section_limit = 50;
             let mut line_count = 0;
             for (n, fp) in fd.iter().enumerate() {
+                path_lost.line_to(pa.ptx(
+                    fp.get_timestamp_ms() as f64,
+                    1.0 - (fp.lost_packets as f64 * 10.0 / self.max_lostpackets as f64).tanh(),
+                ));
                 path_inflight.line_to(pa.ptx(
                     fp.get_timestamp_ms() as f64,
                     1.0 - (fp.inflight as f64 * 10.0 / self.max_inflight as f64).tanh(),
@@ -398,10 +433,16 @@ impl canvas::Drawable for FDQGraph {
                     let polygon = old_b.build();
                     frame.fill(&polygon, *fill);
                 });
+
             path_inflight.line_to(f.pt(1.0, 1.0));
             path_inflight.close();
             let poly = path_inflight.build();
             frame.fill(&poly, fill_inflight);
+
+            path_lost.line_to(f.pt(1.0, 1.0));
+            path_lost.close();
+            let poly = path_lost.build();
+            frame.fill(&poly, fill_lost);
 
             let fd_first = fd.first().unwrap();
             let fd_last = fd.last().unwrap();

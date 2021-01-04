@@ -62,7 +62,7 @@ pub struct Encoded;
 
 #[derive(Debug, Clone, Copy)]
 pub struct FrameDataQ<T> {
-    phantom: PhantomData<T>,
+    pub phantom: PhantomData<T>,
     pub timestamp: Option<i64>,
     pub subsec_ms: SubSecType,
     pub inflight: f32,
