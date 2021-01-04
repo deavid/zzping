@@ -21,7 +21,7 @@ use super::flags::GuiConfig;
 use super::graph_plot::LatencyGraph;
 use super::udp_comm::UdpStats;
 use iced::{
-    canvas, executor, slider, Application, Canvas, Column, Command, Element, Length, Slider,
+    canvas, executor, slider, Application, Canvas, Column, Command, Element, Length, Row, Slider,
     Subscription,
 };
 use std::net::UdpSocket;
@@ -29,6 +29,7 @@ use std::time::Instant;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
+    ZoomYSliderChanged(f32),
     ZoomXSliderChanged(f32),
     PosXSliderChanged(f32),
     Tick(Instant),
@@ -44,6 +45,8 @@ pub struct PingmonGUI {
     pub socket: Option<UdpSocket>,
     pub fdqgraph: FDQGraph,
     pub fdqgraph_canvas: canvas::layer::Cache<FDQGraph>,
+    zoomy_slider_state: slider::State,
+    zoomy_slider: f32,
     zoomx_slider_state: slider::State,
     zoomx_slider: f32,
     posx_slider_state: slider::State,
@@ -118,6 +121,10 @@ impl Application for PingmonGUI {
 
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
+            Message::ZoomYSliderChanged(y) => {
+                self.zoomy_slider = y;
+                self.fdqgraph.set_zoomy(y.exp() as f64);
+            }
             Message::ZoomXSliderChanged(x) => {
                 self.zoomx_slider = x;
                 self.fdqgraph.set_zoomx(x.exp() as f64);
@@ -147,18 +154,26 @@ impl Application for PingmonGUI {
                 .height(Length::Fill)
                 .push(self.fdqgraph_canvas.with(&self.fdqgraph));
             window = window.push(graph);
-            window = window.push(Slider::new(
+            let mut row2 = Row::new().padding(4).spacing(5);
+            row2 = row2.push(Slider::new(
+                &mut self.zoomy_slider_state,
+                0.0..=8.0,
+                self.zoomy_slider,
+                Message::ZoomYSliderChanged,
+            ));
+            row2 = row2.push(Slider::new(
                 &mut self.zoomx_slider_state,
-                0.0..=6.0,
+                0.0..=10.0,
                 self.zoomx_slider,
                 Message::ZoomXSliderChanged,
             ));
-            window = window.push(Slider::new(
+            row2 = row2.push(Slider::new(
                 &mut self.posx_slider_state,
                 0.0..=1.0,
                 self.posx_slider,
                 Message::PosXSliderChanged,
             ));
+            window = window.push(row2);
         }
         window.into()
     }
