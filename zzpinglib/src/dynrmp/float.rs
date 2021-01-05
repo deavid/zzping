@@ -17,7 +17,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct Float {
     pub v: f64,
 }

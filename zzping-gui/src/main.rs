@@ -12,14 +12,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+extern crate zzpinglib;
+
 mod custom_errors;
+mod fdq_graph;
 mod flags;
 mod graph_plot;
 mod gui;
 mod subscr_time;
 mod udp_comm;
 
-use flags::GuiConfig;
+use flags::{Flags, GuiConfig, OtherOpts};
 use gui::PingmonGUI;
 use iced::Settings;
 
@@ -27,18 +30,25 @@ use clap::Clap;
 
 #[derive(Clap)]
 #[clap(
-    version = "0.1.0",
+    version = "0.2.0-beta1",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
 )]
 struct Opts {
     #[clap(short, long, default_value = "gui_config.ron")]
     config: String,
+    #[clap(short, long)]
+    input: Option<String>,
 }
 
 pub fn main() {
     let opts: Opts = Opts::parse();
-    let config = GuiConfig::from_file(&opts.config).unwrap();
-
+    let guiconfig = GuiConfig::from_file(&opts.config).unwrap();
+    let flags = Flags {
+        guiconfig,
+        otheropts: OtherOpts {
+            input_file: opts.input,
+        },
+    };
     use iced::Application; // <- Trait run
     PingmonGUI::run(Settings {
         antialiasing: true,
@@ -46,7 +56,7 @@ pub fn main() {
             size: (1600, 400),
             ..iced::window::Settings::default()
         },
-        flags: config,
+        flags,
         ..Settings::default()
     })
 }

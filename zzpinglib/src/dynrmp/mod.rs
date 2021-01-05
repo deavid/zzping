@@ -19,14 +19,46 @@ pub mod vtype;
 
 use variant::Variant;
 
-use rmp::decode::ValueReadError;
 use rmp::decode::{
     read_data_f32, read_data_f64, read_data_i16, read_data_i32, read_data_i64, read_data_i8,
     read_data_u16, read_data_u32, read_data_u64, read_data_u8, ExtMeta,
 };
+use rmp::decode::{MarkerReadError, ValueReadError};
 use rmp::Marker;
 
 use std::{collections::HashMap, io::Read};
+
+use self::vtype::VType;
+
+#[derive(Debug)]
+pub enum Error {
+    UnexpectedType(VType, VType), // want, got
+    RMPMarkerReadError(MarkerReadError),
+    RMPValueReadError(ValueReadError),
+}
+
+impl Error {
+    pub fn is_marker_eof(&self) -> bool {
+        match self {
+            Error::RMPMarkerReadError(de) => {
+                matches!(de.0.kind(), std::io::ErrorKind::UnexpectedEof)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl From<MarkerReadError> for Error {
+    fn from(e: MarkerReadError) -> Self {
+        Self::RMPMarkerReadError(e)
+    }
+}
+
+impl From<ValueReadError> for Error {
+    fn from(e: ValueReadError) -> Self {
+        Self::RMPValueReadError(e)
+    }
+}
 
 // ---- STRING ---
 pub fn read_str<R: Read>(rd: &mut R, marker: Marker) -> Result<String, ValueReadError> {
@@ -86,7 +118,7 @@ pub fn read_bool(marker: Marker) -> Result<bool, ValueReadError> {
 }
 
 // ---- ARRAY ----
-pub fn read_array<R: Read>(rd: &mut R, marker: Marker) -> Result<Vec<Variant>, ValueReadError> {
+pub fn read_array<R: Read>(rd: &mut R, marker: Marker) -> Result<Vec<Variant>, Error> {
     let len = read_array_len(rd, marker)?;
     let mut ret: Vec<Variant> = vec![];
     for _ in 0..len {
@@ -133,10 +165,7 @@ pub fn read_nil(marker: Marker) -> Result<(), ValueReadError> {
 }
 
 // ----- MAP -----
-pub fn read_map<R: Read>(
-    rd: &mut R,
-    marker: Marker,
-) -> Result<HashMap<Variant, Variant>, ValueReadError> {
+pub fn read_map<R: Read>(rd: &mut R, marker: Marker) -> Result<HashMap<Variant, Variant>, Error> {
     let len = read_map_len(rd, marker)?;
     let mut ret: HashMap<Variant, Variant> = HashMap::new();
     for _ in 0..len {

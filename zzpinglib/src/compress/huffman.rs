@@ -48,7 +48,9 @@ extern crate bit_vec;
 extern crate huffman_compress;
 
 use bit_vec::BitVec;
+use huffman_compress::Book;
 use huffman_compress::CodeBuilder;
+use huffman_compress::Tree;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::iter::FromIterator;
@@ -58,14 +60,14 @@ use super::{Compress, CompressTo, Error};
 #[derive(Debug)]
 pub struct HuffmanQ<T: CompressTo<f32, u64> + Default> {
     pub quantizer: T,
-    pub huffman: Huffman,
+    pub huffman: HuffmanU64,
 }
 
 impl<T: CompressTo<f32, u64> + Default> Default for HuffmanQ<T> {
     fn default() -> Self {
         Self {
             quantizer: T::default(),
-            huffman: Huffman::default(),
+            huffman: HuffmanU64::default(),
         }
     }
 }
@@ -119,7 +121,7 @@ impl<T: CompressTo<f32, u64> + Default> Compress<f32> for HuffmanQ<T> {
 }
 
 #[derive(Debug)]
-pub struct Huffman {
+pub struct HuffmanU64 {
     weights: Vec<(u64, u64)>,
     data: BitVec,
     data_len: usize,
@@ -127,7 +129,7 @@ pub struct Huffman {
     max_count: u64,
 }
 
-impl Huffman {
+impl HuffmanU64 {
     fn encode_weights(&self) {
         println!(
             "K: {:?}",
@@ -138,17 +140,21 @@ impl Huffman {
         for (k, v) in self.weights.iter().copied() {
             let mut d = k - pos;
             while d > 0 {
-                if d >= 64 {
-                    d -= 64;
-                    buf.push(-64);
-                } else if d >= 16 {
-                    d -= 16;
-                    buf.push(-16);
-                } else {
-                    buf.push(-(d as i64));
-                    d = 0;
-                }
+                println!("0");
+                buf.push(0);
+                d -= 1;
+                // if d >= 64 {
+                //         d -= 64;
+                //         buf.push(-64);
+                //     } else if d >= 16 {
+                //         d -= 16;
+                //         buf.push(-16);
+                //     } else {
+                //         buf.push(-(d as i64));
+                //         d = 0;
+                //     }
             }
+            println!("{}", v);
             buf.push(v as i64);
             pos = k + 1;
         }
@@ -157,19 +163,19 @@ impl Huffman {
     }
 }
 
-impl Default for Huffman {
+impl Default for HuffmanU64 {
     fn default() -> Self {
         Self {
             weights: vec![],
             data: BitVec::new(),
             data_len: 0,
             fuzzy: true,
-            max_count: 16,
+            max_count: 3600,
         }
     }
 }
 
-impl Compress<u64> for Huffman {
+impl Compress<u64> for HuffmanU64 {
     fn setup(
         &mut self,
         _params: std::collections::HashMap<String, crate::dynrmp::variant::Variant>,
@@ -286,5 +292,29 @@ impl Compress<u64> for Huffman {
 
     fn deserialize_data(&mut self, _payload: &[u8]) -> Result<usize, Error> {
         todo!()
+    }
+}
+
+#[derive(Debug)]
+pub struct HuffmanI64 {
+    book: Book<i64>,
+    tree: Tree<i64>,
+}
+
+impl HuffmanI64 {
+    pub fn new(weights: Vec<(i64, u64)>) -> Self {
+        let (book, tree) = CodeBuilder::from_iter(weights.into_iter()).finish();
+        Self { book, tree }
+    }
+    pub fn encode(&self, buffer: &mut BitVec, symbol: i64) -> Result<(), Error> {
+        self.book
+            .encode(buffer, &symbol)
+            .map_err(Error::HuffmanEncodeError)
+    }
+    pub fn decode(&self, buffer: &mut bit_vec::Iter<u32>) -> Result<i64, Error> {
+        self.tree
+            .decoder(buffer, 1)
+            .next()
+            .ok_or(Error::HuffmanDecodeNoItemError)
     }
 }

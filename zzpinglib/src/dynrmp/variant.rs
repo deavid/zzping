@@ -20,9 +20,10 @@ use super::map::Map;
 use super::{float::Float, vtype::VType};
 use super::{
     read_array, read_bin, read_bool, read_ext, read_float, read_int, read_map, read_nil, read_str,
+    Error,
 };
 
-#[derive(Ord, PartialOrd, Eq, Hash, PartialEq, Debug)]
+#[derive(Ord, PartialOrd, Eq, Hash, PartialEq, Debug, Clone)]
 pub enum Variant {
     String(String),
     Integer(i128),
@@ -40,16 +41,54 @@ impl Variant {
     // We can add convenience functions here!
     // i.e. to ease the craziness of match recursively.
     // pub fn as_f64
-    pub fn as_str(&self) -> &str {
+    pub fn get_type(&self) -> VType {
         match self {
-            Self::String(v) => &v,
-            _ => panic!("Variant of incorrect type"),
+            Variant::String(_) => VType::String,
+            Variant::Integer(_) => VType::Integer,
+            Variant::Bool(_) => VType::Bool,
+            Variant::Array(_) => VType::Array,
+            Variant::Binary(_) => VType::Binary,
+            Variant::Null(_) => VType::Null,
+            Variant::Float(_) => VType::Float,
+            Variant::Map(_) => VType::Map,
+            Variant::Extension(_) => VType::Extension,
+            Variant::Reserved => VType::Reserved,
+        }
+    }
+    fn err_unexpected<T>(&self, want: VType) -> Result<T, Error> {
+        Err(Error::UnexpectedType(want, self.get_type()))
+    }
+    pub fn map(&self) -> Result<Map, Error> {
+        match self {
+            Self::Map(v) => Ok(v.clone()),
+            _ => self.err_unexpected(VType::Map),
+        }
+    }
+    pub fn as_str(&self) -> &str {
+        self.str().unwrap()
+    }
+    pub fn str(&self) -> Result<&str, Error> {
+        match self {
+            Self::String(v) => Ok(v),
+            _ => self.err_unexpected(VType::String),
+        }
+    }
+    pub fn string(&self) -> Result<String, Error> {
+        match self {
+            Self::String(v) => Ok(v.to_string()),
+            _ => self.err_unexpected(VType::String),
         }
     }
     pub fn as_int(&self) -> i128 {
         match self {
             Self::Integer(v) => *v,
             _ => panic!("Variant of incorrect type"),
+        }
+    }
+    pub fn int(&self) -> Result<i128, Error> {
+        match self {
+            Self::Integer(v) => Ok(*v),
+            _ => self.err_unexpected(VType::Integer),
         }
     }
     pub fn as_bool(&self) -> bool {
@@ -59,9 +98,12 @@ impl Variant {
         }
     }
     pub fn as_slice(&self) -> &[Variant] {
+        self.slice().unwrap()
+    }
+    pub fn slice(&self) -> Result<&[Variant], Error> {
         match self {
-            Self::Array(v) => &v,
-            _ => panic!("Variant of incorrect type"),
+            Self::Array(v) => Ok(&v),
+            _ => self.err_unexpected(VType::Array),
         }
     }
     pub fn as_bin(&self) -> &[u8] {
@@ -85,23 +127,35 @@ impl Variant {
         }
     }
 
-    pub fn read<R: Read>(rd: &mut R) -> Result<Self, ValueReadError> {
-        let marker = read_marker(rd)?;
+    pub fn read_marker<R: Read>(rd: &mut R) -> Result<rmp::Marker, Error> {
+        Ok(read_marker(rd)?)
+    }
+
+    pub fn read_from_marker<R: Read>(rd: &mut R, marker: rmp::Marker) -> Result<Self, Error> {
         let mtype = VType::from_marker(marker);
-        match mtype {
-            VType::Float => read_float(rd, marker).map(Float::new).map(Variant::Float),
-            VType::Integer => read_int(rd, marker).map(Variant::Integer),
-            VType::Bool => read_bool(marker).map(Variant::Bool),
-            VType::String => read_str(rd, marker).map(Variant::String),
-            VType::Null => read_nil(marker).map(Variant::Null),
-            VType::Array => read_array(rd, marker).map(Variant::Array),
+        Ok(match mtype {
+            VType::Float => read_float(rd, marker).map(Float::new).map(Variant::Float)?,
+            VType::Integer => read_int(rd, marker).map(Variant::Integer)?,
+            VType::Bool => read_bool(marker).map(Variant::Bool)?,
+            VType::String => read_str(rd, marker).map(Variant::String)?,
+            VType::Null => read_nil(marker).map(Variant::Null)?,
+            VType::Array => read_array(rd, marker).map(Variant::Array)?,
             VType::Map => read_map(rd, marker)
                 .map(Map::from_hashmap)
-                .map(Variant::Map),
-            VType::Binary => read_bin(rd, marker).map(Variant::Binary),
-            VType::Extension => read_ext(rd, marker).map(Variant::Extension),
+                .map(Variant::Map)?,
+            VType::Binary => read_bin(rd, marker).map(Variant::Binary)?,
+            VType::Extension => read_ext(rd, marker).map(Variant::Extension)?,
             // VType::Reserved,
-            _ => Err(ValueReadError::TypeMismatch(marker)),
-        }
+            _ => {
+                return Err(Error::RMPValueReadError(ValueReadError::TypeMismatch(
+                    marker,
+                )))
+            }
+        })
+    }
+
+    pub fn read<R: Read>(rd: &mut R) -> Result<Self, Error> {
+        let marker = Self::read_marker(rd)?;
+        Self::read_from_marker(rd, marker)
     }
 }

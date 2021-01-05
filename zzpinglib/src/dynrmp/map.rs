@@ -15,7 +15,7 @@
 use std::hash::{Hash, Hasher};
 use std::{cmp::Ordering, collections::HashMap};
 
-use super::variant::Variant;
+use super::{variant::Variant, Error};
 
 /*
   This allows Maps to get Hash, Ord, Eq; even if they don't support it.
@@ -23,7 +23,7 @@ use super::variant::Variant;
   even if this is not even advisable. Avoids having two kinds of enums and
   complicating other stuff. You're not supposed to use these capabilities.
 */
-#[derive(Eq, Default, Debug)]
+#[derive(Eq, Default, Debug, Clone)]
 pub struct Map {
     pub v: HashMap<Variant, Variant>,
 }
@@ -37,6 +37,14 @@ impl Map {
     }
     pub fn into_hashmap(self) -> HashMap<Variant, Variant> {
         self.v
+    }
+    pub fn into_strhashmap(self) -> Result<HashMap<String, Variant>, Error> {
+        let mut ret: HashMap<String, Variant> = HashMap::new();
+        for (k, v) in self.v {
+            let k = k.string()?;
+            ret.insert(k, v.clone());
+        }
+        Ok(ret)
     }
     pub fn to_vec(&self) -> Vec<(&Variant, &Variant)> {
         let mut items: Vec<(&Variant, &Variant)> = self.v.iter().collect();

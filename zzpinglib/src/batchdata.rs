@@ -14,9 +14,9 @@
 
 use chrono::{DateTime, Utc};
 
-use crate::compress::{self, Compress};
+use crate::compress::{self, composite::CompositeStage, quantize::LinearLogQuantizer, Compress};
 use crate::framedata::{FrameData, FrameTime};
-use std::convert::TryInto;
+use std::{collections::HashMap, convert::TryInto};
 
 #[derive(Debug)]
 pub struct BatchData {
@@ -100,9 +100,15 @@ impl BatchData {
         data_len -= data_len % 2; // FFT only allows for even amounts of data.
 
         let trasposed_recv = Self::transpose(&self.recv_us[..data_len]);
-        let origdata = &trasposed_recv[3];
+        //let origdata = &trasposed_recv[3];
+        let mut origdata: Vec<f32> = vec![];
+        let mut oldvalue: f32 = 1.0;
+        for v in trasposed_recv[3].iter() {
+            origdata.push(v / oldvalue);
+            oldvalue = *v;
+        }
 
-        zipper.compress(origdata)?;
+        zipper.compress(&origdata)?;
         let unzipped = zipper.decompress()?;
 
         if unzipped.len() != origdata.len() {
@@ -113,6 +119,57 @@ impl BatchData {
         Self::measure_error(&origdata, &unzipped);
         Self::measure_window_error(&origdata, &unzipped);
         Ok(())
+    }
+
+    pub fn test_recv_composite_compression(&self, stats: &mut HashMap<i64, f64>) {
+        let precision = 0.001;
+        let window = 1;
+        let mut cs_enc = CompositeStage::new(precision, window);
+        let mut buffer = bit_vec::BitVec::new();
+        let trasposed_recv = Self::transpose(&self.recv_us);
+        let origdata: Vec<i64> = trasposed_recv[6].iter().map(|x| x.round() as i64).collect();
+        for val in origdata.iter() {
+            cs_enc.encode(&mut buffer, *val);
+        }
+        let stdev_err_sum: f32 = cs_enc.errors.iter().map(|x| (*x as f32).powi(2)).sum();
+        let stdev_err = (stdev_err_sum / cs_enc.errors.len() as f32).sqrt();
+        let mean_err_sum: f32 = cs_enc.errors.iter().map(|x| (*x as f32).abs()).sum();
+        let mean_err = mean_err_sum / cs_enc.errors.len() as f32;
+        let llq = LinearLogQuantizer::new(1.0);
+        let mut sorted_errors: Vec<_> = cs_enc
+            .errors
+            .into_iter()
+            .map(|x| llq.encode(x))
+            .map(|x| llq.decode(x))
+            .collect();
+        sorted_errors.sort_unstable();
+        let count_err = stats;
+
+        for v in sorted_errors {
+            let counter = count_err.entry(v).or_insert(0.0);
+            let bcksz = llq.bucket_size(llq.encode(v));
+            *counter += 1.0 / bcksz as f64;
+        }
+
+        dbg!(stdev_err, mean_err);
+        dbg!(buffer.len() as f32 / origdata.len() as f32);
+
+        let mut cs_dec = CompositeStage::new(precision, window);
+        let mut buf_iter = buffer.iter();
+        let mut dec_data: Vec<i64> = Vec::with_capacity(origdata.len());
+        while let Ok(v) = cs_dec.decode(&mut buf_iter) {
+            dec_data.push(v);
+        }
+        dbg!(origdata.len());
+        dbg!(dec_data.len());
+
+        let origdata_f32: Vec<f32> = origdata.iter().map(|x| *x as f32).collect();
+        let dec_data_f32: Vec<f32> = dec_data.iter().map(|x| *x as f32).collect();
+        Self::measure_error(&origdata_f32, &dec_data_f32);
+        Self::measure_window_error(&origdata_f32, &dec_data_f32);
+
+        // dbg!(count_err);
+        // println!("data += {:?}", sorted_errors);
     }
 
     pub fn transpose(data: &[[f32; 7]]) -> Vec<Vec<f32>> {

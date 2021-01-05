@@ -60,7 +60,7 @@ impl Default for LogQuantizer {
     fn default() -> Self {
         Self {
             data: vec![],
-            precision: 0.001, // 0.001 => 0.1%
+            precision: 0.02, // 0.001 => 0.1%
             zero_point: 0.0,
             max_value: 0,
             bits: 0,
@@ -93,6 +93,7 @@ impl Compress<f32> for LogQuantizer {
         dbg!(self.max_value);
         dbg!(bits);
         // dbg!(self.bits);
+        // println!("{:?}", self.data);
         Ok(())
     }
 
@@ -292,5 +293,111 @@ impl CompressTo<f32, u64> for LinearQuantizer {
 
     fn decompress_from(&self, srcdata: &[u64]) -> Result<Vec<f32>, Error> {
         self.decompress_data(&srcdata)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LinearLogQuantizer {
+    precision: f64,
+    ln1p: f64,
+    linear_part: i64,
+}
+
+impl LinearLogQuantizer {
+    pub fn new(precision: f64) -> Self {
+        Self {
+            precision,
+            ln1p: precision.ln_1p(),
+            linear_part: precision.recip().ceil() as i64,
+        }
+    }
+    pub fn get_precision(&self) -> f64 {
+        self.precision
+    }
+    pub fn encode(&self, value: i64) -> i64 {
+        if value.abs() <= self.linear_part {
+            return value;
+        }
+        let y: f64 = value.abs() as f64 * self.precision;
+        let w = y.ln() / self.ln1p + self.linear_part as f64;
+        let z = w.round() as i64;
+        z * value.signum()
+    }
+    pub fn decode(&self, enc_val: i64) -> i64 {
+        self.decode_f64(enc_val as f64)
+    }
+    pub fn decode_f64(&self, enc_val: f64) -> i64 {
+        if enc_val.abs().round() as i64 <= self.linear_part {
+            return enc_val.round() as i64;
+        }
+        let z: f64 = enc_val.abs() as f64;
+        let w1 = z - self.linear_part as f64;
+        let w2 = w1 * self.ln1p;
+        let w = w2.exp();
+        let y1: i64 = (w / self.precision).round() as i64;
+        y1 * enc_val.signum() as i64
+    }
+    pub fn bucket_size(&self, enc_val: i64) -> i64 {
+        let mut left = self.decode_f64(enc_val as f64 - 0.5);
+        let mut right = self.decode_f64(enc_val as f64 + 0.5);
+        // l & r just to make clippy happy.
+        let l = left;
+        let r = right;
+        for n in l..=r {
+            if self.encode(n) == enc_val {
+                left = n;
+                break;
+            }
+        }
+        for n in (l..=r).rev() {
+            if self.encode(n) == enc_val {
+                right = n;
+                break;
+            }
+        }
+        right - left + 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::LinearLogQuantizer;
+
+    #[test]
+    fn test1() {
+        let q = LinearLogQuantizer::new(0.1);
+        let limit = 100;
+        let mut hm = HashMap::new();
+        let dlimit = q.decode(limit + 1);
+        dbg!(dlimit);
+        for n in 0..=dlimit {
+            let e = q.encode(n);
+            let entry = hm.entry(e).or_insert(0);
+            *entry += 1;
+        }
+        dbg!("Done");
+        for n in 0..limit {
+            let sz = q.bucket_size(n);
+            let dec = q.decode(n);
+            let pdec = q.decode(n - 1);
+            // let delta = adec - dec;
+            let hsize = hm.get(&n);
+            if let Some(l) = hsize {
+                if *l as i64 != sz {
+                    dbg!(n, l, sz, pdec, dec, &hm[&n]);
+                }
+            } else {
+                dbg!(0, sz);
+            }
+
+            match hsize {
+                Some(l) => assert_eq!(sz, *l as i64),
+                None => assert_eq!(sz, 0),
+            }
+
+            // dbg!(sz, delta);
+        }
     }
 }

@@ -12,34 +12,89 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::{
+    fdq_graph::FDQGraph,
+    flags::{Flags, OtherOpts},
+};
+
 use super::flags::GuiConfig;
 use super::graph_plot::LatencyGraph;
 use super::udp_comm::UdpStats;
-use iced::{canvas, executor, Application, Canvas, Column, Command, Element, Length, Subscription};
+use iced::{
+    canvas, executor, slider, Application, Canvas, Color, Column, Command, Element, Length, Row,
+    Slider, Subscription, Text,
+};
 use std::net::UdpSocket;
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Message {
+    ZoomWSliderChanged(f32),
+    ZoomYSliderChanged(f32),
+    ZoomXSliderChanged(f32),
+    // PosXSliderChanged(f32),
+    PosDXSliderChanged(f32),
     Tick(Instant),
     Startup,
 }
 
-#[derive(Default)]
 pub struct PingmonGUI {
-    pub config: GuiConfig,
+    pub guiconfig: GuiConfig,
+    pub otheropts: OtherOpts,
     pub graph: LatencyGraph,
     pub graph_canvas: canvas::layer::Cache<LatencyGraph>,
     pub socket: Option<UdpSocket>,
+    pub fdqgraph: FDQGraph,
+    pub fdqgraph_canvas: canvas::layer::Cache<FDQGraph>,
+    zoomw_slider_state: slider::State,
+    zoomw_slider: f32,
+    zoomy_slider_state: slider::State,
+    zoomy_slider: f32,
+    zoomx_slider_state: slider::State,
+    zoomx_slider: f32,
+    // posx_slider_state: slider::State,
+    posx_slider: f32,
+    posdx_slider_state: slider::State,
+    posdx_slider: f32,
 }
 
+impl Default for PingmonGUI {
+    fn default() -> Self {
+        Self {
+            posx_slider: 0.5,
+
+            guiconfig: Default::default(),
+            otheropts: Default::default(),
+            graph: Default::default(),
+            graph_canvas: Default::default(),
+            socket: Default::default(),
+            fdqgraph: Default::default(),
+            fdqgraph_canvas: Default::default(),
+            zoomw_slider_state: Default::default(),
+            zoomw_slider: Default::default(),
+            zoomy_slider_state: Default::default(),
+            zoomy_slider: Default::default(),
+            zoomx_slider_state: Default::default(),
+            zoomx_slider: Default::default(),
+            // posx_slider_state: Default::default(),
+            posdx_slider_state: Default::default(),
+            posdx_slider: Default::default(),
+        }
+    }
+}
 impl PingmonGUI {
     fn startup(&mut self) {
-        let socket = UdpSocket::bind(&self.config.udp_listen_address).unwrap();
-        socket.set_nonblocking(true).unwrap();
-        socket.connect(&self.config.udp_server_address).unwrap();
+        let input_file = self.otheropts.input_file.as_ref();
+        match input_file {
+            Some(filename) => self.fdqgraph.load_file(filename),
+            None => {
+                let socket = UdpSocket::bind(&self.guiconfig.udp_listen_address).unwrap();
+                socket.set_nonblocking(true).unwrap();
+                socket.connect(&self.guiconfig.udp_server_address).unwrap();
 
-        self.socket = Some(socket);
+                self.socket = Some(socket);
+            }
+        }
     }
     fn recv(&mut self) -> Result<UdpStats, Box<dyn std::error::Error>> {
         let mut buf: [u8; 65536] = [0; 65536];
@@ -55,49 +110,147 @@ impl PingmonGUI {
         }
         ret
     }
+    fn tick(&mut self, instant: Instant) {
+        if self.otheropts.input_file.is_none() {
+            let stats = self.recv_all();
+            if self.graph.update(instant, stats) {
+                self.graph_canvas.clear();
+            }
+        } else {
+            if self.fdqgraph.update(instant) {
+                self.fdqgraph_canvas.clear();
+            }
+            if self.posdx_slider.abs() > 0.01 {
+                let adx = self.posdx_slider.signum() / 500.0;
+                let z = (self.zoomx_slider as f64).exp();
+                let dx = self.posdx_slider as f64 / z;
+                let factor = 1.0 / 100.0;
+                self.posx_slider += dx as f32 * factor;
+                self.posdx_slider -= adx;
+                if self.posdx_slider.abs() < 0.01 {
+                    self.posdx_slider = 0.0;
+                }
+                self.posx_slider = self.posx_slider.max(0.0).min(1.0);
+                self.update_posx();
+            }
+        }
+    }
+    fn update_posx(&mut self) {
+        let x = self.posx_slider as f64;
+        // let z = (self.zoomx_slider as f64).exp();
+        // let dx = self.posdx_slider as f64 / z;
+        // let fx = x;
+        self.fdqgraph.set_posx(x.max(0.0).min(1.0));
+    }
 }
 
 impl Application for PingmonGUI {
     type Message = Message;
     type Executor = executor::Default;
-    type Flags = GuiConfig;
+    type Flags = Flags;
 
-    fn new(flags: GuiConfig) -> (Self, Command<Message>) {
+    fn new(flags: Flags) -> (Self, Command<Message>) {
         let app = Self {
-            graph: LatencyGraph::new(&flags.display_address),
-            config: flags,
+            graph: LatencyGraph::new(&flags.guiconfig.display_address),
+            guiconfig: flags.guiconfig,
+            otheropts: flags.otheropts,
             ..Self::default()
         };
         (app, Command::from(async { Message::Startup }))
     }
 
     fn title(&self) -> String {
-        String::from("Ping Monitor")
+        match self.otheropts.input_file.as_ref() {
+            Some(input) => format!("Ping Monitor - File: {}", input),
+            None => "Ping Monitor".to_owned(),
+        }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        super::subscr_time::every(std::time::Duration::from_millis(50)).map(Message::Tick)
+        super::subscr_time::every(std::time::Duration::from_millis(20)).map(Message::Tick)
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
         match message {
-            Message::Tick(instant) => {
-                let stats = self.recv_all();
-                if self.graph.update(instant, stats) {
-                    self.graph_canvas.clear();
-                }
+            Message::ZoomWSliderChanged(w) => {
+                self.zoomw_slider = w;
+                self.fdqgraph.set_scalefactor((-w).exp() as f64);
             }
+            Message::ZoomYSliderChanged(y) => {
+                self.zoomy_slider = y;
+                self.fdqgraph.set_zoomy(y.exp() as f64);
+            }
+            Message::ZoomXSliderChanged(x) => {
+                self.zoomx_slider = x;
+                self.fdqgraph.set_zoomx(x.exp() as f64);
+            }
+            // Message::PosXSliderChanged(x) => {
+            //     self.posx_slider = x;
+            //     self.update_posx();
+            // }
+            Message::PosDXSliderChanged(x) => {
+                self.posdx_slider = x;
+                self.update_posx();
+            }
+            Message::Tick(instant) => self.tick(instant),
             Message::Startup => self.startup(),
         };
         Command::none()
     }
 
     fn view(&mut self) -> Element<Message> {
-        let graph = Canvas::new()
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .push(self.graph_canvas.with(&self.graph));
+        let mut window = Column::new().padding(0);
+        if self.otheropts.input_file.is_none() {
+            let graph = Canvas::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .push(self.graph_canvas.with(&self.graph));
 
-        Column::new().padding(0).push(graph).into()
+            window = window.push(graph);
+        } else {
+            let graph = Canvas::new()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .push(self.fdqgraph_canvas.with(&self.fdqgraph));
+            window = window.push(graph);
+            let mut row2 = Row::new().padding(4).spacing(5);
+            row2 = row2.push(Text::new("sf").size(20).color(Color::BLACK));
+            row2 = row2.push(Slider::new(
+                &mut self.zoomw_slider_state,
+                -2.0..=2.0,
+                self.zoomw_slider,
+                Message::ZoomWSliderChanged,
+            ));
+            row2 = row2.push(Text::new("y").size(20).color(Color::BLACK));
+            row2 = row2.push(Slider::new(
+                &mut self.zoomy_slider_state,
+                0.0..=8.0,
+                self.zoomy_slider,
+                Message::ZoomYSliderChanged,
+            ));
+            row2 = row2.push(Text::new("z").size(20).color(Color::BLACK));
+            row2 = row2.push(Slider::new(
+                &mut self.zoomx_slider_state,
+                0.0..=10.0,
+                self.zoomx_slider,
+                Message::ZoomXSliderChanged,
+            ));
+            // row2 = row2.push(Text::new("x").size(20).color(Color::BLACK));
+            // row2 = row2.push(Slider::new(
+            //     &mut self.posx_slider_state,
+            //     0.0..=1.0,
+            //     self.posx_slider,
+            //     Message::PosXSliderChanged,
+            // ));
+            row2 = row2.push(Text::new("dx").size(20).color(Color::BLACK));
+            row2 = row2.push(Slider::new(
+                &mut self.posdx_slider_state,
+                -1.0..=1.0,
+                self.posdx_slider,
+                Message::PosDXSliderChanged,
+            ));
+            window = window.push(row2);
+        }
+        window.into()
     }
 }

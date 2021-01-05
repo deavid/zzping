@@ -6,5 +6,8 @@ perf.data.old
 .~*#
 test*.csv
 test*.csv.ods
+test*.ods
 *.ipynb
 .ipynb_checkpoints
+fdq*.log
+fdq*.log.*

@@ -12,18 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::dynrmp::variant::Variant;
+use crate::dynrmp;
+use crate::dynrmp::variant::Variant;
+
 use chrono::{DateTime, Utc};
 use rmp::decode::ValueReadError;
 use std::time::Duration;
 
-fn custom_error<E>(t: E) -> rmp::decode::ValueReadError
+fn custom_error<E>(t: E) -> dynrmp::Error
 where
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    rmp::decode::ValueReadError::InvalidDataRead(std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        t,
+    dynrmp::Error::RMPValueReadError(rmp::decode::ValueReadError::InvalidDataRead(
+        std::io::Error::new(std::io::ErrorKind::InvalidData, t),
     ))
 }
 
@@ -68,7 +69,7 @@ impl FrameData {
             .map_err(rmp::encode::ValueWriteError::InvalidDataWrite)?;
         Ok(())
     }
-    pub fn decode<R: std::io::Read>(rd: &mut R) -> Result<Self, ValueReadError> {
+    pub fn decode<R: std::io::Read>(rd: &mut R) -> Result<Self, dynrmp::Error> {
         let t = Variant::read(rd)?;
         let time: FrameTime = match t {
             Variant::String(s) => {
@@ -111,7 +112,7 @@ impl FrameDataVec {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn read<R: std::io::Read>(&mut self, rd: &mut R, count: u64) -> Result<(), ValueReadError> {
+    pub fn read<R: std::io::Read>(&mut self, rd: &mut R, count: u64) -> Result<(), dynrmp::Error> {
         let err = || ValueReadError::TypeMismatch(rmp::Marker::Str8);
         for _ in 0..count {
             let mut fd = FrameData::decode(rd)?;

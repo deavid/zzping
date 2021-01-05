@@ -16,7 +16,27 @@ pub mod batchdata;
 pub mod compress;
 pub mod dynrmp;
 pub mod framedata;
+pub mod framedataq;
 pub mod framestats;
+
+#[macro_export]
+macro_rules! dbgf {
+    () => {
+        eprintln!("[{}:{}]", file!(), line!());
+    };
+    ($val:expr $(,)?) => {
+        match $val {
+            tmp => {
+                eprintln!("[{}:{}] {} = {:?}",
+                    file!(), line!(), stringify!($val), &tmp);
+                tmp
+            }
+        }
+    };
+    ($($val:expr),+ $(,)?) => {
+        ($($crate::dbgf!($val)),+,)
+    };
+}
 
 pub fn test() -> bool {
     true
@@ -26,6 +46,7 @@ pub fn test() -> bool {
 mod tests {
     #[test]
     fn it_works() {
-        assert_eq!(2 + 2, 4);
+        let x = 2;
+        assert_eq!(x + x, 4);
     }
 }
