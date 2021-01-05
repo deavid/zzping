@@ -40,8 +40,8 @@ impl FrameScaler {
     pub fn sz(&self, x: f32, y: f32) -> Size {
         Size::new(x * self.fwidth, y * self.fheight)
     }
-    pub fn ph(&self, h: f32) -> f32 {
-        h * self.fheight
+    pub fn pwh(&self, h: f32) -> f32 {
+        (h * (self.fheight.powi(2) + (2.0 * self.fwidth).powi(2)).sqrt()).sqrt()
     }
     pub fn _pw(&self, w: f32) -> f32 {
         w * self.fwidth
@@ -261,7 +261,7 @@ impl canvas::Drawable for FDQGraph {
             ..Stroke::default()
         };
         let black_stroke = Stroke {
-            width: 0.5,
+            width: 0.9,
             color: black50,
             ..Stroke::default()
         };
@@ -473,7 +473,7 @@ impl canvas::Drawable for FDQGraph {
                 content: format!("{}", fd_first.get_datetime()),
                 position: f.pt(0.01, 0.01),
                 color: white90,
-                size: f.ph(0.04),
+                size: f.pwh(0.1),
                 font: iced::Font::Default,
                 horizontal_alignment: iced::HorizontalAlignment::Left,
                 vertical_alignment: iced::VerticalAlignment::Top,
@@ -492,7 +492,7 @@ impl canvas::Drawable for FDQGraph {
                 ),
                 position: f.pt(0.5, 0.01),
                 color: white90,
-                size: f.ph(0.04),
+                size: f.pwh(0.1),
                 font: iced::Font::Default,
                 horizontal_alignment: iced::HorizontalAlignment::Center,
                 vertical_alignment: iced::VerticalAlignment::Top,
@@ -511,7 +511,7 @@ impl canvas::Drawable for FDQGraph {
                 ),
                 position: f.pt(0.99, 0.01),
                 color: white90,
-                size: f.ph(0.04),
+                size: f.pwh(0.1),
                 font: iced::Font::Default,
                 horizontal_alignment: iced::HorizontalAlignment::Right,
                 vertical_alignment: iced::VerticalAlignment::Top,
@@ -529,7 +529,7 @@ impl canvas::Drawable for FDQGraph {
                 ),
                 position: f.pt(0.99, 0.5),
                 color: white90,
-                size: f.ph(0.04),
+                size: f.pwh(0.1),
                 font: iced::Font::Default,
                 horizontal_alignment: iced::HorizontalAlignment::Right,
                 vertical_alignment: iced::VerticalAlignment::Center,
@@ -547,7 +547,7 @@ impl canvas::Drawable for FDQGraph {
                 ),
                 position: f.pt(0.99, 0.75),
                 color: white90,
-                size: f.ph(0.04),
+                size: f.pwh(0.1),
                 font: iced::Font::Default,
                 horizontal_alignment: iced::HorizontalAlignment::Right,
                 vertical_alignment: iced::VerticalAlignment::Center,
@@ -565,7 +565,7 @@ impl canvas::Drawable for FDQGraph {
                 ),
                 position: f.pt(0.99, 1.0 - 1.0 / 16.0),
                 color: white90,
-                size: f.ph(0.04),
+                size: f.pwh(0.1),
                 font: iced::Font::Default,
                 horizontal_alignment: iced::HorizontalAlignment::Right,
                 vertical_alignment: iced::VerticalAlignment::Center,
