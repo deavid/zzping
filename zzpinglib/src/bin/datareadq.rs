@@ -24,7 +24,7 @@ use zzpinglib::{framedata::FrameDataVec, framedataq::Complete};
 
 #[derive(Clap, Debug)]
 #[clap(
-    version = "0.1.1",
+    version = "0.2.0-beta1",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
 )]
 struct Opts {
