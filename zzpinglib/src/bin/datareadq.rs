@@ -38,6 +38,8 @@ struct Opts {
     time: i64,
     #[clap(short, long)]
     delta_enc: bool,
+    #[clap(short, long)]
+    auto_output: bool,
 }
 
 fn main() {
@@ -53,7 +55,7 @@ fn main() {
     let codeccfg = FDCodecCfg {
         full_encode_secs: interval,
         recv_llq: quantizer,
-        delta_enc: false,
+        delta_enc: opts.delta_enc,
     };
     let header: Vec<u8> = FDCodecState::get_header(codeccfg);
     if let Some(buf) = obuffer.as_mut() {
@@ -63,21 +65,33 @@ fn main() {
         let handle = thread::spawn(move || read_inputfile(&input, codeccfg));
         handles.push(handle);
         if handles.len() > 7 {
-            let data = handles.remove(0).join().unwrap();
+            let (input_file, data) = handles.remove(0).join().unwrap();
+            if opts.auto_output {
+                let o_filename = input_file + ".fdq.log";
+                let mut wbuf = std::io::BufWriter::new(File::create(o_filename).unwrap());
+                wbuf.write_all(&header).unwrap();
+                wbuf.write_all(&data).unwrap();
+            }
             if let Some(buf) = obuffer.as_mut() {
                 buf.write_all(&data).unwrap();
             }
         }
     }
     for handle in handles {
-        let data = handle.join().unwrap();
+        let (input_file, data) = handle.join().unwrap();
+        if opts.auto_output {
+            let o_filename = input_file + ".fdq.log";
+            let mut wbuf = std::io::BufWriter::new(File::create(o_filename).unwrap());
+            wbuf.write_all(&header).unwrap();
+            wbuf.write_all(&data).unwrap();
+        }
         if let Some(buf) = obuffer.as_mut() {
             buf.write_all(&data).unwrap();
         }
     }
 }
 
-fn read_inputfile(filename: &str, cfg: FDCodecCfg) -> Vec<u8> {
+fn read_inputfile(filename: &str, cfg: FDCodecCfg) -> (String, Vec<u8>) {
     let f = File::open(filename).unwrap();
     let mut reader = BufReader::new(f);
     let mut fdv = FrameDataVec::new();
@@ -92,5 +106,5 @@ fn read_inputfile(filename: &str, cfg: FDCodecCfg) -> Vec<u8> {
         let mut rmp = fdq.to_rmp();
         buf.append(&mut rmp);
     }
-    buf
+    (filename.to_string(), buf)
 }

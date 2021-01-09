@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::marker::PhantomData;
+use std::{collections::VecDeque, marker::PhantomData};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use dynrmp::variant::Variant;
@@ -161,7 +161,7 @@ impl<Complete> FrameDataQ<Complete> {
             .powf(2.0_f32.recip());
         let lost_packets: f32 = data.iter().map(|x| x.lost_packets).sum::<f32>() / datalen as f32;
         let recv_us_len: usize = data.iter().map(|x| x.recv_us_len).sum::<usize>() / datalen;
-
+        // TODO: This algorithm is wrong, we need to split each percentile and compute over it!
         let mut recv_us_list: Vec<u128> = data
             .iter()
             .map(|x| x.recv_us.iter())
@@ -171,6 +171,25 @@ impl<Complete> FrameDataQ<Complete> {
             .collect();
         recv_us_list.sort_unstable();
         let recv_us = Self::compute_percentiles(&recv_us_list);
+        // let recv_v: Vec<_> = (0..7)
+        //     .map(|n| {
+        //         data.iter()
+        //             .map(|x| x.recv_us[n])
+        //             .filter(|x| *x > 0)
+        //             .map(|x| x as u128)
+        //             .collect::<Vec<_>>()
+        //     })
+        //     .collect();
+
+        // let recv_us: [i64; 7] = [
+        //     Self::compute_percentiles(&recv_v[0])[0],
+        //     Self::compute_percentiles(&recv_v[1])[1],
+        //     Self::compute_percentiles(&recv_v[2])[2],
+        //     Self::compute_percentiles(&recv_v[3])[3],
+        //     Self::compute_percentiles(&recv_v[4])[4],
+        //     Self::compute_percentiles(&recv_v[5])[5],
+        //     Self::compute_percentiles(&recv_v[6])[6],
+        // ];
 
         FrameDataQ {
             phantom: PhantomData::default(),
@@ -609,5 +628,77 @@ impl<R: std::io::Read> Iterator for FDCodecIter<R> {
                 }
             }
         }
+    }
+}
+
+pub struct FDCodecIterFold<T>
+where
+    T: Iterator<Item = FrameDataQ<Complete>>,
+{
+    iter: T,
+    window: usize,
+    step: usize,
+    buffer: VecDeque<FrameDataQ<Complete>>, // ring buffer
+}
+
+impl<T> FDCodecIterFold<T>
+where
+    T: Iterator<Item = FrameDataQ<Complete>>,
+{
+    pub fn from_iter(iter: T, window: usize, step: usize) -> Self {
+        assert!(window >= step);
+        Self {
+            window,
+            step,
+            iter,
+            buffer: VecDeque::with_capacity(window),
+        }
+    }
+}
+impl<T> Iterator for FDCodecIterFold<T>
+where
+    T: Iterator<Item = FrameDataQ<Complete>>,
+{
+    type Item = FrameDataQ<Complete>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.window == 1 && self.step == 1 {
+            self.iter.next()
+        } else {
+            // FIXME: This just does "nothing"
+            let iter = &mut self.iter;
+            let new_items: Vec<_> = iter.take(self.step).collect();
+            let to_remove = match new_items.is_empty() {
+                true => self.step as i64,
+                false => (self.buffer.len() + self.step) as i64 - self.window as i64,
+            };
+            for _ in 0..to_remove {
+                self.buffer.pop_back();
+            }
+            for value in new_items.into_iter() {
+                self.buffer.push_front(value);
+            }
+            self.buffer.make_contiguous();
+            if self.buffer.is_empty() {
+                None
+            } else {
+                Some(FrameDataQ::fold_vec(self.buffer.as_slices().0))
+            }
+        }
+    }
+}
+
+pub trait IterFold {
+    type Iter;
+    fn iter_fold(self, window: usize, step: usize) -> Self::Iter;
+}
+
+impl<T> IterFold for T
+where
+    T: Iterator<Item = FrameDataQ<Complete>>,
+{
+    type Iter = FDCodecIterFold<T>;
+    fn iter_fold(self, window: usize, step: usize) -> Self::Iter {
+        FDCodecIterFold::from_iter(self, window, step)
     }
 }

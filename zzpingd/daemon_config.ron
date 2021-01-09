@@ -4,6 +4,7 @@ ServerConfig(
     ping_targets: [
         // Your local router IP
         "192.168.0.1",
+        "192.168.0.3",
         // Any other host in your home network you want to ping
         "192.168.0.232",
         "9.9.9.9",

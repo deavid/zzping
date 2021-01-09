@@ -18,7 +18,7 @@ use iced::{
     canvas::{self, path, Path, Stroke},
     Color, Point, Size, Vector,
 };
-use zzpinglib::framedataq::{Complete, FDCodecIter, FrameDataQ, SubSecType};
+use zzpinglib::framedataq::{Complete, FDCodecIter, FrameDataQ, IterFold, SubSecType};
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct FrameScaler {
@@ -187,9 +187,9 @@ impl FDQGraph {
         self.fdcache.clear();
 
         let mut step = 1;
-        for _ in 0..16 {
-            step *= 2;
-            fd = fd.chunks(2).map(|x| FrameDataQ::fold_vec(x)).collect();
+        for _ in 0..4 {
+            step *= 32;
+            fd = fd.iter().cloned().iter_fold(32, 8).collect();
             self.fdcache.push((step, fd.clone()));
             if timer_rm.elapsed().as_secs() >= 1 {
                 timer_rm = Instant::now();
@@ -200,7 +200,7 @@ impl FDQGraph {
                 );
             }
 
-            if fd.len() < 1000 {
+            if fd.len() < 8000 {
                 break;
             }
         }
@@ -284,13 +284,15 @@ impl canvas::Drawable for FDQGraph {
             let line = canvas::Path::line(f.pt(0.0, 0.0), f.pt(1.0, 1.0));
             frame.stroke(&line, green_stroke);
         } else {
-            let total_sublimit = 3;
+            let total_sublimit = 4;
             let total_limit = 500 * total_sublimit;
             let total_cache = total_limit * 3 / 2;
             let mut fd = &self.fd;
             let mut cache_step = 1;
+            let ifd_len = (fd.len() as f64 / self.zoomx) as i64;
+
             for (s, cache) in self.fdcache.iter() {
-                if cache.len() / self.zoomx as usize > total_cache {
+                if cache.len() as f64 / self.zoomx > total_cache as f64 {
                     fd = cache;
                     cache_step = *s;
                 }
@@ -486,8 +488,10 @@ impl canvas::Drawable for FDQGraph {
             frame.fill_text(text);
             let text = canvas::Text {
                 content: format!(
-                    "Viewport width: {}\n{}",
+                    "Viewport width: {}\nZoom: {:.2}x / Points in view: {}\n{}",
                     vw_width_text,
+                    self.zoomx,
+                    ifd_len,
                     fd_mid.get_datetime()
                 ),
                 position: f.pt(0.5, 0.01),
