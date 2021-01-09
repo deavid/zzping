@@ -22,13 +22,13 @@ use clap::Clap;
 
 use quantize::LinearLogQuantizer;
 #[allow(unused_imports)]
-use zzpinglib::compress::{fft, huffman, quantize};
+use zzping_lib::compress::{fft, huffman, quantize};
 
-use zzpinglib::{
+use zzping_lib::{
     batchdata::BatchData,
     compress::{corrector::DiffValue, huffman::HuffmanI64, weightfn::MN_BASIC, Compress},
 };
-use zzpinglib::{
+use zzping_lib::{
     compress::{huffmapper::HuffmanMapS, weightfn::ManualFn},
     framedata::{FrameData, FrameDataVec},
 };

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate zzpinglib;
+extern crate zzping_lib;
 
 mod custom_errors;
 mod fdq_graph;

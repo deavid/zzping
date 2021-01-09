@@ -18,9 +18,9 @@ use std::thread;
 
 use clap::Clap;
 
-use zzpinglib::framedataq::{FDCodecCfg, FrameDataQ, RMPCodec};
-use zzpinglib::{compress::quantize::LinearLogQuantizer, framedataq::FDCodecState};
-use zzpinglib::{framedata::FrameDataVec, framedataq::Complete};
+use zzping_lib::framedataq::{FDCodecCfg, FrameDataQ, RMPCodec};
+use zzping_lib::{compress::quantize::LinearLogQuantizer, framedataq::FDCodecState};
+use zzping_lib::{framedata::FrameDataVec, framedataq::Complete};
 
 #[derive(Clap, Debug)]
 #[clap(

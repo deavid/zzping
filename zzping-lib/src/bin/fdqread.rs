@@ -17,8 +17,8 @@ use std::{fs::File, io::Write};
 
 use clap::Clap;
 
-use zzpinglib::framedataq::{FDCodecState, IterFold, RMPCodec};
-use zzpinglib::{
+use zzping_lib::framedataq::{FDCodecState, IterFold, RMPCodec};
+use zzping_lib::{
     compress::quantize::LinearLogQuantizer,
     framedataq::{FDCodecCfg, FDCodecIter},
 };

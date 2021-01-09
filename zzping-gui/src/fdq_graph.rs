@@ -18,7 +18,7 @@ use iced::{
     canvas::{self, path, Path, Stroke},
     Color, Point, Size, Vector,
 };
-use zzpinglib::framedataq::{Complete, FDCodecIter, FrameDataQ, IterFold, SubSecType};
+use zzping_lib::framedataq::{Complete, FDCodecIter, FrameDataQ, IterFold, SubSecType};
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct FrameScaler {

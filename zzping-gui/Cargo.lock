@@ -3138,11 +3138,11 @@ dependencies = [
  "rmp",
  "ron",
  "serde",
- "zzpinglib",
+ "zzping-lib",
 ]
 
 [[package]]
-name = "zzpinglib"
+name = "zzping-lib"
 version = "0.2.0-beta1"
 dependencies = [
  "bit-vec",

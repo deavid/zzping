@@ -24,11 +24,11 @@ use std::time::{Duration, Instant};
 extern crate log;
 extern crate env_logger;
 extern crate rmp;
-extern crate zzpinglib;
+extern crate zzping_lib;
 
 use clap::Clap;
-use zzpinglib::framedata::{FrameData, FrameTime};
-use zzpinglib::framestats::FrameStats;
+use zzping_lib::framedata::{FrameData, FrameTime};
+use zzping_lib::framestats::FrameStats;
 
 #[derive(Clap)]
 #[clap(
