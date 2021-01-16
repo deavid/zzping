@@ -15,5 +15,5 @@
 
 
 cargo build && \
-    sudo setcap cap_net_raw=eip target/debug/zzpingd && \
-    RUST_LOG=debug ./target/debug/zzpingd
+    sudo setcap cap_net_raw=eip target/debug/zzping-daemon && \
+    RUST_LOG=debug ./target/debug/zzping-daemon
