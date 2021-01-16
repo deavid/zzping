@@ -49,8 +49,7 @@ fn main() {
     let socket = UdpSocket::bind(&cfg.udp_listen_address).unwrap();
     socket.set_nonblocking(true).unwrap();
 
-    let interval = Duration::from_millis(5);
-    let wait = Duration::from_millis(5);
+    let interval = Duration::from_millis(50);
     let refresh = Duration::from_millis(100);
 
     let pckt_loss_inflight_time = Duration::from_millis(150);
@@ -58,11 +57,12 @@ fn main() {
     let time_avg = Duration::from_millis(200);
     let mut last_refresh = Instant::now() - Duration::from_secs(60);
     let mut t = transport::Comms::new(transport::CommConfig {
-        forget_lost: Duration::from_millis(5000),
-        forget_inflight: Duration::from_millis(5000),
-        forget_recv: Duration::from_millis(5000),
+        forget_lost: Duration::from_millis(10000),
+        forget_inflight: Duration::from_millis(10000),
+        forget_recv: Duration::from_millis(10000),
     });
     let mut time_since_report = Instant::now() - Duration::from_secs(60);
+    let program_start = Instant::now();
     let now: DateTime<Utc> = Utc::now();
     let mut strnow = now
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
@@ -76,15 +76,28 @@ fn main() {
     for dest in t.dest.iter_mut() {
         dest.create_log_file(&strnow);
     }
+    let wait = t.get_delay();
+    // let wait = Duration::from_millis(1);
+    let mut last_offset = Duration::from_millis(0);
     loop {
-        t.send_all();
-        t.recv_all(wait);
+        let loop_wait = Instant::now();
+        if let Err(e) = t.recv_all(wait.checked_sub(last_offset).unwrap_or_default()) {
+            dbg!(e);
+        }
+        let pcks_sent = t.send_all(2);
+        // dbg!(recv_wait.elapsed());
 
         let elapsed = last_refresh.elapsed();
         if elapsed > refresh {
             last_refresh = Instant::now();
             t.cleanup();
             clearscreen();
+            println!(
+                "offset {}ms, wait: {}ms, sent: {} pcks",
+                last_offset.as_millis(),
+                wait.as_millis(),
+                pcks_sent,
+            );
             let since_report_elapsed = time_since_report.elapsed();
             if since_report_elapsed > Duration::from_secs(15) {
                 time_since_report = Instant::now();
@@ -138,7 +151,11 @@ fn main() {
                     .last()
                     .map_or(last_refresh, |x| x.sent)
                     .elapsed();
-                let recv_per_sec = recv_count as f32 / t.config.forget_recv.as_secs_f32();
+                let recv_per_sec = recv_count as f32
+                    / t.config
+                        .forget_recv
+                        .as_secs_f32()
+                        .min(program_start.elapsed().as_secs_f32());
                 println!(
                     "{:>14?} - {:>4} in-flight - {:>4.2} recv/s - {:>7.2?}ms / {:>4.1?}s - {:>7.2}% loss ({}/{}) ident: {},{}",
                     dest.addr,
@@ -195,5 +212,8 @@ fn main() {
                 }
             }
         }
+        last_offset = (last_offset + loop_wait.elapsed())
+            .checked_sub(wait)
+            .unwrap_or_else(|| Duration::from_millis(0));
     }
 }

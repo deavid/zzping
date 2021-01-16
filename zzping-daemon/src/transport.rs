@@ -18,8 +18,6 @@
 //!
 
 use super::icmp;
-use pnet::transport::icmp_packet_iter;
-use pnet::transport::transport_channel;
 use pnet::transport::{TransportChannelType, TransportReceiver, TransportSender};
 use rand::Rng;
 use std::io::BufWriter;
@@ -85,6 +83,9 @@ pub struct Destination {
     /// ICMP Identifier for this queue
     pub ident: u16,
 
+    /// When was the last packet sent
+    pub last_pckt_sent: Instant,
+
     /// Queue of packets sent awaiting for response.
     ///
     /// When received, they move to recv_packets. If a certain amount of time
@@ -127,6 +128,7 @@ impl Destination {
         Self {
             addr: parse_ipaddr(str_addr).unwrap(),
             str_addr: str_addr.to_owned(),
+            last_pckt_sent: Instant::now() - interval,
             interval,
             seq: 1,
             ident: rand::thread_rng().gen(),
@@ -162,13 +164,16 @@ impl Destination {
     /// If the packet is one that we sent, this function will complete the
     /// packet with the elapsed time of the response and move it to the
     /// recv_packets queue, removing it from the inflight_packets queue.
-    pub fn recv(&mut self, packet: icmp::PacketData) -> Option<(IpAddr, Duration)> {
+    pub fn recv(&mut self, packet: &icmp::PacketData) -> Option<(IpAddr, Duration)> {
         // TODO: A queue to detect duplicate responses would be nice to have.
         // TODO: Part of this code belongs to icmp::PacketSent::recv.
         // TODO: This code should consume PacketSent and craft a PacketReceived.
         let mut ret: Option<(IpAddr, Duration)> = None;
+        if self.ident != packet.ident {
+            return ret;
+        }
         for sent in self.inflight_packets.iter_mut() {
-            if sent.data.ident == packet.ident && sent.received.is_none() {
+            if sent.data.seqn == packet.seqn && sent.received.is_none() {
                 sent.received = Some(sent.sent.elapsed());
                 self.recv_count += 1;
                 self.recv_packets.push(sent.clone());
@@ -186,7 +191,7 @@ impl Destination {
     /// If the destination keeps creeping up in the inflight_packets (not responding)
     /// then this function will randomly be a no-op to avoid DoS to a device, and
     /// also to avoid having insane amounts of packets to search later.
-    pub fn send(&mut self, tx: &mut TransportSender) {
+    pub fn send(&mut self, tx: &mut TransportSender, min_delay: Duration) -> bool {
         let inflight = self.inflight_packets.len() as u16;
         /*
          rnd_num and skipping is a hack to avoid a bug creating nasty sizes of
@@ -194,19 +199,21 @@ impl Destination {
          on recv), but the hack stays just in case.
         */
         let rnd_num = self.rng.gen_range(16, 64);
-        if rnd_num >= inflight {
-            let packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
-            self.inflight_packets.push(packet);
-        } else if rnd_num * 2 >= inflight {
-            // TODO: Seems we have a bug and we don't clean the queue properly... ¿dup packets? hmmm
-            let idx = self.rng.gen_range(0, inflight) as usize;
-            self.inflight_packets.remove(idx);
-            return;
+        if rnd_num < inflight {
+            return false;
         }
+        if self.last_pckt_sent.elapsed() + min_delay < self.interval {
+            return false;
+        }
+        let packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
+        self.last_pckt_sent = Instant::now() - Duration::from_micros(self.rng.gen_range(0, 101));
+        self.inflight_packets.push(packet);
+
         // The sequence is random to avoid a device "guessing" what the next sequence will be.
         // TODO: This opens the door to sending two packets with the same seq number.
         self.seq = self.rng.gen();
         self.sent_count += 1;
+        true
     }
 
     /// Return the packets that were received on the last "wait" seconds.
@@ -256,6 +263,8 @@ pub struct Comms {
     tx: TransportSender,
     /// Timings Config
     pub config: CommConfig,
+    /// Recommended delay
+    pub delay: Duration,
 }
 
 impl std::fmt::Debug for Comms {
@@ -272,7 +281,7 @@ impl Comms {
     pub fn new(config: CommConfig) -> Self {
         let bufsize = 65536;
         // TODO: Caller should have two Comms, one for IpV4, and another for IpV6.
-        let (tx, rx) = match transport_channel(bufsize, protocol_ipv4()) {
+        let (tx, rx) = match pnet::transport::transport_channel(bufsize, protocol_ipv4()) {
             Ok((tx, rx)) => (tx, rx),
             Err(e) => panic!(e.to_string()),
         };
@@ -281,18 +290,42 @@ impl Comms {
             rx,
             tx,
             config,
+            delay: Duration::from_millis(1),
         }
     }
     /// Add a new destination from a given string address
     pub fn add_destination(&mut self, addr: &str, interval: Duration) {
-        self.dest.push(Destination::new(addr, interval))
+        if interval.as_nanos() == 0 {
+            panic!("Interval for a target host cannot be zero.")
+        }
+        self.dest.push(Destination::new(addr, interval));
+        self.delay = self.get_delay();
     }
 
     /// Sends a ping for each destination
-    pub fn send_all(&mut self) {
-        for dest in &mut self.dest {
-            dest.send(&mut self.tx);
+    pub fn send_all(&mut self, limit: usize) -> usize {
+        let mut count = 0;
+        let mut dests: Vec<_> = self
+            .dest
+            .iter()
+            .map(|x| {
+                x.last_pckt_sent
+                    .saturating_duration_since(Instant::now())
+                    .as_micros() as i128
+            })
+            .enumerate()
+            .collect();
+        dests.sort_unstable_by_key(|(_, x)| -*x);
+        let delay = self.delay;
+        for (n, _) in dests {
+            if self.dest[n].send(&mut self.tx, delay) {
+                count += 1;
+                if limit > 0 && count >= limit {
+                    break;
+                }
+            }
         }
+        count
     }
 
     /// Forget old packets following the config specs.
@@ -316,7 +349,20 @@ impl Comms {
         }
     }
 
-    pub fn _delay() {
+    /// Estimate the desired delay to complete all packets in one second
+    pub fn get_delay(&self) -> Duration {
+        let mut freq = 0.0;
+        for dest in &self.dest {
+            freq += dest.interval.as_secs_f64().recip();
+        }
+        dbg!(freq);
+        if freq > 0.0 {
+            Duration::from_secs_f64(freq.recip())
+        } else {
+            // Sensible default when there are no targets.
+            // It might also be that all targets have interval=0. Wrong, but whatever.
+            Duration::from_millis(1)
+        }
         /*
         The delay could be something evenly spaced. Maybe the formula of:
 
@@ -337,39 +383,56 @@ impl Comms {
     /// keeps reading until the buffer is exhausted. If an error occurs, will
     /// return the packets read so far, plus the error. Filters those packets that
     /// do not match the ident variable
-    pub fn recv_all(
-        &mut self,
-        timeout: Duration,
-    ) -> (Vec<(IpAddr, Duration)>, Option<std::io::Error>) {
-        let mut iter = icmp_packet_iter(&mut self.rx);
-        let mut next_timeout = Duration::from_micros(1000);
-        let zero = Duration::from_micros(100);
-        let mut vec: Vec<(IpAddr, Duration)> = vec![];
+    pub fn recv_all(&mut self, timeout: Duration) -> Result<(), std::io::Error> {
         let starttime = Instant::now();
+        if timeout.as_millis() > 5000 {
+            dbg!(timeout);
+            panic!("recv_all: Tried to wait more than 5000ms");
+        }
         loop {
-            match iter.next_with_timeout(next_timeout) {
-                Ok(data) => {
-                    if let Some((packet, addr)) = data {
-                        let packet = icmp::PacketData::parse(packet, addr);
-                        for dest in &mut self.dest {
-                            if packet.ident == dest.ident {
-                                if let Some(info) = dest.recv(packet.clone()) {
-                                    vec.push(info);
-                                }
-                            }
-                        }
-                    } else if next_timeout == zero {
-                        break;
-                    }
-                    if next_timeout != zero && starttime.elapsed() > timeout {
-                        next_timeout = zero;
-                    }
-                }
-                Err(e) => {
-                    return (vec, Some(e));
-                }
+            let wait = timeout.checked_sub(starttime.elapsed()).unwrap_or_default();
+            assert!(wait <= timeout);
+            self.recv_one(wait)?;
+            if wait.as_millis() == 0 {
+                break;
             }
         }
-        (vec, None)
+        Ok(())
     }
+
+    /// Attempt to get a single ICMP packet from channel iterator.
+    ///
+    /// If no packet was received within timeout will return Ok(false).
+    /// If one packet was processed, will return Ok(true)
+    /// Be aware that this function can block a slightly and random higher value
+    /// than demanded.
+    pub fn recv_one(&mut self, timeout: Duration) -> Result<bool, std::io::Error> {
+        let mut packet_iter = pnet::transport::icmp_packet_iter(&mut self.rx);
+        let min_time = Duration::from_micros(1);
+        if timeout.as_millis() > 5000 {
+            dbg!(timeout);
+            panic!("recv_one: Tried to wait more than 5000ms");
+        }
+        match packet_iter.next_with_timeout(timeout.max(min_time))? {
+            Some((packet, addr)) => {
+                let packet = icmp::PacketData::parse(packet, addr);
+                for dest in &mut self.dest {
+                    dest.recv(&packet);
+                }
+                Ok(true)
+            }
+            None => Ok(false),
+        }
+    }
+}
+
+// TODO: Add tests here:
+#[cfg(test)]
+mod tests {
+    /*
+    use super::*;
+
+    #[test]
+    fn test_XXX() {}
+    */
 }

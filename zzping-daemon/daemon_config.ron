@@ -8,6 +8,8 @@ ServerConfig(
         // Any other host in your home network you want to ping
         "192.168.0.232",
         "9.9.9.9",
+        "8.8.8.8",
+        "8.8.4.4",
         
     ],
 )
