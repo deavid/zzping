@@ -45,7 +45,7 @@ fn clearscreen() {
 }
 fn main() {
     let opts: Opts = Opts::parse();
-    let cfg = config::ServerConfig::from_file(&opts.config).unwrap();
+    let cfg = config::ServerConfig::from_filepath(&opts.config).unwrap();
     let socket = UdpSocket::bind(&cfg.udp_listen_address).unwrap();
     socket.set_nonblocking(true).unwrap();
 

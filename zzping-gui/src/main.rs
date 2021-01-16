@@ -42,7 +42,7 @@ struct Opts {
 
 pub fn main() {
     let opts: Opts = Opts::parse();
-    let guiconfig = GuiConfig::from_file(&opts.config).unwrap();
+    let guiconfig = GuiConfig::from_filepath(&opts.config).unwrap();
     let flags = Flags {
         guiconfig,
         otheropts: OtherOpts {

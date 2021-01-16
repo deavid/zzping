@@ -20,7 +20,7 @@ use pnet::transport::TransportChannelType;
 use pnet::transport::TransportSender;
 use pnet::util;
 use pnet_macros_support::types::u16be;
-// use rand::random;
+
 use std::net::IpAddr;
 use std::time::{Duration, Instant, SystemTime};
 

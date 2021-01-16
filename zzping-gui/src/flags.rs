@@ -23,7 +23,7 @@ pub struct GuiConfig {
 }
 
 impl GuiConfig {
-    pub fn from_file(filepath: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_filepath(filepath: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let contents = fs::read_to_string(filepath)?;
         Ok(ron::de::from_str(&contents)?)
     }
