@@ -12,6 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Reads the ping daemon configuration from a file.
+//!
+//! # Examples
+//!
+//! daemon_config.ron:
+//! ```ron
+//! ServerConfig(
+//!     udp_listen_address: "127.0.0.1:7878",
+//!     udp_client_address: "127.0.0.1:7879",
+//!     ping_targets: [
+//!         "192.168.0.1",
+//!     ],
+//! )
+//! ```
+
 use serde::{Deserialize, Serialize};
 use std::fs;
 
@@ -40,10 +55,9 @@ impl ServerConfig {
 
 #[cfg(test)]
 mod tests {
-    use core::panic;
+    use super::*;
     use std::io::Write;
 
-    use super::*;
     const SAMPLE_CFG: &str = r#"
         ServerConfig(
             udp_listen_address: "127.0.0.1:7878",

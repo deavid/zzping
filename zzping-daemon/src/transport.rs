@@ -12,49 +12,120 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! ICMP Transport and management objects
+//!
+//! This is the core of the zzping-daemon binary, it holds its main behavior.
+//!
+
 use super::icmp;
 use pnet::transport::icmp_packet_iter;
 use pnet::transport::transport_channel;
-use pnet::transport::{TransportReceiver, TransportSender};
+use pnet::transport::{TransportChannelType, TransportReceiver, TransportSender};
 use rand::Rng;
 use std::io::BufWriter;
 use std::net::IpAddr;
 use std::time::{Duration, Instant};
 use std::{fs::File, io::Write};
 
-fn recv_before(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
+/// Creates a TransportChannelType for ICMP over IPv4
+pub fn protocol_ipv4() -> TransportChannelType {
+    use pnet::packet::ip::IpNextHeaderProtocols;
+    use pnet::transport::TransportChannelType::Layer4;
+    use pnet::transport::TransportProtocol::Ipv4;
+    Layer4(Ipv4(IpNextHeaderProtocols::Icmp))
+}
+
+/// Parses a string into an IP Address.
+pub fn parse_ipaddr(ipaddr: &str) -> Option<IpAddr> {
+    // TODO: This function is basically useless. What do we do with it?
+    let addr = ipaddr.parse::<IpAddr>();
+    match addr {
+        Ok(valid_addr) => Some(valid_addr),
+        Err(e) => {
+            error!("Error parsing ip address {}. Error: {}", ipaddr, e);
+            None
+        }
+    }
+}
+
+/// Function used for .filter() so it can parse a queue and get packets that were
+/// received before "now" - "wait".
+pub fn recv_before(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
     let received: Duration = pck.received.unwrap_or_default();
     now.saturating_duration_since(pck.sent + received) < wait
 }
 
-fn sent_before(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
+/// Function used for .filter() so it can parse a queue and get packets that were
+/// sent before "now" - "wait".
+pub fn sent_before(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
     now.saturating_duration_since(pck.sent) < wait
 }
 
-fn sent_after(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
+/// Function used for .filter() so it can parse a queue and get packets that were
+/// sent after "now" - "wait".
+pub fn sent_after(pck: &icmp::PacketSent, now: Instant, wait: Duration) -> bool {
     !sent_before(pck, now, wait)
 }
 
+/// Defines a destination host with parameters and internal queues.
 #[derive(Debug)]
 pub struct Destination {
-    pub addr: IpAddr,
+    /// String Address, as used when creating this destination.
     pub str_addr: String,
+
+    /// Limit on how frequently to send pings to the target host.
     pub interval: Duration,
-    pub seq: u16,   // Next packet number
-    pub ident: u16, // Identifier for this queue
+
+    /// Target Host address.
+    pub addr: IpAddr,
+
+    /// Next ICMP packet number to be sent.
+    pub seq: u16,
+
+    /// ICMP Identifier for this queue
+    pub ident: u16,
+
+    /// Queue of packets sent awaiting for response.
+    ///
+    /// When received, they move to recv_packets. If a certain amount of time
+    /// has passed, they're deemed lost and moved to lost_packets.
     pub inflight_packets: Vec<icmp::PacketSent>,
+
+    /// Queue of packets received.
+    ///
+    /// This queue is hold only for a certain amount of time. After that, the
+    /// packets are removed.
     pub recv_packets: Vec<icmp::PacketSent>,
+
+    /// Queue of lost packets.
+    ///
+    /// This queue is hold only for a certain amount of time. After that, the
+    /// packets are removed.
     pub lost_packets: Vec<icmp::PacketSent>,
+
+    /// Stat counter of amount of packets sent to this destination.
+    ///
+    /// For stats only, this will be reset each time the program restarts.
     pub sent_count: u64,
+
+    /// Stat counter of amount of packets received from this destination.
+    ///
+    /// For stats only, this will be reset each time the program restarts.
     pub recv_count: u64,
+
+    /// Thread Random generator. Used only for caching purposes.
     pub rng: rand::rngs::ThreadRng,
+
+    /// Where to write the packets to disk. To be deprecated.
     pub logfile: Option<BufWriter<File>>,
 }
 
 impl Destination {
+    /// Create a new destination from a IP Address in a string and a interval
+    /// for the frequency of the pings.
     pub fn new(str_addr: &str, interval: Duration) -> Self {
         Self {
-            addr: icmp::ipaddr(str_addr).unwrap(),
+            addr: parse_ipaddr(str_addr).unwrap(),
             str_addr: str_addr.to_owned(),
             interval,
             seq: 1,
@@ -69,6 +140,11 @@ impl Destination {
         }
     }
 
+    /// Enables logging packets to disk. If there was a logging running, it will
+    /// switch to the new file. If the file exists, it will be replaced by a new
+    /// one.
+    ///
+    /// The filename follows the format ./logs/pingd-log-{str_addr}-{now}.log
     pub fn create_log_file(&mut self, now: &str) {
         let filename = format!("logs/pingd-log-{}-{}.log", self.str_addr, now);
         let f = File::create(filename).unwrap();
@@ -81,7 +157,15 @@ impl Destination {
         self.logfile = Some(BufWriter::new(f));
     }
 
+    /// Try to match an incoming packet against the inflight_packets queue.
+    ///
+    /// If the packet is one that we sent, this function will complete the
+    /// packet with the elapsed time of the response and move it to the
+    /// recv_packets queue, removing it from the inflight_packets queue.
     pub fn recv(&mut self, packet: icmp::PacketData) -> Option<(IpAddr, Duration)> {
+        // TODO: A queue to detect duplicate responses would be nice to have.
+        // TODO: Part of this code belongs to icmp::PacketSent::recv.
+        // TODO: This code should consume PacketSent and craft a PacketReceived.
         let mut ret: Option<(IpAddr, Duration)> = None;
         for sent in self.inflight_packets.iter_mut() {
             if sent.data.ident == packet.ident && sent.received.is_none() {
@@ -97,6 +181,11 @@ impl Destination {
         ret
     }
 
+    /// Send another ping to this destination
+    ///
+    /// If the destination keeps creeping up in the inflight_packets (not responding)
+    /// then this function will randomly be a no-op to avoid DoS to a device, and
+    /// also to avoid having insane amounts of packets to search later.
     pub fn send(&mut self, tx: &mut TransportSender) {
         let inflight = self.inflight_packets.len() as u16;
         /*
@@ -114,16 +203,15 @@ impl Destination {
             self.inflight_packets.remove(idx);
             return;
         }
+        // The sequence is random to avoid a device "guessing" what the next sequence will be.
+        // TODO: This opens the door to sending two packets with the same seq number.
         self.seq = self.rng.gen();
-        // if self.seq == 65535 {
-        //     // wrap-around
-        //     self.seq = 0;
-        // } else {
-        //     self.seq += 1;
-        // }
         self.sent_count += 1;
     }
 
+    /// Return the packets that were received on the last "wait" seconds.
+    ///
+    /// This clones the packets, so it might be a bit intensive.
     pub fn received_last(&self, wait: Duration) -> Vec<icmp::PacketSent> {
         let now = Instant::now();
         self.recv_packets
@@ -132,6 +220,10 @@ impl Destination {
             .cloned()
             .collect()
     }
+
+    /// Return the packets that are awaiting for response and sent in the last "wait" seconds.
+    ///
+    /// This clones the packets, so it might be a bit intensive.
     pub fn inflight_after(&self, wait: Duration) -> Vec<icmp::PacketSent> {
         let now = Instant::now();
         self.inflight_packets
@@ -142,13 +234,19 @@ impl Destination {
     }
 }
 
-#[derive(Debug, Clone)]
+/// Configuration struct used to create new Comms objects
+#[derive(Debug, Clone, Copy)]
 pub struct CommConfig {
-    pub forget_lost: Duration,
+    /// Time required to consider an inflight packet lost.
     pub forget_inflight: Duration,
+    /// How long lost packets are hold.
+    pub forget_lost: Duration,
+    /// How long received packets are hold.
     pub forget_recv: Duration,
+    // TODO: Add TransportChannelType here?, so it can configure IpV4 or IpV6.
 }
 
+/// Pinger struct to manage send/recv pings for several destinations at different intervals.
 pub struct Comms {
     /// Collection of hosts to send pings to
     pub dest: Vec<Destination>,
@@ -160,12 +258,21 @@ pub struct Comms {
     pub config: CommConfig,
 }
 
+impl std::fmt::Debug for Comms {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Comms")
+            .field("dest", &self.dest)
+            .field("config", &self.config)
+            .finish()
+    }
+}
+
 impl Comms {
+    /// Create a new Comms object from config
     pub fn new(config: CommConfig) -> Self {
-        // let ident: u16 = (std::process::id() % 65536) as u16;
-        let buf = 65536;
-        // let buf = 1024;
-        let (tx, rx) = match transport_channel(buf, icmp::protocol()) {
+        let bufsize = 65536;
+        // TODO: Caller should have two Comms, one for IpV4, and another for IpV6.
+        let (tx, rx) = match transport_channel(bufsize, protocol_ipv4()) {
             Ok((tx, rx)) => (tx, rx),
             Err(e) => panic!(e.to_string()),
         };
@@ -176,7 +283,7 @@ impl Comms {
             config,
         }
     }
-
+    /// Add a new destination from a given string address
     pub fn add_destination(&mut self, addr: &str, interval: Duration) {
         self.dest.push(Destination::new(addr, interval))
     }
@@ -188,8 +295,9 @@ impl Comms {
         }
     }
 
+    /// Forget old packets following the config specs.
     pub fn cleanup(&mut self) {
-        let c = self.config.clone();
+        let c = self.config;
         let now = Instant::now();
         for dest in self.dest.iter_mut() {
             for pck in dest
@@ -222,6 +330,9 @@ impl Comms {
         */
     }
 
+    /// Listens for packets up to "timeout" time and matches incoming packets
+    /// with the different destinations and their recv queues.
+    ///
     /// Waits for timeout for icmp packets, then subsequentially
     /// keeps reading until the buffer is exhausted. If an error occurs, will
     /// return the packets read so far, plus the error. Filters those packets that
@@ -230,7 +341,6 @@ impl Comms {
         &mut self,
         timeout: Duration,
     ) -> (Vec<(IpAddr, Duration)>, Option<std::io::Error>) {
-        // TODO: Rename to recv_all  & change return to Result::Ok(None)
         let mut iter = icmp_packet_iter(&mut self.rx);
         let mut next_timeout = Duration::from_micros(1000);
         let zero = Duration::from_micros(100);
