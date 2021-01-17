@@ -16,7 +16,8 @@ mod config;
 mod icmp;
 mod transport;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
+use rand::Rng;
 use std::net::UdpSocket;
 use std::time::{Duration, Instant};
 
@@ -43,52 +44,84 @@ struct Opts {
 fn clearscreen() {
     print!("{esc}[2J{esc}[1;1H", esc = 27 as char);
 }
-fn main() {
-    let opts: Opts = Opts::parse();
-    let cfg = config::ServerConfig::from_filepath(&opts.config).unwrap();
-    let socket = UdpSocket::bind(&cfg.udp_listen_address).unwrap();
-    socket.set_nonblocking(true).unwrap();
 
-    let interval = Duration::from_millis(50);
-    let refresh = Duration::from_millis(100);
+fn read_config(filepath: &str) -> config::ServerConfig {
+    match config::ServerConfig::from_filepath(filepath) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            panic!(format!("Error parsing config file '{}': {:?}", filepath, e));
+        }
+    }
+}
 
-    let pckt_loss_inflight_time = Duration::from_millis(150);
-    let pckt_loss_recv_time = Duration::from_millis(300);
-    let time_avg = Duration::from_millis(200);
-    let mut last_refresh = Instant::now() - Duration::from_secs(60);
-    let mut t = transport::Comms::new(transport::CommConfig {
-        forget_lost: Duration::from_millis(10000),
-        forget_inflight: Duration::from_millis(10000),
-        forget_recv: Duration::from_millis(10000),
-    });
-    let mut time_since_report = Instant::now() - Duration::from_secs(60);
-    let program_start = Instant::now();
-    let now: DateTime<Utc> = Utc::now();
-    let mut strnow = now
+fn get_logfile_now() -> String {
+    let mut strnow = Utc::now()
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         .replace("-", "")
         .replace(":", "");
     strnow.truncate(11);
+    strnow
+}
+fn main() {
+    let mut rng = rand::thread_rng();
+
+    let opts: Opts = Opts::parse();
+    let cfg = read_config(&opts.config);
+    let mut t = transport::Comms::new(transport::CommConfig {
+        forget_lost: Duration::from_secs(cfg.keep_packets.lost_secs),
+        forget_inflight: Duration::from_secs(cfg.keep_packets.inflight_secs),
+        forget_recv: Duration::from_secs(cfg.keep_packets.recv_secs),
+    });
+
+    let socket = UdpSocket::bind(&cfg.udp_listen_address).unwrap();
+    socket.set_nonblocking(true).unwrap();
+
+    // How often the console UI is refreshed
+    let cli_refresh = Duration::from_millis(100);
+
+    // Config Stats for CLI
+    let pckt_loss_inflight_time = Duration::from_millis(150);
+    let pckt_loss_recv_time = Duration::from_millis(300);
+    // Average CLI stats (recv time) over this time period
+    let time_avg = Duration::from_millis(500);
+
+    // Timer to make the UI refresh every "cli_refresh"
+    let mut last_refresh = Instant::now() - Duration::from_secs(60);
+    // Timer to both enable the disk log to switch to a new file, and to write a complete packet every X
+    let mut time_since_report = Instant::now() - Duration::from_secs(60);
+    let report_every_secs = Duration::from_secs(15);
+
+    // Timer to smooth the averages on the program load, to avoid seeing lower averages upon program start
+    let program_start = Instant::now();
+
+    // Contains the current ending of the file, changes every hour
+    let mut strnow = get_logfile_now();
 
     for target in cfg.ping_targets {
-        t.add_destination(&target, interval);
+        let interval = Duration::from_secs(1) / target.frequency;
+        // Add a random amount to avoid having all targets at exactly the same time
+        let interval_n =
+            interval + Duration::from_nanos(rng.gen_range(0, interval.as_millis()) as u64);
+
+        t.add_destination(&target.address, interval_n);
     }
     for dest in t.dest.iter_mut() {
         dest.create_log_file(&strnow);
     }
+    // Recommended wait ammount to be able to push all pings in time
     let wait = t.get_delay();
-    // let wait = Duration::from_millis(1);
+
+    // Amount of extra time taken in one round, to be able to correct it.
     let mut last_offset = Duration::from_millis(0);
     loop {
         let loop_wait = Instant::now();
         if let Err(e) = t.recv_all(wait.checked_sub(last_offset).unwrap_or_default()) {
             dbg!(e);
         }
-        let pcks_sent = t.send_all(2);
-        // dbg!(recv_wait.elapsed());
+        let pcks_sent = t.send_all(0);
 
         let elapsed = last_refresh.elapsed();
-        if elapsed > refresh {
+        if elapsed > cli_refresh {
             last_refresh = Instant::now();
             t.cleanup();
             clearscreen();
@@ -99,13 +132,9 @@ fn main() {
                 pcks_sent,
             );
             let since_report_elapsed = time_since_report.elapsed();
-            if since_report_elapsed > Duration::from_secs(15) {
+            if since_report_elapsed > report_every_secs {
                 time_since_report = Instant::now();
-                let mut newstrnow = Utc::now()
-                    .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-                    .replace("-", "")
-                    .replace(":", "");
-                newstrnow.truncate(11);
+                let newstrnow = get_logfile_now();
                 if newstrnow != strnow {
                     strnow = newstrnow;
                     for dest in t.dest.iter_mut() {
@@ -186,8 +215,8 @@ fn main() {
                 println!("Error sending via UDP. Client might not be connected.")
             }
             for dest in t.dest.iter_mut() {
-                let last_recv = dest.received_last(refresh * 2);
-                let inflight = dest.inflight_after(refresh);
+                let last_recv = dest.received_last(cli_refresh * 2);
+                let inflight = dest.inflight_after(cli_refresh);
                 let mut last_recv_us: Vec<u128> = last_recv
                     .iter()
                     .map(|p| p.received.unwrap_or_default().as_micros())
@@ -195,7 +224,7 @@ fn main() {
                 last_recv_us.sort_unstable();
                 if let Some(mut f) = dest.logfile.as_mut() {
                     // TODO: Extract this as a function!
-                    let time: FrameTime = if since_report_elapsed > Duration::from_secs(15) {
+                    let time: FrameTime = if since_report_elapsed > report_every_secs {
                         FrameTime::Timestamp(Utc::now())
                     } else {
                         FrameTime::Elapsed(since_report_elapsed)

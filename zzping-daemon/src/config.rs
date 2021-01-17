@@ -1,6 +1,6 @@
 // Copyright 2020 Google LLC
 //
-// Licensed under the Apache License, Version 2.0 (the "License");
+// Licen inflight_secs: (), lost_secs: (), recv_secs: ()sed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
@@ -30,15 +30,44 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 
+/// Config for a single target host
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TargetHost {
+    /// Target Host to ping, IP Address in string format
+    pub address: String,
+    /// How many pings per second to do
+    pub frequency: u32,
+}
+
+impl TargetHost {
+    #[allow(dead_code)]
+    pub fn new(address: &str, frequency: u32) -> Self {
+        Self {
+            address: address.to_owned(),
+            frequency,
+        }
+    }
+}
+
+/// Config for how long to keep the old pings
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ForgetConfig {
+    pub inflight_secs: u64,
+    pub lost_secs: u64,
+    pub recv_secs: u64,
+}
+
 /// Configuration parameters for the pinger daemon
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServerConfig {
     /// IP Address:port where the GUI would connect to.
     pub udp_listen_address: String,
     /// IP Address:port where the GUI is listening.
     pub udp_client_address: String,
     /// List of hosts that will be pinged.
-    pub ping_targets: Vec<String>,
+    pub ping_targets: Vec<TargetHost>,
+    /// How long to keep the packets
+    pub keep_packets: ForgetConfig,
 }
 
 impl ServerConfig {
@@ -63,8 +92,16 @@ mod tests {
             udp_listen_address: "127.0.0.1:7878",
             udp_client_address: "127.0.0.1:7879",
             ping_targets: [
-                "192.168.0.1",
+                TargetHost(
+                    address: "192.168.0.1",
+                    frequency: 10,
+                ),
             ],
+            keep_packets: (
+                inflight_secs: 10,
+                lost_secs: 10,
+                recv_secs: 10,
+            ),
         )        
     "#;
 
@@ -85,7 +122,15 @@ mod tests {
             Ok(cfg) => {
                 assert_eq!(cfg.udp_listen_address, "127.0.0.1:7878");
                 assert_eq!(cfg.udp_client_address, "127.0.0.1:7879");
-                assert_eq!(cfg.ping_targets, vec!["192.168.0.1"]);
+                assert_eq!(cfg.ping_targets, vec![TargetHost::new("192.168.0.1", 10)]);
+                assert_eq!(
+                    cfg.keep_packets,
+                    ForgetConfig {
+                        inflight_secs: 10,
+                        lost_secs: 10,
+                        recv_secs: 10,
+                    }
+                );
             }
         }
     }
@@ -105,7 +150,15 @@ mod tests {
             Ok(cfg) => {
                 assert_eq!(cfg.udp_listen_address, "127.0.0.1:7878");
                 assert_eq!(cfg.udp_client_address, "127.0.0.1:7879");
-                assert_eq!(cfg.ping_targets, vec!["192.168.0.1"]);
+                assert_eq!(cfg.ping_targets, vec![TargetHost::new("192.168.0.1", 10)]);
+                assert_eq!(
+                    cfg.keep_packets,
+                    ForgetConfig {
+                        inflight_secs: 10,
+                        lost_secs: 10,
+                        recv_secs: 10,
+                    }
+                );
             }
         }
         path.close().unwrap();
