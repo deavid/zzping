@@ -76,8 +76,8 @@ fn main() {
     let socket = UdpSocket::bind(&cfg.udp_listen_address).unwrap();
     socket.set_nonblocking(true).unwrap();
 
-    // How often the console UI is refreshed
-    let cli_refresh = Duration::from_millis(100);
+    // How often the console UI is refreshed / how often to write a frame
+    let cli_refresh = Duration::from_millis(50);
 
     // Config Stats for CLI
     let pckt_loss_inflight_time = Duration::from_millis(150);
@@ -215,7 +215,7 @@ fn main() {
                 println!("Error sending via UDP. Client might not be connected.")
             }
             for dest in t.dest.iter_mut() {
-                let last_recv = dest.received_last(cli_refresh * 2);
+                let last_recv = dest.received_last(cli_refresh + cli_refresh / 2);
                 let inflight = dest.inflight_after(cli_refresh);
                 let mut last_recv_us: Vec<u128> = last_recv
                     .iter()

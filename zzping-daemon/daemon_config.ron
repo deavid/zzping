@@ -5,29 +5,29 @@ ServerConfig(
         // Your local router IP
         TargetHost(
             address: "192.168.0.1", // Host address
-            frequency: 30,          // Pings per second
+            frequency: 20,          // Pings per second
         ),
         TargetHost(
             address: "192.168.0.3", 
-            frequency: 50,          
+            frequency: 100,          
         ),
         TargetHost(
             address: "192.168.0.232",
-            frequency: 50,          
+            frequency: 100,          
         ),
         // Any other host in your home network you want to ping
         TargetHost(
             address: "9.9.9.9",
-            frequency: 5,          
+            frequency: 10,          
         ),
-        TargetHost(
-            address: "8.8.8.8",
-            frequency: 5,          
-        ),
-        TargetHost(
-            address: "8.8.4.4",
-            frequency: 5,          
-        ),
+        // TargetHost(
+        //     address: "8.8.8.8",
+        //     frequency: 5,          
+        // ),
+        // TargetHost(
+        //     address: "8.8.4.4",
+        //     frequency: 5,          
+        // ),
     ],
     // How long the daemon should keep the packets
     keep_packets: (
