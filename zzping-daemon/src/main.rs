@@ -31,6 +31,19 @@ use clap::Clap;
 use zzping_lib::framedata::{FrameData, FrameTime};
 use zzping_lib::framestats::FrameStats;
 
+struct CLIStats {
+    dest_addr: std::net::IpAddr,
+    inflight_count: usize,
+    recv_per_sec: f32,
+    avg_time: Duration,
+    last_pckt_received: Duration,
+    packet_loss: f32,
+    packets_lost: usize,
+    packets_recv: usize,
+    dest_ident: u16,
+    dest_seq: u16,
+}
+
 #[derive(Clap)]
 #[clap(
     version = "0.2.1-beta1",
@@ -77,13 +90,14 @@ fn main() {
     socket.set_nonblocking(true).unwrap();
 
     // How often the console UI is refreshed / how often to write a frame
-    let cli_refresh = Duration::from_millis(150);
+    let cli_refresh = Duration::from_millis(20);
+
+    // Time to assign if there are no packets reported.
+    let default_recv_avg_no_packets = Duration::from_millis(0);
 
     // Config Stats for CLI
     let pckt_loss_inflight_time = Duration::from_millis(150);
     let pckt_loss_recv_time = Duration::from_millis(300);
-    // Average CLI stats (recv time) over this time period
-    let time_avg = Duration::from_millis(500);
 
     // Timer to make the UI refresh every "cli_refresh"
     let mut last_refresh = Instant::now() - Duration::from_secs(60);
@@ -123,14 +137,8 @@ fn main() {
         let elapsed = last_refresh.elapsed();
         if elapsed > cli_refresh {
             last_refresh = Instant::now();
+            // Remove now the old packets from their queues. (Packets never received, old packets lost & received)
             t.cleanup();
-            clearscreen();
-            println!(
-                "offset {}ms, wait: {}ms, sent: {} pcks",
-                last_offset.as_millis(),
-                wait.as_millis(),
-                pcks_sent,
-            );
             let since_report_elapsed = time_since_report.elapsed();
             if since_report_elapsed > report_every_secs {
                 time_since_report = Instant::now();
@@ -142,68 +150,60 @@ fn main() {
                     }
                 }
             }
-            let mut udp_ok = true;
+            // --- Compute stats phase ---
+
+            // Used to estimate the size of the recv queue in seconds, avoids getting wrong values on program start
+            let recv_time_size = t
+                .config
+                .forget_recv
+                .min(program_start.elapsed())
+                .as_secs_f32();
+
+            // Vector to hold the stats found in each destination host
+            let mut cli_stats: Vec<CLIStats> = vec![];
+
             for dest in t.dest.iter() {
+                // The time used to average results is meant to contain 5 pings
+                // in average, or one cli_refresh if that's bigger.
+                let time_avg = (dest.interval * 5).max(cli_refresh);
                 let inflight_count = dest.inflight_packets.len();
                 let recv_count = dest.recv_packets.len();
-                let packets_lost = dest.inflight_packets.iter().fold(0, |acc, x| {
-                    acc + if last_refresh - x.sent >= pckt_loss_inflight_time {
-                        1
-                    } else {
-                        0
-                    }
-                }) + dest.lost_packets.len();
-                let packets_recv = dest.recv_packets.iter().fold(0, |acc, x| {
-                    acc + if last_refresh - (x.sent + x.received.unwrap()) <= pckt_loss_recv_time {
-                        1
-                    } else {
-                        0
-                    }
-                });
+                let inflight_long = dest.inflight_after(pckt_loss_inflight_time).len();
+                let packets_lost = inflight_long + dest.lost_packets.len();
+                let packets_recv = dest.received_last(pckt_loss_recv_time).len();
                 let packet_loss =
                     (100.0 * packets_lost as f32) / ((packets_lost + packets_recv) as f32);
-                let avg = dest
-                    .recv_packets
-                    .iter()
-                    .filter(|x| (x.sent + x.received.unwrap()).elapsed() < time_avg);
-                let tot_time: Duration = avg.clone().fold(Duration::from_micros(0), |acc, x| {
-                    acc + x.received.unwrap_or_default()
-                });
-                let avg_len = avg.count().max(1);
-                let avg_time: Duration = if dest.recv_packets.is_empty() {
-                    Duration::from_millis(0)
-                } else {
-                    tot_time / (avg_len as u32)
-                };
+                let avg_time: Duration = dest
+                    .mean_recv_time(time_avg)
+                    .unwrap_or(default_recv_avg_no_packets);
                 let last_pckt_received = dest
                     .recv_packets
                     .last()
                     .map_or(last_refresh, |x| x.sent)
                     .elapsed();
-                let recv_per_sec = recv_count as f32
-                    / t.config
-                        .forget_recv
-                        .as_secs_f32()
-                        .min(program_start.elapsed().as_secs_f32());
-                println!(
-                    "{:>14?} - {:>4} in-flight - {:>4.2} recv/s - {:>7.2?}ms / {:>4.1?}s - {:>7.2}% loss ({}/{}) ident: {},{}",
-                    dest.addr,
+                let recv_per_sec = recv_count as f32 / recv_time_size;
+                cli_stats.push(CLIStats {
+                    dest_addr: dest.addr,
                     inflight_count,
                     recv_per_sec,
-                    avg_time.as_secs_f32() * 1000.0,
-                    last_pckt_received.as_secs_f32(),
-                    packet_loss,
-                    packets_lost,
-                    packets_recv,
-                    dest.ident,
-                    dest.seq,
-                );
-                match FrameStats::encode_stats(
-                    dest.addr,
-                    inflight_count,
                     avg_time,
                     last_pckt_received,
                     packet_loss,
+                    packets_lost,
+                    packets_recv,
+                    dest_ident: dest.ident,
+                    dest_seq: dest.seq,
+                });
+            }
+            // --- Send stats to GUI via UDP ---
+            let mut udp_ok = true;
+            for st in cli_stats.iter() {
+                match FrameStats::encode_stats(
+                    st.dest_addr,
+                    st.inflight_count,
+                    st.avg_time,
+                    st.last_pckt_received,
+                    st.packet_loss,
                 ) {
                     Ok(msg) => {
                         udp_ok = udp_ok && socket.send_to(&msg, &cfg.udp_client_address).is_ok()
@@ -214,6 +214,7 @@ fn main() {
             if !udp_ok {
                 println!("Error sending via UDP. Client might not be connected.")
             }
+            // -- Logging phase ---
             for dest in t.dest.iter_mut() {
                 let last_recv = dest.received_last(cli_refresh + cli_refresh / 2);
                 let inflight = dest.inflight_after(cli_refresh);
@@ -223,7 +224,6 @@ fn main() {
                     .collect();
                 last_recv_us.sort_unstable();
                 if let Some(mut f) = dest.logfile.as_mut() {
-                    // TODO: Extract this as a function!
                     let time: FrameTime = if since_report_elapsed > report_every_secs {
                         FrameTime::Timestamp(Utc::now())
                     } else {
@@ -239,6 +239,31 @@ fn main() {
                         println!("Error writing to file: {:?}", e);
                     }
                 }
+            }
+            // --- CLI Stats display phase ---
+            // All printing behavior is sent to the end to avoid delays that cause flickering
+            clearscreen();
+            println!(
+                "offset {}ms, wait: {}ms, sent: {} pcks",
+                last_offset.as_millis(),
+                wait.as_millis(),
+                pcks_sent,
+            );
+
+            for st in cli_stats.iter() {
+                println!(
+                    "{:>14?} - {:>4} in-flight - {:>4.2} recv/s - {:>7.2?}ms / {:>4.1?}s - {:>7.2}% loss ({}/{}) ident: {},{}",
+                    st.dest_addr,
+                    st.inflight_count,
+                    st.recv_per_sec,
+                    st.avg_time.as_secs_f32() * 1000.0,
+                    st.last_pckt_received.as_secs_f32(),
+                    st.packet_loss,
+                    st.packets_lost,
+                    st.packets_recv,
+                    st.dest_ident,
+                    st.dest_seq,
+                );
             }
         }
         last_offset = (last_offset + loop_wait.elapsed())

@@ -5,7 +5,7 @@ ServerConfig(
         // Your local router IP
         TargetHost(
             address: "192.168.0.1", // Host address
-            frequency: 5,          // Pings per second
+            frequency: 10,          // Pings per second
         ),
         TargetHost(
             address: "192.168.0.3", 
@@ -19,47 +19,47 @@ ServerConfig(
         // Cloudflare DNS
         TargetHost(
             address: "1.1.1.1",
-            frequency: 5,          
+            frequency: 2,          
         ),
         TargetHost(
             address: "1.0.0.1",
-            frequency: 5,          
+            frequency: 2,          
         ),
         // Quad9
         TargetHost(
             address: "9.9.9.9",
-            frequency: 5,          
+            frequency: 2,          
         ),
         TargetHost(
             address: "149.112.112.112",
-            frequency: 5,          
+            frequency: 2,          
         ),
         // Google DNS
         TargetHost(
             address: "8.8.8.8",
-            frequency: 5,          
+            frequency: 2,          
         ),
         TargetHost(
             address: "8.8.4.4",
-            frequency: 5,          
+            frequency: 2,          
         ),
         // OpenDNS       
         TargetHost(
             address: "208.67.222.222",
-            frequency: 5,          
+            frequency: 2,          
         ),
         TargetHost(
             address: "208.67.220.220",
-            frequency: 5,          
+            frequency: 2,          
         ),
         // Comodo Secure DNS
         TargetHost(
             address: "8.26.56.26",
-            frequency: 5,          
+            frequency: 2,          
         ),
         TargetHost(
             address: "8.20.247.20",
-            frequency: 5,          
+            frequency: 2,          
         ),
     ],
     // How long the daemon should keep the packets

@@ -239,6 +239,25 @@ impl Destination {
             .cloned()
             .collect()
     }
+
+    /// Calculate the average time that packets are taking to return over a period of time.
+    pub fn mean_recv_time(&self, time_avg: Duration) -> Option<Duration> {
+        if self.recv_packets.is_empty() {
+            return None;
+        }
+        let avg: Vec<_> = self
+            .recv_packets
+            .iter()
+            .filter(|x| (x.sent + x.received.unwrap()).elapsed() < time_avg)
+            .collect();
+        let avg_len = avg.len().max(1);
+        let tot_time: Duration = avg.iter().fold(Duration::from_micros(0), |acc, x| {
+            acc + x.received.unwrap_or_default()
+        });
+        let avg_time: Duration = tot_time / (avg_len as u32);
+
+        Some(avg_time)
+    }
 }
 
 /// Configuration struct used to create new Comms objects
