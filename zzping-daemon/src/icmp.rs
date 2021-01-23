@@ -37,12 +37,19 @@ pub struct PacketData {
     pub ident: u16,
     /// Address to send this packet to.
     pub addr: IpAddr,
+    /// Time when it was received (if it was). Used to compute later the timing
+    pub received: Option<Instant>,
 }
 
 impl PacketData {
     /// Construct a new ICMP packet (to be sent later).
     pub fn new(seqn: u16, ident: u16, addr: IpAddr) -> Self {
-        Self { seqn, ident, addr }
+        Self {
+            seqn,
+            ident,
+            addr,
+            received: None,
+        }
     }
     /// Parse a received ICMP Packet from given address.
     pub fn parse(packet: IcmpPacket, addr: IpAddr) -> Self {
@@ -52,6 +59,7 @@ impl PacketData {
             seqn: packet.get_sequence_number(),
             ident: packet.get_identifier(),
             addr,
+            received: None,
         }
     }
     /// Send this ICMP packet using the given transport sender.

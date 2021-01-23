@@ -20,10 +20,13 @@
 use super::icmp;
 use pnet::transport::{TransportChannelType, TransportReceiver, TransportSender};
 use rand::Rng;
-use std::io::BufWriter;
-use std::net::IpAddr;
-use std::time::{Duration, Instant};
 use std::{fs::File, io::Write};
+use std::{io::BufWriter, sync::Mutex};
+use std::{net::IpAddr, sync::Arc};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 /// Creates a TransportChannelType for ICMP over IPv4
 pub fn protocol_ipv4() -> TransportChannelType {
@@ -174,7 +177,15 @@ impl Destination {
         }
         for sent in self.inflight_packets.iter_mut() {
             if sent.data.seqn == packet.seqn && sent.received.is_none() {
-                sent.received = Some(sent.sent.elapsed());
+                sent.received = match packet.received {
+                    Some(received) => received.checked_duration_since(sent.sent),
+                    None => Some(sent.sent.elapsed()),
+                };
+                if sent.received.is_none() {
+                    // Received before sending. This must be because a duplicate packet was matched.
+                    // TODO: fix duplicate in-flight packets
+                    continue;
+                }
                 self.recv_count += 1;
                 self.recv_packets.push(sent.clone());
                 ret = Some((packet.addr, sent.received.unwrap()));
@@ -269,6 +280,8 @@ pub struct CommConfig {
     pub forget_lost: Duration,
     /// How long received packets are hold.
     pub forget_recv: Duration,
+    /// Timing precision multiplier, makes the wait smaller
+    pub precision_mult: f64,
     // TODO: Add TransportChannelType here?, so it can configure IpV4 or IpV6.
 }
 
@@ -277,13 +290,39 @@ pub struct Comms {
     /// Collection of hosts to send pings to
     pub dest: Vec<Destination>,
     /// Read channel
-    rx: TransportReceiver,
+    // rx: TransportReceiver,
     /// Write channel
     tx: TransportSender,
     /// Timings Config
     pub config: CommConfig,
     /// Recommended delay
     pub delay: Duration,
+    // ---- Reader Thread Data ----
+    readbuf: Arc<Mutex<Vec<icmp::PacketData>>>,
+    _read_thread_handle: thread::JoinHandle<()>,
+}
+
+fn receiver_thread(mut rx: TransportReceiver, readbuf: Arc<Mutex<Vec<icmp::PacketData>>>) {
+    let mut buffer: Vec<icmp::PacketData> = vec![];
+    let mut last_sync = Instant::now();
+    let sync_time = Duration::from_micros(100);
+    let mut packet_iter = pnet::transport::icmp_packet_iter(&mut rx);
+    loop {
+        if let Some((packet, addr)) = packet_iter.next_with_timeout(sync_time).unwrap_or_default() {
+            let mut packet: icmp::PacketData = icmp::PacketData::parse(packet, addr);
+            packet.received = Some(Instant::now());
+            buffer.push(packet);
+        }
+
+        if last_sync.elapsed() > sync_time {
+            // Try to lock the buffer, if it would block, just try later. Don't block!!
+            if let Ok(mut locked_buffer) = readbuf.try_lock() {
+                // Dump our state to the external buffer
+                locked_buffer.append(&mut buffer);
+                last_sync = Instant::now();
+            }
+        }
+    }
 }
 
 impl std::fmt::Debug for Comms {
@@ -304,12 +343,17 @@ impl Comms {
             Ok((tx, rx)) => (tx, rx),
             Err(e) => panic!(e.to_string()),
         };
+        let readbuf = Arc::new(Mutex::new(vec![]));
+        let thread_buf = readbuf.clone();
+        let read_thread_handle: thread::JoinHandle<()> =
+            std::thread::spawn(move || receiver_thread(rx, thread_buf));
         Self {
             dest: vec![],
-            rx,
             tx,
             config,
             delay: Duration::from_millis(1),
+            readbuf,
+            _read_thread_handle: read_thread_handle,
         }
     }
     /// Add a new destination from a given string address
@@ -374,6 +418,8 @@ impl Comms {
         for dest in &self.dest {
             freq += dest.interval.as_secs_f64().recip();
         }
+        // Extra precision, will check X times faster
+        freq *= self.config.precision_mult;
         dbg!(freq);
         if freq > 0.0 {
             Duration::from_secs_f64(freq.recip())
@@ -382,65 +428,38 @@ impl Comms {
             // It might also be that all targets have interval=0. Wrong, but whatever.
             Duration::from_millis(1)
         }
-        /*
-        The delay could be something evenly spaced. Maybe the formula of:
-
-        1/delay = 1/delay1 + 1/delay2 + ...
-        OR
-        HZ = Hz1 + Hz2 + Hz3 + ...
-
-        Could get us something evenly spaced. The idea being that if there are
-        4 destinations at 40ms, we send one each 10ms, instead of doing all four
-        at once every 40ms.
-        */
     }
 
     /// Listens for packets up to "timeout" time and matches incoming packets
     /// with the different destinations and their recv queues.
     ///
-    /// Waits for timeout for icmp packets, then subsequentially
-    /// keeps reading until the buffer is exhausted. If an error occurs, will
-    /// return the packets read so far, plus the error. Filters those packets that
-    /// do not match the ident variable
-    pub fn recv_all(&mut self, timeout: Duration) -> Result<(), std::io::Error> {
+    /// There is a thread reading the socket continuosly, this function just
+    /// dumps that data into local memory and matches the packets against the
+    /// different target hosts.
+    pub fn recv_all(&mut self, timeout: Duration) {
         let starttime = Instant::now();
         if timeout.as_millis() > 5000 {
             dbg!(timeout);
             panic!("recv_all: Tried to wait more than 5000ms");
         }
         loop {
-            let wait = timeout.checked_sub(starttime.elapsed()).unwrap_or_default();
-            assert!(wait <= timeout);
-            self.recv_one(wait)?;
-            if wait.as_millis() == 0 {
-                break;
-            }
-        }
-        Ok(())
-    }
-
-    /// Attempt to get a single ICMP packet from channel iterator.
-    ///
-    /// If no packet was received within timeout will return Ok(false).
-    /// If one packet was processed, will return Ok(true)
-    /// Be aware that this function can block a slightly and random higher value
-    /// than demanded.
-    pub fn recv_one(&mut self, timeout: Duration) -> Result<bool, std::io::Error> {
-        let mut packet_iter = pnet::transport::icmp_packet_iter(&mut self.rx);
-        let min_time = Duration::from_micros(1);
-        if timeout.as_millis() > 5000 {
-            dbg!(timeout);
-            panic!("recv_one: Tried to wait more than 5000ms");
-        }
-        match packet_iter.next_with_timeout(timeout.max(min_time))? {
-            Some((packet, addr)) => {
-                let packet = icmp::PacketData::parse(packet, addr);
+            let mut buffer = vec![];
+            let mut locked_buffer = self.readbuf.lock().unwrap();
+            buffer.append(&mut locked_buffer);
+            // Release the lock early once the Vec is empty.
+            drop(locked_buffer);
+            // Now we can work freely with the values.
+            for packet in buffer {
                 for dest in &mut self.dest {
                     dest.recv(&packet);
                 }
-                Ok(true)
             }
-            None => Ok(false),
+            if let Some(wait) = timeout.checked_sub(starttime.elapsed()) {
+                assert!(wait <= timeout);
+                thread::sleep(wait);
+            } else {
+                break;
+            }
         }
     }
 }

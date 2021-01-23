@@ -84,13 +84,14 @@ fn main() {
         forget_lost: Duration::from_secs(cfg.keep_packets.lost_secs),
         forget_inflight: Duration::from_secs(cfg.keep_packets.inflight_secs),
         forget_recv: Duration::from_secs(cfg.keep_packets.recv_secs),
+        precision_mult: 2.0,
     });
 
     let socket = UdpSocket::bind(&cfg.udp_listen_address).unwrap();
     socket.set_nonblocking(true).unwrap();
 
     // How often the console UI is refreshed / how often to write a frame
-    let cli_refresh = Duration::from_millis(20);
+    let cli_refresh = Duration::from_secs(1) / 30;
 
     // Time to assign if there are no packets reported.
     let default_recv_avg_no_packets = Duration::from_millis(0);
@@ -115,7 +116,7 @@ fn main() {
         let interval = Duration::from_secs(1) / target.frequency;
         // Add a random amount to avoid having all targets at exactly the same time
         let interval_n =
-            interval + Duration::from_nanos(rng.gen_range(0, interval.as_millis()) as u64);
+            interval + Duration::from_nanos(rng.gen_range(0, interval.as_millis() + 1) as u64);
 
         t.add_destination(&target.address, interval_n);
     }
@@ -129,10 +130,10 @@ fn main() {
     let mut last_offset = Duration::from_millis(0);
     loop {
         let loop_wait = Instant::now();
-        if let Err(e) = t.recv_all(wait.checked_sub(last_offset).unwrap_or_default()) {
-            dbg!(e);
-        }
-        let pcks_sent = t.send_all(0);
+        t.recv_all(wait.checked_sub(last_offset).unwrap_or_default());
+        let before_send = Instant::now();
+        let pcks_sent = t.send_all(2);
+        let send_time = before_send.elapsed();
 
         let elapsed = last_refresh.elapsed();
         if elapsed > cli_refresh {
@@ -244,10 +245,12 @@ fn main() {
             // All printing behavior is sent to the end to avoid delays that cause flickering
             clearscreen();
             println!(
-                "offset {}ms, wait: {}ms, sent: {} pcks",
+                "offset {}ms, wait: {}ms, sent: {} pcks, send time: {:?}, stats compute time: {:?}",
                 last_offset.as_millis(),
                 wait.as_millis(),
                 pcks_sent,
+                send_time,
+                last_refresh.elapsed(),
             );
 
             for st in cli_stats.iter() {
