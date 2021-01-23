@@ -1,4 +1,4 @@
-// Copyright 2020 Google LLC
+// Copyright 2021 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate zzpinglib;
+extern crate zzping_lib;
 
 mod custom_errors;
 mod fdq_graph;
@@ -30,7 +30,7 @@ use clap::Clap;
 
 #[derive(Clap)]
 #[clap(
-    version = "0.2.0-beta1",
+    version = "0.2.1-beta1",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
 )]
 struct Opts {
@@ -42,7 +42,7 @@ struct Opts {
 
 pub fn main() {
     let opts: Opts = Opts::parse();
-    let guiconfig = GuiConfig::from_file(&opts.config).unwrap();
+    let guiconfig = GuiConfig::from_filepath(&opts.config).unwrap();
     let flags = Flags {
         guiconfig,
         otheropts: OtherOpts {

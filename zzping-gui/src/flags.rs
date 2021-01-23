@@ -1,4 +1,4 @@
-// Copyright 2020 Google LLC
+// Copyright 2021 Google LLC
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ pub struct GuiConfig {
 }
 
 impl GuiConfig {
-    pub fn from_file(filepath: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn from_filepath(filepath: &str) -> Result<Self, Box<dyn std::error::Error>> {
         let contents = fs::read_to_string(filepath)?;
         Ok(ron::de::from_str(&contents)?)
     }
