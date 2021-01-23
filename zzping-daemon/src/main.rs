@@ -77,7 +77,7 @@ fn main() {
     socket.set_nonblocking(true).unwrap();
 
     // How often the console UI is refreshed / how often to write a frame
-    let cli_refresh = Duration::from_millis(50);
+    let cli_refresh = Duration::from_millis(150);
 
     // Config Stats for CLI
     let pckt_loss_inflight_time = Duration::from_millis(150);
@@ -171,7 +171,7 @@ fn main() {
                 });
                 let avg_len = avg.count().max(1);
                 let avg_time: Duration = if dest.recv_packets.is_empty() {
-                    Duration::from_millis(999)
+                    Duration::from_millis(0)
                 } else {
                     tot_time / (avg_len as u32)
                 };
