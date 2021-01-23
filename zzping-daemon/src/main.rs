@@ -84,7 +84,7 @@ fn main() {
         forget_lost: Duration::from_secs(cfg.keep_packets.lost_secs),
         forget_inflight: Duration::from_secs(cfg.keep_packets.inflight_secs),
         forget_recv: Duration::from_secs(cfg.keep_packets.recv_secs),
-        precision_mult: 2.0,
+        precision_mult: cfg.precision_mult,
     });
 
     let socket = UdpSocket::bind(&cfg.udp_listen_address).unwrap();
@@ -127,13 +127,9 @@ fn main() {
     let wait = t.get_delay();
 
     // Amount of extra time taken in one round, to be able to correct it.
-    let mut last_offset = Duration::from_millis(0);
     loop {
-        let loop_wait = Instant::now();
-        t.recv_all(wait.checked_sub(last_offset).unwrap_or_default());
-        let before_send = Instant::now();
-        let pcks_sent = t.send_all(2);
-        let send_time = before_send.elapsed();
+        t.recv_all(wait);
+        t.send_all(2);
 
         let elapsed = last_refresh.elapsed();
         if elapsed > cli_refresh {
@@ -244,14 +240,6 @@ fn main() {
             // --- CLI Stats display phase ---
             // All printing behavior is sent to the end to avoid delays that cause flickering
             clearscreen();
-            println!(
-                "offset {}ms, wait: {}ms, sent: {} pcks, send time: {:?}, stats compute time: {:?}",
-                last_offset.as_millis(),
-                wait.as_millis(),
-                pcks_sent,
-                send_time,
-                last_refresh.elapsed(),
-            );
 
             for st in cli_stats.iter() {
                 println!(
@@ -269,8 +257,5 @@ fn main() {
                 );
             }
         }
-        last_offset = (last_offset + loop_wait.elapsed())
-            .checked_sub(wait)
-            .unwrap_or_else(|| Duration::from_millis(0));
     }
 }

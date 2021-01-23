@@ -289,8 +289,6 @@ pub struct CommConfig {
 pub struct Comms {
     /// Collection of hosts to send pings to
     pub dest: Vec<Destination>,
-    /// Read channel
-    // rx: TransportReceiver,
     /// Write channel
     tx: TransportSender,
     /// Timings Config
@@ -298,10 +296,16 @@ pub struct Comms {
     /// Recommended delay
     pub delay: Duration,
     // ---- Reader Thread Data ----
+    /// Buffer for the reader thread to fill, will be emptied in recv_all
     readbuf: Arc<Mutex<Vec<icmp::PacketData>>>,
+    /// Handle of the thread for joining. Unused, as the thread never ends
     _read_thread_handle: thread::JoinHandle<()>,
 }
 
+/// Reader thread implementation
+///
+/// This continuosly reads from the socket and sends the data to the main thread
+/// every 0.1ms. This is done to prevent blocking, also mutexes are expensive.
 fn receiver_thread(mut rx: TransportReceiver, readbuf: Arc<Mutex<Vec<icmp::PacketData>>>) {
     let mut buffer: Vec<icmp::PacketData> = vec![];
     let mut last_sync = Instant::now();
@@ -343,6 +347,7 @@ impl Comms {
             Ok((tx, rx)) => (tx, rx),
             Err(e) => panic!(e.to_string()),
         };
+        // rx is sent to the thread as an exclusive thing, we lose track of it here.
         let readbuf = Arc::new(Mutex::new(vec![]));
         let thread_buf = readbuf.clone();
         let read_thread_handle: thread::JoinHandle<()> =
@@ -379,7 +384,7 @@ impl Comms {
             .enumerate()
             .collect();
         dests.sort_unstable_by_key(|(_, x)| -*x);
-        let delay = self.delay;
+        let delay = self.delay / 2;
         for (n, _) in dests {
             if self.dest[n].send(&mut self.tx, delay) {
                 count += 1;
