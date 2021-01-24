@@ -3,5 +3,10 @@ GuiConfig(
     //  serve as a default on some networks
     udp_listen_address: "127.0.0.1:7879",
     udp_server_address: "127.0.0.1:7878",
-    display_address: "192.168.0.1",
+    display_address: [
+        "192.168.0.3",
+        "192.168.0.1",
+        "8.8.8.8",
+        "9.9.9.9",
+    ],
 )

@@ -97,8 +97,8 @@ fn main() {
     let default_recv_avg_no_packets = Duration::from_millis(0);
 
     // Config Stats for CLI
-    let pckt_loss_inflight_time = Duration::from_millis(150);
-    let pckt_loss_recv_time = Duration::from_millis(300);
+    let pckt_loss_inflight_time = Duration::from_millis(300);
+    let pckt_loss_recv_time = Duration::from_millis(1000);
 
     // Timer to make the UI refresh every "cli_refresh"
     let mut last_refresh = Instant::now() - Duration::from_secs(60);
@@ -169,7 +169,7 @@ fn main() {
                 let packets_lost = inflight_long + dest.lost_packets.len();
                 let packets_recv = dest.received_last(pckt_loss_recv_time).len();
                 let packet_loss =
-                    (100.0 * packets_lost as f32) / ((packets_lost + packets_recv) as f32);
+                    (100.0 * packets_lost as f32) / ((packets_lost + packets_recv) as f32 + 0.1);
                 let avg_time: Duration = dest
                     .mean_recv_time(time_avg)
                     .unwrap_or(default_recv_avg_no_packets);
