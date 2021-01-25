@@ -3,10 +3,14 @@ GuiConfig(
     //  serve as a default on some networks
     udp_listen_address: "127.0.0.1:7879",
     udp_server_address: "127.0.0.1:7878",
+    // List of IP addresses (from daemon) to show in this GUI. Each one makes a
+    // new graph
     display_address: [
         "192.168.0.3",
         "192.168.0.1",
         "8.8.8.8",
         "9.9.9.9",
     ],
+    // Number of points to display in the GUI
+    sample_limit: 1000,
 )

@@ -91,7 +91,7 @@ fn main() {
     socket.set_nonblocking(true).unwrap();
 
     // How often the console UI is refreshed / how often to write a frame
-    let cli_refresh = Duration::from_secs(1) / 30;
+    let cli_refresh = Duration::from_secs(1) / cfg.refresh_freq;
 
     // Time to assign if there are no packets reported.
     let default_recv_avg_no_packets = Duration::from_millis(0);

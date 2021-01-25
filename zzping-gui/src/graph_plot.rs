@@ -16,10 +16,9 @@ use super::udp_comm::UdpStats;
 use iced::{canvas, Color, Point};
 use std::time::{Duration, Instant};
 
-static SAMPLES: usize = 2500;
-
 #[derive(Debug)]
 pub struct LatencyGraph {
+    pub samples: usize,
     pub latency_us: Vec<u32>,
     pub packet_loss_x100_000: Vec<u32>,
     pub current: Instant,
@@ -27,12 +26,13 @@ pub struct LatencyGraph {
 }
 
 impl LatencyGraph {
-    pub fn new(display_address: &str) -> Self {
+    pub fn new(display_address: &str, samples: usize) -> Self {
         Self {
             latency_us: vec![],
             packet_loss_x100_000: vec![],
             current: Instant::now(),
             display_address: display_address.to_owned(),
+            samples,
         }
     }
     pub fn update(&mut self, now: Instant, stats: &[UdpStats]) -> bool {
@@ -44,7 +44,7 @@ impl LatencyGraph {
                 modified = true;
             }
         }
-        while self.latency_us.len() >= SAMPLES {
+        while self.latency_us.len() >= self.samples {
             self.latency_us.remove(0);
             self.packet_loss_x100_000.remove(0);
             modified = true;
@@ -62,7 +62,7 @@ impl LatencyGraph {
 
 impl Default for LatencyGraph {
     fn default() -> Self {
-        Self::new("")
+        Self::new("", 1000)
     }
 }
 
@@ -123,8 +123,8 @@ impl canvas::Drawable for LatencyGraph {
             .filter(|x| **x < 2000000)
             .max()
             .unwrap();
-        // let len = self.points.len();
-        let len = SAMPLES;
+
+        let len = self.samples;
         let sx = frame.width() / (len as f32);
         let max_sy = frame.height() / (300.0 * ms);
         let sy = ((frame.height() / *max as f32) * 0.8).max(max_sy);

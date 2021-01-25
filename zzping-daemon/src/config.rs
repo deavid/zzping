@@ -70,6 +70,8 @@ pub struct ServerConfig {
     pub keep_packets: ForgetConfig,
     /// Precision multiplier. Use 1.0 for low CPU usage, but frequencies might get off. 10.0 for excellent precision.
     pub precision_mult: f64,
+    /// How many updates per second for CLI, GUI and logging
+    pub refresh_freq: u32,
 }
 
 impl ServerConfig {
@@ -105,6 +107,7 @@ mod tests {
                 recv_secs: 10,
             ),
             precision_mult: 1.0,
+            refresh_freq: 15,
         )        
     "#;
 
@@ -127,6 +130,7 @@ mod tests {
                 assert_eq!(cfg.udp_client_address, "127.0.0.1:7879");
                 assert_eq!(cfg.ping_targets, vec![TargetHost::new("192.168.0.1", 10)]);
                 assert!((cfg.precision_mult - 1.0).abs() < f64::EPSILON);
+                assert_eq!(cfg.refresh_freq, 15);
                 assert_eq!(
                     cfg.keep_packets,
                     ForgetConfig {
@@ -156,6 +160,7 @@ mod tests {
                 assert_eq!(cfg.udp_client_address, "127.0.0.1:7879");
                 assert_eq!(cfg.ping_targets, vec![TargetHost::new("192.168.0.1", 10)]);
                 assert!((cfg.precision_mult - 1.0).abs() < f64::EPSILON);
+                assert_eq!(cfg.refresh_freq, 15);
                 assert_eq!(
                     cfg.keep_packets,
                     ForgetConfig {

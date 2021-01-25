@@ -159,7 +159,7 @@ impl Application for PingmonGUI {
                 .guiconfig
                 .display_address
                 .iter()
-                .map(|addr| LatencyGraph::new(addr))
+                .map(|addr| LatencyGraph::new(addr, flags.guiconfig.sample_limit))
                 .collect(),
             graph_canvas: flags
                 .guiconfig
