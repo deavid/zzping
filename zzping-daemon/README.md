@@ -1,8 +1,11 @@
-# zzpingd
+# zzping-daemon
 
 This is part of the zzping suite.
 
-It is done on Rust, single thread. Considered the server of zzping-gui
+It is done on Rust, two threads (A thread is dedicated to receive all data from
+the network, the main thread does everything else). 
+
+Considered the server of zzping-gui
 
 ## Usage
 
@@ -12,10 +15,10 @@ This requires either sudo or setcap:
 
 I use `./run.sh` to build + run (debug mode) while developing.
 
-This will load the file `gui_config.ron` with the basic settings.
+This will load the file `daemon_config.ron` with the basic settings.
 
 By default this will ping some hosts at the same time, one of those is
-`192.168.0.1`, to change that, see the file `gui_config.ron`.
+`192.168.0.1`, to change that, see the file `daemon_config.ron`.
 
 To select a different file or different folder for this config file, use the
 flag:
@@ -26,6 +29,4 @@ Be warned that `./run.sh` does not support flags.
 
 ## Config file contents
 
-*   udp_listen_address: IP Address and port where this binary listens to.
-*   udp_client_address: IP Address and port where the client GUI is listening.
-*   ping_targets: List of Target Host IP to ping.
+See `daemon_config.ron` in this folder for additional documentation in comments.

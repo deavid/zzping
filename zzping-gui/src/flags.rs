@@ -19,7 +19,8 @@ use std::fs;
 pub struct GuiConfig {
     pub udp_listen_address: String,
     pub udp_server_address: String,
-    pub display_address: String,
+    pub display_address: Vec<String>,
+    pub sample_limit: usize,
 }
 
 impl GuiConfig {

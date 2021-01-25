@@ -16,10 +16,9 @@ use super::udp_comm::UdpStats;
 use iced::{canvas, Color, Point};
 use std::time::{Duration, Instant};
 
-static SAMPLES: usize = 500;
-
 #[derive(Debug)]
 pub struct LatencyGraph {
+    pub samples: usize,
     pub latency_us: Vec<u32>,
     pub packet_loss_x100_000: Vec<u32>,
     pub current: Instant,
@@ -27,24 +26,25 @@ pub struct LatencyGraph {
 }
 
 impl LatencyGraph {
-    pub fn new(display_address: &str) -> Self {
+    pub fn new(display_address: &str, samples: usize) -> Self {
         Self {
             latency_us: vec![],
             packet_loss_x100_000: vec![],
             current: Instant::now(),
             display_address: display_address.to_owned(),
+            samples,
         }
     }
-    pub fn update(&mut self, now: Instant, stats: Vec<UdpStats>) -> bool {
+    pub fn update(&mut self, now: Instant, stats: &[UdpStats]) -> bool {
         let mut modified = false;
-        for s in stats {
+        for s in stats.iter() {
             if s.addr == self.display_address {
                 self.latency_us.push(s.avg_time_us.min(500000));
                 self.packet_loss_x100_000.push(s.packet_loss_x100_000);
                 modified = true;
             }
         }
-        while self.latency_us.len() >= SAMPLES {
+        while self.latency_us.len() >= self.samples {
             self.latency_us.remove(0);
             self.packet_loss_x100_000.remove(0);
             modified = true;
@@ -62,7 +62,7 @@ impl LatencyGraph {
 
 impl Default for LatencyGraph {
     fn default() -> Self {
-        Self::new("")
+        Self::new("", 1000)
     }
 }
 
@@ -95,6 +95,22 @@ impl canvas::Drawable for LatencyGraph {
         };
 
         frame.fill(&space, Color::from_rgba8(100, 100, 100, 1.0));
+        let avg_latency: u32 =
+            self.latency_us.iter().sum::<u32>() / (self.latency_us.len().max(1) as u32);
+        let text = canvas::Text {
+            content: format!(
+                "{} - {:.2}ms avg",
+                self.display_address,
+                avg_latency as f32 / 1000.0
+            ),
+            position: Point::new(0.0, 0.0),
+            color: Color::from_rgba8(255, 255, 255, 0.9),
+            size: 12.0,
+            font: iced::Font::Default,
+            horizontal_alignment: iced::HorizontalAlignment::Left,
+            vertical_alignment: iced::VerticalAlignment::Top,
+        };
+        frame.fill_text(text);
         if self.latency_us.is_empty() {
             let line = canvas::Path::line(Point::new(0.0, 0.0), botright);
             frame.stroke(&line, red_stroke);
@@ -107,8 +123,8 @@ impl canvas::Drawable for LatencyGraph {
             .filter(|x| **x < 2000000)
             .max()
             .unwrap();
-        // let len = self.points.len();
-        let len = SAMPLES;
+
+        let len = self.samples;
         let sx = frame.width() / (len as f32);
         let max_sy = frame.height() / (300.0 * ms);
         let sy = ((frame.height() / *max as f32) * 0.8).max(max_sy);
@@ -121,25 +137,65 @@ impl canvas::Drawable for LatencyGraph {
             frame.stroke(
                 &canvas::Path::line(Point::new(0.0, y3ms), Point::new(right, y3ms)),
                 black_stroke1,
-            )
+            );
+            let text = canvas::Text {
+                content: "3ms".to_string(),
+                position: Point::new(right, y3ms),
+                color: Color::from_rgba8(255, 255, 255, 0.9),
+                size: 12.0,
+                font: iced::Font::Default,
+                horizontal_alignment: iced::HorizontalAlignment::Right,
+                vertical_alignment: iced::VerticalAlignment::Center,
+            };
+            frame.fill_text(text);
         }
         if y10ms > 0.0 {
             frame.stroke(
                 &canvas::Path::line(Point::new(0.0, y10ms), Point::new(right, y10ms)),
                 black_stroke2,
-            )
+            );
+            let text = canvas::Text {
+                content: "10ms".to_string(),
+                position: Point::new(right, y10ms),
+                color: Color::from_rgba8(255, 255, 255, 0.9),
+                size: 12.0,
+                font: iced::Font::Default,
+                horizontal_alignment: iced::HorizontalAlignment::Right,
+                vertical_alignment: iced::VerticalAlignment::Center,
+            };
+            frame.fill_text(text);
         }
         if y30ms > 0.0 {
             frame.stroke(
                 &canvas::Path::line(Point::new(0.0, y30ms), Point::new(right, y30ms)),
                 black_stroke1,
-            )
+            );
+            let text = canvas::Text {
+                content: "30ms".to_string(),
+                position: Point::new(right, y30ms),
+                color: Color::from_rgba8(255, 255, 255, 0.9),
+                size: 12.0,
+                font: iced::Font::Default,
+                horizontal_alignment: iced::HorizontalAlignment::Right,
+                vertical_alignment: iced::VerticalAlignment::Center,
+            };
+            frame.fill_text(text);
         }
         if y100ms > 0.0 {
             frame.stroke(
                 &canvas::Path::line(Point::new(0.0, y100ms), Point::new(right, y100ms)),
                 black_stroke2,
-            )
+            );
+            let text = canvas::Text {
+                content: "100ms".to_string(),
+                position: Point::new(right, y100ms),
+                color: Color::from_rgba8(255, 255, 255, 0.9),
+                size: 12.0,
+                font: iced::Font::Default,
+                horizontal_alignment: iced::HorizontalAlignment::Right,
+                vertical_alignment: iced::VerticalAlignment::Center,
+            };
+            frame.fill_text(text);
         }
         let mut oldp: Option<Point> = None;
         for (n, p) in self.latency_us.iter().enumerate() {

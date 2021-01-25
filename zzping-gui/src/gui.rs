@@ -39,10 +39,11 @@ pub enum Message {
 }
 
 pub struct PingmonGUI {
+    pub display_address: Vec<String>,
     pub guiconfig: GuiConfig,
     pub otheropts: OtherOpts,
-    pub graph: LatencyGraph,
-    pub graph_canvas: canvas::layer::Cache<LatencyGraph>,
+    pub graph: Vec<LatencyGraph>,
+    pub graph_canvas: Vec<canvas::layer::Cache<LatencyGraph>>,
     pub socket: Option<UdpSocket>,
     pub fdqgraph: FDQGraph,
     pub fdqgraph_canvas: canvas::layer::Cache<FDQGraph>,
@@ -62,7 +63,7 @@ impl Default for PingmonGUI {
     fn default() -> Self {
         Self {
             posx_slider: 0.5,
-
+            display_address: vec![],
             guiconfig: Default::default(),
             otheropts: Default::default(),
             graph: Default::default(),
@@ -113,8 +114,10 @@ impl PingmonGUI {
     fn tick(&mut self, instant: Instant) {
         if self.otheropts.input_file.is_none() {
             let stats = self.recv_all();
-            if self.graph.update(instant, stats) {
-                self.graph_canvas.clear();
+            for (graph, canvas) in self.graph.iter_mut().zip(self.graph_canvas.iter_mut()) {
+                if graph.update(instant, &stats) {
+                    canvas.clear();
+                }
             }
         } else {
             if self.fdqgraph.update(instant) {
@@ -151,7 +154,20 @@ impl Application for PingmonGUI {
 
     fn new(flags: Flags) -> (Self, Command<Message>) {
         let app = Self {
-            graph: LatencyGraph::new(&flags.guiconfig.display_address),
+            display_address: flags.guiconfig.display_address.clone(),
+            graph: flags
+                .guiconfig
+                .display_address
+                .iter()
+                .map(|addr| LatencyGraph::new(addr, flags.guiconfig.sample_limit))
+                .collect(),
+            graph_canvas: flags
+                .guiconfig
+                .display_address
+                .iter()
+                .map(|_| Default::default())
+                .collect(),
+
             guiconfig: flags.guiconfig,
             otheropts: flags.otheropts,
             ..Self::default()
@@ -201,12 +217,18 @@ impl Application for PingmonGUI {
     fn view(&mut self) -> Element<Message> {
         let mut window = Column::new().padding(0);
         if self.otheropts.input_file.is_none() {
-            let graph = Canvas::new()
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .push(self.graph_canvas.with(&self.graph));
+            for (_addr, (graph, canvas)) in self
+                .display_address
+                .iter()
+                .zip(self.graph.iter().zip(self.graph_canvas.iter()))
+            {
+                let widget_graph = Canvas::new()
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .push(canvas.with(graph));
 
-            window = window.push(graph);
+                window = window.push(widget_graph);
+            }
         } else {
             let graph = Canvas::new()
                 .width(Length::Fill)
