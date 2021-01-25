@@ -3119,7 +3119,7 @@ dependencies = [
 
 [[package]]
 name = "zzping-gui"
-version = "0.2.1-beta1"
+version = "0.2.2-beta1"
 dependencies = [
  "async-std",
  "clap",
@@ -3134,7 +3134,7 @@ dependencies = [
 
 [[package]]
 name = "zzping-lib"
-version = "0.2.1-beta1"
+version = "0.2.2-beta1"
 dependencies = [
  "bit-vec",
  "chrono",
