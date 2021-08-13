@@ -15,12 +15,3 @@ ron = "0.6.2"
 clap = "3.0.0-beta.2"
 serde = "1.0.117"
 
-[profile.dev]
-opt-level = 1
-
-[profile.dev.package."*"]
-opt-level = 3
-debug = 2
-
-[profile.release]
-debug = 2
