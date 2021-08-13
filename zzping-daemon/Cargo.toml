@@ -6,17 +6,17 @@ edition = "2018"
 
 [dependencies]
 zzping-lib = { path = "../zzping-lib" }
-env_logger = "0.8.1"
-log = "0.4.11"
-pnet = "0.26"
-pnet_macros_support = "0.26"
-rand = "0.7"
-rmp = "0.8.9"
-ron = "0.6.2"
+env_logger = "0.9.0"
+log = "0.4.14"
+pnet = "0.28.0"
+pnet_macros_support = "0.28.0"
+rand = "0.8.4"
+rmp = "0.8.10"
+ron = "0.6.4"
 clap = "3.0.0-beta.2"
-serde = "1.0.117"
-chrono = "0.4"
-tempfile = "3"
+serde = "1.0.127"
+chrono = "0.4.19"
+tempfile = "3.2"
 
 
 [profile.dev]

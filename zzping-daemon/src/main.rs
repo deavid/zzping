@@ -115,8 +115,8 @@ fn main() {
     for target in cfg.ping_targets {
         let interval = Duration::from_secs(1) / target.frequency;
         // Add a random amount to avoid having all targets at exactly the same time
-        let interval_n =
-            interval + Duration::from_nanos(rng.gen_range(0, interval.as_millis() + 1) as u64);
+        let rng_time: u64 = rng.gen_range(0..interval.as_millis()) as u64 + 1;
+        let interval_n = interval + Duration::from_nanos(rng_time);
 
         t.add_destination(&target.address, interval_n);
     }

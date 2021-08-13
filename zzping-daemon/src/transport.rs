@@ -209,7 +209,7 @@ impl Destination {
          the queues. It is currently fixed (by looking and cleaning up >1 pckt
          on recv), but the hack stays just in case.
         */
-        let rnd_num = self.rng.gen_range(16, 64);
+        let rnd_num = self.rng.gen_range(16..64);
         if rnd_num < inflight {
             return false;
         }
@@ -217,7 +217,7 @@ impl Destination {
             return false;
         }
         let packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
-        self.last_pckt_sent = Instant::now() - Duration::from_micros(self.rng.gen_range(0, 101));
+        self.last_pckt_sent = Instant::now() - Duration::from_micros(self.rng.gen_range(0..101));
         self.inflight_packets.push(packet);
 
         // The sequence is random to avoid a device "guessing" what the next sequence will be.
