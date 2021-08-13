@@ -114,13 +114,13 @@ mod tests {
     #[test]
     fn test_from_str_empty() {
         let config = "";
-        if let Ok(_cfg) = ServerConfig::from_str(&config) {
+        if let Ok(_cfg) = ServerConfig::from_str(config) {
             panic!("This should have returned an error");
         }
     }
     #[test]
     fn test_from_str_valid() {
-        match ServerConfig::from_str(&SAMPLE_CFG) {
+        match ServerConfig::from_str(SAMPLE_CFG) {
             Err(e) => {
                 dbg!(e);
                 panic!("Error constructing the config");

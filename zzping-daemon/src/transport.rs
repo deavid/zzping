@@ -345,7 +345,7 @@ impl Comms {
         // TODO: Caller should have two Comms, one for IpV4, and another for IpV6.
         let (tx, rx) = match pnet::transport::transport_channel(bufsize, protocol_ipv4()) {
             Ok((tx, rx)) => (tx, rx),
-            Err(e) => panic!(e.to_string()),
+            Err(e) => panic!("{}", e.to_string()),
         };
         // rx is sent to the thread as an exclusive thing, we lose track of it here.
         let readbuf = Arc::new(Mutex::new(vec![]));

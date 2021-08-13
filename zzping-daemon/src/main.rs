@@ -62,7 +62,7 @@ fn read_config(filepath: &str) -> config::ServerConfig {
     match config::ServerConfig::from_filepath(filepath) {
         Ok(cfg) => cfg,
         Err(e) => {
-            panic!(format!("Error parsing config file '{}': {:?}", filepath, e));
+            panic!("Error parsing config file '{}': {:?}", filepath, e);
         }
     }
 }
