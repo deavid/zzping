@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! This contains all the tooling for reading and writting messages of differnt
+//! formats. This library is common to all programs of the zzping suite.
+
 pub mod batchdata;
 pub mod compress;
 pub mod dynrmp;
@@ -19,6 +22,7 @@ pub mod framedata;
 pub mod framedataq;
 pub mod framestats;
 
+/// This is a test macro that tries to do a dbg!() but inlined. Takes less space.
 #[macro_export]
 macro_rules! dbgf {
     () => {
@@ -38,10 +42,7 @@ macro_rules! dbgf {
     };
 }
 
-pub fn test() -> bool {
-    true
-}
-
+// Placeholder for tests
 #[cfg(test)]
 mod tests {
     #[test]

@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Experimental library for further compressing the data. DO NOT USE.
+
 use chrono::{DateTime, Utc};
 
 use crate::compress::{self, composite::CompositeStage, quantize::LinearLogQuantizer, Compress};

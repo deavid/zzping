@@ -60,7 +60,10 @@ impl HuffmanMapSBlock {
         let vq = vq.abs();
         assert!(
             vq >= self.start_quantized && vq < self.end_quantized,
-            format!("{} [{}..{}]", &vq, self.start_quantized, self.end_quantized)
+            "{} [{}..{}]",
+            &vq,
+            self.start_quantized,
+            self.end_quantized
         );
         let v = vq - self.start_quantized;
         let vb = v / self.block_size;

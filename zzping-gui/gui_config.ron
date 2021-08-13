@@ -8,9 +8,9 @@ GuiConfig(
     display_address: [
         "192.168.0.3",
         "192.168.0.1",
-        "8.8.8.8",
+        // "8.8.8.8",
         "9.9.9.9",
     ],
     // Number of points to display in the GUI
-    sample_limit: 1000,
+    sample_limit: 300,
 )

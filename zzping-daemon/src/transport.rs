@@ -411,9 +411,9 @@ impl Comms {
             dest.inflight_packets
                 .retain(|x| sent_before(x, now, c.forget_inflight));
             dest.recv_packets
-                .retain(|x| sent_before(x, now, c.forget_recv));
+                .retain(|x| sent_before(x, now, c.forget_inflight + c.forget_recv));
             dest.lost_packets
-                .retain(|x| sent_before(x, now, c.forget_lost));
+                .retain(|x| sent_before(x, now, c.forget_inflight + c.forget_lost));
         }
     }
 

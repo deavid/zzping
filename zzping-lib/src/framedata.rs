@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//! Former format for storing logs from zzping-daemon. It's being phased out.
+
 use crate::dynrmp;
 use crate::dynrmp::variant::Variant;
 
@@ -19,6 +21,7 @@ use chrono::{DateTime, Utc};
 use rmp::decode::ValueReadError;
 use std::time::Duration;
 
+/// Used to easily bundle errors from dynrmp
 fn custom_error<E>(t: E) -> dynrmp::Error
 where
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
@@ -28,9 +31,12 @@ where
     ))
 }
 
+/// Timestamp part of FrameData
 #[derive(Debug, Clone)]
 pub enum FrameTime {
+    /// On full frame encoding, a complete datetime is stored.
     Timestamp(DateTime<Utc>),
+    // On regular delta-encoding, a duration since the last timestamp is stored.
     Elapsed(Duration),
 }
 

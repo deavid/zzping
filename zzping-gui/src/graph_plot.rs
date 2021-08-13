@@ -49,8 +49,7 @@ impl LatencyGraph {
             self.packet_loss_x100_000.remove(0);
             modified = true;
         }
-        // self.points.push(rand_num());
-        if self.current.elapsed() > Duration::from_secs(1) {
+        if self.current.elapsed() > Duration::from_secs_f32(1.0) {
             modified = true;
         }
         if modified {
