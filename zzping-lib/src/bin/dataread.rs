@@ -209,7 +209,7 @@ fn test_serializer(v: Vec<FrameData>) {
     // let test_vec = BatchData::flatten(&bd.recv_us[..1]);
 
     let mut serializer = quantize::LogQuantizer::default();
-    serializer.compress(&test_vec).unwrap();
+    serializer.compress(test_vec).unwrap();
     let ser_data = serializer.serialize().unwrap();
     dbg!(ser_data.len());
     dbg!(ser_data.len() as f32 * 8.0 / test_vec.len() as f32);

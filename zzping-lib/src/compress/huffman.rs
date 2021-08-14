@@ -53,7 +53,6 @@ use huffman_compress::CodeBuilder;
 use huffman_compress::Tree;
 use std::collections::HashMap;
 use std::fmt::Debug;
-use std::iter::FromIterator;
 
 use super::{Compress, CompressTo, Error};
 
@@ -246,7 +245,12 @@ impl Compress<u64> for HuffmanU64 {
         self.encode_weights();
         self.weights.sort_by_key(|(_k, v)| -(*v as i128));
         dbg!(self.weights.len());
-        let (book, _tree) = CodeBuilder::from_iter(self.weights.iter().copied()).finish();
+        let (book, _tree) = self
+            .weights
+            .iter()
+            .copied()
+            .collect::<CodeBuilder<_, _>>()
+            .finish();
         self.data = BitVec::with_capacity(data.len() * 8);
         self.data_len = quantizer_data.len();
         for mut symbol in quantizer_data.iter() {
@@ -271,7 +275,12 @@ impl Compress<u64> for HuffmanU64 {
     }
 
     fn decompress(&self) -> Result<Vec<u64>, Error> {
-        let (_book, tree) = CodeBuilder::from_iter(self.weights.iter().copied()).finish();
+        let (_book, tree) = self
+            .weights
+            .iter()
+            .copied()
+            .collect::<CodeBuilder<_, _>>()
+            .finish();
         Ok(tree.decoder(&self.data, self.data_len).collect())
     }
     fn debug_name(&self) -> String {
@@ -303,7 +312,7 @@ pub struct HuffmanI64 {
 
 impl HuffmanI64 {
     pub fn new(weights: Vec<(i64, u64)>) -> Self {
-        let (book, tree) = CodeBuilder::from_iter(weights.into_iter()).finish();
+        let (book, tree) = weights.into_iter().collect::<CodeBuilder<_, _>>().finish();
         Self { book, tree }
     }
     pub fn encode(&self, buffer: &mut BitVec, symbol: i64) -> Result<(), Error> {

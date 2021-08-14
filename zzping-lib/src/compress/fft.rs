@@ -183,7 +183,7 @@ pub fn double_fft_cmplx(half_fft: &[Complex<f32>]) -> Vec<Complex<f32>> {
 }
 
 pub fn export_print(mid: &[f32]) {
-    let fft = fft_polar(&mid);
+    let fft = fft_polar(mid);
     let half_fft = half_fft_polar(&fft);
     println!("output,--");
     print_polar(half_fft);

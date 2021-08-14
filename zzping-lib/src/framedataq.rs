@@ -284,9 +284,9 @@ impl FDCodecState {
     pub fn try_from_header<R: std::io::Read>(rd: &mut R) -> Result<FDCodecCfg, Error> {
         let header = Variant::read(rd)?.map()?.into_strhashmap()?;
         let get_header = |field: &str| -> Result<&Variant, Error> {
-            Ok(header
+            header
                 .get(field)
-                .ok_or_else(|| Error::header_field_missing(field))?)
+                .ok_or_else(|| Error::header_field_missing(field))
         };
         let schema = get_header("schema")?.str()?;
         if schema != Self::HEADER_SCHEMA {

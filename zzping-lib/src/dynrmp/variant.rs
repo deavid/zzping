@@ -102,13 +102,13 @@ impl Variant {
     }
     pub fn slice(&self) -> Result<&[Variant], Error> {
         match self {
-            Self::Array(v) => Ok(&v),
+            Self::Array(v) => Ok(v),
             _ => self.err_unexpected(VType::Array),
         }
     }
     pub fn as_bin(&self) -> &[u8] {
         match self {
-            Self::Binary(v) => &v,
+            Self::Binary(v) => v,
             _ => panic!("Variant of incorrect type"),
         }
     }
@@ -116,7 +116,7 @@ impl Variant {
     pub fn as_option(&self) -> Option<&Self> {
         match self {
             Self::Null(()) => None,
-            _ => Some(&self),
+            _ => Some(self),
         }
     }
 
