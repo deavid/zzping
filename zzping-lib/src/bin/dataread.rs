@@ -18,7 +18,7 @@ use std::thread;
 use std::{collections::HashMap, fs::File};
 
 use bit_vec::BitVec;
-use clap::Clap;
+use clap::Parser;
 
 use quantize::LinearLogQuantizer;
 #[allow(unused_imports)]
@@ -33,7 +33,7 @@ use zzping_lib::{
     framedata::{FrameData, FrameDataVec},
 };
 
-#[derive(Clap, Debug)]
+#[derive(Parser, Debug)]
 #[clap(
     version = "0.2.2-beta1",
     author = "David Martinez Marti <deavidsedice@gmail.com>"

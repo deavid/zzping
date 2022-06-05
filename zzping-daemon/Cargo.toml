@@ -13,7 +13,7 @@ pnet_macros_support = "0.28.0"
 rand = "0.8.4"
 rmp = "0.8.10"
 ron = "0.6.4"
-clap = "3.0.0-beta.2"
+clap = { version = "3.1.18", features = ["derive"] }
 serde = "1.0.127"
 chrono = "0.4.19"
 tempfile = "3.2"

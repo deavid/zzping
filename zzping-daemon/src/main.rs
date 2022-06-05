@@ -27,7 +27,7 @@ extern crate env_logger;
 extern crate rmp;
 extern crate zzping_lib;
 
-use clap::Clap;
+use clap::Parser;
 use zzping_lib::framedata::{FrameData, FrameTime};
 use zzping_lib::framestats::FrameStats;
 
@@ -44,7 +44,7 @@ struct CLIStats {
     dest_seq: u16,
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(
     version = "0.2.2-beta1",
     author = "David Martinez Marti <deavidsedice@gmail.com>"

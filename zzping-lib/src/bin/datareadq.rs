@@ -16,13 +16,13 @@ use std::fs::File;
 use std::io::{BufReader, Write};
 use std::thread;
 
-use clap::Clap;
+use clap::Parser;
 
 use zzping_lib::framedataq::{FDCodecCfg, FrameDataQ, RMPCodec};
 use zzping_lib::{compress::quantize::LinearLogQuantizer, framedataq::FDCodecState};
 use zzping_lib::{framedata::FrameDataVec, framedataq::Complete};
 
-#[derive(Clap, Debug)]
+#[derive(Parser, Debug)]
 #[clap(
     version = "0.2.2-beta1",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
