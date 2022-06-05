@@ -125,14 +125,13 @@ impl<Complete> FrameDataQ<Complete> {
         for (i, p) in percentiles.iter().enumerate() {
             let p = *p * vmax as f32;
             let (pl, pr) = (p.floor() as usize, p.ceil() as usize);
-            let val;
-            if pl == pr {
-                val = v[pl] as i64;
+            let val = if pl == pr {
+                v[pl] as i64
             } else {
                 let fr = p - pl as f32;
                 let fl = 1.0 - fr;
-                val = (v[pl] as f32 * fl + v[pr] as f32 * fr).round() as i64;
-            }
+                (v[pl] as f32 * fl + v[pr] as f32 * fr).round() as i64
+            };
             ret[i] = val;
         }
         ret
@@ -164,8 +163,7 @@ impl<Complete> FrameDataQ<Complete> {
         // TODO: This algorithm is wrong, we need to split each percentile and compute over it!
         let mut recv_us_list: Vec<u128> = data
             .iter()
-            .map(|x| x.recv_us.iter())
-            .flatten()
+            .flat_map(|x| x.recv_us.iter())
             .filter(|x| **x >= 0)
             .map(|x| *x as u128)
             .collect();
@@ -236,7 +234,7 @@ impl Default for FDCodecCfg {
         }
     }
 }
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct FDCodecState {
     cfg: FDCodecCfg,
     pub last_timestamp: Option<i64>,
@@ -420,17 +418,6 @@ impl FDCodecState {
     }
 }
 
-impl Default for FDCodecState {
-    fn default() -> Self {
-        Self {
-            cfg: FDCodecCfg::default(),
-            last_timestamp: None,
-            last_subsec_ms: 0,
-            last_recvq_0: 0,
-        }
-    }
-}
-
 #[derive(Debug)]
 pub enum Error {
     RmpEncodeValue(rmp::encode::ValueWriteError),
@@ -506,17 +493,16 @@ impl RMPCodec for FrameDataQ<Encoded> {
     fn try_to_rmp(&self) -> Result<Vec<u8>, Error> {
         let mut data: Vec<u8> = vec![];
         let buf = &mut data;
-        let subsec_ms;
-        match self.timestamp {
+        let subsec_ms = match self.timestamp {
             Some(val) => {
                 rmp::encode::write_uint(buf, val as u64)?;
-                subsec_ms = self.subsec_ms.unwrap_abs();
+                self.subsec_ms.unwrap_abs()
             }
             None => {
                 rmp::encode::write_nil(buf)?;
-                subsec_ms = self.subsec_ms.unwrap_delta();
+                self.subsec_ms.unwrap_delta()
             }
-        }
+        };
         rmp::encode::write_uint(buf, subsec_ms as u64)?;
         if self.inflight.round() as usize + self.lost_packets.round() as usize > 0 {
             rmp::encode::write_uint(buf, self.inflight.round() as u64)?;

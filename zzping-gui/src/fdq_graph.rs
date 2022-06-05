@@ -63,9 +63,9 @@ pub struct PlotAssist {
     wdth: f64,
     hght: f64,
     lft: f64,
-    rght: f64,
     tp: f64,
-    btm: f64,
+    // rght: f64,
+    // btm: f64,
 }
 
 impl PlotAssist {
@@ -73,18 +73,16 @@ impl PlotAssist {
         let wdth = cfg.src_right - cfg.src_left;
         let hght = cfg.src_bottom - cfg.src_top;
         let lft = cfg.src_left / wdth;
-        let rght = cfg.src_right / wdth;
         let tp = cfg.src_top / hght;
-        let btm = cfg.src_bottom / hght;
+        // let rght = cfg.src_right / wdth;
+        // let btm = cfg.src_bottom / hght;
 
         Self {
             cfg,
             wdth,
             hght,
             lft,
-            rght,
             tp,
-            btm,
         }
     }
     pub fn ptp(&self, p: (f64, f64)) -> (f64, f64) {
@@ -310,8 +308,8 @@ impl canvas::Drawable for FDQGraph {
             let time_chunks = Instant::now();
             let fd: Vec<_> = match step > 1 {
                 // FIXME: if a chunk is all -1, then what happens? think of zooming in a conn-loss.
-                true => ifd.chunks(step).map(|x| FrameDataQ::fold_vec(x)).collect(),
-                false => ifd.iter().copied().collect(), // .filter(|x| x.recv_us_len > 0)
+                true => ifd.chunks(step).map(FrameDataQ::fold_vec).collect(),
+                false => ifd.to_vec(), // .filter(|x| x.recv_us_len > 0)
             };
             if time_chunks.elapsed().as_millis() > 10 {
                 dbg!(time_chunks.elapsed());
@@ -320,11 +318,8 @@ impl canvas::Drawable for FDQGraph {
             let time_windows = Instant::now();
             let fd: Vec<_> = match substep > 1 {
                 // FIXME: if a window is all -1, then what happens? think of zooming in a conn-loss.
-                true => fd
-                    .windows(substep)
-                    .map(|x| FrameDataQ::fold_vec(x))
-                    .collect(),
-                false => fd.iter().copied().collect(),
+                true => fd.windows(substep).map(FrameDataQ::fold_vec).collect(),
+                false => fd.to_vec(),
             };
             if time_windows.elapsed().as_millis() > 10 {
                 dbg!(time_windows.elapsed());

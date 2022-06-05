@@ -43,7 +43,7 @@ use std::collections::HashMap;
 // of the frequency values of the functions. Therefore 'item_count' represents
 // how many items you expect to encode between raw values.
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct HuffmanMapSBlock {
     start_quantized: i64,
     start_huffman: i64,
@@ -96,7 +96,7 @@ impl HuffmanMapSBlock {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub struct HuffmanMapSRaw {
     /// How to name the token for raw input
     key: i64,
@@ -115,7 +115,7 @@ impl HuffmanMapSRaw {
         }
     }
 }
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum HKeyMetadata {
     Block(HuffmanMapSBlock),
     Raw(HuffmanMapSRaw),

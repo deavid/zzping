@@ -70,8 +70,8 @@ fn read_config(filepath: &str) -> config::ServerConfig {
 fn get_logfile_now() -> String {
     let mut strnow = Utc::now()
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        .replace("-", "")
-        .replace(":", "");
+        .replace('-', "")
+        .replace(':', "");
     strnow.truncate(11);
     strnow
 }
