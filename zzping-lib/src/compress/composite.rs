@@ -45,7 +45,7 @@ impl CompositeStage {
         Self {
             quantizer: LinearLogQuantizer::new(precision),
             predictor: WindowMedianPredictor::new(window_size),
-            correction: BasicCorrector::new(),
+            correction: BasicCorrector::default(),
             huffmapper: hmaps,
             huffman: HuffmanI64::new(weights.into_iter().collect()),
             errors: vec![],
@@ -72,17 +72,16 @@ impl CompositeStage {
         let extra_bits = partial_key.extra_bits;
 
         // 3. Read the extra data from buffer
-        let extra_data: i64;
-        if extra_bits > 0 {
+        let extra_data = if extra_bits > 0 {
             let mut bdata: BitVec = buffer.take(extra_bits).collect();
             let mut full_data = BitVec::from_elem(64 - extra_bits, false);
             full_data.append(&mut bdata);
             let vbytes: Vec<u8> = full_data.to_bytes();
             let abytes: [u8; 8] = vbytes.try_into().unwrap();
-            extra_data = i64::from_be_bytes(abytes);
+            i64::from_be_bytes(abytes)
         } else {
-            extra_data = 0;
-        }
+            0
+        };
         // 3b. Get the huffmapper key
         let hkey = partial_key.add_extra_data(extra_data);
 

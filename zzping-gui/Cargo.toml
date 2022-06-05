@@ -1,26 +1,17 @@
 [package]
 name = "zzping-gui"
-version = "0.2.2-beta1"
+version = "0.2.2-beta2"
 authors = ["Google LLC", "David Martinez Marti <deavidsedice@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 zzping-lib = { path = "../zzping-lib" }
-iced = { version = "0.1", features = ["canvas"] }
-iced_native = { version = "0.2.0" }
+iced = { version = "0.4", features = ["canvas"] }
+iced_native = { version = "0.5" }
 async-std = { version = "1.0", features = ["unstable"] }
-rand = "0.7.3"
-rmp = "0.8.9"
-ron = "0.6.2"
-clap = "3.0.0-beta.2"
-serde = "1.0.117"
+rand = "0.8"
+rmp = "0.8"
+ron = "0.7"
+clap = { version = "3.1", features = ["derive"] }
+serde = "1.0"
 
-[profile.dev]
-opt-level = 1
-
-[profile.dev.package."*"]
-opt-level = 3
-debug = 2
-
-[profile.release]
-debug = 2

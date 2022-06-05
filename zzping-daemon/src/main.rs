@@ -27,7 +27,7 @@ extern crate env_logger;
 extern crate rmp;
 extern crate zzping_lib;
 
-use clap::Clap;
+use clap::Parser;
 use zzping_lib::framedata::{FrameData, FrameTime};
 use zzping_lib::framestats::FrameStats;
 
@@ -44,9 +44,9 @@ struct CLIStats {
     dest_seq: u16,
 }
 
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(
-    version = "0.2.2-beta1",
+    version = "0.2.2-beta2",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
 )]
 struct Opts {
@@ -62,7 +62,7 @@ fn read_config(filepath: &str) -> config::ServerConfig {
     match config::ServerConfig::from_filepath(filepath) {
         Ok(cfg) => cfg,
         Err(e) => {
-            panic!(format!("Error parsing config file '{}': {:?}", filepath, e));
+            panic!("Error parsing config file '{}': {:?}", filepath, e);
         }
     }
 }
@@ -70,8 +70,8 @@ fn read_config(filepath: &str) -> config::ServerConfig {
 fn get_logfile_now() -> String {
     let mut strnow = Utc::now()
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-        .replace("-", "")
-        .replace(":", "");
+        .replace('-', "")
+        .replace(':', "");
     strnow.truncate(11);
     strnow
 }
@@ -115,8 +115,8 @@ fn main() {
     for target in cfg.ping_targets {
         let interval = Duration::from_secs(1) / target.frequency;
         // Add a random amount to avoid having all targets at exactly the same time
-        let interval_n =
-            interval + Duration::from_nanos(rng.gen_range(0, interval.as_millis() + 1) as u64);
+        let rng_time: u64 = rng.gen_range(0..interval.as_millis()) as u64 + 1;
+        let interval_n = interval + Duration::from_nanos(rng_time);
 
         t.add_destination(&target.address, interval_n);
     }

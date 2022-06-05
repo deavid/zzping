@@ -16,15 +16,15 @@ use std::fs::File;
 use std::io::{BufReader, Write};
 use std::thread;
 
-use clap::Clap;
+use clap::Parser;
 
 use zzping_lib::framedataq::{FDCodecCfg, FrameDataQ, RMPCodec};
 use zzping_lib::{compress::quantize::LinearLogQuantizer, framedataq::FDCodecState};
 use zzping_lib::{framedata::FrameDataVec, framedataq::Complete};
 
-#[derive(Clap, Debug)]
+#[derive(Parser, Debug)]
 #[clap(
-    version = "0.2.2-beta1",
+    version = "0.2.2-beta2",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
 )]
 struct Opts {
@@ -95,9 +95,10 @@ fn read_inputfile(filename: &str, cfg: FDCodecCfg) -> (String, Vec<u8>) {
     let f = File::open(filename).unwrap();
     let mut reader = BufReader::new(f);
     let mut fdv = FrameDataVec::new();
-    if fdv.read(&mut reader, 100_000_000).is_err() {
-        // dbg!(e);
+    if let Err(e) = fdv.read(&mut reader, 100_000_000) {
+        dbg!(filename, e);
     }
+    dbg!(fdv.v.len());
     let mut codec = FDCodecState::new(cfg);
     let mut buf = Vec::with_capacity(fdv.v.len() * 12);
     for frame in fdv.v.iter() {

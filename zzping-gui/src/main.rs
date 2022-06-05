@@ -26,11 +26,11 @@ use flags::{Flags, GuiConfig, OtherOpts};
 use gui::PingmonGUI;
 use iced::Settings;
 
-use clap::Clap;
+use clap::Parser;
 
-#[derive(Clap)]
+#[derive(Parser)]
 #[clap(
-    version = "0.2.2-beta1",
+    version = "0.2.2-beta2",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
 )]
 struct Opts {
@@ -59,4 +59,5 @@ pub fn main() {
         flags,
         ..Settings::default()
     })
+    .unwrap();
 }

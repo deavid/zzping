@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "zzping-lib",
+    "zzping-daemon",
+    "zzping-gui",
+]
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+debug = 2

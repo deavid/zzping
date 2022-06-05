@@ -15,8 +15,8 @@
 use std::hash::{Hash, Hasher};
 use std::{cmp::Ordering, collections::HashMap};
 
-use super::{variant::Variant, Error};
-
+use super::variant::Variant;
+use anyhow::Result;
 /*
   This allows Maps to get Hash, Ord, Eq; even if they don't support it.
   It might not be 100% safe, but it allows to create hashmaps with them as keys
@@ -38,7 +38,7 @@ impl Map {
     pub fn into_hashmap(self) -> HashMap<Variant, Variant> {
         self.v
     }
-    pub fn into_strhashmap(self) -> Result<HashMap<String, Variant>, Error> {
+    pub fn into_strhashmap(self) -> Result<HashMap<String, Variant>> {
         let mut ret: HashMap<String, Variant> = HashMap::new();
         for (k, v) in self.v {
             let k = k.string()?;

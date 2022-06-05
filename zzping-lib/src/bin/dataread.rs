@@ -18,7 +18,7 @@ use std::thread;
 use std::{collections::HashMap, fs::File};
 
 use bit_vec::BitVec;
-use clap::Clap;
+use clap::Parser;
 
 use quantize::LinearLogQuantizer;
 #[allow(unused_imports)]
@@ -33,9 +33,9 @@ use zzping_lib::{
     framedata::{FrameData, FrameDataVec},
 };
 
-#[derive(Clap, Debug)]
+#[derive(Parser, Debug)]
 #[clap(
-    version = "0.2.2-beta1",
+    version = "0.2.2-beta2",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
 )]
 struct Opts {
@@ -209,7 +209,7 @@ fn test_serializer(v: Vec<FrameData>) {
     // let test_vec = BatchData::flatten(&bd.recv_us[..1]);
 
     let mut serializer = quantize::LogQuantizer::default();
-    serializer.compress(&test_vec).unwrap();
+    serializer.compress(test_vec).unwrap();
     let ser_data = serializer.serialize().unwrap();
     dbg!(ser_data.len());
     dbg!(ser_data.len() as f32 * 8.0 / test_vec.len() as f32);

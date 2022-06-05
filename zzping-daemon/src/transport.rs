@@ -18,7 +18,7 @@
 //!
 
 use super::icmp;
-use pnet::transport::{TransportChannelType, TransportReceiver, TransportSender};
+use pnet_transport::{TransportChannelType, TransportReceiver, TransportSender};
 use rand::Rng;
 use std::{fs::File, io::Write};
 use std::{io::BufWriter, sync::Mutex};
@@ -31,8 +31,8 @@ use std::{
 /// Creates a TransportChannelType for ICMP over IPv4
 pub fn protocol_ipv4() -> TransportChannelType {
     use pnet::packet::ip::IpNextHeaderProtocols;
-    use pnet::transport::TransportChannelType::Layer4;
-    use pnet::transport::TransportProtocol::Ipv4;
+    use pnet_transport::TransportChannelType::Layer4;
+    use pnet_transport::TransportProtocol::Ipv4;
     Layer4(Ipv4(IpNextHeaderProtocols::Icmp))
 }
 
@@ -152,7 +152,8 @@ impl Destination {
     /// The filename follows the format ./logs/pingd-log-{str_addr}-{now}.log
     pub fn create_log_file(&mut self, now: &str) {
         let filename = format!("logs/pingd-log-{}-{}.log", self.str_addr, now);
-        let f = File::create(filename).unwrap();
+        let f = File::create(&filename)
+            .unwrap_or_else(|e| panic!("unable to create file {}: {}", &filename, &e));
         let mut oldlog = self.logfile.take();
         if let Some(log) = oldlog.as_mut() {
             log.flush().unwrap();
@@ -209,7 +210,7 @@ impl Destination {
          the queues. It is currently fixed (by looking and cleaning up >1 pckt
          on recv), but the hack stays just in case.
         */
-        let rnd_num = self.rng.gen_range(16, 64);
+        let rnd_num = self.rng.gen_range(16..64);
         if rnd_num < inflight {
             return false;
         }
@@ -217,7 +218,7 @@ impl Destination {
             return false;
         }
         let packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
-        self.last_pckt_sent = Instant::now() - Duration::from_micros(self.rng.gen_range(0, 101));
+        self.last_pckt_sent = Instant::now() - Duration::from_micros(self.rng.gen_range(0..101));
         self.inflight_packets.push(packet);
 
         // The sequence is random to avoid a device "guessing" what the next sequence will be.
@@ -310,7 +311,7 @@ fn receiver_thread(mut rx: TransportReceiver, readbuf: Arc<Mutex<Vec<icmp::Packe
     let mut buffer: Vec<icmp::PacketData> = vec![];
     let mut last_sync = Instant::now();
     let sync_time = Duration::from_micros(100);
-    let mut packet_iter = pnet::transport::icmp_packet_iter(&mut rx);
+    let mut packet_iter = pnet_transport::icmp_packet_iter(&mut rx);
     loop {
         if let Some((packet, addr)) = packet_iter.next_with_timeout(sync_time).unwrap_or_default() {
             let mut packet: icmp::PacketData = icmp::PacketData::parse(packet, addr);
@@ -343,9 +344,9 @@ impl Comms {
     pub fn new(config: CommConfig) -> Self {
         let bufsize = 65536;
         // TODO: Caller should have two Comms, one for IpV4, and another for IpV6.
-        let (tx, rx) = match pnet::transport::transport_channel(bufsize, protocol_ipv4()) {
+        let (tx, rx) = match pnet_transport::transport_channel(bufsize, protocol_ipv4()) {
             Ok((tx, rx)) => (tx, rx),
-            Err(e) => panic!(e.to_string()),
+            Err(e) => panic!("{}", e.to_string()),
         };
         // rx is sent to the thread as an exclusive thing, we lose track of it here.
         let readbuf = Arc::new(Mutex::new(vec![]));
@@ -411,9 +412,9 @@ impl Comms {
             dest.inflight_packets
                 .retain(|x| sent_before(x, now, c.forget_inflight));
             dest.recv_packets
-                .retain(|x| sent_before(x, now, c.forget_recv));
+                .retain(|x| sent_before(x, now, c.forget_inflight + c.forget_recv));
             dest.lost_packets
-                .retain(|x| sent_before(x, now, c.forget_lost));
+                .retain(|x| sent_before(x, now, c.forget_inflight + c.forget_lost));
         }
     }
 

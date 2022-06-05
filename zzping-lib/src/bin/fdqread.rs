@@ -15,7 +15,7 @@
 use std::io::BufReader;
 use std::{fs::File, io::Write};
 
-use clap::Clap;
+use clap::Parser;
 
 use zzping_lib::framedataq::{FDCodecState, IterFold, RMPCodec};
 use zzping_lib::{
@@ -23,9 +23,9 @@ use zzping_lib::{
     framedataq::{FDCodecCfg, FDCodecIter},
 };
 
-#[derive(Clap, Debug)]
+#[derive(Parser, Debug)]
 #[clap(
-    version = "0.2.2-beta1",
+    version = "0.2.2-beta2",
     author = "David Martinez Marti <deavidsedice@gmail.com>"
 )]
 struct Opts {

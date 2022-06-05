@@ -14,6 +14,9 @@
 # limitations under the License.
 
 
-cargo build --release && \
-    sudo setcap cap_net_raw=eip ../target/release/zzping-daemon && \
-    RUST_LOG=debug ../target/release/zzping-daemon
+cargo build --release --bin zzping-daemon || exit 1
+sudo setcap cap_net_raw=eip target/release/zzping-daemon || exit 1
+
+cd zzping-daemon
+mkdir -p logs
+RUST_LOG=debug ../target/release/zzping-daemon

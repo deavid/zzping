@@ -188,7 +188,7 @@ impl CompressTo<f32, u64> for LogQuantizer {
     }
 
     fn decompress_from(&self, srcdata: &[u64]) -> Result<Vec<f32>, Error> {
-        self.decompress_data(&srcdata)
+        self.decompress_data(srcdata)
     }
 }
 
@@ -292,7 +292,7 @@ impl CompressTo<f32, u64> for LinearQuantizer {
     }
 
     fn decompress_from(&self, srcdata: &[u64]) -> Result<Vec<f32>, Error> {
-        self.decompress_data(&srcdata)
+        self.decompress_data(srcdata)
     }
 }
 
