@@ -17,6 +17,9 @@ use std::{collections::VecDeque, marker::PhantomData};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use dynrmp::variant::Variant;
 
+use anyhow::{Context, Result};
+use thiserror::Error;
+
 #[allow(unused_imports)]
 use crate::dbgf;
 
@@ -255,7 +258,7 @@ impl FDCodecState {
     pub fn get_header(cfg: FDCodecCfg) -> Vec<u8> {
         Self::try_get_header(cfg).unwrap()
     }
-    pub fn try_get_header(cfg: FDCodecCfg) -> Result<Vec<u8>, Error> {
+    pub fn try_get_header(cfg: FDCodecCfg) -> Result<Vec<u8>, XError> {
         let mut vbuf: Vec<u8> = vec![];
         let wr = &mut vbuf;
         rmp::encode::write_map_len(wr, 5)?;
@@ -279,24 +282,24 @@ impl FDCodecState {
 
         Ok(vbuf)
     }
-    pub fn try_from_header<R: std::io::Read>(rd: &mut R) -> Result<FDCodecCfg, Error> {
+    pub fn try_from_header<R: std::io::Read>(rd: &mut R) -> Result<FDCodecCfg> {
         let header = Variant::read(rd)?.map()?.into_strhashmap()?;
-        let get_header = |field: &str| -> Result<&Variant, Error> {
+        let get_header = |field: &str| -> Result<&Variant, XError> {
             header
                 .get(field)
-                .ok_or_else(|| Error::header_field_missing(field))
+                .ok_or_else(|| XError::header_field_missing(field))
         };
         let schema = get_header("schema")?.str()?;
         if schema != Self::HEADER_SCHEMA {
-            return Err(Error::unexpected_data(
+            return Err(XError::unexpected_data(
                 "Incompatible header, wrong file format",
-            ));
+            ))?;
         }
         let version = get_header("version")?.int()? as u64;
         if version > Self::HEADER_VERSION {
-            return Err(Error::unexpected_data(
+            return Err(XError::unexpected_data(
                 "File format has a newer, unsupported version",
-            ));
+            ))?;
         }
         let full_encode_secs = get_header("full_encode_secs")?.int()? as i64;
         let recv_llq = get_header("recv_llq")?;
@@ -306,7 +309,7 @@ impl FDCodecState {
         let recv_llq = match recv_llq {
             Variant::Null(_) => Ok(None),
             Variant::Float(v) => Ok(Some(LinearLogQuantizer::new(v.as_f64()))),
-            _ => Err(Error::unexpected_data(
+            _ => Err(XError::unexpected_data(
                 "recv_llq expected to be nil or float type",
             )),
         }?;
@@ -418,19 +421,27 @@ impl FDCodecState {
     }
 }
 
-#[derive(Debug)]
-pub enum Error {
+#[derive(Error, Debug)]
+pub enum XError {
+    #[error("msgpack write error: {0:?}")]
     RmpEncodeValue(rmp::encode::ValueWriteError),
+    #[error("msgpack read error: {0:?}")]
     RmpDecodeValue(rmp::decode::ValueReadError),
+    #[error("msgpack num value read error: {0:?}")]
     RmpDecodeNumValue(rmp::decode::NumValueReadError),
-    Variant(dynrmp::Error),
+    #[error("dynrmp variant error: {0:?}")]
+    Variant(dynrmp::DError),
+    #[error("I/O error: {0:?}")]
     StdIO(std::io::Error),
+    #[error("unexpected data: {0:?}")]
     UnexpectedData(String),
+    #[error("header field missing: {0:?}")]
     HeaderFieldMissing(String),
+    #[error("End of File")]
     EOF,
 }
 
-impl Error {
+impl XError {
     fn unexpected_data(s: &str) -> Self {
         Self::UnexpectedData(s.to_owned())
     }
@@ -439,38 +450,38 @@ impl Error {
     }
 }
 
-impl From<dynrmp::Error> for Error {
-    fn from(e: dynrmp::Error) -> Self {
+impl From<dynrmp::DError> for XError {
+    fn from(e: dynrmp::DError) -> Self {
         Self::Variant(e)
     }
 }
-impl From<rmp::encode::ValueWriteError> for Error {
+impl From<rmp::encode::ValueWriteError> for XError {
     fn from(e: rmp::encode::ValueWriteError) -> Self {
         Self::RmpEncodeValue(e)
     }
 }
 
-impl From<rmp::decode::ValueReadError> for Error {
+impl From<rmp::decode::ValueReadError> for XError {
     fn from(e: rmp::decode::ValueReadError) -> Self {
         Self::RmpDecodeValue(e)
     }
 }
 
-impl From<rmp::decode::NumValueReadError> for Error {
+impl From<rmp::decode::NumValueReadError> for XError {
     fn from(e: rmp::decode::NumValueReadError) -> Self {
         Self::RmpDecodeNumValue(e)
     }
 }
 
-impl From<std::io::Error> for Error {
+impl From<std::io::Error> for XError {
     fn from(e: std::io::Error) -> Self {
         Self::StdIO(e)
     }
 }
 
 pub trait RMPCodec: Sized + std::fmt::Debug {
-    fn try_to_rmp(&self) -> Result<Vec<u8>, Error>;
-    fn try_from_rmp<R: std::io::Read>(rd: &mut R) -> Result<Self, Error>;
+    fn try_to_rmp(&self) -> Result<Vec<u8>>;
+    fn try_from_rmp<R: std::io::Read>(rd: &mut R) -> Result<Self>;
 
     fn to_rmp(&self) -> Vec<u8> {
         match self.try_to_rmp() {
@@ -490,7 +501,7 @@ pub trait RMPCodec: Sized + std::fmt::Debug {
 }
 
 impl RMPCodec for FrameDataQ<Encoded> {
-    fn try_to_rmp(&self) -> Result<Vec<u8>, Error> {
+    fn try_to_rmp(&self) -> Result<Vec<u8>> {
         let mut data: Vec<u8> = vec![];
         let buf = &mut data;
         let subsec_ms = match self.timestamp {
@@ -535,40 +546,45 @@ impl RMPCodec for FrameDataQ<Encoded> {
         Ok(data)
     }
 
-    fn try_from_rmp<R: std::io::Read>(rd: &mut R) -> Result<Self, Error> {
-        let marker = Variant::read_marker(rd).map_err(|e: dynrmp::Error| -> Error {
-            match e.is_marker_eof() {
-                true => Error::EOF,
-                false => e.into(),
-            }
-        })?;
-        let ts_var = Variant::read_from_marker(rd, marker)?;
+    fn try_from_rmp<R: std::io::Read>(rd: &mut R) -> Result<Self> {
+        let ts_var = Variant::read(rd)
+            .map_err(|e| {
+                let de = e.downcast_ref::<dynrmp::DError>();
+                match de {
+                    Some(dynrmp::DError::IOError(x)) => match x.kind() {
+                        std::io::ErrorKind::UnexpectedEof => anyhow::Error::from(XError::EOF),
+                        _ => e,
+                    },
+                    _ => e,
+                }
+            })
+            .context("ts_var")?;
         let timestamp = match ts_var {
             Variant::Null(_) => None,
             Variant::Integer(v) => Some(v as i64),
-            _ => return Err(Error::unexpected_data("want Null or Int")),
+            _ => Err(XError::unexpected_data("want Null or Int"))?,
         };
-        let subsec_ms_v: usize = rmp::decode::read_int(rd)?;
+        let subsec_ms_v: usize = rmp::decode::read_int(rd).context("subsec_ms")?;
         let subsec_ms = match timestamp {
             Some(_) => SubSecType::Abs(subsec_ms_v as u32),
             None => SubSecType::Delta(subsec_ms_v as u32),
         };
-        let ifl: i64 = rmp::decode::read_int(rd)?;
+        let ifl: i64 = rmp::decode::read_int(rd).context("inflight")?;
         let inflight: f32 = if ifl == -1 { 0.0 } else { ifl as f32 };
         let lost_packets: f32 = if ifl == -1 {
             0.0
         } else {
-            rmp::decode::read_int::<usize, _>(rd)? as f32
+            rmp::decode::read_int::<usize, _>(rd).context("lost packets")? as f32
         };
-        let recv_us_len: usize = rmp::decode::read_int(rd)?;
+        let recv_us_len: usize = rmp::decode::read_int(rd).context("recv_us_len")?;
         let mut recv_us: [i64; 7] = [-1, -1, -1, -1, -1, -1, -1];
         if recv_us_len > 0 {
-            let recv_var_t = Variant::read(rd)?;
-            let recv_var = recv_var_t.slice()?;
+            let recv_var_t = Variant::read(rd).context("recv_var_t")?;
+            let recv_var = recv_var_t.slice().context("recv_var slice")?;
             // TODO: LinearLogQuantizer::decode
             let mut prev = 0;
             for (n, var) in recv_var.iter().enumerate() {
-                let dv = var.int()?;
+                let dv = var.int().context("recv_var.int")?;
                 let v = dv + prev;
                 recv_us[n] = v as i64;
                 prev = v;
@@ -602,14 +618,18 @@ impl<R: std::io::Read> Iterator for FDCodecIter<R> {
     type Item = FrameDataQ<Complete>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let rfde = RMPCodec::try_from_rmp(&mut self.buf);
+        let rfde = RMPCodec::try_from_rmp(&mut self.buf).context("FDCodecIter - next");
         match rfde {
             Ok(v) => Some(self.fdcs.decode(v)),
             Err(e) => {
-                if matches!(e, Error::EOF) {
+                if matches!(e.downcast_ref::<XError>(), Some(XError::EOF)) {
                     None
                 } else {
-                    dbg!(e);
+                    println!("FDCodecIter::iterator::next(): Error: {}", e);
+                    for cause in e.chain() {
+                        dbg!(cause);
+                    }
+
                     panic!("Unexpected error ocurred while reading MessagePack from buffer");
                 }
             }

@@ -95,9 +95,10 @@ fn read_inputfile(filename: &str, cfg: FDCodecCfg) -> (String, Vec<u8>) {
     let f = File::open(filename).unwrap();
     let mut reader = BufReader::new(f);
     let mut fdv = FrameDataVec::new();
-    if fdv.read(&mut reader, 100_000_000).is_err() {
-        // dbg!(e);
+    if let Err(e) = fdv.read(&mut reader, 100_000_000) {
+        dbg!(filename, e);
     }
+    dbg!(fdv.v.len());
     let mut codec = FDCodecState::new(cfg);
     let mut buf = Vec::with_capacity(fdv.v.len() * 12);
     for frame in fdv.v.iter() {

@@ -5,7 +5,7 @@ ServerConfig(
         // Your local router IP
         TargetHost(
             address: "192.168.0.1", // Host address
-            frequency: 5,          // Pings per second
+            frequency: 100,          // Pings per second
         ),
         // TargetHost(
         //     address: "192.168.0.3", 
@@ -19,7 +19,7 @@ ServerConfig(
         // // Cloudflare DNS
         TargetHost(
             address: "1.1.1.1",
-            frequency: 5,          
+            frequency: 100,          
         ),
         // TargetHost(
         //     address: "1.0.0.1",
@@ -28,7 +28,7 @@ ServerConfig(
         // Quad9
         TargetHost(
             address: "9.9.9.9",
-            frequency: 5,          
+            frequency: 100,          
         ),
         // TargetHost(
         //     address: "149.112.112.112",
@@ -80,6 +80,6 @@ ServerConfig(
     precision_mult: 2.0,
 
     // How many times per second to refresh the CLI, GUI and disk logging.
-    refresh_freq: 2,
+    refresh_freq: 50,
 
 )

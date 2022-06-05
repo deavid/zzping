@@ -21,8 +21,8 @@ use super::flags::GuiConfig;
 use super::graph_plot::LatencyGraph;
 use super::udp_comm::UdpStats;
 use iced::{
-    canvas, executor, slider, Application, Canvas, Color, Column, Command, Element, Length, Row,
-    Slider, Subscription, Text,
+    executor, slider, Application, Canvas, Color, Column, Command, Element, Length, Row, Slider,
+    Subscription, Text,
 };
 use std::net::UdpSocket;
 use std::time::Instant;
@@ -43,10 +43,10 @@ pub struct PingmonGUI {
     pub guiconfig: GuiConfig,
     pub otheropts: OtherOpts,
     pub graph: Vec<LatencyGraph>,
-    pub graph_canvas: Vec<canvas::layer::Cache<LatencyGraph>>,
+    pub graph_cache: Vec<iced::widget::canvas::Cache>,
     pub socket: Option<UdpSocket>,
     pub fdqgraph: FDQGraph,
-    pub fdqgraph_canvas: canvas::layer::Cache<FDQGraph>,
+    pub fdqgraph_cache: iced::widget::canvas::Cache,
     zoomw_slider_state: slider::State,
     zoomw_slider: f32,
     zoomy_slider_state: slider::State,
@@ -67,10 +67,10 @@ impl Default for PingmonGUI {
             guiconfig: Default::default(),
             otheropts: Default::default(),
             graph: Default::default(),
-            graph_canvas: Default::default(),
+            graph_cache: Default::default(),
             socket: Default::default(),
             fdqgraph: Default::default(),
-            fdqgraph_canvas: Default::default(),
+            fdqgraph_cache: Default::default(),
             zoomw_slider_state: Default::default(),
             zoomw_slider: Default::default(),
             zoomy_slider_state: Default::default(),
@@ -114,14 +114,14 @@ impl PingmonGUI {
     fn tick(&mut self, instant: Instant) {
         if self.otheropts.input_file.is_none() {
             let stats = self.recv_all();
-            for (graph, canvas) in self.graph.iter_mut().zip(self.graph_canvas.iter_mut()) {
+            for (graph, canvas) in self.graph.iter_mut().zip(self.graph_cache.iter_mut()) {
                 if graph.update(instant, &stats) {
                     canvas.clear();
                 }
             }
         } else {
             if self.fdqgraph.update(instant) {
-                self.fdqgraph_canvas.clear();
+                self.fdqgraph_cache.clear();
             }
             if self.posdx_slider.abs() > 0.01 {
                 let adx = self.posdx_slider.signum() / 500.0;
@@ -161,7 +161,7 @@ impl Application for PingmonGUI {
                 .iter()
                 .map(|addr| LatencyGraph::new(addr, flags.guiconfig.sample_limit))
                 .collect(),
-            graph_canvas: flags
+            graph_cache: flags
                 .guiconfig
                 .display_address
                 .iter()
@@ -172,7 +172,7 @@ impl Application for PingmonGUI {
             otheropts: flags.otheropts,
             ..Self::default()
         };
-        (app, Command::from(async { Message::Startup }))
+        (app, Command::perform(async { Message::Startup }, |x| x))
     }
 
     fn title(&self) -> String {
@@ -215,27 +215,33 @@ impl Application for PingmonGUI {
     }
 
     fn view(&mut self) -> Element<Message> {
-        let mut window = Column::new().padding(0);
+        let mut window: Column<Message> = Column::new().padding(0);
         if self.otheropts.input_file.is_none() {
-            for (_addr, (graph, canvas)) in self
+            for (_addr, (graph, _cache)) in self
                 .display_address
                 .iter()
-                .zip(self.graph.iter().zip(self.graph_canvas.iter()))
+                .zip(self.graph.iter().zip(self.graph_cache.iter()))
             {
-                let widget_graph = Canvas::new()
+                // FIXME: This clones the graph data AND doesn't use the Cache!
+                // let widget_graph = Canvas::new(cache.with(graph))
+                //     .width(Length::Fill)
+                //     .height(Length::Fill);
+                let widget_graph = Canvas::new(graph.clone())
                     .width(Length::Fill)
-                    .height(Length::Fill)
-                    .push(canvas.with(graph));
-
+                    .height(Length::Fill);
                 window = window.push(widget_graph);
             }
         } else {
-            let graph = Canvas::new()
+            // FIXME: This clones the graph data AND doesn't use the Cache!
+            let graph = Canvas::new(self.fdqgraph.clone())
                 .width(Length::Fill)
-                .height(Length::Fill)
-                .push(self.fdqgraph_canvas.with(&self.fdqgraph));
+                .height(Length::Fill);
+
+            // let graph = Canvas::new(self.fdqgraph_cache.with(&self.fdqgraph))
+            //     .width(Length::Fill)
+            //     .height(Length::Fill);
             window = window.push(graph);
-            let mut row2 = Row::new().padding(4).spacing(5);
+            let mut row2: Row<Message> = Row::new().padding(4).spacing(5);
             row2 = row2.push(Text::new("sf").size(20).color(Color::BLACK));
             row2 = row2.push(Slider::new(
                 &mut self.zoomw_slider_state,
@@ -271,6 +277,7 @@ impl Application for PingmonGUI {
                 self.posdx_slider,
                 Message::PosDXSliderChanged,
             ));
+
             window = window.push(row2);
         }
         window.into()

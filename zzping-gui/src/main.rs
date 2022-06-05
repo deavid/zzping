@@ -59,4 +59,5 @@ pub fn main() {
         flags,
         ..Settings::default()
     })
+    .unwrap();
 }

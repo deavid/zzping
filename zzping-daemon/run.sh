@@ -15,5 +15,5 @@
 
 
 cargo build --release && \
-    sudo setcap cap_net_raw=eip target/release/zzping-daemon && \
-    RUST_LOG=debug ./target/release/zzping-daemon
+    sudo setcap cap_net_raw=eip ../target/release/zzping-daemon && \
+    RUST_LOG=debug ../target/release/zzping-daemon

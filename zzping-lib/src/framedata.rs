@@ -21,12 +21,14 @@ use chrono::{DateTime, Utc};
 use rmp::decode::ValueReadError;
 use std::time::Duration;
 
+use anyhow::{Context, Result};
+
 /// Used to easily bundle errors from dynrmp
-fn custom_error<E>(t: E) -> dynrmp::Error
+fn custom_error<E>(t: E) -> dynrmp::DError
 where
     E: Into<Box<dyn std::error::Error + Send + Sync>>,
 {
-    dynrmp::Error::RMPValueReadError(rmp::decode::ValueReadError::InvalidDataRead(
+    dynrmp::DError::RMPValueReadError(rmp::decode::ValueReadError::InvalidDataRead(
         std::io::Error::new(std::io::ErrorKind::InvalidData, t),
     ))
 }
@@ -75,13 +77,13 @@ impl FrameData {
             .map_err(rmp::encode::ValueWriteError::InvalidDataWrite)?;
         Ok(())
     }
-    pub fn decode<R: std::io::Read>(rd: &mut R) -> Result<Self, dynrmp::Error> {
+    pub fn decode<R: std::io::Read>(rd: &mut R) -> Result<Self> {
         let t = Variant::read(rd)?;
         let time: FrameTime = match t {
             Variant::String(s) => {
                 let elapsed = rmp::decode::read_u32(rd)?;
                 if elapsed != 0 {
-                    return Err(custom_error("Unexpected elapsed time, should be zero."));
+                    return Err(custom_error("Unexpected elapsed time, should be zero."))?;
                 }
                 FrameTime::Timestamp(
                     DateTime::parse_from_rfc3339(&s)
@@ -118,15 +120,18 @@ impl FrameDataVec {
     pub fn new() -> Self {
         Self::default()
     }
-    pub fn read<R: std::io::Read>(&mut self, rd: &mut R, count: u64) -> Result<(), dynrmp::Error> {
+    pub fn read<R: std::io::Read>(&mut self, rd: &mut R, count: u64) -> Result<()> {
         let err = || ValueReadError::TypeMismatch(rmp::Marker::Str8);
-        for _ in 0..count {
+        for n in 0..count {
+            println!("{}", n);
             let mut fd = FrameData::decode(rd)?;
             match &fd.time {
                 FrameTime::Timestamp(ts) => self.last_keyframe = Some(*ts),
                 FrameTime::Elapsed(e) => {
                     fd.time = FrameTime::Timestamp(
-                        self.last_keyframe.ok_or_else(err)?
+                        self.last_keyframe
+                            .ok_or_else(err)
+                            .context("FrameDataVec::read - no last_keyframe")?
                             + chrono::Duration::from_std(*e).unwrap(),
                     )
                 }

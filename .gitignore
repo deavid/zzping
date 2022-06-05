@@ -11,3 +11,6 @@ test*.ods
 .ipynb_checkpoints
 fdq*.log
 fdq*.log.*
+.vscode/
+*/pkg/mod
+*/dataread.log

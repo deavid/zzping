@@ -20,6 +20,8 @@ use iced::{
 };
 use zzping_lib::framedataq::{Complete, FDCodecIter, FrameDataQ, IterFold, SubSecType};
 
+use crate::gui::Message;
+
 #[derive(Debug, Default, Copy, Clone)]
 pub struct FrameScaler {
     fwidth: f32,
@@ -27,10 +29,10 @@ pub struct FrameScaler {
 }
 
 impl FrameScaler {
-    pub fn new(frame: &canvas::Frame) -> Self {
+    pub fn new(rect: &iced::Rectangle) -> Self {
         Self {
-            fwidth: frame.width(),
-            fheight: frame.height(),
+            fwidth: rect.width,
+            fheight: rect.height,
             // ..Default::default()
         }
     }
@@ -102,7 +104,7 @@ impl PlotAssist {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct FDQGraph {
     fd: Vec<FrameDataQ<Complete>>,
     fdcache: Vec<(i64, Vec<FrameDataQ<Complete>>)>,
@@ -234,10 +236,22 @@ impl FDQGraph {
     }
 }
 
-impl canvas::Drawable for FDQGraph {
-    fn draw(&self, frame: &mut canvas::Frame) {
+fn fill_color(color: Color) -> iced::widget::canvas::Fill {
+    iced::widget::canvas::Fill {
+        color,
+        ..Default::default()
+    }
+}
+
+impl canvas::Program<Message> for FDQGraph {
+    fn draw(
+        &self,
+        bounds: iced::Rectangle,
+        _cursor: iced::canvas::Cursor,
+    ) -> std::vec::Vec<iced::canvas::Geometry> {
         let timer_begin = Instant::now();
-        let f = FrameScaler::new(frame);
+        let f = FrameScaler::new(&bounds);
+        let mut frame = canvas::Frame::new(bounds.size());
         let color_r0 = Color::from_rgba8(100, 50, 50, 1.0);
         let color_r1 = Color::from_rgba8(220, 50, 50, 1.0);
         let color_r2 = Color::from_rgba8(200, 150, 50, 1.0);
@@ -263,18 +277,18 @@ impl canvas::Drawable for FDQGraph {
             color: black50,
             ..Stroke::default()
         };
-        let fill_r0 = canvas::Fill::Color(color_r0);
-        let fill_r1 = canvas::Fill::Color(color_r1);
-        let fill_r2 = canvas::Fill::Color(color_r2);
-        let fill_r3 = canvas::Fill::Color(color_r3);
-        let fill_r4 = canvas::Fill::Color(color_r4);
-        let fill_r5 = canvas::Fill::Color(color_r5);
-        let fill_r6 = canvas::Fill::Color(color_r6);
+        let fill_r0 = fill_color(color_r0);
+        let fill_r1 = fill_color(color_r1);
+        let fill_r2 = fill_color(color_r2);
+        let fill_r3 = fill_color(color_r3);
+        let fill_r4 = fill_color(color_r4);
+        let fill_r5 = fill_color(color_r5);
+        let fill_r6 = fill_color(color_r6);
         let fill_recv = vec![
             fill_r0, fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6,
         ];
-        let fill_inflight = canvas::Fill::Color(color_inflight);
-        let fill_lost = canvas::Fill::Color(color_lost);
+        let fill_inflight = fill_color(color_inflight);
+        let fill_lost = fill_color(color_lost);
 
         let space = Path::rectangle(f.pt(0.0, 0.0), f.sz(1.0, 1.0));
         frame.fill(&space, Color::from_rgba8(100, 100, 100, 1.0));
@@ -472,8 +486,8 @@ impl canvas::Drawable for FDQGraph {
                 color: white90,
                 size: f.pwh(0.1),
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Left,
-                vertical_alignment: iced::VerticalAlignment::Top,
+                horizontal_alignment: iced::alignment::Horizontal::Left,
+                vertical_alignment: iced::alignment::Vertical::Top,
             };
             frame.fill_text(canvas::Text {
                 color: black90,
@@ -493,8 +507,8 @@ impl canvas::Drawable for FDQGraph {
                 color: white90,
                 size: f.pwh(0.1),
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Center,
-                vertical_alignment: iced::VerticalAlignment::Top,
+                horizontal_alignment: iced::alignment::Horizontal::Center,
+                vertical_alignment: iced::alignment::Vertical::Top,
             };
             frame.fill_text(canvas::Text {
                 color: black90,
@@ -512,8 +526,8 @@ impl canvas::Drawable for FDQGraph {
                 color: white90,
                 size: f.pwh(0.1),
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Right,
-                vertical_alignment: iced::VerticalAlignment::Top,
+                horizontal_alignment: iced::alignment::Horizontal::Right,
+                vertical_alignment: iced::alignment::Vertical::Top,
             };
             frame.fill_text(canvas::Text {
                 color: black90,
@@ -530,8 +544,8 @@ impl canvas::Drawable for FDQGraph {
                 color: white90,
                 size: f.pwh(0.1),
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Right,
-                vertical_alignment: iced::VerticalAlignment::Center,
+                horizontal_alignment: iced::alignment::Horizontal::Right,
+                vertical_alignment: iced::alignment::Vertical::Center,
             };
             frame.fill_text(canvas::Text {
                 color: black90,
@@ -548,8 +562,8 @@ impl canvas::Drawable for FDQGraph {
                 color: white90,
                 size: f.pwh(0.1),
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Right,
-                vertical_alignment: iced::VerticalAlignment::Center,
+                horizontal_alignment: iced::alignment::Horizontal::Right,
+                vertical_alignment: iced::alignment::Vertical::Center,
             };
             frame.fill_text(canvas::Text {
                 color: black90,
@@ -566,8 +580,8 @@ impl canvas::Drawable for FDQGraph {
                 color: white90,
                 size: f.pwh(0.1),
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Right,
-                vertical_alignment: iced::VerticalAlignment::Center,
+                horizontal_alignment: iced::alignment::Horizontal::Right,
+                vertical_alignment: iced::alignment::Vertical::Center,
             };
             frame.fill_text(canvas::Text {
                 color: black90,
@@ -579,5 +593,6 @@ impl canvas::Drawable for FDQGraph {
         if timer_begin.elapsed().as_millis() > 50 {
             dbg!(timer_begin.elapsed());
         }
+        vec![frame.into_geometry()]
     }
 }

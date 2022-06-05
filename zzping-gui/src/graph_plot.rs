@@ -12,11 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use crate::gui::Message;
+
 use super::udp_comm::UdpStats;
 use iced::{canvas, Color, Point};
 use std::time::{Duration, Instant};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LatencyGraph {
     pub samples: usize,
     pub latency_us: Vec<u32>,
@@ -65,12 +67,16 @@ impl Default for LatencyGraph {
     }
 }
 
-impl canvas::Drawable for LatencyGraph {
-    fn draw(&self, frame: &mut canvas::Frame) {
+impl canvas::Program<Message> for LatencyGraph {
+    fn draw(
+        &self,
+        bounds: iced::Rectangle,
+        _cursor: iced::canvas::Cursor,
+    ) -> std::vec::Vec<iced::canvas::Geometry> {
         use canvas::{Path, Stroke};
-        let space = Path::rectangle(Point::new(0.0, 0.0), frame.size());
-        let right = frame.width();
-        let bottom = frame.height();
+        let space = Path::rectangle(Point::new(0.0, 0.0), bounds.size());
+        let right = bounds.width;
+        let bottom = bounds.height;
         let botright = Point::new(right, bottom);
         let green_stroke = Stroke {
             width: 1.0,
@@ -92,6 +98,7 @@ impl canvas::Drawable for LatencyGraph {
             color: Color::from_rgba8(0, 0, 0, 0.2),
             ..Stroke::default()
         };
+        let mut frame = canvas::Frame::new(bounds.size());
 
         frame.fill(&space, Color::from_rgba8(100, 100, 100, 1.0));
         let avg_latency: u32 =
@@ -106,14 +113,14 @@ impl canvas::Drawable for LatencyGraph {
             color: Color::from_rgba8(255, 255, 255, 0.9),
             size: 12.0,
             font: iced::Font::Default,
-            horizontal_alignment: iced::HorizontalAlignment::Left,
-            vertical_alignment: iced::VerticalAlignment::Top,
+            horizontal_alignment: iced::alignment::Horizontal::Left,
+            vertical_alignment: iced::alignment::Vertical::Top,
         };
         frame.fill_text(text);
         if self.latency_us.is_empty() {
             let line = canvas::Path::line(Point::new(0.0, 0.0), botright);
             frame.stroke(&line, red_stroke);
-            return;
+            return vec![frame.into_geometry()];
         }
         let ms: f32 = 1000.0;
         let max = self
@@ -143,8 +150,8 @@ impl canvas::Drawable for LatencyGraph {
                 color: Color::from_rgba8(255, 255, 255, 0.9),
                 size: 12.0,
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Right,
-                vertical_alignment: iced::VerticalAlignment::Center,
+                horizontal_alignment: iced::alignment::Horizontal::Right,
+                vertical_alignment: iced::alignment::Vertical::Center,
             };
             frame.fill_text(text);
         }
@@ -159,8 +166,8 @@ impl canvas::Drawable for LatencyGraph {
                 color: Color::from_rgba8(255, 255, 255, 0.9),
                 size: 12.0,
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Right,
-                vertical_alignment: iced::VerticalAlignment::Center,
+                horizontal_alignment: iced::alignment::Horizontal::Right,
+                vertical_alignment: iced::alignment::Vertical::Center,
             };
             frame.fill_text(text);
         }
@@ -175,8 +182,8 @@ impl canvas::Drawable for LatencyGraph {
                 color: Color::from_rgba8(255, 255, 255, 0.9),
                 size: 12.0,
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Right,
-                vertical_alignment: iced::VerticalAlignment::Center,
+                horizontal_alignment: iced::alignment::Horizontal::Right,
+                vertical_alignment: iced::alignment::Vertical::Center,
             };
             frame.fill_text(text);
         }
@@ -191,8 +198,8 @@ impl canvas::Drawable for LatencyGraph {
                 color: Color::from_rgba8(255, 255, 255, 0.9),
                 size: 12.0,
                 font: iced::Font::Default,
-                horizontal_alignment: iced::HorizontalAlignment::Right,
-                vertical_alignment: iced::VerticalAlignment::Center,
+                horizontal_alignment: iced::alignment::Horizontal::Right,
+                vertical_alignment: iced::alignment::Vertical::Center,
             };
             frame.fill_text(text);
         }
@@ -232,5 +239,6 @@ impl canvas::Drawable for LatencyGraph {
             }
             oldp = Some(point);
         }
+        vec![frame.into_geometry()]
     }
 }
