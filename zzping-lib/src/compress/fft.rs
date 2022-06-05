@@ -15,8 +15,7 @@
 use crate::dynrmp::variant::Variant;
 
 use super::{huffman, quantize, Compress, CompressTo, Error};
-use rustfft::num_traits::Zero;
-use rustfft::{num_complex::Complex, FFTplanner};
+use rustfft::{num_complex::Complex, FftPlanner};
 use std::collections::HashMap;
 
 pub fn quantize(input: &[(f32, f32)], q_m: usize, q_a: usize) -> Vec<(f32, f32)> {
@@ -67,21 +66,19 @@ pub fn fft_cmplx(input_v: &[f32]) -> Vec<Complex<f32>> {
         .iter()
         .map(|x| Complex::new(*x / lenf32, 0.0))
         .collect();
-    let mut output: Vec<Complex<f32>> = vec![Complex::zero(); len];
-    let mut planner = FFTplanner::new(false);
-    let fft = planner.plan_fft(len);
-    fft.process(&mut input, &mut output);
-    output
+    let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_forward(len);
+    fft.process(&mut input);
+    input
 }
 
 pub fn inv_fft_cmplx(input_v: &[Complex<f32>]) -> Vec<f32> {
     let len = input_v.len();
     let mut input: Vec<Complex<f32>> = input_v.to_vec();
-    let mut output: Vec<Complex<f32>> = vec![Complex::zero(); len];
-    let mut planner = FFTplanner::new(true);
-    let fft = planner.plan_fft(len);
-    fft.process(&mut input, &mut output);
-    let out: Vec<f32> = output.into_iter().map(|x| x.re).collect();
+    let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_inverse(len);
+    fft.process(&mut input);
+    let out: Vec<f32> = input.into_iter().map(|x| x.re).collect();
     out
 }
 

@@ -9,9 +9,9 @@ zzping-lib = { path = "../zzping-lib" }
 iced = { version = "0.1", features = ["canvas"] }
 iced_native = { version = "0.2" }
 async-std = { version = "1.0", features = ["unstable"] }
-rand = "0.8.4"
-rmp = "0.8.9"
-ron = "0.6.2"
-clap = { version = "3.1.18", features = ["derive"] }
-serde = "1.0.117"
+rand = "0.8"
+rmp = "0.8"
+ron = "0.6"
+clap = { version = "3.1", features = ["derive"] }
+serde = "1.0"
 
