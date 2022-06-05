@@ -243,26 +243,35 @@ impl Application for PingmonGUI {
             window = window.push(graph);
             let mut row2: Row<Message> = Row::new().padding(4).spacing(5);
             row2 = row2.push(Text::new("sf").size(20).color(Color::BLACK));
-            row2 = row2.push(Slider::new(
-                &mut self.zoomw_slider_state,
-                -2.0..=2.0,
-                self.zoomw_slider,
-                Message::ZoomWSliderChanged,
-            ));
+            row2 = row2.push(
+                Slider::new(
+                    &mut self.zoomw_slider_state,
+                    -2.0..=2.0,
+                    self.zoomw_slider,
+                    Message::ZoomWSliderChanged,
+                )
+                .step(0.01),
+            );
             row2 = row2.push(Text::new("y").size(20).color(Color::BLACK));
-            row2 = row2.push(Slider::new(
-                &mut self.zoomy_slider_state,
-                0.0..=8.0,
-                self.zoomy_slider,
-                Message::ZoomYSliderChanged,
-            ));
+            row2 = row2.push(
+                Slider::new(
+                    &mut self.zoomy_slider_state,
+                    0.0..=8.0,
+                    self.zoomy_slider,
+                    Message::ZoomYSliderChanged,
+                )
+                .step(0.01),
+            );
             row2 = row2.push(Text::new("z").size(20).color(Color::BLACK));
-            row2 = row2.push(Slider::new(
-                &mut self.zoomx_slider_state,
-                0.0..=10.0,
-                self.zoomx_slider,
-                Message::ZoomXSliderChanged,
-            ));
+            row2 = row2.push(
+                Slider::new(
+                    &mut self.zoomx_slider_state,
+                    0.0..=10.0,
+                    self.zoomx_slider,
+                    Message::ZoomXSliderChanged,
+                )
+                .step(0.01),
+            );
             // row2 = row2.push(Text::new("x").size(20).color(Color::BLACK));
             // row2 = row2.push(Slider::new(
             //     &mut self.posx_slider_state,
@@ -271,12 +280,15 @@ impl Application for PingmonGUI {
             //     Message::PosXSliderChanged,
             // ));
             row2 = row2.push(Text::new("dx").size(20).color(Color::BLACK));
-            row2 = row2.push(Slider::new(
-                &mut self.posdx_slider_state,
-                -1.0..=1.0,
-                self.posdx_slider,
-                Message::PosDXSliderChanged,
-            ));
+            row2 = row2.push(
+                Slider::new(
+                    &mut self.posdx_slider_state,
+                    -1.0..=1.0,
+                    self.posdx_slider,
+                    Message::PosDXSliderChanged,
+                )
+                .step(0.01),
+            );
 
             window = window.push(row2);
         }
