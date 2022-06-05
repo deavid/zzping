@@ -22,8 +22,8 @@ use pnet::packet::icmp::echo_reply::MutableEchoReplyPacket;
 use pnet::packet::icmp::IcmpTypes;
 use pnet::packet::icmp::{echo_request, IcmpPacket};
 use pnet::packet::Packet;
-use pnet::transport::TransportSender;
 use pnet::util;
+use pnet_transport::TransportSender;
 
 use std::net::IpAddr;
 use std::time::{Duration, Instant, SystemTime};

@@ -18,7 +18,7 @@
 //!
 
 use super::icmp;
-use pnet::transport::{TransportChannelType, TransportReceiver, TransportSender};
+use pnet_transport::{TransportChannelType, TransportReceiver, TransportSender};
 use rand::Rng;
 use std::{fs::File, io::Write};
 use std::{io::BufWriter, sync::Mutex};
@@ -31,8 +31,8 @@ use std::{
 /// Creates a TransportChannelType for ICMP over IPv4
 pub fn protocol_ipv4() -> TransportChannelType {
     use pnet::packet::ip::IpNextHeaderProtocols;
-    use pnet::transport::TransportChannelType::Layer4;
-    use pnet::transport::TransportProtocol::Ipv4;
+    use pnet_transport::TransportChannelType::Layer4;
+    use pnet_transport::TransportProtocol::Ipv4;
     Layer4(Ipv4(IpNextHeaderProtocols::Icmp))
 }
 
@@ -311,7 +311,7 @@ fn receiver_thread(mut rx: TransportReceiver, readbuf: Arc<Mutex<Vec<icmp::Packe
     let mut buffer: Vec<icmp::PacketData> = vec![];
     let mut last_sync = Instant::now();
     let sync_time = Duration::from_micros(100);
-    let mut packet_iter = pnet::transport::icmp_packet_iter(&mut rx);
+    let mut packet_iter = pnet_transport::icmp_packet_iter(&mut rx);
     loop {
         if let Some((packet, addr)) = packet_iter.next_with_timeout(sync_time).unwrap_or_default() {
             let mut packet: icmp::PacketData = icmp::PacketData::parse(packet, addr);
@@ -344,7 +344,7 @@ impl Comms {
     pub fn new(config: CommConfig) -> Self {
         let bufsize = 65536;
         // TODO: Caller should have two Comms, one for IpV4, and another for IpV6.
-        let (tx, rx) = match pnet::transport::transport_channel(bufsize, protocol_ipv4()) {
+        let (tx, rx) = match pnet_transport::transport_channel(bufsize, protocol_ipv4()) {
             Ok((tx, rx)) => (tx, rx),
             Err(e) => panic!("{}", e.to_string()),
         };
