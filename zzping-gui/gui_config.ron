@@ -6,10 +6,10 @@ GuiConfig(
     // List of IP addresses (from daemon) to show in this GUI. Each one makes a
     // new graph
     display_address: [
-        "192.168.0.3",
         "192.168.0.1",
         // "8.8.8.8",
         "9.9.9.9",
+        "1.1.1.1",
     ],
     // Number of points to display in the GUI
     sample_limit: 300,

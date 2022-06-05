@@ -152,7 +152,8 @@ impl Destination {
     /// The filename follows the format ./logs/pingd-log-{str_addr}-{now}.log
     pub fn create_log_file(&mut self, now: &str) {
         let filename = format!("logs/pingd-log-{}-{}.log", self.str_addr, now);
-        let f = File::create(filename).unwrap();
+        let f = File::create(&filename)
+            .unwrap_or_else(|e| panic!("unable to create file {}: {}", &filename, &e));
         let mut oldlog = self.logfile.take();
         if let Some(log) = oldlog.as_mut() {
             log.flush().unwrap();
