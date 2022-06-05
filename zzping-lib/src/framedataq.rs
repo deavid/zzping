@@ -463,7 +463,7 @@ impl From<rmp::decode::NumValueReadError> for Error {
 }
 
 impl From<std::io::Error> for Error {
-    fn from(e: rmp::encode::Error) -> Self {
+    fn from(e: std::io::Error) -> Self {
         Self::StdIO(e)
     }
 }

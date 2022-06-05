@@ -20,8 +20,8 @@ pub mod vtype;
 use variant::Variant;
 
 use rmp::decode::{
-    read_data_f32, read_data_f64, read_data_i16, read_data_i32, read_data_i64, read_data_i8,
-    read_data_u16, read_data_u32, read_data_u64, read_data_u8, ExtMeta,
+    read_f32, read_f64, read_i16, read_i32, read_i64, read_i8, read_u16, read_u32, read_u64,
+    read_u8, ExtMeta,
 };
 use rmp::decode::{MarkerReadError, ValueReadError};
 use rmp::Marker;
@@ -84,9 +84,9 @@ where
 {
     match marker {
         Marker::FixStr(size) => Ok((size as u64, 1)),
-        Marker::Str8 => Ok((read_data_u8(rd)? as u64, 2)),
-        Marker::Str16 => Ok((read_data_u16(rd)? as u64, 3)),
-        Marker::Str32 => Ok((read_data_u32(rd)? as u64, 5)),
+        Marker::Str8 => Ok((read_u8(rd)? as u64, 2)),
+        Marker::Str16 => Ok((read_u16(rd)? as u64, 3)),
+        Marker::Str32 => Ok((read_u32(rd)? as u64, 5)),
         marker => Err(ValueReadError::TypeMismatch(marker)),
     }
 }
@@ -96,14 +96,14 @@ pub fn read_int<R: Read>(rd: &mut R, marker: Marker) -> Result<i128, ValueReadEr
     match marker {
         Marker::FixPos(val) => Ok(val as i128),
         Marker::FixNeg(val) => Ok(val as i128),
-        Marker::U8 => read_data_u8(rd).map(|x| x as i128),
-        Marker::U16 => read_data_u16(rd).map(|x| x as i128),
-        Marker::U32 => read_data_u32(rd).map(|x| x as i128),
-        Marker::U64 => read_data_u64(rd).map(|x| x as i128),
-        Marker::I8 => read_data_i8(rd).map(|x| x as i128),
-        Marker::I16 => read_data_i16(rd).map(|x| x as i128),
-        Marker::I32 => read_data_i32(rd).map(|x| x as i128),
-        Marker::I64 => read_data_i64(rd).map(|x| x as i128),
+        Marker::U8 => read_u8(rd).map(|x| x as i128),
+        Marker::U16 => read_u16(rd).map(|x| x as i128),
+        Marker::U32 => read_u32(rd).map(|x| x as i128),
+        Marker::U64 => read_u64(rd).map(|x| x as i128),
+        Marker::I8 => read_i8(rd).map(|x| x as i128),
+        Marker::I16 => read_i16(rd).map(|x| x as i128),
+        Marker::I32 => read_i32(rd).map(|x| x as i128),
+        Marker::I64 => read_i64(rd).map(|x| x as i128),
         marker => Err(ValueReadError::TypeMismatch(marker)),
     }
 }
@@ -131,8 +131,8 @@ pub fn read_array<R: Read>(rd: &mut R, marker: Marker) -> Result<Vec<Variant>, E
 pub fn read_array_len<R: Read>(rd: &mut R, marker: Marker) -> Result<usize, ValueReadError> {
     match marker {
         Marker::FixArray(size) => Ok(size as usize),
-        Marker::Array16 => Ok(read_data_u16(rd)? as usize),
-        Marker::Array32 => Ok(read_data_u32(rd)? as usize),
+        Marker::Array16 => Ok(read_u16(rd)? as usize),
+        Marker::Array32 => Ok(read_u32(rd)? as usize),
         marker => Err(ValueReadError::TypeMismatch(marker)),
     }
 }
@@ -149,9 +149,9 @@ pub fn read_bin<R: Read>(rd: &mut R, marker: Marker) -> Result<Vec<u8>, ValueRea
 
 pub fn read_bin_len<R: Read>(rd: &mut R, marker: Marker) -> Result<usize, ValueReadError> {
     match marker {
-        Marker::Bin8 => Ok(read_data_u8(rd)? as usize),
-        Marker::Bin16 => Ok(read_data_u16(rd)? as usize),
-        Marker::Bin32 => Ok(read_data_u32(rd)? as usize),
+        Marker::Bin8 => Ok(read_u8(rd)? as usize),
+        Marker::Bin16 => Ok(read_u16(rd)? as usize),
+        Marker::Bin32 => Ok(read_u32(rd)? as usize),
         marker => Err(ValueReadError::TypeMismatch(marker)),
     }
 }
@@ -179,8 +179,8 @@ pub fn read_map<R: Read>(rd: &mut R, marker: Marker) -> Result<HashMap<Variant, 
 pub fn read_map_len<R: Read>(rd: &mut R, marker: Marker) -> Result<usize, ValueReadError> {
     match marker {
         Marker::FixMap(size) => Ok(size as usize),
-        Marker::Map16 => Ok(read_data_u16(rd)? as usize),
-        Marker::Map32 => Ok(read_data_u32(rd)? as usize),
+        Marker::Map16 => Ok(read_u16(rd)? as usize),
+        Marker::Map32 => Ok(read_u32(rd)? as usize),
         marker => Err(ValueReadError::TypeMismatch(marker)),
     }
 }
@@ -188,8 +188,8 @@ pub fn read_map_len<R: Read>(rd: &mut R, marker: Marker) -> Result<usize, ValueR
 // ----- FLOAT -----
 pub fn read_float<R: Read>(rd: &mut R, marker: Marker) -> Result<f64, ValueReadError> {
     match marker {
-        Marker::F32 => Ok(read_data_f32(rd)? as f64),
-        Marker::F64 => Ok(read_data_f64(rd)?),
+        Marker::F32 => Ok(read_f32(rd)? as f64),
+        Marker::F64 => Ok(read_f64(rd)?),
         marker => Err(ValueReadError::TypeMismatch(marker)),
     }
 }
@@ -211,13 +211,13 @@ pub fn read_ext_meta<R: Read>(rd: &mut R, marker: Marker) -> Result<ExtMeta, Val
         Marker::FixExt4 => 4,
         Marker::FixExt8 => 8,
         Marker::FixExt16 => 16,
-        Marker::Ext8 => read_data_u8(rd)? as u32,
-        Marker::Ext16 => read_data_u16(rd)? as u32,
-        Marker::Ext32 => read_data_u32(rd)?,
+        Marker::Ext8 => read_u8(rd)? as u32,
+        Marker::Ext16 => read_u16(rd)? as u32,
+        Marker::Ext32 => read_u32(rd)?,
         marker => return Err(ValueReadError::TypeMismatch(marker)),
     };
 
-    let ty = read_data_i8(rd)?;
+    let ty = read_i8(rd)?;
     let meta = ExtMeta { typeid: ty, size };
 
     Ok(meta)
