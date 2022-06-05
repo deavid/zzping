@@ -2,7 +2,7 @@
 name = "zzping-gui"
 version = "0.2.2-beta2"
 authors = ["Google LLC", "David Martinez Marti <deavidsedice@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [dependencies]
 zzping-lib = { path = "../zzping-lib" }
