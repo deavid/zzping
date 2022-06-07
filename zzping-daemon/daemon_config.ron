@@ -77,9 +77,9 @@ ServerConfig(
     // - 1.0 -> if you need to save CPU. Hosts may be pinged 20% faster or slower than intended.
     // - 2.0 -> Good compromise between CPU and precision. +/- 5% error.
     // - 10.0 -> yields good values. +/- 1% error.
-    precision_mult: 2.0,
+    precision_mult: 10.0,
 
     // How many times per second to refresh the CLI, GUI and disk logging.
-    refresh_freq: 50,
+    refresh_freq: 100,
 
 )

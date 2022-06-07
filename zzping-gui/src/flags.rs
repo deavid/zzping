@@ -12,8 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use anyhow::{Context, Result};
+use log::info;
 use serde::{Deserialize, Serialize};
-use std::fs;
+use std::{fs, path::Path};
+
+use crate::custom_errors::GuiError;
 
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
 pub struct GuiConfig {
@@ -24,9 +28,21 @@ pub struct GuiConfig {
 }
 
 impl GuiConfig {
-    pub fn from_filepath(filepath: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let contents = fs::read_to_string(filepath)?;
-        Ok(ron::de::from_str(&contents)?)
+    pub fn from_filepath(filepath: &str) -> Result<Self> {
+        let mut path = Path::new(filepath);
+        let zzguipath = Path::new("zzping-gui/").join(path);
+        if !path.exists() {
+            info!("GuiConfig: not found: {:?}", path);
+            if path.is_absolute() {
+                Err(GuiError::ConfigFileNotFound(path.display().to_string()))?
+            }
+            if zzguipath.exists() {
+                info!("GuiConfig: found in alternative location: {:?}", zzguipath);
+                path = zzguipath.as_path();
+            }
+        }
+        let contents = fs::read_to_string(path).context("error reading file for GuiConfig")?;
+        ron::de::from_str(&contents).context("error parsiong GuiConfig file")
     }
 }
 

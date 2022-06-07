@@ -12,21 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#[derive(Debug, Clone)]
-pub struct UnexpectedError {
-    pub t: String,
-}
+use thiserror::Error;
 
-impl UnexpectedError {
-    pub fn new(t: &str) -> Self {
-        Self { t: t.to_owned() }
-    }
+#[derive(Debug, Clone, Error)]
+pub enum GuiError {
+    #[error("Configuration file not found `{0}`")]
+    ConfigFileNotFound(String),
+    #[error("Unexpected error: {0}")]
+    UnexpectedError(String),
 }
-
-impl std::fmt::Display for UnexpectedError {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "unexpected: {}", self.t)
-    }
-}
-
-impl std::error::Error for UnexpectedError {}

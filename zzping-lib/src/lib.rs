@@ -15,6 +15,7 @@
 //! This contains all the tooling for reading and writting messages of differnt
 //! formats. This library is common to all programs of the zzping suite.
 
+pub mod pingdata;
 pub mod batchdata;
 pub mod compress;
 pub mod dynrmp;

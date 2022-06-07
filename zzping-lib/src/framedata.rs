@@ -122,8 +122,12 @@ impl FrameDataVec {
     }
     pub fn read<R: std::io::Read>(&mut self, rd: &mut R, count: u64) -> Result<()> {
         let err = || ValueReadError::TypeMismatch(rmp::Marker::Str8);
+        let mut next = 1;
         for n in 0..count {
-            println!("{}", n);
+            if n >= next {
+                println!("{}", n);
+                next *= 2;
+            }
             let mut fd = FrameData::decode(rd)?;
             match &fd.time {
                 FrameTime::Timestamp(ts) => self.last_keyframe = Some(*ts),

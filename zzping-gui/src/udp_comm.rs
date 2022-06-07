@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use super::custom_errors::UnexpectedError;
+use anyhow::{Context, Result};
+
+use crate::custom_errors::GuiError;
 
 pub struct UdpStats {
     pub addr: String,
@@ -23,20 +25,26 @@ pub struct UdpStats {
 }
 
 impl UdpStats {
-    pub fn from_buf(mut v: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
-        let len = rmp::decode::read_array_len(&mut v)?;
+    pub fn from_buf(mut v: &[u8]) -> Result<Self> {
+        let len = rmp::decode::read_array_len(&mut v).context("UDPStats: len")?;
+
         if len != 5 {
-            return Err(Box::new(UnexpectedError::new("Array must be length 5")));
+            Err(GuiError::UnexpectedError(
+                "UDPStats: Array must be length 5".into(),
+            ))?;
         }
         let mut buf: Vec<u8> = vec![0; 65536];
         let addr = rmp::decode::read_str(&mut v, &mut buf)
-            .map_err(|_| Box::new(UnexpectedError::new("Couldn't read string")))?
+            .map_err(|e| {
+                GuiError::UnexpectedError(format!("UDPStats: Couldn't read string: {:?}", e))
+            })?
             .to_owned();
 
-        let inflight_count = rmp::decode::read_u16(&mut v)?;
-        let avg_time_us = rmp::decode::read_u32(&mut v)?;
-        let last_pckt_ms = rmp::decode::read_u32(&mut v)?;
-        let packet_loss_x100_000 = rmp::decode::read_u32(&mut v)?;
+        let inflight_count = rmp::decode::read_u16(&mut v).context("UDPStats: inflight_count")?;
+        let avg_time_us = rmp::decode::read_u32(&mut v).context("UDPStats: avg_time_us")?;
+        let last_pckt_ms = rmp::decode::read_u32(&mut v).context("UDPStats: last_pckt_ms")?;
+        let packet_loss_x100_000 =
+            rmp::decode::read_u32(&mut v).context("UDPStats: packet_loss_x100_000")?;
 
         Ok(Self {
             addr,

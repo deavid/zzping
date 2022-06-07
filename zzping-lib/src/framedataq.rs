@@ -29,6 +29,37 @@ use crate::{
     framedata::{FrameData, FrameTime},
 };
 
+#[derive(Error, Debug)]
+pub enum XError {
+    #[error("msgpack write error: {0:?}")]
+    RmpEncodeValue(rmp::encode::ValueWriteError),
+    #[error("msgpack read error: {0:?}")]
+    RmpDecodeValue(rmp::decode::ValueReadError),
+    #[error("msgpack num value read error: {0:?}")]
+    RmpDecodeNumValue(rmp::decode::NumValueReadError),
+    #[error("dynrmp variant error: {0:?}")]
+    Variant(dynrmp::DError),
+    #[error("I/O error: {0:?}")]
+    StdIO(std::io::Error),
+    #[error("unexpected data: {0:?}")]
+    UnexpectedData(String),
+    #[error("header field missing: {0:?}")]
+    HeaderFieldMissing(String),
+    #[error("SubSecType unexpected data: {0}")]
+    SubSecType(String),
+    #[error("End of File")]
+    EOF,
+}
+
+impl XError {
+    fn unexpected_data(s: &str) -> Self {
+        Self::UnexpectedData(s.to_owned())
+    }
+    fn header_field_missing(s: &str) -> Self {
+        Self::HeaderFieldMissing(s.to_owned())
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum SubSecType {
     Abs(u32),
@@ -36,21 +67,33 @@ pub enum SubSecType {
 }
 
 impl SubSecType {
-    pub fn unwrap_delta(&self) -> u32 {
+    pub fn try_delta(&self) -> Result<u32> {
         match self {
-            SubSecType::Delta(v) => *v,
-            SubSecType::Abs(_) => panic!("Expected a delta value, found an absolute one"),
+            SubSecType::Delta(v) => Ok(*v),
+            SubSecType::Abs(_) => Err(XError::SubSecType(
+                "Expected a delta value, found an absolute one".into(),
+            ))?,
         }
+    }
+
+    pub fn try_abs(&self) -> Result<u32> {
+        match self {
+            SubSecType::Abs(v) => Ok(*v),
+            SubSecType::Delta(_) => Err(XError::SubSecType(
+                "Expected an absolute value, found a delta".into(),
+            ))?,
+        }
+    }
+
+    pub fn unwrap_delta(&self) -> u32 {
+        self.try_delta().unwrap()
     }
 
     pub fn unwrap_abs(&self) -> u32 {
-        match self {
-            SubSecType::Abs(v) => *v,
-            SubSecType::Delta(_) => panic!("Expected an absolute value, found a delta"),
-        }
+        self.try_abs().unwrap()
     }
 
-    pub fn unwrap_abs_or_add(&self, reference: u32) -> u32 {
+    pub fn abs_or_add(&self, reference: u32) -> u32 {
         match self {
             SubSecType::Abs(v) => *v,
             SubSecType::Delta(v) => *v + reference,
@@ -398,7 +441,7 @@ impl FDCodecState {
             self.last_timestamp
                 .expect("Tried to decode delta without reference timestamp")
         });
-        let subsec_ms = d.subsec_ms.unwrap_abs_or_add(self.last_subsec_ms);
+        let subsec_ms = d.subsec_ms.abs_or_add(self.last_subsec_ms);
         let subsec_ms_part = subsec_ms % 1000;
         ts += ((subsec_ms - subsec_ms_part) / 1000) as i64;
         d.timestamp = Some(ts);
@@ -418,35 +461,6 @@ impl FDCodecState {
         let d = self.peek_decode(d);
         self.push(&d);
         d
-    }
-}
-
-#[derive(Error, Debug)]
-pub enum XError {
-    #[error("msgpack write error: {0:?}")]
-    RmpEncodeValue(rmp::encode::ValueWriteError),
-    #[error("msgpack read error: {0:?}")]
-    RmpDecodeValue(rmp::decode::ValueReadError),
-    #[error("msgpack num value read error: {0:?}")]
-    RmpDecodeNumValue(rmp::decode::NumValueReadError),
-    #[error("dynrmp variant error: {0:?}")]
-    Variant(dynrmp::DError),
-    #[error("I/O error: {0:?}")]
-    StdIO(std::io::Error),
-    #[error("unexpected data: {0:?}")]
-    UnexpectedData(String),
-    #[error("header field missing: {0:?}")]
-    HeaderFieldMissing(String),
-    #[error("End of File")]
-    EOF,
-}
-
-impl XError {
-    fn unexpected_data(s: &str) -> Self {
-        Self::UnexpectedData(s.to_owned())
-    }
-    fn header_field_missing(s: &str) -> Self {
-        Self::HeaderFieldMissing(s.to_owned())
     }
 }
 

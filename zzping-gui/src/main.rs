@@ -14,8 +14,10 @@
 
 extern crate zzping_lib;
 
+mod basicgraph;
 mod custom_errors;
 mod fdq_graph;
+mod firtest;
 mod flags;
 mod graph_plot;
 mod gui;
@@ -26,6 +28,7 @@ use flags::{Flags, GuiConfig, OtherOpts};
 use gui::PingmonGUI;
 use iced::Settings;
 
+use anyhow::{Context, Result};
 use clap::Parser;
 
 #[derive(Parser)]
@@ -38,9 +41,11 @@ struct Opts {
     config: String,
     #[clap(short, long)]
     input: Option<String>,
+    #[clap(long)]
+    firtest: bool,
 }
 
-pub fn main() {
+pub fn main() -> Result<()> {
     let opts: Opts = Opts::parse();
     let guiconfig = GuiConfig::from_filepath(&opts.config).unwrap();
     let flags = Flags {
@@ -49,8 +54,7 @@ pub fn main() {
             input_file: opts.input,
         },
     };
-    use iced::Application; // <- Trait run
-    PingmonGUI::run(Settings {
+    let settings = Settings {
         antialiasing: true,
         window: iced::window::Settings {
             size: (1600, 400),
@@ -58,6 +62,12 @@ pub fn main() {
         },
         flags,
         ..Settings::default()
-    })
-    .unwrap();
+    };
+    use iced::Application; // <- Trait run
+    if opts.firtest {
+        firtest::FirTest::run(settings).context("FirTest error")?;
+    } else {
+        PingmonGUI::run(settings).context("PingmonGUI errored out")?;
+    }
+    Ok(())
 }
