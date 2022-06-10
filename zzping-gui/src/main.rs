@@ -46,6 +46,12 @@ struct Opts {
 }
 
 pub fn main() -> Result<()> {
+    use env_logger::Env;
+    env_logger::Builder::from_env(Env::default().default_filter_or("info"))
+        .filter_module("wgpu_core", log::LevelFilter::Error)
+        .filter_module("wgpu_hal", log::LevelFilter::Error)
+        .init();
+
     let opts: Opts = Opts::parse();
     let guiconfig = GuiConfig::from_filepath(&opts.config).unwrap();
     let flags = Flags {

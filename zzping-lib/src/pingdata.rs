@@ -1,14 +1,22 @@
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::VecDeque,
+    io::{BufRead, BufReader, Read, Write},
+    net::IpAddr,
+    time::{Duration, Instant, SystemTime},
+};
 
 use crate::framedataq::{Complete, FrameDataQ};
 use anyhow::{Context, Result};
 
+use chrono::{DateTime, SecondsFormat, Utc};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
 enum PingError {
     #[error("error parsing data")]
     ParseError,
+    #[error("Unexpected file line: {0:?}")]
+    UnexpectedFileLine(String),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -82,16 +90,16 @@ pub struct FirPing {
 impl FirPing {
     /// Converts a list of pings into FIR using the provided config.
     /// Interval is the (intended) frequency of the input pings.
-    pub fn from_pings(cfg: FirPingConfig, _interval: Duration, pings: Vec<Ping>) -> Self {
+    pub fn from_pings(cfg: FirPingConfig, _interval: Duration, pings: &[Ping], dev: i32) -> Self {
         let mut ret = Self {
             cfg,
             rtt: vec![],
             max_density: 1.0, // FIXME
         };
-        ret.load(pings);
+        ret.load(pings, dev);
         ret
     }
-    fn load(&mut self, pings: Vec<Ping>) {
+    fn load(&mut self, pings: &[Ping], dev: i32) {
         // use probability::distribution::Continuous;
         use probability::distribution::Distribution;
         let w_size_secs: f64 = self.cfg.window_size.as_secs_f64();
@@ -103,15 +111,14 @@ impl FirPing {
             .cfg
             .end
             .duration_since(self.cfg.start)
-            .unwrap()
-            .as_secs_f64();
+            .map(|x| x.as_secs_f64())
+            .unwrap_or_default();
         let fir_size = (size_secs / interval).ceil() as usize + 1;
         self.rtt = vec![(0.0, 0.0); fir_size];
 
         for p in pings {
             let rtt = p.rtt_us as f64 / 1_000_000.0;
-            // let rtt2 = (p.rtt_us as f64 / 1_000.0).powi(9);
-            let rtt2 = 1.0;
+            let rtt2 = (p.rtt_us as f64 / 10_000.0).powi(dev);
             let d = match p.received.duration_since(self.cfg.start) {
                 Ok(v) => v.as_secs_f64(),
                 Err(e) => -e.duration().as_secs_f64(),
@@ -130,5 +137,294 @@ impl FirPing {
             }
         }
         // density indicates pings per interval - that makes sense.
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamData {
+    /// Target Host address.
+    pub addr: IpAddr,
+    /// How fast we're trying to ping.
+    pub send_interval: Duration,
+    /// Starting time.
+    pub initial_time: chrono::DateTime<chrono::Utc>,
+    /// Quantity and amount of microseconds from initial_time that the pings were sent.
+    pub pending_pings_us: Vec<u64>,
+
+    /// Used to compute the deltas to the next packet
+    pub time_cursor: Instant,
+}
+
+impl StreamData {
+    pub fn from_file_header<R: Read>(r: &mut BufReader<R>) -> Result<Self> {
+        let mut buf = String::new();
+        // HEADER
+        r.read_line(&mut buf)?;
+        if buf.trim() != "StreamData1!" {
+            Err(PingError::UnexpectedFileLine(buf.to_owned())).context("invalid header")?
+        }
+        // IPAddress
+        buf.clear();
+        r.read_line(&mut buf)?;
+        let left = "addr: ";
+        if &buf[0..left.len()] != left {
+            Err(PingError::UnexpectedFileLine(buf.to_owned())).context("invalid addr field")?
+        }
+        let addr: IpAddr = buf[left.len()..buf.len()]
+            .trim()
+            .parse()
+            .with_context(|| format!("addr value from: {:?}", buf))?;
+
+        // Send Interval micros
+        buf.clear();
+        r.read_line(&mut buf)?;
+        let left = "send_interval_us: ";
+        if &buf[0..left.len()] != left {
+            Err(PingError::UnexpectedFileLine(buf.to_owned()))
+                .context("invalid send_interval_us field")?
+        }
+        let send_interval_us: u64 = buf[left.len()..buf.len()]
+            .trim()
+            .parse()
+            .with_context(|| format!("send_interval_us value from: {:?}", buf))?;
+        let send_interval = Duration::from_micros(send_interval_us);
+
+        // Initial Time
+        buf.clear();
+        r.read_line(&mut buf)?;
+        let left = "initial_time: ";
+        if &buf[0..left.len()] != left {
+            Err(PingError::UnexpectedFileLine(buf.to_owned()))
+                .context("invalid initial_time field")?
+        }
+        let initial_time: DateTime<Utc> =
+            DateTime::parse_from_rfc3339(buf[left.len()..buf.len()].trim().trim_matches('"'))
+                .with_context(|| format!("initial_time value from: {:?}", buf))?
+                .try_into()
+                .with_context(|| format!("initial_time value from (TZ): {:?}", buf))?;
+
+        // Pending pings
+        buf.clear();
+        r.read_line(&mut buf)?;
+        let left = "pending_pings_us: ";
+        if &buf[0..left.len()] != left {
+            Err(PingError::UnexpectedFileLine(buf.to_owned()))
+                .context("invalid pending_pings_us field")?
+        }
+        let pending_pings: String = buf[left.len()..buf.len()].trim().to_owned();
+        let mut pending_pings_us: Vec<u64> = vec![];
+        for p in pending_pings
+            .trim_matches(|c| c == '[' || c == ']')
+            .split(',')
+        {
+            let p = p.trim();
+            if p.is_empty() {
+                continue;
+            }
+            let p: u64 = p.parse().context("pending_pings_us")?;
+            pending_pings_us.push(p);
+        }
+        pending_pings_us.sort_by(|a, b| b.cmp(a));
+        // END HEADER
+        buf.clear();
+        r.read_line(&mut buf)?;
+        if buf.trim() != "---" {
+            Err(PingError::UnexpectedFileLine(buf.to_owned())).context("invalid end header")?
+        }
+        Ok(Self {
+            addr,
+            send_interval,
+            initial_time,
+            pending_pings_us: vec![],    // TODO: parse this
+            time_cursor: Instant::now(), // TODO: not useful when decoding!,
+        })
+    }
+
+    pub fn write_header<W: Write>(&self, mut w: W) -> Result<()> {
+        writeln!(w, "StreamData1!")?;
+        writeln!(w, "addr: {}", self.addr)?;
+        writeln!(w, "send_interval_us: {}", self.send_interval.as_micros())?;
+        writeln!(
+            w,
+            "initial_time: {}",
+            self.initial_time
+                .to_rfc3339_opts(SecondsFormat::Micros, true),
+        )?;
+        writeln!(w, "pending_pings_us: {:?}", self.pending_pings_us)?;
+        writeln!(w, "---")?;
+        // TODO: this header is going to be hell to parse.
+
+        Ok(())
+    }
+
+    pub fn write_ping<W: Write>(&mut self, w: W, event: StreamEventType, scode: u8) -> Result<()> {
+        let delta = self.time_cursor.elapsed().as_micros() as u64;
+        self.time_cursor += Duration::from_micros(delta);
+        let sp = StreamPing {
+            event,
+            delta,
+            scode,
+        };
+        sp.write(w)?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamEventType {
+    // Ping was sent.
+    Sent,
+    // Ping was received.
+    Received,
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamPing {
+    pub event: StreamEventType,
+    pub delta: u64,
+    pub scode: u8,
+}
+
+impl StreamPing {
+    const SKIP_TIME_USEC: u64 = 1 << 22;
+
+    pub fn from_reader<R: Read>(mut r: R) -> Result<Self> {
+        let mut delta: u64 = 0;
+        let mut buf = [0u8; 4];
+        r.read_exact(&mut buf).context("StreamPing:r.read_exact")?;
+        let mut code = i32::from_be_bytes(buf);
+        while code == 0 {
+            delta += Self::SKIP_TIME_USEC;
+            r.read_exact(&mut buf)?;
+            code = i32::from_be_bytes(buf);
+        }
+        let event = match code > 0 {
+            true => StreamEventType::Sent,
+            false => StreamEventType::Received,
+        };
+        let code = code.abs();
+        let scode = (code % 256) as u8;
+        let code = code / 256 - 1;
+        delta += code as u64;
+        Ok(Self {
+            event,
+            delta,
+            scode,
+        })
+    }
+    pub fn write<W: Write>(&self, mut w: W) -> Result<()> {
+        let t = self.delta;
+        let t = self.write_skips(&mut w, t)? as i32 + 1;
+        let mut t = t * 256;
+        t += self.scode as i32;
+        let time: i32 = match self.event {
+            StreamEventType::Sent => t,
+            StreamEventType::Received => -t,
+        };
+        let code = time.to_be_bytes();
+        w.write_all(&code)?;
+        Ok(())
+    }
+
+    fn write_skips<W: Write>(&self, mut w: W, mut t: u64) -> Result<u64> {
+        let skip: i32 = 0;
+        let skipcode = skip.to_be_bytes();
+        while t > Self::SKIP_TIME_USEC {
+            w.write_all(&skipcode)?;
+            t -= Self::SKIP_TIME_USEC;
+        }
+        Ok(t)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum SIOEvent {
+    // Ping was sent.
+    Sent,
+    // Ping was received.
+    Received,
+    // Ping was lost.
+    Lost,
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamPingIO {
+    pub header: StreamData,
+    pub delta: u64,
+    pub queue: VecDeque<u16>,
+}
+
+impl StreamPingIO {
+    pub fn from_header(header: StreamData) -> Self {
+        let delta = 0;
+        // FIXME: Move delta logic in here.
+        Self {
+            header,
+            delta,
+            queue: VecDeque::new(),
+        }
+    }
+    pub fn from_file_header<R: Read>(r: &mut BufReader<R>) -> Result<Self> {
+        let header = StreamData::from_file_header(r)?;
+        Ok(Self::from_header(header))
+    }
+    pub fn read_next<R: Read>(&mut self, r: R) -> Result<Option<StreamPing>> {
+        let mut sp = match StreamPing::from_reader(r) {
+            Ok(v) => v,
+            Err(e) => {
+                if let Some(e) = e.downcast_ref::<std::io::Error>() {
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof {
+                        return Ok(None);
+                    }
+                }
+                Err(e)?
+            }
+        };
+        self.delta += sp.delta;
+        sp.delta = self.delta;
+        Ok(Some(sp))
+    }
+    pub fn write_ping<W: Write>(&mut self, mut w: W, ev: SIOEvent, seqn: u16) -> Result<()> {
+        match ev {
+            SIOEvent::Sent => {
+                if self.queue.len() > 200 {
+                    // Signal packet lost to prevent queue overflow
+                    self.header.write_ping(&mut w, StreamEventType::Sent, 255)?;
+                    self.queue.pop_front();
+                }
+                self.queue.push_back(seqn);
+                self.header.write_ping(w, StreamEventType::Sent, 0)?;
+            }
+            SIOEvent::Received => {
+                let scode = self
+                    .queue
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .find(|(_, x)| *x == seqn)
+                    .map(|(n, _)| n)
+                    .unwrap_or(255) as u8;
+                self.queue.remove(scode as usize);
+
+                self.header
+                    .write_ping(w, StreamEventType::Received, scode)?;
+            }
+            SIOEvent::Lost => {
+                if let Some(scode) = self
+                    .queue
+                    .iter()
+                    .copied()
+                    .enumerate()
+                    .find(|(_, x)| *x == seqn)
+                    .map(|(n, _)| n as u8)
+                {
+                    self.header
+                        .write_ping(w, StreamEventType::Sent, scode + 1)?;
+                    self.queue.remove(scode as usize);
+                }
+            }
+        }
+
+        Ok(())
     }
 }

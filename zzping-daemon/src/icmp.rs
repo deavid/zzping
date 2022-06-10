@@ -25,6 +25,7 @@ use pnet::packet::Packet;
 use pnet::util;
 use pnet_transport::TransportSender;
 
+use anyhow::{Context, Result};
 use std::net::IpAddr;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -63,7 +64,7 @@ impl PacketData {
         }
     }
     /// Send this ICMP packet using the given transport sender.
-    pub fn send(self, tx: &mut TransportSender) -> PacketSent {
+    pub fn send(self, tx: &mut TransportSender) -> Result<PacketSent> {
         PacketSent::new(self, tx)
     }
     /// Constructs an EchoRequestPacket so it can be sent via TransportSender.
@@ -106,17 +107,17 @@ pub struct PacketReceived {
 
 impl PacketSent {
     /// Send a PacketData using the TransportSender specified. Constructs a PacketSent with the details.
-    pub fn new(data: PacketData, tx: &mut TransportSender) -> Self {
+    pub fn new(data: PacketData, tx: &mut TransportSender) -> Result<Self> {
         let mut payload = vec![0; 16];
         let echo_packet = data.create_echo_packet(&mut payload[..]);
-        // TODO: This unwrap returns OS:Network unreachable error, and program ends
-        tx.send_to(echo_packet, data.addr).unwrap();
-        Self {
+        tx.send_to(echo_packet, data.addr)
+            .context("pnet_transport::TransportSender.send_to in PacketSent.new")?;
+        Ok(Self {
             data,
             sent: Instant::now(),
             when: SystemTime::now(),
             received: None,
-        }
+        })
     }
     // TODO: This lacks a receiving method. Code probably exists in transport.rs.
 }

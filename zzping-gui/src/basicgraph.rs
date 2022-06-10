@@ -4,6 +4,7 @@ use iced::{
     canvas::{self, Frame, Program, Stroke},
     Color, Point,
 };
+use log::info;
 use zzping_lib::pingdata::{FirPing, FirPingConfig, Ping};
 
 use crate::firtest::Msg;
@@ -17,6 +18,7 @@ pub struct Graph {
     pub left: SystemTime,
     pub right: SystemTime,
     pub top: i64,
+    pub bottom: i64,
     pub init_len: usize,
     pub first_item: usize,
     pub last_item: usize,
@@ -29,51 +31,86 @@ impl Graph {
         self.left = SystemTime::now();
         self.right = SystemTime::UNIX_EPOCH;
         self.top = 0;
+        self.bottom = 1 << 60;
         self.first_item = 0;
 
-        for (n, p) in self.data.iter().take(10000).enumerate() {
+        for (n, p) in self.data.iter().take(3000000).enumerate() {
             let t = p.received;
             let r = p.rtt_us;
             self.left = self.left.min(t);
             self.right = self.right.max(t);
             self.top = self.top.max(r);
+            self.bottom = self.bottom.min(r);
             self.last_item = n;
         }
+        let k = 8;
+        let msec = 100;
+        // let cfg = FirPingConfig {
+        //     start: self.left,
+        //     end: self.right,
+        //     interval: Duration::from_millis(msec / 2),
+        //     window_size: Duration::from_millis(msec),
+        //     sigmas: 3.0,
+        // };
+        // self.firdata = FirPing::from_pings(cfg, Duration::from_millis(10), &self.data, 0);
+        // let cfg = FirPingConfig {
+        //     start: self.left,
+        //     end: self.right,
+        //     interval: Duration::from_millis(msec * k / 2),
+        //     window_size: Duration::from_millis(msec * k),
+        //     sigmas: 3.0,
+        // };
+        // self.firdata2 = FirPing::from_pings(cfg, Duration::from_millis(10), &self.data, 0);
         let cfg = FirPingConfig {
             start: self.left,
             end: self.right,
-            interval: Duration::from_millis(20),
-            window_size: Duration::from_millis(20),
+            interval: Duration::from_millis(msec * k * k / 2),
+            window_size: Duration::from_millis(msec * k * k),
             sigmas: 3.0,
         };
-        self.firdata = FirPing::from_pings(cfg, Duration::from_millis(10), self.data.clone());
-        let cfg = FirPingConfig {
-            start: self.left,
-            end: self.right,
-            interval: Duration::from_millis(20 * 16),
-            window_size: Duration::from_millis(20 * 16),
-            sigmas: 3.0,
-        };
-        self.firdata2 = FirPing::from_pings(cfg, Duration::from_millis(10), self.data.clone());
-        let cfg = FirPingConfig {
-            start: self.left,
-            end: self.right,
-            interval: Duration::from_millis(20 * 16 * 16),
-            window_size: Duration::from_millis(20 * 16 * 16),
-            sigmas: 3.0,
-        };
-        self.firdata3 = FirPing::from_pings(cfg, Duration::from_millis(10), self.data.clone());
-        for w in self.firdata.rtt.windows(2) {
-            const ALMOST_ZERO: f64 = 0.000001;
-            let l = w[0];
-            let r = w[1];
-            if l.1 < ALMOST_ZERO || r.1 < ALMOST_ZERO {
-                continue;
-            }
-            let rttl = l.0 / l.1;
-            let rttr = r.0 / r.1;
-            println!("{}", (rttl / rttr).log2());
+        self.firdata3 = FirPing::from_pings(cfg.clone(), Duration::from_millis(10), &self.data, 0);
+        self.firdata2 = FirPing::from_pings(cfg.clone(), Duration::from_millis(10), &self.data, 2);
+        self.firdata = FirPing::from_pings(cfg, Duration::from_millis(10), &self.data, -2);
+        let firtop: f64 = self
+            .firdata2
+            .rtt
+            .iter()
+            .copied()
+            .filter_map(|(r, d)| match d > 0.0 {
+                true => Some(r / d),
+                false => None,
+            })
+            .fold(0.0, |acc, x| x.max(acc))
+            * 1.1;
+        self.top = self.top.min((firtop * 1_000_000.0) as i64);
+
+        let firbottom: f64 = self
+            .firdata
+            .rtt
+            .iter()
+            .copied()
+            .filter_map(|(r, d)| match d > 0.0 {
+                true => Some(r / d),
+                false => None,
+            })
+            .fold(f64::INFINITY, |acc, x| x.min(acc))
+            / 1.1;
+        self.bottom = self.bottom.max((firbottom * 1_000_000.0) as i64);
+        if self.bottom == self.top {
+            self.bottom -= 1;
+            self.bottom /= 2;
         }
+        // for w in self.firdata.rtt.windows(2) {
+        //     const ALMOST_ZERO: f64 = 0.000001;
+        //     let l = w[0];
+        //     let r = w[1];
+        //     if l.1 < ALMOST_ZERO || r.1 < ALMOST_ZERO {
+        //         continue;
+        //     }
+        //     let rttl = l.0 / l.1;
+        //     let rttr = r.0 / r.1;
+        //     println!("{}", (rttl / rttr).log2());
+        // }
         dbg!(self.firdata3.rtt.len());
     }
     pub fn to_screen(&self, sz: iced::Size, v: &Ping) -> Point {
@@ -84,8 +121,17 @@ impl Graph {
         let rd = self.right.duration_since(self.left).unwrap().as_secs_f32();
         let x: f32 = d / rd * sz.width;
 
-        let y: f32 = sz.height - v.rtt_us as f32 / self.top as f32 * sz.height;
-
+        let y: f32 = sz.height
+            - (v.rtt_us - self.bottom) as f32 / (self.top - self.bottom) as f32 * sz.height;
+        if !x.is_finite() {
+            panic!("to_screen - x is {:?}", x);
+        }
+        if !y.is_finite() {
+            panic!(
+                "to_screen - y is {:?} - top:{:?} - bottom:{}",
+                y, self.top, self.bottom
+            );
+        }
         Point::new(x, y)
     }
 }
@@ -99,42 +145,43 @@ impl Program<Msg> for &mut Graph {
         let sz = bounds.size();
         let mut frame = Frame::new(sz);
         let green_st = Stroke {
-            width: 1.0,
-            color: Color::from_rgba8(0, 255, 0, 0.2),
+            width: 0.125,
+            color: Color::from_rgba8(0, 127, 0, 10.0 / 255.0),
             ..Stroke::default()
         };
         let yellow_st = Stroke {
             width: 1.5,
-            color: Color::from_rgba8(255, 192, 0, 0.3),
+            color: Color::from_rgba8(255, 192, 0, 0.5),
             ..Stroke::default()
         };
         let orange_st = Stroke {
             width: 1.5,
-            color: Color::from_rgba8(255, 64, 0, 0.8),
+            color: Color::from_rgba8(255, 64, 0, 0.6),
             ..Stroke::default()
         };
         let black_st = Stroke {
             width: 2.0,
-            color: Color::from_rgba8(0, 0, 0, 0.5),
+            color: Color::from_rgba8(0, 0, 0, 0.7),
             ..Stroke::default()
         };
-        for w in self
-            .data
-            .windows(2)
-            .skip(self.first_item)
-            .take(self.last_item - self.first_item)
-        {
-            let l = w[0];
-            let r = w[1];
-            frame.stroke(
-                &canvas::Path::line(self.to_screen(sz, &l), self.to_screen(sz, &r)),
-                green_st,
-            );
+        // for w in self
+        //     .data
+        //     .windows(2)
+        //     .skip(self.first_item)
+        //     .take(self.last_item - self.first_item)
+        //     .take(10000000)
+        // {
+        //     let l = w[0];
+        //     let r = w[1];
+        //     frame.stroke(
+        //         &canvas::Path::line(self.to_screen(sz, &l), self.to_screen(sz, &r)),
+        //         green_st,
+        //     );
 
-            //
-        }
+        //     //
+        // }
         let mut posl = self.firdata.cfg.start;
-        for w in self.firdata.rtt.windows(2) {
+        for w in self.firdata.rtt.windows(2).take(10000) {
             const ALMOST_ZERO: f64 = 0.000001;
             let l = w[0];
             let r = w[1];
@@ -160,7 +207,7 @@ impl Program<Msg> for &mut Graph {
             posl += self.firdata.cfg.interval;
         }
         let mut posl = self.firdata2.cfg.start;
-        for w in self.firdata2.rtt.windows(2) {
+        for w in self.firdata2.rtt.windows(2).take(100000) {
             const ALMOST_ZERO: f64 = 0.000001;
             let l = w[0];
             let r = w[1];
@@ -186,7 +233,7 @@ impl Program<Msg> for &mut Graph {
             posl += self.firdata2.cfg.interval;
         }
         let mut posl = self.firdata3.cfg.start;
-        for w in self.firdata3.rtt.windows(2) {
+        for w in self.firdata3.rtt.windows(2).take(10000) {
             const ALMOST_ZERO: f64 = 0.000001;
             let l = w[0];
             let r = w[1];
@@ -222,6 +269,7 @@ impl Default for Graph {
             right: SystemTime::now(),
             data: Default::default(),
             top: Default::default(),
+            bottom: Default::default(),
             init_len: Default::default(),
             first_item: Default::default(),
             last_item: Default::default(),

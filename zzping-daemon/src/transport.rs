@@ -18,8 +18,11 @@
 //!
 
 use super::icmp;
+use chrono::{Local, Utc};
 use pnet_transport::{TransportChannelType, TransportReceiver, TransportSender};
 use rand::Rng;
+use std::collections::VecDeque;
+use std::path::Path;
 use std::{fs::File, io::Write};
 use std::{io::BufWriter, sync::Mutex};
 use std::{net::IpAddr, sync::Arc};
@@ -27,6 +30,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+use zzping_lib::pingdata::{SIOEvent, StreamData, StreamEventType, StreamPingIO};
 
 /// Creates a TransportChannelType for ICMP over IPv4
 pub fn protocol_ipv4() -> TransportChannelType {
@@ -117,11 +121,12 @@ pub struct Destination {
     /// For stats only, this will be reset each time the program restarts.
     pub recv_count: u64,
 
-    /// Thread Random generator. Used only for caching purposes.
-    pub rng: rand::rngs::ThreadRng,
-
     /// Where to write the packets to disk. To be deprecated.
     pub logfile: Option<BufWriter<File>>,
+
+    // Streamdata saving:
+    pub streampingio: Option<StreamPingIO>,
+    pub sdlogfile: Option<BufWriter<File>>,
 }
 
 impl Destination {
@@ -140,8 +145,26 @@ impl Destination {
             lost_packets: vec![],
             sent_count: 0,
             recv_count: 0,
-            rng: rand::thread_rng(),
             logfile: None,
+            streampingio: None,
+            sdlogfile: None,
+        }
+    }
+    /// Create a StreamData header from the current destination.
+    pub fn as_streamdata(&self) -> StreamData {
+        let initial_time: chrono::DateTime<Utc> = Utc::now();
+        let time_cursor = Instant::now();
+
+        let mut pending_pings_us = vec![];
+        for p in self.inflight_packets.iter() {
+            pending_pings_us.push(p.sent.elapsed().as_micros() as u64);
+        }
+        StreamData {
+            addr: self.addr,
+            send_interval: self.interval,
+            initial_time,
+            time_cursor,
+            pending_pings_us,
         }
     }
 
@@ -151,7 +174,13 @@ impl Destination {
     ///
     /// The filename follows the format ./logs/pingd-log-{str_addr}-{now}.log
     pub fn create_log_file(&mut self, now: &str) {
-        let filename = format!("logs/pingd-log-{}-{}.log", self.str_addr, now);
+        let mut n = 1;
+        let mut filename = format!("logs/pingd-log-{}-{}-{:04}.log", now, self.str_addr, n);
+        while Path::new(&filename).exists() {
+            n += 1;
+            filename = format!("logs/pingd-log-{}-{}-{:04}.log", now, self.str_addr, n);
+        }
+
         let f = File::create(&filename)
             .unwrap_or_else(|e| panic!("unable to create file {}: {}", &filename, &e));
         let mut oldlog = self.logfile.take();
@@ -161,8 +190,46 @@ impl Destination {
         // Buffering is needed to avoid wearing SSDs by not writting the same
         // sector dozens of times. 8KB by default. It auto-flushes.
         self.logfile = Some(BufWriter::new(f));
+
+        // Streamdata logging
+        let filename = format!(
+            "logs/pingd-streamdata-{}-{}-{:04}.log",
+            self.str_addr, now, n
+        );
+        let f = File::create(&filename)
+            .unwrap_or_else(|e| panic!("unable to create file {}: {}", &filename, &e));
+        let mut oldlog = self.sdlogfile.take();
+        if let Some(sdlog) = oldlog.as_mut() {
+            sdlog.flush().unwrap();
+        }
+        let sdata = self.as_streamdata();
+        let mut f = BufWriter::new(f);
+        sdata.write_header(&mut f).unwrap();
+        f.flush().unwrap();
+        self.sdlogfile = Some(f);
+        self.streampingio = Some(StreamPingIO::from_header(sdata));
+    }
+    pub fn ping_xxx(&mut self, seqn: u16, ev: SIOEvent) {
+        if let Some(f) = self.sdlogfile.as_mut() {
+            if let Some(sdata) = self.streampingio.as_mut() {
+                if let Err(e) = sdata.write_ping(f, ev, seqn) {
+                    error!("ping_xxx: write_ping: {:?}", e);
+                }
+            }
+        }
     }
 
+    pub fn ping_sent(&mut self, seqn: u16) {
+        self.ping_xxx(seqn, SIOEvent::Sent);
+    }
+
+    pub fn ping_received(&mut self, seqn: u16) {
+        self.ping_xxx(seqn, SIOEvent::Received);
+    }
+
+    pub fn ping_lost(&mut self, seqn: u16) {
+        self.ping_xxx(seqn, SIOEvent::Lost);
+    }
     /// Try to match an incoming packet against the inflight_packets queue.
     ///
     /// If the packet is one that we sent, this function will complete the
@@ -176,6 +243,7 @@ impl Destination {
         if self.ident != packet.ident {
             return ret;
         }
+        let mut recv: Vec<u16> = vec![];
         for sent in self.inflight_packets.iter_mut() {
             if sent.data.seqn == packet.seqn && sent.received.is_none() {
                 sent.received = match packet.received {
@@ -187,10 +255,14 @@ impl Destination {
                     // TODO: fix duplicate in-flight packets
                     continue;
                 }
-                self.recv_count += 1;
+                recv.push(packet.seqn);
                 self.recv_packets.push(sent.clone());
                 ret = Some((packet.addr, sent.received.unwrap()));
             }
+        }
+        self.recv_count += recv.len() as u64;
+        for r in recv {
+            self.ping_received(r);
         }
         if ret.is_some() {
             self.inflight_packets.retain(|x| x.received.is_none());
@@ -204,28 +276,48 @@ impl Destination {
     /// then this function will randomly be a no-op to avoid DoS to a device, and
     /// also to avoid having insane amounts of packets to search later.
     pub fn send(&mut self, tx: &mut TransportSender, min_delay: Duration) -> bool {
+        let mut rng = rand::thread_rng();
+
         let inflight = self.inflight_packets.len() as u16;
         /*
          rnd_num and skipping is a hack to avoid a bug creating nasty sizes of
          the queues. It is currently fixed (by looking and cleaning up >1 pckt
          on recv), but the hack stays just in case.
         */
-        let rnd_num = self.rng.gen_range(16..64);
+        let rnd_num = rng.gen_range(16..64);
         if rnd_num < inflight {
             return false;
         }
         if self.last_pckt_sent.elapsed() + min_delay < self.interval {
             return false;
         }
-        let packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
-        self.last_pckt_sent = Instant::now() - Duration::from_micros(self.rng.gen_range(0..101));
-        self.inflight_packets.push(packet);
+        let res_packet = icmp::PacketData::new(self.seq, self.ident, self.addr).send(tx);
+        match res_packet {
+            Ok(packet) => {
+                self.ping_sent(self.seq);
+                self.last_pckt_sent = Instant::now() - Duration::from_micros(rng.gen_range(0..101));
+                self.inflight_packets.push(packet);
 
-        // The sequence is random to avoid a device "guessing" what the next sequence will be.
-        // TODO: This opens the door to sending two packets with the same seq number.
-        self.seq = self.rng.gen();
-        self.sent_count += 1;
-        true
+                // The sequence is random to avoid a device "guessing" what the next sequence will be.
+                self.seq = rng.gen();
+                while self
+                    .inflight_packets
+                    .iter()
+                    .any(|p| p.data.seqn == self.seq)
+                {
+                    self.seq = rng.gen();
+                }
+                self.sent_count += 1;
+                true
+            }
+            Err(e) => {
+                error!(
+                    "tansport::Destination::send: Error sending packet to {}: {:?}",
+                    self.addr, e
+                );
+                false
+            }
+        }
     }
 
     /// Return the packets that were received on the last "wait" seconds.
@@ -402,12 +494,17 @@ impl Comms {
         let c = self.config;
         let now = Instant::now();
         for dest in self.dest.iter_mut() {
+            let mut lost: Vec<u16> = vec![];
             for pck in dest
                 .inflight_packets
                 .iter()
                 .filter(|x| sent_after(x, now, c.forget_recv))
             {
                 dest.lost_packets.push(pck.clone());
+                lost.push(pck.data.seqn);
+            }
+            for seqn in lost {
+                dest.ping_lost(seqn);
             }
             dest.inflight_packets
                 .retain(|x| sent_before(x, now, c.forget_inflight));

@@ -2,6 +2,11 @@ ServerConfig(
     udp_listen_address: "127.0.0.1:7878",
     udp_client_address: "127.0.0.1:7879",
     ping_targets: [
+        // Localhost - to test if your CPU is working properly!
+        TargetHost(
+            address: "127.0.0.1", // Host address
+            frequency: 100,          // Pings per second
+        ),
         // Your local router IP
         TargetHost(
             address: "192.168.0.1", // Host address
@@ -80,6 +85,6 @@ ServerConfig(
     precision_mult: 10.0,
 
     // How many times per second to refresh the CLI, GUI and disk logging.
-    refresh_freq: 100,
+    refresh_freq: 10,
 
 )

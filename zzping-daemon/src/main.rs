@@ -72,7 +72,7 @@ fn get_logfile_now() -> String {
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
         .replace('-', "")
         .replace(':', "");
-    strnow.truncate(11);
+    strnow.truncate(8);
     strnow
 }
 fn main() {

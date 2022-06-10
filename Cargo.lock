@@ -2875,6 +2875,7 @@ checksum = "d2d7d3948613f75c98fd9328cfdcc45acc4d360655289d0a7d4ec931392200a3"
 name = "zzping-daemon"
 version = "0.2.2-beta2"
 dependencies = [
+ "anyhow",
  "chrono",
  "clap",
  "env_logger",
@@ -2896,7 +2897,9 @@ version = "0.2.2-beta2"
 dependencies = [
  "anyhow",
  "async-std",
+ "chrono",
  "clap",
+ "env_logger",
  "iced",
  "iced_native",
  "log",
