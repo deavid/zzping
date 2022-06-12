@@ -5,7 +5,10 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use crate::framedataq::{Complete, FrameDataQ};
+use crate::{
+    framedataq::{Complete, FrameDataQ},
+    sin_integral::sinc_cumulative,
+};
 use anyhow::{Context, Result};
 
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -100,11 +103,11 @@ impl FirPing {
         ret
     }
     fn load(&mut self, pings: &[Ping], dev: i32) {
-        // use probability::distribution::Continuous;
         use probability::distribution::Distribution;
         let w_size_secs: f64 = self.cfg.window_size.as_secs_f64();
         let interval = self.cfg.interval.as_secs_f64();
-        let window = probability::distribution::Gaussian::new(0.0, w_size_secs / interval);
+        let w_width = w_size_secs / interval;
+        let window = probability::distribution::Gaussian::new(0.0, w_width);
         let sigmas = w_size_secs / interval * self.cfg.sigmas;
 
         let size_secs = self
@@ -128,7 +131,15 @@ impl FirPing {
             let r = (pos + sigmas).ceil().min((fir_size - 1) as f64) as usize;
             for n in l..=r {
                 let wpos = n as f64 - pos;
-                let density = window.distribution(wpos + 0.5) - window.distribution(wpos - 0.5);
+                let density_gauss =
+                    window.distribution(wpos + 0.5) - window.distribution(wpos - 0.5);
+                let density_sinc =
+                    sinc_cumulative(wpos + 0.5, w_width) - sinc_cumulative(wpos - 0.5, w_width);
+                let factor_1 = 2.0;
+                let density_gauss2 = window.distribution((wpos + 0.5) * factor_1)
+                    - window.distribution((wpos - 0.5) * factor_1);
+                let density = density_sinc * density_gauss + density_gauss2 * 0.1;
+                let density = density.powf(dev.abs() as f64 + 1.0);
                 // println!("{},{}", wpos, density);
                 let rdens = rtt * rtt2 * density;
                 let item = self.rtt.get_mut(n).unwrap();

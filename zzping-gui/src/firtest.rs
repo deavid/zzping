@@ -81,8 +81,12 @@ impl FirTest {
                             // if sp.scode != 0 {
                             //     info!("{}us - {} left code:{}", rtt_us, pending.len(), sp.scode);
                             // }
+                            let sent_time = init_time + Duration::from_micros(sent);
+
                             data.push(Ping {
-                                received: cur_time,
+                                // Reporting from sent_time instead from receiving time seems to be better.
+                                // The problem is that this metric might be "in the past" of a block.
+                                received: sent_time,
                                 rtt_us,
                             });
                         }
@@ -97,7 +101,7 @@ impl FirTest {
                                 let sent = pending.remove(idx as usize).unwrap();
                                 let sent_time = init_time + Duration::from_micros(sent);
                                 for p in loss.iter_mut().rev() {
-                                    if p.received <= sent_time {
+                                    if p.received <= sent_time && p.rtt_us > 500_000 {
                                         p.rtt_us = 500_000;
                                         break;
                                     }
@@ -107,11 +111,11 @@ impl FirTest {
                                 //     rtt_us: -1_000_000,
                                 // });
 
-                                info!(
-                                    "packet lost: {}, {:?}",
-                                    sp.scode,
-                                    chrono::DateTime::<chrono::Local>::from(sent_time)
-                                );
+                                // info!(
+                                //     "packet lost: {}, {:?}",
+                                //     sp.scode,
+                                //     chrono::DateTime::<chrono::Local>::from(sent_time)
+                                // );
                             } else {
                                 pending.push_back(sp.delta);
                                 loss.push(Ping {

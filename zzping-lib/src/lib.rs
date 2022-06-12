@@ -14,14 +14,14 @@
 
 //! This contains all the tooling for reading and writting messages of differnt
 //! formats. This library is common to all programs of the zzping suite.
-
-pub mod pingdata;
 pub mod batchdata;
 pub mod compress;
 pub mod dynrmp;
 pub mod framedata;
 pub mod framedataq;
 pub mod framestats;
+pub mod pingdata;
+pub mod sin_integral;
 
 /// This is a test macro that tries to do a dbg!() but inlined. Takes less space.
 #[macro_export]
