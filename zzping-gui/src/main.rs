@@ -20,6 +20,7 @@ mod fdq_graph;
 mod firtest;
 mod flags;
 mod graph_plot;
+mod graphutils;
 mod gui;
 mod subscr_time;
 mod udp_comm;

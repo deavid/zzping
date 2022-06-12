@@ -16,3 +16,5 @@ bit-vec = "0.6"  # for huffman, also for serializing
 anyhow = "1.0"
 thiserror = "1.0"
 probability = "0.18.0"
+rustdct = "0.7"
+log = "0.4"

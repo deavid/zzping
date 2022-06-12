@@ -1,7 +1,7 @@
 use crate::{basicgraph, flags::Flags};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use iced::{Alignment, Application, Canvas, Column, Subscription, Text};
+use iced::{slider, Alignment, Application, Canvas, Column, Slider, Subscription, Text};
 use log::{info, warn};
 use std::{collections::VecDeque, fs::File, io::BufReader, time::Instant};
 use zzping_lib::{
@@ -11,6 +11,7 @@ use zzping_lib::{
 
 #[derive(Debug, Clone, Copy)]
 pub enum Msg {
+    ZoomChange(f64),
     Startup,
     Tick(Instant),
 }
@@ -18,6 +19,8 @@ pub enum Msg {
 pub struct Widgets {
     ping_graph: basicgraph::Graph,
     loss_graph: basicgraph::Graph,
+    zoom_state: slider::State,
+    zoom: f64,
 }
 
 #[derive(Debug, Default)]
@@ -103,16 +106,6 @@ impl FirTest {
                                         break;
                                     }
                                 }
-                                // loss.push(Ping {
-                                //     received: sent_time,
-                                //     rtt_us: -1_000_000,
-                                // });
-
-                                // info!(
-                                //     "packet lost: {}, {:?}",
-                                //     sp.scode,
-                                //     chrono::DateTime::<chrono::Local>::from(sent_time)
-                                // );
                             } else {
                                 pending.push_back(sp.delta);
                                 loss.push(Ping {
@@ -140,7 +133,7 @@ impl FirTest {
             }
             dbg!(data.len());
             self.widgets.ping_graph.load(data);
-            self.widgets.loss_graph.load(loss);
+            // self.widgets.loss_graph.load(loss);
         }
         Ok(())
     }
@@ -148,13 +141,19 @@ impl FirTest {
 
     fn process_message(&mut self, msg: Msg) -> Result<()> {
         match msg {
+            Msg::ZoomChange(x) => self.on_zoom_change(x),
             Msg::Tick(_) => self.tick(),
             Msg::Startup => self.startup().context("startup error")?,
         }
         Ok(())
     }
+    pub fn on_zoom_change(&mut self, zoom_pos: f64) {
+        self.widgets.zoom = zoom_pos;
+        let zoom = f64::exp(zoom_pos / 100.0);
+        self.widgets.ping_graph.update_zoom(zoom);
+        self.widgets.loss_graph.update_zoom(zoom);
+    }
 }
-
 impl Application for FirTest {
     type Message = Msg;
 
@@ -194,6 +193,12 @@ impl Application for FirTest {
                     .height(iced::Length::Fill)
                     .width(iced::Length::Fill),
             )
+            .push(Slider::new(
+                &mut self.widgets.zoom_state,
+                0.0..=1000.0,
+                self.widgets.zoom,
+                Msg::ZoomChange,
+            ))
             .into()
     }
 

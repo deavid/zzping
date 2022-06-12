@@ -2081,6 +2081,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "08d43f7aa6b08d49f382cde6a7982047c3426db949b1424bc4b7ec9ae12c6ce2"
 
 [[package]]
+name = "rustdct"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "620247053ace0eddd3e607c66423537e45c3ae36008e6d6fac1552f51ea1a63a"
+dependencies = [
+ "rustfft",
+]
+
+[[package]]
 name = "rustfft"
 version = "6.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2906,6 +2915,7 @@ dependencies = [
  "rand",
  "rmp",
  "ron",
+ "rustdct",
  "serde",
  "thiserror",
  "zzping-lib",
@@ -2920,8 +2930,10 @@ dependencies = [
  "chrono",
  "clap",
  "huffman-compress",
+ "log",
  "probability",
  "rmp",
+ "rustdct",
  "rustfft",
  "thiserror",
 ]

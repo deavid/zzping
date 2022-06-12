@@ -14,6 +14,7 @@ use crate::{
 use anyhow::{Context, Result};
 
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc, MIN_DATETIME};
+use log::warn;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -91,6 +92,8 @@ pub struct FirPing {
     /// FIXME: This does not account for the input point density - meaning that
     /// depending on the frequency of the pings, it might look higher or lower.
     pub max_density: f64,
+
+    pub dct: Dct,
 }
 
 impl FirPing {
@@ -101,6 +104,7 @@ impl FirPing {
             cfg: cfg.clone(),
             rtt: vec![],
             max_density: 1.0, // FIXME
+            dct: Default::default(),
         };
         ret.load(pings, dev);
         ret
@@ -151,6 +155,73 @@ impl FirPing {
             }
         }
         // density indicates pings per interval - that makes sense.
+        // TODO: optimally, we should prevent here leaving with density = 0. Extra smoothing from neighbors would be nice.
+        self.dct = Dct::from_rd(&self.rtt);
+    }
+    pub fn dct_test(&self) {
+        use rustdct::DctPlanner;
+        let k: f64 = 2.0 / self.rtt.len() as f64;
+        let buffer: Vec<_> = self.rtt.iter().map(|(r, d)| r / d).collect();
+        println!("orig: {:?}", &buffer[..64]);
+        let mut buffer: Vec<_> = self.rtt.iter().map(|(r, d)| r / d * k).collect();
+        let t = Instant::now();
+        let mut planner = DctPlanner::new();
+        let dct2 = planner.plan_dct2(self.rtt.len());
+        dct2.process_dct2(&mut buffer);
+        println!("dct2: {:?}", &buffer[..1024]);
+        println!("forward: {:?}", t.elapsed());
+        let t = Instant::now();
+
+        let len = 100;
+        let dct3 = planner.plan_dct3(len);
+        dct3.process_dct3(&mut buffer[..len]);
+        // for n in buffer.iter_mut() {
+        //     *n *= k;
+        // }
+        println!("dct3: {:?}", &buffer[..64]);
+        println!("inverse: {:?}", t.elapsed());
+
+        //
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Dct {
+    pub data: Vec<f64>,
+}
+
+impl Dct {
+    pub fn from_rd(rd: &[(f64, f64)]) -> Self {
+        use rustdct::DctPlanner;
+        let mut planner = DctPlanner::new();
+
+        let len = rd.len();
+        let k: f64 = 2.0 / len as f64;
+        let mut data: Vec<f64> = rd.iter().map(|(r, d)| r / d * k).collect();
+        let dct2 = planner.plan_dct2(len);
+        dct2.process_dct2(&mut data);
+
+        Self { data }
+    }
+    pub fn export(&self, len: usize) -> Vec<f64> {
+        use rustdct::DctPlanner;
+        let mut planner = DctPlanner::new();
+        let len2 = len.min(self.data.len());
+        if len != len2 {
+            warn!("Dct::export({}) - max len is {}", len, len2);
+        }
+        let mut buffer = self.data[..len2].to_owned();
+        let mut zeros = vec![0.0; len2 * 3];
+        buffer.append(&mut zeros);
+        let len2 = buffer.len();
+        let dct3 = planner.plan_dct3(len2);
+
+        // for (n, p) in buffer[len2 / 2..len2].iter_mut().enumerate() {
+        //     let k = 1.0 - (n as f64 / (len2 / 2) as f64);
+        //     *p *= k.powi(6);
+        // }
+        dct3.process_dct3(&mut buffer);
+        buffer
     }
 }
 

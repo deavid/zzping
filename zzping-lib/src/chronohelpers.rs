@@ -1,4 +1,4 @@
-use chrono::{Utc, TimeZone};
+use chrono::{TimeZone, Utc};
 
 pub trait ChronoHelperDuration {
     fn as_secs_f64(&self) -> f64;
@@ -16,6 +16,7 @@ impl ChronoHelperDuration for chrono::Duration {
 pub trait ChronoHelperDatetime {
     fn now() -> Self;
     fn unix_epoch() -> Self;
+    fn timestamp_f64(&self) -> f64;
 }
 
 impl ChronoHelperDatetime for chrono::DateTime<Utc> {
@@ -25,5 +26,11 @@ impl ChronoHelperDatetime for chrono::DateTime<Utc> {
 
     fn unix_epoch() -> Self {
         Utc.timestamp(0, 0)
+    }
+
+    fn timestamp_f64(&self) -> f64 {
+        // WARN: These will have less than microsecond precision past year 2255
+        let unix_epoch = Utc.timestamp(0, 0);
+        self.signed_duration_since(unix_epoch).as_secs_f64()
     }
 }
