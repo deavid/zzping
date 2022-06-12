@@ -2,8 +2,10 @@ use std::{
     collections::VecDeque,
     io::{BufRead, BufReader, Read, Write},
     net::IpAddr,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant},
 };
+
+use crate::chronohelpers::ChronoHelperDuration;
 
 use crate::{
     framedataq::{Complete, FrameDataQ},
@@ -11,7 +13,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 
-use chrono::{DateTime, SecondsFormat, Utc};
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc, MIN_DATETIME};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -24,7 +26,7 @@ enum PingError {
 
 #[derive(Debug, Clone, Copy)]
 pub struct Ping {
-    pub received: SystemTime,
+    pub received: DateTime<Utc>,
     pub rtt_us: i64,
 }
 
@@ -35,11 +37,12 @@ impl Ping {
             .ok_or(PingError::ParseError)
             .context("timestamp parse")? as u64;
         let sub_ms = frame.subsec_ms.try_abs().context("sub_ms parse")? as u64;
-        let d = Duration::from_millis(ts * 1000 + sub_ms);
-        let received = SystemTime::UNIX_EPOCH
-            .checked_add(d)
-            .ok_or(PingError::ParseError)
-            .context("systemtime add")?;
+        let ts = ts + sub_ms / 1000;
+        let sub_ms = sub_ms % 1000;
+        let received = DateTime::<Utc>::from_utc(
+            NaiveDateTime::from_timestamp(ts as i64, sub_ms as u32 * 1_000_000),
+            Utc,
+        );
         let rtt_us = frame.recv_us[3];
         Ok(Self { received, rtt_us })
     }
@@ -48,9 +51,9 @@ impl Ping {
 #[derive(Debug, Clone)]
 pub struct FirPingConfig {
     /// Initial time for the series (can include data outside of the series)
-    pub start: SystemTime,
+    pub start: DateTime<Utc>,
     /// End time for the series (can include data outside of the series)
-    pub end: SystemTime,
+    pub end: DateTime<Utc>,
     /// Sampling frequency
     pub interval: Duration,
     /// Width of the window, where nearly 70% of the values fall into.
@@ -66,8 +69,8 @@ pub struct FirPingConfig {
 impl Default for FirPingConfig {
     fn default() -> Self {
         Self {
-            start: SystemTime::UNIX_EPOCH,
-            end: SystemTime::UNIX_EPOCH,
+            start: MIN_DATETIME,
+            end: MIN_DATETIME,
             interval: Default::default(),
             window_size: Default::default(),
             sigmas: Default::default(),
@@ -93,9 +96,9 @@ pub struct FirPing {
 impl FirPing {
     /// Converts a list of pings into FIR using the provided config.
     /// Interval is the (intended) frequency of the input pings.
-    pub fn from_pings(cfg: FirPingConfig, _interval: Duration, pings: &[Ping], dev: i32) -> Self {
+    pub fn from_pings(cfg: &FirPingConfig, _interval: Duration, pings: &[Ping], dev: i32) -> Self {
         let mut ret = Self {
-            cfg,
+            cfg: cfg.clone(),
             rtt: vec![],
             max_density: 1.0, // FIXME
         };
@@ -113,19 +116,19 @@ impl FirPing {
         let size_secs = self
             .cfg
             .end
-            .duration_since(self.cfg.start)
-            .map(|x| x.as_secs_f64())
-            .unwrap_or_default();
+            .signed_duration_since(self.cfg.start)
+            .as_secs_f64();
+
         let fir_size = (size_secs / interval).ceil() as usize + 1;
         self.rtt = vec![(0.0, 0.0); fir_size];
 
         for p in pings {
             let rtt = p.rtt_us as f64 / 1_000_000.0;
             let rtt2 = (p.rtt_us as f64 / 10_000.0).powi(dev);
-            let d = match p.received.duration_since(self.cfg.start) {
-                Ok(v) => v.as_secs_f64(),
-                Err(e) => -e.duration().as_secs_f64(),
-            };
+            let d = p
+                .received
+                .signed_duration_since(self.cfg.start)
+                .as_secs_f64();
             let pos = d / interval;
             let l = (pos - sigmas).floor().max(0.0) as usize;
             let r = (pos + sigmas).ceil().min((fir_size - 1) as f64) as usize;

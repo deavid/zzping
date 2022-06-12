@@ -1,11 +1,14 @@
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
+use chrono::{DateTime, Utc};
 use iced::{
     canvas::{self, Frame, Program, Stroke},
     Color, Point,
 };
-use log::info;
-use zzping_lib::pingdata::{FirPing, FirPingConfig, Ping};
+use zzping_lib::{
+    chronohelpers::{ChronoHelperDatetime, ChronoHelperDuration},
+    pingdata::{FirPing, FirPingConfig, Ping},
+};
 
 use crate::firtest::Msg;
 
@@ -15,8 +18,8 @@ pub struct Graph {
     pub firdata2: FirPing,
     pub firdata3: FirPing,
     pub data: Vec<Ping>,
-    pub left: SystemTime,
-    pub right: SystemTime,
+    pub left: DateTime<Utc>,
+    pub right: DateTime<Utc>,
     pub top: i64,
     pub bottom: i64,
     pub init_len: usize,
@@ -28,8 +31,8 @@ impl Graph {
     pub fn load(&mut self, data: Vec<Ping>) {
         self.data = data;
         // .. .calc left, right, etc.
-        self.left = SystemTime::now();
-        self.right = SystemTime::UNIX_EPOCH;
+        self.left = DateTime::<Utc>::now();
+        self.right = DateTime::<Utc>::unix_epoch();
         self.top = 0;
         self.bottom = 1 << 60;
         self.first_item = 0;
@@ -44,9 +47,9 @@ impl Graph {
             self.bottom = self.bottom.min(r);
             self.last_item = n;
         }
-        let k = 5;
         let msec = 10;
         // let msec = 60 * 1000;
+        // let k = 5;
         // let cfg = FirPingConfig {
         //     start: self.left,
         //     end: self.right,
@@ -71,7 +74,7 @@ impl Graph {
             sigmas: 8.0,
         };
         let w = 7;
-        self.firdata3 = FirPing::from_pings(cfg.clone(), Duration::from_millis(10), &self.data, 0);
+        self.firdata3 = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, 0);
         let cfg = FirPingConfig {
             start: self.left,
             end: self.right,
@@ -79,8 +82,8 @@ impl Graph {
             window_size: Duration::from_millis(msec * 4),
             sigmas: 8.0,
         };
-        self.firdata2 = FirPing::from_pings(cfg.clone(), Duration::from_millis(10), &self.data, w);
-        self.firdata = FirPing::from_pings(cfg, Duration::from_millis(10), &self.data, -w);
+        self.firdata2 = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, w);
+        self.firdata = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, -w);
         // let firtop: f64 = self
         //     .firdata2
         //     .rtt
@@ -124,12 +127,9 @@ impl Graph {
         dbg!(self.firdata3.rtt.len());
     }
     pub fn to_screen(&self, sz: iced::Size, v: &Ping) -> Point {
-        let d = match v.received.duration_since(self.left) {
-            Ok(v) => v.as_secs_f32(),
-            Err(e) => -e.duration().as_secs_f32(),
-        };
-        let rd = self.right.duration_since(self.left).unwrap().as_secs_f32();
-        let x: f32 = d / rd * sz.width;
+        let d = v.received.signed_duration_since(self.left).as_secs_f64();
+        let rd = self.right.signed_duration_since(self.left).as_secs_f64();
+        let x: f32 = (d / rd) as f32 * sz.width;
 
         let y: f32 = sz.height
             - (v.rtt_us - self.bottom) as f32 / (self.top - self.bottom) as f32 * sz.height;
@@ -195,12 +195,12 @@ impl Program<Msg> for &mut Graph {
             let l = w[0];
             let r = w[1];
             if l.1 < ALMOST_ZERO || r.1 < ALMOST_ZERO {
-                posl += self.firdata.cfg.interval;
+                posl = posl + chrono::Duration::from_std(self.firdata.cfg.interval).unwrap();
                 continue;
             }
             let rttl = l.0 * 1_000_000.0 / l.1;
             let rttr = r.0 * 1_000_000.0 / r.1;
-            let posr = posl + self.firdata.cfg.interval;
+            let posr = posl + chrono::Duration::from_std(self.firdata.cfg.interval).unwrap();
             let l = Ping {
                 received: posl,
                 rtt_us: rttl.round() as i64,
@@ -213,19 +213,19 @@ impl Program<Msg> for &mut Graph {
                 &canvas::Path::line(self.to_screen(sz, &l), self.to_screen(sz, &r)),
                 yellow_st,
             );
-            posl += self.firdata.cfg.interval;
+            posl = posl + chrono::Duration::from_std(self.firdata.cfg.interval).unwrap();
         }
         let mut posl = self.firdata2.cfg.start;
         for w in self.firdata2.rtt.windows(2).take(100000) {
             let l = w[0];
             let r = w[1];
             if l.1 < ALMOST_ZERO || r.1 < ALMOST_ZERO {
-                posl += self.firdata2.cfg.interval;
+                posl = posl + chrono::Duration::from_std(self.firdata2.cfg.interval).unwrap();
                 continue;
             }
             let rttl = l.0 * 1_000_000.0 / l.1;
             let rttr = r.0 * 1_000_000.0 / r.1;
-            let posr = posl + self.firdata2.cfg.interval;
+            let posr = posl + chrono::Duration::from_std(self.firdata2.cfg.interval).unwrap();
             let l = Ping {
                 received: posl,
                 rtt_us: rttl.round() as i64,
@@ -238,19 +238,19 @@ impl Program<Msg> for &mut Graph {
                 &canvas::Path::line(self.to_screen(sz, &l), self.to_screen(sz, &r)),
                 orange_st,
             );
-            posl += self.firdata2.cfg.interval;
+            posl = posl + chrono::Duration::from_std(self.firdata2.cfg.interval).unwrap();
         }
         let mut posl = self.firdata3.cfg.start;
         for w in self.firdata3.rtt.windows(2).take(100000) {
             let l = w[0];
             let r = w[1];
             if l.1 < ALMOST_ZERO || r.1 < ALMOST_ZERO {
-                posl += self.firdata3.cfg.interval;
+                posl = posl + chrono::Duration::from_std(self.firdata3.cfg.interval).unwrap();
                 continue;
             }
             let rttl = l.0 * 1_000_000.0 / l.1;
             let rttr = r.0 * 1_000_000.0 / r.1;
-            let posr = posl + self.firdata3.cfg.interval;
+            let posr = posl + chrono::Duration::from_std(self.firdata3.cfg.interval).unwrap();
             let l = Ping {
                 received: posl,
                 rtt_us: rttl.round() as i64,
@@ -263,7 +263,7 @@ impl Program<Msg> for &mut Graph {
                 &canvas::Path::line(self.to_screen(sz, &l), self.to_screen(sz, &r)),
                 black_st,
             );
-            posl += self.firdata3.cfg.interval;
+            posl = posl + chrono::Duration::from_std(self.firdata3.cfg.interval).unwrap();
         }
         vec![frame.into_geometry()]
     }
@@ -272,8 +272,8 @@ impl Program<Msg> for &mut Graph {
 impl Default for Graph {
     fn default() -> Self {
         Self {
-            left: SystemTime::UNIX_EPOCH,
-            right: SystemTime::now(),
+            left: DateTime::<Utc>::unix_epoch(),
+            right: DateTime::<Utc>::now(),
             data: Default::default(),
             top: Default::default(),
             bottom: Default::default(),

@@ -18,10 +18,9 @@
 //!
 
 use super::icmp;
-use chrono::{Local, Utc};
+use chrono::Utc;
 use pnet_transport::{TransportChannelType, TransportReceiver, TransportSender};
 use rand::Rng;
-use std::collections::VecDeque;
 use std::path::Path;
 use std::{fs::File, io::Write};
 use std::{io::BufWriter, sync::Mutex};
@@ -30,7 +29,7 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use zzping_lib::pingdata::{SIOEvent, StreamData, StreamEventType, StreamPingIO};
+use zzping_lib::pingdata::{SIOEvent, StreamData, StreamPingIO};
 
 /// Creates a TransportChannelType for ICMP over IPv4
 pub fn protocol_ipv4() -> TransportChannelType {

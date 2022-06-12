@@ -1,13 +1,9 @@
 use crate::{basicgraph, flags::Flags};
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use iced::{Alignment, Application, Canvas, Column, Subscription, Text};
 use log::{info, warn};
-use std::{
-    collections::VecDeque,
-    fs::File,
-    io::BufReader,
-    time::{Duration, Instant, SystemTime},
-};
+use std::{collections::VecDeque, fs::File, io::BufReader, time::Instant};
 use zzping_lib::{
     framedataq::FDCodecIter,
     pingdata::{Ping, StreamData, StreamEventType, StreamPingIO},
@@ -58,10 +54,10 @@ impl FirTest {
                     .map(|x| x - max_ping)
                     .collect();
 
-                let init_time: SystemTime = spr.header.initial_time.into();
+                let init_time: DateTime<Utc> = spr.header.initial_time;
                 let mut cur_time = init_time;
                 while let Some(sp) = spr.read_next(&mut buf).context("SDR:read")? {
-                    cur_time = init_time + Duration::from_micros(sp.delta);
+                    cur_time = init_time + chrono::Duration::microseconds(sp.delta as i64);
                     match sp.event {
                         StreamEventType::Received => {
                             if pending.is_empty() {
@@ -81,7 +77,7 @@ impl FirTest {
                             // if sp.scode != 0 {
                             //     info!("{}us - {} left code:{}", rtt_us, pending.len(), sp.scode);
                             // }
-                            let sent_time = init_time + Duration::from_micros(sent);
+                            let sent_time = init_time + chrono::Duration::microseconds(sent as i64);
 
                             data.push(Ping {
                                 // Reporting from sent_time instead from receiving time seems to be better.
@@ -99,7 +95,8 @@ impl FirTest {
                                 let idx = if sp.scode == 255 { 0 } else { sp.scode - 1 };
                                 let idx = idx.min(pending.len() as u8 - 1);
                                 let sent = pending.remove(idx as usize).unwrap();
-                                let sent_time = init_time + Duration::from_micros(sent);
+                                let sent_time =
+                                    init_time + chrono::Duration::microseconds(sent as i64);
                                 for p in loss.iter_mut().rev() {
                                     if p.received <= sent_time && p.rtt_us > 500_000 {
                                         p.rtt_us = 500_000;
