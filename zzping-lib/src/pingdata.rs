@@ -14,7 +14,6 @@ use crate::{
 use anyhow::{Context, Result};
 
 use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc, MIN_DATETIME};
-use log::warn;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -187,6 +186,7 @@ impl FirPing {
 
 #[derive(Debug, Clone, Default)]
 pub struct Dct {
+    pub orig_data: Vec<f64>,
     pub data: Vec<f64>,
 }
 
@@ -197,30 +197,68 @@ impl Dct {
 
         let len = rd.len();
         let k: f64 = 2.0 / len as f64;
-        let mut data: Vec<f64> = rd.iter().map(|(r, d)| r / d * k).collect();
+        let orig_data: Vec<f64> = rd.iter().map(|(r, d)| r / d).collect();
+        let mut data: Vec<f64> = orig_data.iter().map(|x| x * k).collect();
         let dct2 = planner.plan_dct2(len);
         dct2.process_dct2(&mut data);
 
-        Self { data }
+        Self { data, orig_data }
     }
-    pub fn export(&self, len: usize) -> Vec<f64> {
+    pub fn export(&self, len: usize, loss: f64) -> Vec<f64> {
         use rustdct::DctPlanner;
         let mut planner = DctPlanner::new();
         let len2 = len.min(self.data.len());
-        if len != len2 {
-            warn!("Dct::export({}) - max len is {}", len, len2);
+        // if len != len2 {
+        //     warn!("Dct::export({}) - max len is {}", len, len2);
+        // }
+        let mut buffer: Vec<f64> = self.data[..len2].to_vec();
+        let skip = len2 / 16;
+        let blck_sz = 10000;
+        let mut range: Vec<f64> = vec![1.0e-60; len2 / blck_sz + 1];
+        for (n, x) in buffer.iter().skip(skip).copied().enumerate() {
+            let x = x.abs();
+            let n = n / blck_sz;
+            range[n] = range[n].max(x);
         }
-        let mut buffer = self.data[..len2].to_owned();
-        let mut zeros = vec![0.0; len2 * 3];
-        buffer.append(&mut zeros);
+
+        let loss_v: Vec<f64> = range.into_iter().map(|x| loss * x).collect();
+        // let mut rnd = rand::thread_rng();
+        if loss > 0.0 {
+            // let dbg: Vec<_> = buffer
+            //     .iter()
+            //     .skip(skip)
+            //     .enumerate()
+            //     .map(|(n, x)| ((*x / loss_v[n / blck_sz]).abs().round() * x.signum()) as i64)
+            //     .collect();
+
+            buffer.iter_mut().skip(skip).enumerate().for_each(|(n, x)| {
+                *x = (*x / loss_v[n / blck_sz]).abs().round() * x.signum() * loss_v[n / blck_sz]
+            });
+            // println!("dct: {:?}", dbg);
+        }
+
+        // if len > len2 {
+        //     let mut zeros = vec![0.0; len.min(len2 * 2) - len2];
+        //     buffer.append(&mut zeros);
+        // }
         let len2 = buffer.len();
         let dct3 = planner.plan_dct3(len2);
-
-        // for (n, p) in buffer[len2 / 2..len2].iter_mut().enumerate() {
-        //     let k = 1.0 - (n as f64 / (len2 / 2) as f64);
-        //     *p *= k.powi(6);
+        // if len / 2 < len2 {
+        //     for (n, p) in buffer[len / 2..len2].iter_mut().enumerate() {
+        //         let k = 1.0 - (n as f64 / (len2 / 2) as f64);
+        //         *p *= k.powi(6);
+        //     }
         // }
         dct3.process_dct3(&mut buffer);
+        if buffer.len() == self.data.len() {
+            let mut diff = 0.0;
+            for (x, y) in buffer.iter().zip(self.orig_data.iter()) {
+                diff += (x - y).abs();
+            }
+            diff /= buffer.len() as f64;
+            diff /= self.data[0] / 2.0;
+            dbg!(diff * 100.0);
+        }
         buffer
     }
 }

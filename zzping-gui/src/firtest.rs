@@ -11,9 +11,10 @@ use zzping_lib::{
 
 #[derive(Debug, Clone, Copy)]
 pub enum Msg {
-    ZoomChange(f64),
     Startup,
     Tick(Instant),
+    ZoomChange(f64),
+    TestChange(f64),
 }
 #[derive(Debug, Default)]
 pub struct Widgets {
@@ -21,6 +22,8 @@ pub struct Widgets {
     loss_graph: basicgraph::Graph,
     zoom_state: slider::State,
     zoom: f64,
+    test_state: slider::State,
+    test: f64,
 }
 
 #[derive(Debug, Default)]
@@ -141,17 +144,25 @@ impl FirTest {
 
     fn process_message(&mut self, msg: Msg) -> Result<()> {
         match msg {
+            Msg::TestChange(x) => self.on_test_change(x),
             Msg::ZoomChange(x) => self.on_zoom_change(x),
             Msg::Tick(_) => self.tick(),
             Msg::Startup => self.startup().context("startup error")?,
         }
         Ok(())
     }
-    pub fn on_zoom_change(&mut self, zoom_pos: f64) {
-        self.widgets.zoom = zoom_pos;
-        let zoom = f64::exp(zoom_pos / 100.0);
+    pub fn on_zoom_change(&mut self, pos: f64) {
+        self.widgets.zoom = pos;
+        let zoom = f64::exp(pos / 100.0);
         self.widgets.ping_graph.update_zoom(zoom);
         self.widgets.loss_graph.update_zoom(zoom);
+    }
+
+    pub fn on_test_change(&mut self, pos: f64) {
+        self.widgets.test = pos;
+        let test = (pos / 1000.0).powi(10);
+        dbg!((1.0 + 2.0 / test).log2());
+        self.widgets.ping_graph.update_test(test);
     }
 }
 impl Application for FirTest {
@@ -188,16 +199,22 @@ impl Application for FirTest {
                     .height(iced::Length::Fill)
                     .width(iced::Length::Fill),
             )
-            .push(
-                Canvas::new(&mut self.widgets.loss_graph)
-                    .height(iced::Length::Fill)
-                    .width(iced::Length::Fill),
-            )
+            // .push(
+            //     Canvas::new(&mut self.widgets.loss_graph)
+            //         .height(iced::Length::Fill)
+            //         .width(iced::Length::Fill),
+            // )
             .push(Slider::new(
                 &mut self.widgets.zoom_state,
                 0.0..=1000.0,
                 self.widgets.zoom,
                 Msg::ZoomChange,
+            ))
+            .push(Slider::new(
+                &mut self.widgets.test_state,
+                0.0..=1000.0,
+                self.widgets.test,
+                Msg::TestChange,
             ))
             .into()
     }

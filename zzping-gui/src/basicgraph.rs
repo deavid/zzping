@@ -23,6 +23,7 @@ pub struct Graph {
     pub data: Vec<Ping>,
     pub vw: Viewport,
     pub size: Option<iced::Size>,
+    pub test: f64,
 }
 
 impl Graph {
@@ -43,34 +44,43 @@ impl Graph {
             end: self.vw.right_time,
             interval: Duration::from_millis(msec),
             window_size: Duration::from_millis(msec),
-            sigmas: 3.0,
+            sigmas: 6.0,
         };
         self.firdata3 = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, 0);
-        // let cfg = FirPingConfig {
-        //     start: self.vw.left_time,
-        //     end: self.vw.right_time,
-        //     interval: Duration::from_millis(msec),
-        //     window_size: Duration::from_millis(msec * 4),
-        //     sigmas: 3.0,
-        // };
-        // let w = 7;
-        // self.firdata2 = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, w);
+        let cfg = FirPingConfig {
+            start: self.vw.left_time,
+            end: self.vw.right_time,
+            interval: Duration::from_millis(msec * 32),
+            window_size: Duration::from_millis(msec * 128),
+            sigmas: 6.0,
+        };
+        let w = 7;
+        self.firdata2 = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, w);
         // self.firdata = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, -w);
 
-        self.mean_pings = PointGraph::from_fir(&self.firdata3);
-        // self.stddevup_pings = PointGraph::from_fir(&self.firdata2);
-        // self.stddevdown_pings = PointGraph::from_fir(&self.firdata);
+        self.redraw();
 
         dbg!(self.firdata3.rtt.len());
     }
-    pub fn update_zoom(&mut self, zoom: f64) {
-        // self.vw.zoom = zoom;
+    pub fn redraw(&mut self) {
         if let Some(sz) = self.size {
             if !self.firdata3.dct.data.is_empty() {
-                self.mean_pings = PointGraph::from_firdct(&self.firdata3, zoom, sz);
-                dbg!(self.mean_pings.points.len());
+                self.mean_pings =
+                    PointGraph::from_firdct(&self.firdata3, self.vw.zoom, sz, self.test);
+                // self.mean_pings = PointGraph::from_firdctdbg(&self.firdata3);
+                // self.stddevup_pings =
+                //     PointGraph::from_firdct(&self.firdata2, self.vw.zoom, sz, self.test);
+                // self.stddevdown_pings = PointGraph::from_firdct(&self.firdata, self.vw.zoom, sz);
             }
         }
+    }
+    pub fn update_zoom(&mut self, zoom: f64) {
+        self.vw.zoom = zoom;
+        self.redraw();
+    }
+    pub fn update_test(&mut self, test: f64) {
+        self.test = test;
+        self.redraw();
     }
 }
 
@@ -81,7 +91,10 @@ impl Program<Msg> for &mut Graph {
         bounds: iced::Rectangle,
         _cursor: iced::canvas::Cursor,
     ) -> (iced::canvas::event::Status, Option<Msg>) {
-        self.size = Some(bounds.size());
+        if self.size != Some(bounds.size()) {
+            self.size = Some(bounds.size());
+            self.redraw();
+        }
         (event::Status::Ignored, None)
     }
     fn draw(
@@ -92,7 +105,7 @@ impl Program<Msg> for &mut Graph {
         let sz = bounds.size();
         let mut frame = Frame::new(sz);
         // let green_st = Stroke {
-        //     width: 1.5,
+        //     width: 0.5,
         //     color: Color::from_rgba8(0, 200, 0, 0.8),
         //     ..Stroke::default()
         // };
@@ -103,7 +116,7 @@ impl Program<Msg> for &mut Graph {
         // };
         // let orange_st = Stroke {
         //     width: 1.5,
-        //     color: Color::from_rgba8(255, 64, 0, 0.6),
+        //     color: Color::from_rgba8(255, 64, 0, 0.9),
         //     ..Stroke::default()
         // };
         // let black_st = Stroke {

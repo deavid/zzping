@@ -60,7 +60,7 @@ pub struct PointGraph {
 impl PointGraph {
     pub fn draw(&self, frame: &mut Frame, stroke: Stroke, vw: &Viewport) {
         let sz = frame.size();
-        let points_per_px = (self.points.len() as f32 / sz.width / vw.zoom as f32)
+        let points_per_px = (self.points.len() as f32 / sz.width / 400.0 / vw.zoom as f32)
             .floor()
             .max(1.0) as usize;
         let count = (self.points.len() as f64 / vw.zoom).ceil() as usize;
@@ -89,18 +89,23 @@ impl PointGraph {
                 let mut stroke = stroke;
                 let k = 2.0;
                 stroke.width = s.width / k;
-                s.width = 0.0;
+                s.width = stroke.width;
 
                 frame.stroke(&canvas::Path::rectangle(tl, s), stroke);
             } else {
                 if l.is_nan() || r.is_nan() {
                     continue;
                 }
-
+                let s = Size::new(stroke.width, stroke.width);
                 frame.stroke(
-                    &canvas::Path::line(self.to_screen(sz, &l, vw), self.to_screen(sz, &r, vw)),
+                    &canvas::Path::rectangle(self.to_screen(sz, &l, vw), s),
                     stroke,
                 );
+
+                // frame.stroke(
+                //     &canvas::Path::line(self.to_screen(sz, &l, vw), self.to_screen(sz, &r, vw)),
+                //     stroke,
+                // );
             }
         }
     }
@@ -135,9 +140,10 @@ impl PointGraph {
         }
         ret
     }
-    pub fn from_firdct(fir: &FirPing, zoom: f64, sz: Size) -> Self {
-        let len = (fir.rtt.len() as f64 / zoom) as usize;
-        let data = fir.dct.export(len);
+    pub fn from_firdct(fir: &FirPing, zoom: f64, sz: Size, loss: f64) -> Self {
+        let width = sz.width as f64 * zoom * 8.0;
+        let len = width.ceil() as usize;
+        let data = fir.dct.export(len, loss);
         let len = data.len();
         let mut x = fir.cfg.start.timestamp_f64();
         let interval = fir.cfg.interval.as_secs_f64();
@@ -145,6 +151,20 @@ impl PointGraph {
         let mut ret = Self::default();
         for y in data {
             ret.points.push(Point2D { x, y });
+            x += interval;
+        }
+        ret
+    }
+    pub fn from_firdctdbg(fir: &FirPing) -> Self {
+        let mean = fir.dct.data[0];
+        let mut x = fir.cfg.start.timestamp_f64();
+        let interval = fir.cfg.interval.as_secs_f64();
+        let mut ret = Self::default();
+        for y in fir.dct.data.iter().copied() {
+            ret.points.push(Point2D {
+                x,
+                y: (y * 300.0) + mean,
+            });
             x += interval;
         }
         ret
