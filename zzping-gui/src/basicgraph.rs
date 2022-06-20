@@ -32,7 +32,7 @@ impl Graph {
         self.vw = Viewport::default();
 
         //for p in self.data.iter().take(7300).skip(7100) {
-        for p in self.data.iter().take(100_000) {
+        for p in self.data.iter().take(1_000_000) {
             let t = p.received;
             let r = p.rtt_us;
             self.vw.extend(t, r as f64 / 1_000_000.0);

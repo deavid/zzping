@@ -1,19 +1,13 @@
+use crate::chronohelpers::ChronoHelperDuration;
+use crate::framedataq::{Complete, FrameDataQ};
+use anyhow::{Context, Result};
+use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc, MIN_DATETIME};
 use std::{
     collections::VecDeque,
     io::{BufRead, BufReader, Read, Write},
     net::IpAddr,
     time::{Duration, Instant},
 };
-
-use crate::chronohelpers::ChronoHelperDuration;
-
-use crate::{
-    framedataq::{Complete, FrameDataQ},
-    sin_integral::sinc_cumulative,
-};
-use anyhow::{Context, Result};
-
-use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc, MIN_DATETIME};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -109,11 +103,11 @@ impl FirPing {
         ret
     }
     fn load(&mut self, pings: &[Ping], dev: i32) {
-        use probability::distribution::Distribution;
+        use crate::window::GAUSS_WINDOW;
+        use crate::window::SINC_WINDOW;
         let w_size_secs: f64 = self.cfg.window_size.as_secs_f64();
         let interval = self.cfg.interval.as_secs_f64();
         let w_width = w_size_secs / interval;
-        let window = probability::distribution::Gaussian::new(0.0, w_width);
         let sigmas = w_size_secs / interval * self.cfg.sigmas;
 
         let size_secs = self
@@ -124,28 +118,54 @@ impl FirPing {
 
         let fir_size = (size_secs / interval).ceil() as usize + 1;
         self.rtt = vec![(0.0, 0.0); fir_size];
+        let dur: Vec<_> = pings
+            .iter()
+            .map(|p| {
+                p.received
+                    .signed_duration_since(self.cfg.start)
+                    .as_secs_f64()
+            })
+            .collect();
 
-        for p in pings {
+        for (n, p) in pings.iter().enumerate() {
             let rtt = p.rtt_us as f64 / 1_000_000.0;
             let rtt2 = (p.rtt_us as f64 / 10_000.0).powi(dev);
-            let d = p
-                .received
-                .signed_duration_since(self.cfg.start)
-                .as_secs_f64();
+            let d = dur[n];
             let pos = d / interval;
-            let l = (pos - sigmas).floor().max(0.0) as usize;
-            let r = (pos + sigmas).ceil().min((fir_size - 1) as f64) as usize;
+            let prev_pos = dur[(n.saturating_sub(2)).clamp(0, dur.len() - 1)] / interval;
+            let next_pos = dur[(n + 2).clamp(0, dur.len() - 1)] / interval;
+            // Scale factor finds gaps (packet loss) and ensures they have data in between (i.e. no NaN)
+            let scale_factor_r = ((next_pos - pos) / 2.0).max(1.0);
+            let scale_factor_l = ((pos - prev_pos) / 2.0).max(1.0);
+            let scale_factor = (scale_factor_l + scale_factor_r) / 2.0;
+            let l = (pos - sigmas * scale_factor_l).floor().max(0.0) as usize;
+            let r = (pos + sigmas * scale_factor_r)
+                .ceil()
+                .min((fir_size - 1) as f64) as usize;
+            let wpos = l as f64 - pos;
+
+            let mut prev_density_gauss = GAUSS_WINDOW.get(wpos - 0.5, w_width);
+            let mut prev_density_sinc = SINC_WINDOW.get(wpos - 0.5, w_width);
+            let mut prev_density_gauss2 = GAUSS_WINDOW.get(wpos - 0.5, w_width * scale_factor);
+
             for n in l..=r {
                 let wpos = n as f64 - pos;
-                let density_gauss =
-                    window.distribution(wpos + 0.5) - window.distribution(wpos - 0.5);
-                let density_sinc =
-                    sinc_cumulative(wpos + 0.5, w_width) - sinc_cumulative(wpos - 0.5, w_width);
-                let factor_1 = 2.0;
-                let density_gauss2 = window.distribution((wpos + 0.5) * factor_1)
-                    - window.distribution((wpos - 0.5) * factor_1);
-                let density = density_sinc * density_gauss + density_gauss2 * 0.1;
-                let density = density.powf(dev.abs() as f64 + 1.0);
+                let next_density_gauss = GAUSS_WINDOW.get(wpos + 0.5, w_width);
+                let next_density_sinc = SINC_WINDOW.get(wpos + 0.5, w_width);
+                let next_density_gauss2 = GAUSS_WINDOW.get(wpos + 0.5, w_width * scale_factor);
+
+                // dbg!(wpos);
+                let density_gauss = next_density_gauss - prev_density_gauss;
+                let density_sinc = next_density_sinc - prev_density_sinc;
+                let density_gauss2 = next_density_gauss2 - prev_density_gauss2;
+
+                prev_density_gauss = next_density_gauss;
+                prev_density_gauss2 = next_density_gauss2;
+                prev_density_sinc = next_density_sinc;
+
+                let density = density_sinc * density_gauss + density_gauss2 * 0.01;
+                // x.powf is extremely slow!
+                // let density = density.powf(dev.abs() as f64 + 1.0);
                 // println!("{},{}", wpos, density);
                 let rdens = rtt * rtt2 * density;
                 let item = self.rtt.get_mut(n).unwrap();
@@ -260,6 +280,19 @@ impl Dct {
             dbg!(diff * 100.0);
         }
         buffer
+    }
+
+    pub fn from_dct(d: &[f64]) -> Self {
+        use rustdct::DctPlanner;
+        let mut planner = DctPlanner::new();
+        let mut buffer = d.to_owned();
+        let len = d.len();
+        let dct3 = planner.plan_dct3(len);
+        dct3.process_dct3(&mut buffer);
+        Self {
+            orig_data: buffer,
+            data: d.to_owned(),
+        }
     }
 }
 

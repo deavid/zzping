@@ -102,10 +102,10 @@ impl PointGraph {
                     stroke,
                 );
 
-                // frame.stroke(
-                //     &canvas::Path::line(self.to_screen(sz, &l, vw), self.to_screen(sz, &r, vw)),
-                //     stroke,
-                // );
+                frame.stroke(
+                    &canvas::Path::line(self.to_screen(sz, &l, vw), self.to_screen(sz, &r, vw)),
+                    stroke,
+                );
             }
         }
     }

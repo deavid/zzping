@@ -464,5 +464,5 @@ pub fn sinc_int_norm(x: f64) -> f64 {
 }
 
 pub fn sinc_cumulative(x: f64, width: f64) -> f64 {
-    xsin_integral_si(x * std::f64::consts::PI / width) / std::f64::consts::PI
+    sinc_int_norm(x / width)
 }

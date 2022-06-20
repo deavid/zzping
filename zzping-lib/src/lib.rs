@@ -14,6 +14,10 @@
 
 //! This contains all the tooling for reading and writting messages of differnt
 //! formats. This library is common to all programs of the zzping suite.
+
+#[macro_use]
+extern crate lazy_static;
+
 pub mod batchdata;
 pub mod chronohelpers;
 pub mod compress;
@@ -23,6 +27,7 @@ pub mod framedataq;
 pub mod framestats;
 pub mod pingdata;
 pub mod sin_integral;
+pub mod window;
 
 /// This is a test macro that tries to do a dbg!() but inlined. Takes less space.
 #[macro_export]
