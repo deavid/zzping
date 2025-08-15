@@ -43,7 +43,7 @@ impl Graph {
             start: self.vw.left_time,
             end: self.vw.right_time,
             interval: Duration::from_millis(msec),
-            window_size: Duration::from_millis(msec),
+            window_size: Duration::from_millis(msec * 11),
             sigmas: 6.0,
         };
         self.firdata3 = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, 0);
@@ -56,7 +56,7 @@ impl Graph {
         };
         let w = 7;
         self.firdata2 = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, w);
-        // self.firdata = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, -w);
+        self.firdata = FirPing::from_pings(&cfg, Duration::from_millis(10), &self.data, -w);
 
         self.redraw();
 
@@ -68,9 +68,10 @@ impl Graph {
                 self.mean_pings =
                     PointGraph::from_firdct(&self.firdata3, self.vw.zoom, sz, self.test);
                 // self.mean_pings = PointGraph::from_firdctdbg(&self.firdata3);
-                // self.stddevup_pings =
-                //     PointGraph::from_firdct(&self.firdata2, self.vw.zoom, sz, self.test);
-                // self.stddevdown_pings = PointGraph::from_firdct(&self.firdata, self.vw.zoom, sz);
+                self.stddevup_pings =
+                    PointGraph::from_firdct(&self.firdata2, self.vw.zoom, sz, self.test);
+                // self.stddevdown_pings =
+                //     PointGraph::from_firdct(&self.firdata, self.vw.zoom, sz, self.test);
             }
         }
     }
@@ -114,11 +115,11 @@ impl Program<Msg> for &mut Graph {
         //     color: Color::from_rgba8(255, 192, 0, 0.5),
         //     ..Stroke::default()
         // };
-        // let orange_st = Stroke {
-        //     width: 1.5,
-        //     color: Color::from_rgba8(255, 64, 0, 0.9),
-        //     ..Stroke::default()
-        // };
+        let orange_st = Stroke {
+            width: 0.5,
+            color: Color::from_rgba8(255, 64, 0, 0.9),
+            ..Stroke::default()
+        };
         // let black_st = Stroke {
         //     width: 1.5,
         //     color: Color::from_rgba8(0, 0, 0, 0.9),
@@ -131,7 +132,7 @@ impl Program<Msg> for &mut Graph {
         };
 
         // self.raw_pings.draw(&mut frame, green_st, &self.vw);
-        // self.stddevup_pings.draw(&mut frame, orange_st, &self.vw);
+        self.stddevup_pings.draw(&mut frame, orange_st, &self.vw);
         // self.stddevdown_pings.draw(&mut frame, yellow_st, &self.vw);
         self.mean_pings.draw(&mut frame, white_st, &self.vw);
 
