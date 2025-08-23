@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use crate::{
-    // fdq_graph::FDQGraph,
+    fdq_graph::FDQGraph,
     flags::{Flags, OtherOpts},
 };
 
@@ -47,7 +47,7 @@ pub struct PingmonGUI {
     pub graph: Vec<LatencyGraph>,
     pub graph_cache: Vec<iced::widget::canvas::Cache>,
     pub socket: Option<UdpSocket>,
-    // pub fdqgraph: FDQGraph,
+    pub fdqgraph: FDQGraph,
     // pub fdqgraph_cache: iced::widget::canvas::Cache,
     zoomw_slider: f32,
     zoomy_slider: f32,
@@ -66,7 +66,7 @@ impl Default for PingmonGUI {
             graph: Default::default(),
             graph_cache: Default::default(),
             socket: Default::default(),
-            // fdqgraph: Default::default(),
+            fdqgraph: Default::default(),
             // fdqgraph_cache: Default::default(),
             zoomw_slider: Default::default(),
             zoomy_slider: Default::default(),
@@ -211,11 +211,10 @@ impl PingmonGUI {
                 content = content.push(widget_graph);
             }
         } else {
-            // FIXME: This clones the graph data AND doesn't use the Cache!
-            // let graph = Canvas::new(self.fdqgraph.clone())
-            //     .width(Length::Fill)
-            //     .height(Length::Fill);
-            let placeholder_text = Text::new("FDQ Graph temporarily disabled during migration");
+            // FDQ Graph - re-enabled with iced 0.13 placeholder implementation  
+            let graph = Canvas::new(&self.fdqgraph)
+                .width(Length::Fill)
+                .height(Length::Fill);
 
             let controls = Row::new()
                 .padding(4)
@@ -257,7 +256,7 @@ impl PingmonGUI {
                     .step(0.01),
                 );
 
-            content = content.push(placeholder_text).push(controls);
+            content = content.push(graph).push(controls);
         }
         content.into()
     }
