@@ -6,7 +6,7 @@ edition = "2021"
 
 [dependencies]
 zzping-lib = { path = "../zzping-lib" }
-iced = { version = "0.13.1", features = ["canvas", "tokio"] }
+iced = { version = "0.13", features = ["canvas", "tokio"] }
 rand = "0.9"
 rmp = "0.8"
 ron = "0.10"

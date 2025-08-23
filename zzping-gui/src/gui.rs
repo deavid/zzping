@@ -20,7 +20,9 @@ use crate::{
 use super::flags::GuiConfig;
 use super::graph_plot::LatencyGraph;
 use super::udp_comm::UdpStats;
-use iced::widget::{Canvas, Column, Row, Slider, Text};
+use iced::widget::{
+    button, canvas, container, Canvas, Column, Container, Row, Slider, Stack, Text,
+};
 use iced::{Element, Length, Subscription, Task};
 use std::net::UdpSocket;
 use std::time::Instant;
@@ -38,11 +40,9 @@ pub enum Message {
 }
 
 pub struct PingmonGUI {
-    pub display_address: Vec<String>,
     pub guiconfig: GuiConfig,
     pub otheropts: OtherOpts,
     pub graph: Vec<LatencyGraph>,
-    pub graph_cache: Vec<iced::widget::canvas::Cache>,
     pub socket: Option<UdpSocket>,
     pub fdqgraph: FDQGraph,
     // pub fdqgraph_cache: iced::widget::canvas::Cache,
@@ -57,14 +57,11 @@ impl Default for PingmonGUI {
     fn default() -> Self {
         Self {
             posx_slider: 0.5,
-            display_address: vec![],
             guiconfig: Default::default(),
             otheropts: Default::default(),
             graph: Default::default(),
-            graph_cache: Default::default(),
             socket: Default::default(),
             fdqgraph: Default::default(),
-            // fdqgraph_cache: Default::default(),
             zoomw_slider: Default::default(),
             zoomy_slider: Default::default(),
             zoomx_slider: Default::default(),
@@ -103,10 +100,8 @@ impl PingmonGUI {
     fn tick(&mut self, instant: Instant) {
         if self.otheropts.input_file.is_none() {
             let stats = self.recv_all();
-            for (graph, canvas) in self.graph.iter_mut().zip(self.graph_cache.iter_mut()) {
-                if graph.update(instant, &stats) {
-                    canvas.clear();
-                }
+            for graph in self.graph.iter_mut() {
+                graph.update(instant, &stats);
             }
         } else {
             // if self.fdqgraph.update(instant) {
@@ -139,18 +134,11 @@ impl PingmonGUI {
 impl PingmonGUI {
     pub fn new(flags: Flags) -> Self {
         let mut app = Self {
-            display_address: flags.guiconfig.display_address.clone(),
             graph: flags
                 .guiconfig
                 .display_address
                 .iter()
                 .map(|addr| LatencyGraph::new(addr, flags.guiconfig.sample_limit))
-                .collect(),
-            graph_cache: flags
-                .guiconfig
-                .display_address
-                .iter()
-                .map(|_| Default::default())
                 .collect(),
 
             guiconfig: flags.guiconfig,
@@ -190,20 +178,21 @@ impl PingmonGUI {
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_millis(20)).map(Message::Tick)
+        iced::time::every(std::time::Duration::from_millis(50)).map(Message::Tick)
     }
 
     pub fn view(&self) -> Element<'_, Message> {
-        let mut content = Column::new().padding(0);
+        let mut content = Column::new().spacing(5).padding(1).clip(false);
         if self.otheropts.input_file.is_none() {
-            for (_addr, (graph, _cache)) in self
-                .display_address
-                .iter()
-                .zip(self.graph.iter().zip(self.graph_cache.iter()))
-            {
+            for graph in self.graph.iter() {
                 // Use Canvas with reference instead of clone in iced 0.13
-                let widget_graph = Canvas::new(graph).width(Length::Fill).height(Length::Fill);
-                content = content.push(widget_graph);
+                let widget_graph = Canvas::new(graph)
+                    .width(Length::Fill)
+                    .height(Length::Fixed(160.0));
+                // let container = Stack::new()
+                //     .push(widget_graph)
+                //     .push(Stack::new().height(Length::Fixed(160.0)));
+                content = content.push(widget_graph).width(Length::Fill);
             }
         } else {
             // FDQ Graph - re-enabled with iced 0.13 placeholder implementation
@@ -237,6 +226,6 @@ impl PingmonGUI {
 
             content = content.push(graph).push(controls);
         }
-        content.into()
+        container(content).into()
     }
 }

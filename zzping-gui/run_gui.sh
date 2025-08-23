@@ -8,7 +8,9 @@
 # Alternative: Force Wayland backend if X11 doesn't work
 # export WINIT_UNIX_BACKEND=wayland
 
+# this fixes most of the problems
 export ICED_BACKEND=tiny-skia
-
+# alternative that also works:
+# export WGPU_BACKEND=gl
 echo "Running zzping-gui with X11 compatibility settings..."
 RUST_BACKTRACE=1 cargo run --release "$@"
