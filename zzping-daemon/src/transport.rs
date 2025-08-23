@@ -138,7 +138,7 @@ impl Destination {
             last_pckt_sent: Instant::now() - interval,
             interval,
             seq: 1,
-            ident: rand::thread_rng().gen(),
+            ident: rand::thread_rng().r#gen(),
             inflight_packets: vec![],
             recv_packets: vec![],
             lost_packets: vec![],
@@ -298,13 +298,13 @@ impl Destination {
                 self.inflight_packets.push(packet);
 
                 // The sequence is random to avoid a device "guessing" what the next sequence will be.
-                self.seq = rng.gen();
+                self.seq = rng.r#gen();
                 while self
                     .inflight_packets
                     .iter()
                     .any(|p| p.data.seqn == self.seq)
                 {
-                    self.seq = rng.gen();
+                    self.seq = rng.r#gen();
                 }
                 self.sent_count += 1;
                 true

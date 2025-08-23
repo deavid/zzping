@@ -35,7 +35,7 @@ macro_rules! dbgf {
     () => {
         eprintln!("[{}:{}]", file!(), line!());
     };
-    ($val:expr $(,)?) => {
+    ($val:expr_2021 $(,)?) => {
         match $val {
             tmp => {
                 eprintln!("[{}:{}] {} = {:?}",
@@ -44,7 +44,7 @@ macro_rules! dbgf {
             }
         }
     };
-    ($($val:expr),+ $(,)?) => {
+    ($($val:expr_2021),+ $(,)?) => {
         ($($crate::dbgf!($val)),+,)
     };
 }
