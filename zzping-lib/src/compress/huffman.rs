@@ -211,7 +211,7 @@ impl Compress<u64> for HuffmanU64 {
                         .or_else(|| weights.get_key_value(&kl));
 
                     if let Some(kv) = new {
-                        if translate.get(kv.0).is_none() {
+                        if !translate.contains_key(kv.0) {
                             let dk: u64 = *kv.0;
                             translate.insert(k, dk);
                             *weights.get_mut(&k).unwrap() = 0;

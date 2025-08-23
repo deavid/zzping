@@ -1,7 +1,7 @@
 use crate::chronohelpers::ChronoHelperDuration;
 use crate::framedataq::{Complete, FrameDataQ};
 use anyhow::{Context, Result};
-use chrono::{DateTime, NaiveDateTime, SecondsFormat, Utc, MIN_DATETIME};
+use chrono::{DateTime, SecondsFormat, Utc};
 use std::{
     collections::VecDeque,
     io::{BufRead, BufReader, Read, Write},
@@ -33,10 +33,8 @@ impl Ping {
         let sub_ms = frame.subsec_ms.try_abs().context("sub_ms parse")? as u64;
         let ts = ts + sub_ms / 1000;
         let sub_ms = sub_ms % 1000;
-        let received = DateTime::<Utc>::from_utc(
-            NaiveDateTime::from_timestamp(ts as i64, sub_ms as u32 * 1_000_000),
-            Utc,
-        );
+        let received =
+            DateTime::<Utc>::from_timestamp(ts as i64, sub_ms as u32 * 1_000_000).unwrap();
         let rtt_us = frame.recv_us[3];
         Ok(Self { received, rtt_us })
     }
@@ -63,8 +61,8 @@ pub struct FirPingConfig {
 impl Default for FirPingConfig {
     fn default() -> Self {
         Self {
-            start: MIN_DATETIME,
-            end: MIN_DATETIME,
+            start: DateTime::<Utc>::MIN_UTC,
+            end: DateTime::<Utc>::MIN_UTC,
             interval: Default::default(),
             window_size: Default::default(),
             sigmas: Default::default(),
@@ -356,8 +354,7 @@ impl StreamData {
         let initial_time: DateTime<Utc> =
             DateTime::parse_from_rfc3339(buf[left.len()..buf.len()].trim().trim_matches('"'))
                 .with_context(|| format!("initial_time value from: {:?}", buf))?
-                .try_into()
-                .with_context(|| format!("initial_time value from (TZ): {:?}", buf))?;
+                .into();
 
         // Pending pings
         buf.clear();

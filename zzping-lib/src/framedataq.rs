@@ -14,7 +14,7 @@
 
 use std::{collections::VecDeque, marker::PhantomData};
 
-use chrono::{DateTime, NaiveDateTime, Utc};
+use chrono::{DateTime, Utc};
 use dynrmp::variant::Variant;
 
 use anyhow::{Context, Result};
@@ -152,8 +152,7 @@ impl<Complete> FrameDataQ<Complete> {
     pub fn get_datetime(&self) -> DateTime<Utc> {
         let ts = self.timestamp.unwrap();
         let subsec_ms = self.subsec_ms.unwrap_abs();
-        let dt = NaiveDateTime::from_timestamp_opt(ts, subsec_ms * 1000 * 1000).unwrap();
-        DateTime::from_utc(dt, Utc)
+        DateTime::<Utc>::from_timestamp(ts, subsec_ms * 1000 * 1000).unwrap()
     }
     pub fn get_timestamp_ms(&self) -> i128 {
         let ts = self.timestamp.unwrap();
@@ -201,8 +200,7 @@ impl<Complete> FrameDataQ<Complete> {
         let timestamp = Some((mean_ts / 1000) as i64);
         let subsec_ms = SubSecType::Abs((mean_ts % 1000) as u32);
         // let inflight: usize = data.iter().map(|x| x.inflight).max().unwrap();
-        let inflight: f32 = (data.iter().map(|x| x.inflight.powi(2)).sum::<f32>()
-            / datalen as f32)
+        let inflight: f32 = (data.iter().map(|x| x.inflight.powi(2)).sum::<f32>() / datalen as f32)
             .powf(2.0_f32.recip());
         let lost_packets: f32 = data.iter().map(|x| x.lost_packets).sum::<f32>() / datalen as f32;
         let recv_us_len: usize = data.iter().map(|x| x.recv_us_len).sum::<usize>() / datalen;

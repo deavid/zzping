@@ -284,7 +284,9 @@ impl canvas::Program<Message> for FDQGraph {
         let fill_r4 = fill_color(color_r4);
         let fill_r5 = fill_color(color_r5);
         let fill_r6 = fill_color(color_r6);
-        let fill_recv = [fill_r0, fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6];
+        let fill_recv = [
+            fill_r0, fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6,
+        ];
         let fill_inflight = fill_color(color_inflight);
         let fill_lost = fill_color(color_lost);
 

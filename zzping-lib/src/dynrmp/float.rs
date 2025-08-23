@@ -47,7 +47,7 @@ impl PartialEq for Float {
 
 impl PartialOrd for Float {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.v.partial_cmp(&other.v)
+        Some(self.cmp(other))
     }
 }
 
