@@ -12,6 +12,7 @@ use crate::{
 };
 
 // Temporary message type since firtest is disabled
+#[allow(dead_code)]
 #[derive(Debug, Clone, Copy)]
 pub enum Msg {
     Tick(std::time::Instant),
@@ -25,6 +26,7 @@ pub struct Graph {
     pub raw_pings: PointGraph,
     pub mean_pings: PointGraph,
     pub stddevup_pings: PointGraph,
+    #[allow(dead_code)]
     pub stddevdown_pings: PointGraph,
     pub data: Vec<Ping>,
     pub vw: Viewport,

@@ -61,25 +61,17 @@ pub fn main() -> Result<()> {
     };
 
     if opts.firtest {
-        iced::application(
-            "FirTest",
-            firtest::FirTest::update,
-            firtest::FirTest::view,
-        )
-        .subscription(firtest::FirTest::subscription)
-        .run_with({
-            let flags = flags.clone();
-            move || firtest::FirTest::new(flags)
-        })
-        .context("FirTest error")
+        iced::application("FirTest", firtest::FirTest::update, firtest::FirTest::view)
+            .subscription(firtest::FirTest::subscription)
+            .run_with({
+                let flags = flags.clone();
+                move || firtest::FirTest::new(flags)
+            })
+            .context("FirTest error")
     } else {
-        iced::application(
-            "Ping Monitor",
-            PingmonGUI::update,
-            PingmonGUI::view,
-        )
-        .subscription(PingmonGUI::subscription)
-        .run_with(|| (PingmonGUI::new(flags), iced::Task::none()))
-        .context("PingmonGUI errored out")
+        iced::application("Ping Monitor", PingmonGUI::update, PingmonGUI::view)
+            .subscription(PingmonGUI::subscription)
+            .run_with(|| (PingmonGUI::new(flags), iced::Task::none()))
+            .context("PingmonGUI errored out")
     }
 }

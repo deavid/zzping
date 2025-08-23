@@ -15,12 +15,10 @@
 use std::{fs::File, io::BufReader, time::Instant};
 
 use iced::{
-    widget::canvas::{self, path, Path, Stroke, Cache, Text},
-    Color, Point, Size, Vector, Rectangle,
+    widget::canvas::{self, path, Cache, Path, Stroke},
+    Color, Point, Rectangle, Size, Vector,
 };
 use zzping_lib::framedataq::{Complete, FDCodecIter, FrameDataQ, IterFold, SubSecType};
-
-use crate::gui::Message;
 
 #[derive(Debug, Default, Copy, Clone)]
 pub struct FrameScaler {
@@ -108,6 +106,7 @@ impl PlotAssist {
 pub struct FDQGraph {
     fd: Vec<FrameDataQ<Complete>>,
     fdcache: Vec<(i64, Vec<FrameDataQ<Complete>>)>,
+    #[allow(dead_code)]
     changed: bool,
     zoomx: f64,
     posx: f64,
@@ -138,6 +137,7 @@ impl Default for FDQGraph {
 }
 
 impl FDQGraph {
+    #[allow(dead_code)]
     pub fn load_file(&mut self, filename: &str) {
         let timer = Instant::now();
         eprintln!("Loading file: {}", filename);
@@ -230,25 +230,30 @@ impl FDQGraph {
         self.changed = true;
         eprintln!("caching finished: {:?}", timer.elapsed());
     }
+    #[allow(dead_code)]
     pub fn update(&mut self, _now: Instant) -> bool {
         let ret = self.changed;
         self.changed = false;
         ret
     }
+    #[allow(dead_code)]
     pub fn set_zoomy(&mut self, z: f64) {
         self.zoomy = z;
         self.changed = true;
     }
+    #[allow(dead_code)]
     pub fn set_zoomx(&mut self, z: f64) {
         self.zoomx = z;
         self.changed = true;
     }
+    #[allow(dead_code)]
     pub fn set_posx(&mut self, x: f64) {
         if (x - self.posx).abs() > 1e-12 {
             self.posx = x;
             self.changed = true;
         }
     }
+    #[allow(dead_code)]
     pub fn set_scalefactor(&mut self, z: f64) {
         self.scale_factor = z;
         self.changed = true;
@@ -275,7 +280,7 @@ impl<Message> canvas::Program<Message> for FDQGraph {
     ) -> Vec<iced::widget::canvas::Geometry> {
         let timer_begin = Instant::now();
         let f = FrameScaler::new(&bounds);
-        
+
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
             let color_r0 = Color::from_rgba8(100, 50, 50, 1.0);
             let color_r1 = Color::from_rgba8(220, 50, 50, 1.0);
@@ -291,12 +296,8 @@ impl<Message> canvas::Program<Message> for FDQGraph {
             let white90 = Color::from_rgba8(255, 255, 255, 0.9);
             let black90 = Color::from_rgba8(0, 0, 0, 0.9);
             let black50 = Color::from_rgba8(0, 0, 0, 0.5);
-            let green_stroke = Stroke::default()
-                .with_width(1.0)
-                .with_color(green10);
-            let black_stroke = Stroke::default()
-                .with_width(0.9)
-                .with_color(black50);
+            let green_stroke = Stroke::default().with_width(1.0).with_color(green10);
+            let black_stroke = Stroke::default().with_width(0.9).with_color(black50);
             let fill_r0 = fill_color(color_r0);
             let fill_r1 = fill_color(color_r1);
             let fill_r2 = fill_color(color_r2);
@@ -316,7 +317,7 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                 rule: iced::widget::canvas::fill::Rule::NonZero,
             };
             frame.fill(&space, background_fill);
-            
+
             if self.fd.is_empty() {
                 let line = canvas::Path::line(f.pt(0.0, 0.0), f.pt(1.0, 1.0));
                 frame.stroke(&line, green_stroke);
@@ -343,7 +344,7 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                 let substep = (ifd.len() * total_sublimit / total_limit)
                     .min(total_sublimit)
                     .max(1);
-                    
+
                 let time_chunks = Instant::now();
                 let fd: Vec<_> = match step > 1 {
                     true => ifd.chunks(step).map(FrameDataQ::fold_vec).collect(),
@@ -401,11 +402,14 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                     points.push(points_i)
                 }
 
-                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 2.0), f.pt(1.0, 1.0 - 1.0 / 2.0));
+                let line =
+                    canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 2.0), f.pt(1.0, 1.0 - 1.0 / 2.0));
                 frame.stroke(&line, black_stroke);
-                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 4.0), f.pt(1.0, 1.0 - 1.0 / 4.0));
+                let line =
+                    canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 4.0), f.pt(1.0, 1.0 - 1.0 / 4.0));
                 frame.stroke(&line, black_stroke);
-                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 16.0), f.pt(1.0, 1.0 - 1.0 / 16.0));
+                let line =
+                    canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 16.0), f.pt(1.0, 1.0 - 1.0 / 16.0));
                 frame.stroke(&line, black_stroke);
 
                 let mut path_bldr: Vec<_> = (0..7).map(|_| path::Builder::new()).collect();
@@ -483,17 +487,21 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                 let fd_mid = fd[mid_pos as usize];
 
                 // Zoom X locator
-                let line = canvas::Path::line(f.pt(self.posx as f32, 0.0), f.pt(self.posx as f32, 1.0));
+                let line =
+                    canvas::Path::line(f.pt(self.posx as f32, 0.0), f.pt(self.posx as f32, 1.0));
                 frame.stroke(&line, black_stroke);
 
                 // Ping timing lines - vertical
-                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 2.0), f.pt(1.0, 1.0 - 1.0 / 2.0));
+                let line =
+                    canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 2.0), f.pt(1.0, 1.0 - 1.0 / 2.0));
                 frame.stroke(&line, black_stroke);
-                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 4.0), f.pt(1.0, 1.0 - 1.0 / 4.0));
+                let line =
+                    canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 4.0), f.pt(1.0, 1.0 - 1.0 / 4.0));
                 frame.stroke(&line, black_stroke);
-                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 16.0), f.pt(1.0, 1.0 - 1.0 / 16.0));
+                let line =
+                    canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 16.0), f.pt(1.0, 1.0 - 1.0 / 16.0));
                 frame.stroke(&line, black_stroke);
-                
+
                 let vw_width = (fd_last.get_datetime() - fd_first.get_datetime())
                     .to_std()
                     .unwrap();
@@ -520,7 +528,7 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                     ..text.clone()
                 });
                 frame.fill_text(text);
-                
+
                 let text = iced::widget::canvas::Text {
                     content: format!(
                         "Viewport width: {}\nZoom: {:.2}x / Points in view: {}\n{}",
@@ -544,7 +552,7 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                     ..text.clone()
                 });
                 frame.fill_text(text);
-                
+
                 let text = iced::widget::canvas::Text {
                     content: format!(
                         "{} - {:.2}ms",
@@ -566,7 +574,7 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                     ..text.clone()
                 });
                 frame.fill_text(text);
-                
+
                 let text = iced::widget::canvas::Text {
                     content: format!(
                         "{:.2}ms",
@@ -587,7 +595,7 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                     ..text.clone()
                 });
                 frame.fill_text(text);
-                
+
                 let text = iced::widget::canvas::Text {
                     content: format!(
                         "{:.2}ms",
@@ -608,7 +616,7 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                     ..text.clone()
                 });
                 frame.fill_text(text);
-                
+
                 let text = iced::widget::canvas::Text {
                     content: format!(
                         "{:.2}ms",
@@ -631,7 +639,7 @@ impl<Message> canvas::Program<Message> for FDQGraph {
                 frame.fill_text(text);
             }
         });
-        
+
         if timer_begin.elapsed().as_millis() > 50 {
             dbg!(timer_begin.elapsed());
         }
