@@ -1,8 +1,7 @@
 use crate::{basicgraph, flags::Flags};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use iced::{Alignment, Subscription};
-use iced::application::Application;
+use iced::{Alignment, Subscription, Element, Length, Task};
 use iced::widget::{Canvas, Column, Slider, Text};
 use log::{info, warn};
 use std::{collections::VecDeque, fs::File, io::BufReader, time::Instant};
@@ -18,6 +17,7 @@ pub enum Msg {
     ZoomChange(f64),
     TestChange(f64),
 }
+
 #[derive(Debug, Default)]
 pub struct Widgets {
     ping_graph: basicgraph::Graph,
@@ -32,9 +32,6 @@ pub struct FirTest {
     should_quit: bool,
     widgets: Widgets,
 }
-
-type Cmd = iced::Task<Msg>;
-type Elem<'a> = iced::Element<'a, Msg>;
 
 impl FirTest {
     fn startup(&mut self) -> Result<()> {
@@ -165,53 +162,50 @@ impl FirTest {
         self.widgets.ping_graph.update_test(test);
     }
 }
-impl Application for FirTest {
-    type Message = Msg;
+impl FirTest {
+    pub fn new(flags: Flags) -> (Self, Task<Msg>) {
+        let ret = Self {
+            flags,
+            ..Default::default()
+        };
+        let task = Task::perform(async { Msg::Startup }, |x| x);
+        (ret, task)
+    }
 
-    type Executor = iced::executor::Default;
-
-    type Flags = Flags;
-
-    fn title(&self) -> String {
+    pub fn title(&self) -> String {
         "FIR Test".to_string()
     }
 
-    fn update(&mut self, msg: Msg) -> Cmd {
+    pub fn update(&mut self, msg: Msg) -> Task<Msg> {
         if let Err(e) = self.process_message(msg) {
             eprintln!("{:#?}", e);
             eprintln!("ERROR: {}", e);
             self.should_quit = true;
         }
-        Cmd::none()
+        Task::none()
     }
-    fn subscription(&self) -> Subscription<Msg> {
-                iced::time::every(std::time::Duration::from_millis(1000)).map(Msg::Tick)
+    
+    pub fn subscription(&self) -> Subscription<Msg> {
+        iced::time::every(std::time::Duration::from_millis(1000)).map(Msg::Tick)
     }
 
-    fn view(&mut self) -> Elem<'_> {
+    pub fn view(&self) -> Element<'_, Msg> {
         let input = self.flags.otheropts.input_file.clone().unwrap_or_default();
         Column::new()
             .padding(5)
-            .align_items(Alignment::Center)
+            .align_x(Alignment::Center)
             .push(Text::new(input).size(20).color(iced::Color::WHITE))
             .push(
-                Canvas::new(&mut self.widgets.ping_graph)
-                    .height(iced::Length::Fill)
-                    .width(iced::Length::Fill),
+                Canvas::new(&self.widgets.ping_graph)
+                    .height(Length::Fill)
+                    .width(Length::Fill),
             )
-            // .push(
-            //     Canvas::new(&mut self.widgets.loss_graph)
-            //         .height(iced::Length::Fill)
-            //         .width(iced::Length::Fill),
-            // )
             .push(Slider::new(
-                &mut self.widgets.zoom_state,
                 0.0..=1000.0,
                 self.widgets.zoom,
                 Msg::ZoomChange,
             ))
             .push(Slider::new(
-                &mut self.widgets.test_state,
                 0.0..=1000.0,
                 self.widgets.test,
                 Msg::TestChange,
@@ -219,21 +213,11 @@ impl Application for FirTest {
             .into()
     }
 
-    fn new(flags: Flags) -> (Self, Cmd) {
-        let ret = Self {
-            flags,
-            ..Default::default()
-        };
-        let msg = Cmd::perform(async { Msg::Startup }, |x| x);
-
-        (ret, msg)
-    }
-
-    fn background_color(&self) -> iced::Color {
+    pub fn background_color(&self) -> iced::Color {
         iced::Color::from_rgb(0.25, 0.25, 0.30)
     }
 
-    fn should_exit(&self) -> bool {
+    pub fn should_exit(&self) -> bool {
         self.should_quit
     }
 }

@@ -273,29 +273,368 @@ impl<Message> canvas::Program<Message> for FDQGraph {
         bounds: Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> Vec<iced::widget::canvas::Geometry> {
+        let timer_begin = Instant::now();
+        let f = FrameScaler::new(&bounds);
+        
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
-            // Simple placeholder implementation for now
-            let background = canvas::Path::rectangle(Point::new(0.0, 0.0), bounds.size());
-            let fill = iced::widget::canvas::Fill {
-                style: Color::from_rgba8(60, 60, 60, 1.0).into(),
+            let color_r0 = Color::from_rgba8(100, 50, 50, 1.0);
+            let color_r1 = Color::from_rgba8(220, 50, 50, 1.0);
+            let color_r2 = Color::from_rgba8(200, 150, 50, 1.0);
+            let color_r3 = Color::from_rgba8(200, 200, 50, 1.0);
+            let color_r4 = Color::from_rgba8(50, 220, 50, 1.0);
+            let color_r5 = Color::from_rgba8(50, 200, 200, 1.0);
+            let color_r6 = Color::from_rgba8(50, 150, 200, 1.0);
+            let color_inflight = Color::from_rgba8(0, 0, 0, 0.3);
+            let color_lost = Color::from_rgba8(255, 0, 0, 0.1);
+
+            let green10 = Color::from_rgba8(0, 255, 0, 0.1);
+            let white90 = Color::from_rgba8(255, 255, 255, 0.9);
+            let black90 = Color::from_rgba8(0, 0, 0, 0.9);
+            let black50 = Color::from_rgba8(0, 0, 0, 0.5);
+            let green_stroke = Stroke::default()
+                .with_width(1.0)
+                .with_color(green10);
+            let black_stroke = Stroke::default()
+                .with_width(0.9)
+                .with_color(black50);
+            let fill_r0 = fill_color(color_r0);
+            let fill_r1 = fill_color(color_r1);
+            let fill_r2 = fill_color(color_r2);
+            let fill_r3 = fill_color(color_r3);
+            let fill_r4 = fill_color(color_r4);
+            let fill_r5 = fill_color(color_r5);
+            let fill_r6 = fill_color(color_r6);
+            let fill_recv = [
+                fill_r0, fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6,
+            ];
+            let fill_inflight = fill_color(color_inflight);
+            let fill_lost = fill_color(color_lost);
+
+            let space = Path::rectangle(f.pt(0.0, 0.0), f.sz(1.0, 1.0));
+            let background_fill = iced::widget::canvas::Fill {
+                style: Color::from_rgba8(100, 100, 100, 1.0).into(),
                 rule: iced::widget::canvas::fill::Rule::NonZero,
             };
-            frame.fill(&background, fill);
+            frame.fill(&space, background_fill);
             
-            // Add placeholder text
-            frame.fill_text(iced::widget::canvas::Text {
-                content: "FDQ Graph - Migration in Progress".to_string(),
-                position: Point::new(bounds.width / 2.0, bounds.height / 2.0),
-                color: Color::WHITE,
-                size: iced::Pixels(16.0),
-                font: iced::Font::default(),
-                horizontal_alignment: iced::alignment::Horizontal::Center,
-                vertical_alignment: iced::alignment::Vertical::Center,
-                line_height: iced::widget::text::LineHeight::default(),
-                shaping: iced::widget::text::Shaping::default(),
-            });
+            if self.fd.is_empty() {
+                let line = canvas::Path::line(f.pt(0.0, 0.0), f.pt(1.0, 1.0));
+                frame.stroke(&line, green_stroke);
+            } else {
+                let total_sublimit = 4;
+                let total_limit = 500 * total_sublimit;
+                let total_cache = total_limit * 3 / 2;
+                let mut fd = &self.fd;
+                let mut cache_step = 1;
+                let ifd_len = (fd.len() as f64 / self.zoomx) as i64;
+
+                for (s, cache) in self.fdcache.iter() {
+                    if cache.len() as f64 / self.zoomx > total_cache as f64 {
+                        fd = cache;
+                        cache_step = *s;
+                    }
+                }
+                let zoomx = self.zoomx.min(fd.len() as f64 / 2.0);
+                let len = (fd.len() as f64 / zoomx).round() as usize;
+                let zero = ((fd.len() - len) as f64 * self.posx) as usize;
+                let ifd = &fd[zero..len + zero];
+
+                let step = (ifd.len() / total_limit).max(1);
+                let substep = (ifd.len() * total_sublimit / total_limit)
+                    .min(total_sublimit)
+                    .max(1);
+                    
+                let time_chunks = Instant::now();
+                let fd: Vec<_> = match step > 1 {
+                    true => ifd.chunks(step).map(FrameDataQ::fold_vec).collect(),
+                    false => ifd.to_vec(),
+                };
+                if time_chunks.elapsed().as_millis() > 10 {
+                    dbg!(time_chunks.elapsed());
+                    eprintln!("cache: {} step: {} substep: {}", cache_step, step, substep);
+                }
+                let time_windows = Instant::now();
+                let fd: Vec<_> = match substep > 1 {
+                    true => fd.windows(substep).map(FrameDataQ::fold_vec).collect(),
+                    false => fd.to_vec(),
+                };
+                if time_windows.elapsed().as_millis() > 10 {
+                    dbg!(time_windows.elapsed());
+                }
+
+                let min_ftime = fd
+                    .iter()
+                    .take(100)
+                    .map(|x| x.get_timestamp_ms())
+                    .min()
+                    .unwrap();
+                let max_ftime = fd[(fd.len() as i64 - 100).max(0) as usize..]
+                    .iter()
+                    .map(|x| x.get_timestamp_ms())
+                    .max()
+                    .unwrap();
+
+                let scale_factor = self.scale_factor;
+                let src_left = min_ftime as f64;
+                let src_right = max_ftime as f64;
+                let src_top = (self.max_recv as f64 * 1.5 / self.zoomy).powf(scale_factor);
+                let src_bottom = 0.0;
+
+                let pa = PlotAssist::new(PlotAssistCfg {
+                    fs: f,
+                    src_left,
+                    src_right,
+                    src_top,
+                    src_bottom,
+                });
+                let mut points: Vec<_> = vec![];
+                for i in 0..7 {
+                    let points_i: Vec<_> = fd
+                        .iter()
+                        .map(|x| {
+                            (
+                                x.get_timestamp_ms() as f64,
+                                (x.recv_us[i] as f64).max(0.0).powf(scale_factor),
+                            )
+                        })
+                        .collect();
+                    points.push(points_i)
+                }
+
+                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 2.0), f.pt(1.0, 1.0 - 1.0 / 2.0));
+                frame.stroke(&line, black_stroke);
+                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 4.0), f.pt(1.0, 1.0 - 1.0 / 4.0));
+                frame.stroke(&line, black_stroke);
+                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 16.0), f.pt(1.0, 1.0 - 1.0 / 16.0));
+                frame.stroke(&line, black_stroke);
+
+                let mut path_bldr: Vec<_> = (0..7).map(|_| path::Builder::new()).collect();
+                path_bldr.iter_mut().for_each(|b| b.move_to(f.pt(0.0, 1.0)));
+
+                let mut path_inflight = path::Builder::new();
+                path_inflight.move_to(f.pt(0.0, 1.0));
+
+                let mut path_lost = path::Builder::new();
+                path_lost.move_to(f.pt(0.0, 1.0));
+
+                let section_limit = 50;
+                let mut line_count = 0;
+                for (n, fp) in fd.iter().enumerate() {
+                    path_lost.line_to(pa.ptx(
+                        fp.get_timestamp_ms() as f64,
+                        1.0 - (fp.lost_packets as f64 * 10.0 / self.max_lostpackets as f64).tanh(),
+                    ));
+                    path_inflight.line_to(pa.ptx(
+                        fp.get_timestamp_ms() as f64,
+                        1.0 - (fp.inflight as f64 * 10.0 / self.max_inflight as f64).tanh(),
+                    ));
+                    path_bldr
+                        .iter_mut()
+                        .zip(points.iter())
+                        .for_each(|(b, p)| b.line_to(pa.pt(p[n])));
+
+                    line_count += 1;
+                    if line_count > section_limit {
+                        path_bldr
+                            .iter_mut()
+                            .zip(points.iter())
+                            .zip(fill_recv.iter())
+                            .rev()
+                            .for_each(|((b, p), fill)| {
+                                let p = p[n];
+                                let mid = f.pt(pa.ptp(p).0 as f32, 1.0);
+                                b.line_to(mid);
+                                b.close();
+                                let old_b = std::mem::replace(b, path::Builder::new());
+                                let polygon = old_b.build();
+                                frame.fill(&polygon, *fill);
+                                b.move_to(mid);
+                                b.line_to(pa.pt(p));
+                            });
+
+                        line_count = 1;
+                    }
+                }
+                path_bldr
+                    .iter_mut()
+                    .zip(fill_recv.iter())
+                    .rev()
+                    .for_each(|(b, fill)| {
+                        b.line_to(f.pt(1.0, 1.0));
+                        b.close();
+                        let old_b = std::mem::replace(b, path::Builder::new());
+                        let polygon = old_b.build();
+                        frame.fill(&polygon, *fill);
+                    });
+
+                path_inflight.line_to(f.pt(1.0, 1.0));
+                path_inflight.close();
+                let poly = path_inflight.build();
+                frame.fill(&poly, fill_inflight);
+
+                path_lost.line_to(f.pt(1.0, 1.0));
+                path_lost.close();
+                let poly = path_lost.build();
+                frame.fill(&poly, fill_lost);
+
+                let fd_first = fd.first().unwrap();
+                let fd_last = fd.last().unwrap();
+                let mid_pos = ((fd.len() - 1) as f32 * self.posx as f32).round();
+                let fd_mid = fd[mid_pos as usize];
+
+                // Zoom X locator
+                let line = canvas::Path::line(f.pt(self.posx as f32, 0.0), f.pt(self.posx as f32, 1.0));
+                frame.stroke(&line, black_stroke);
+
+                // Ping timing lines - vertical
+                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 2.0), f.pt(1.0, 1.0 - 1.0 / 2.0));
+                frame.stroke(&line, black_stroke);
+                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 4.0), f.pt(1.0, 1.0 - 1.0 / 4.0));
+                frame.stroke(&line, black_stroke);
+                let line = canvas::Path::line(f.pt(0.0, 1.0 - 1.0 / 16.0), f.pt(1.0, 1.0 - 1.0 / 16.0));
+                frame.stroke(&line, black_stroke);
+                
+                let vw_width = (fd_last.get_datetime() - fd_first.get_datetime())
+                    .to_std()
+                    .unwrap();
+                let vw_width_text = match vw_width.as_secs() {
+                    3601..=u64::MAX => format!("{:.2}h", vw_width.as_secs_f32() / 60.0 / 60.0),
+                    120..=3600 => format!("{:.2}min", vw_width.as_secs_f32() / 60.0),
+                    _ => format!("{:?}", vw_width),
+                };
+                let shadow = Vector::new(2.0, 1.0);
+                let text = iced::widget::canvas::Text {
+                    content: format!("{}", fd_first.get_datetime()),
+                    position: f.pt(0.01, 0.01),
+                    color: white90,
+                    size: iced::Pixels(f.pwh(0.1)),
+                    font: iced::Font::default(),
+                    horizontal_alignment: iced::alignment::Horizontal::Left,
+                    vertical_alignment: iced::alignment::Vertical::Top,
+                    line_height: iced::widget::text::LineHeight::default(),
+                    shaping: iced::widget::text::Shaping::default(),
+                };
+                frame.fill_text(iced::widget::canvas::Text {
+                    color: black90,
+                    position: text.position + shadow,
+                    ..text.clone()
+                });
+                frame.fill_text(text);
+                
+                let text = iced::widget::canvas::Text {
+                    content: format!(
+                        "Viewport width: {}\nZoom: {:.2}x / Points in view: {}\n{}",
+                        vw_width_text,
+                        self.zoomx,
+                        ifd_len,
+                        fd_mid.get_datetime()
+                    ),
+                    position: f.pt(0.5, 0.01),
+                    color: white90,
+                    size: iced::Pixels(f.pwh(0.1)),
+                    font: iced::Font::default(),
+                    horizontal_alignment: iced::alignment::Horizontal::Center,
+                    vertical_alignment: iced::alignment::Vertical::Top,
+                    line_height: iced::widget::text::LineHeight::default(),
+                    shaping: iced::widget::text::Shaping::default(),
+                };
+                frame.fill_text(iced::widget::canvas::Text {
+                    color: black90,
+                    position: text.position + shadow,
+                    ..text.clone()
+                });
+                frame.fill_text(text);
+                
+                let text = iced::widget::canvas::Text {
+                    content: format!(
+                        "{} - {:.2}ms",
+                        fd_last.get_datetime(),
+                        src_top.powf(scale_factor.recip()) / 1000.0
+                    ),
+                    position: f.pt(0.99, 0.01),
+                    color: white90,
+                    size: iced::Pixels(f.pwh(0.1)),
+                    font: iced::Font::default(),
+                    horizontal_alignment: iced::alignment::Horizontal::Right,
+                    vertical_alignment: iced::alignment::Vertical::Top,
+                    line_height: iced::widget::text::LineHeight::default(),
+                    shaping: iced::widget::text::Shaping::default(),
+                };
+                frame.fill_text(iced::widget::canvas::Text {
+                    color: black90,
+                    position: text.position + shadow,
+                    ..text.clone()
+                });
+                frame.fill_text(text);
+                
+                let text = iced::widget::canvas::Text {
+                    content: format!(
+                        "{:.2}ms",
+                        (src_top / 2.0).powf(scale_factor.recip()) / 1000.0
+                    ),
+                    position: f.pt(0.99, 0.5),
+                    color: white90,
+                    size: iced::Pixels(f.pwh(0.1)),
+                    font: iced::Font::default(),
+                    horizontal_alignment: iced::alignment::Horizontal::Right,
+                    vertical_alignment: iced::alignment::Vertical::Center,
+                    line_height: iced::widget::text::LineHeight::default(),
+                    shaping: iced::widget::text::Shaping::default(),
+                };
+                frame.fill_text(iced::widget::canvas::Text {
+                    color: black90,
+                    position: text.position + shadow,
+                    ..text.clone()
+                });
+                frame.fill_text(text);
+                
+                let text = iced::widget::canvas::Text {
+                    content: format!(
+                        "{:.2}ms",
+                        (src_top / 4.0).powf(scale_factor.recip()) / 1000.0
+                    ),
+                    position: f.pt(0.99, 0.75),
+                    color: white90,
+                    size: iced::Pixels(f.pwh(0.1)),
+                    font: iced::Font::default(),
+                    horizontal_alignment: iced::alignment::Horizontal::Right,
+                    vertical_alignment: iced::alignment::Vertical::Center,
+                    line_height: iced::widget::text::LineHeight::default(),
+                    shaping: iced::widget::text::Shaping::default(),
+                };
+                frame.fill_text(iced::widget::canvas::Text {
+                    color: black90,
+                    position: text.position + shadow,
+                    ..text.clone()
+                });
+                frame.fill_text(text);
+                
+                let text = iced::widget::canvas::Text {
+                    content: format!(
+                        "{:.2}ms",
+                        (src_top / 16.0).powf(scale_factor.recip()) / 1000.0
+                    ),
+                    position: f.pt(0.99, 1.0 - 1.0 / 16.0),
+                    color: white90,
+                    size: iced::Pixels(f.pwh(0.1)),
+                    font: iced::Font::default(),
+                    horizontal_alignment: iced::alignment::Horizontal::Right,
+                    vertical_alignment: iced::alignment::Vertical::Center,
+                    line_height: iced::widget::text::LineHeight::default(),
+                    shaping: iced::widget::text::Shaping::default(),
+                };
+                frame.fill_text(iced::widget::canvas::Text {
+                    color: black90,
+                    position: text.position + shadow,
+                    ..text.clone()
+                });
+                frame.fill_text(text);
+            }
         });
         
+        if timer_begin.elapsed().as_millis() > 50 {
+            dbg!(timer_begin.elapsed());
+        }
         vec![geometry]
     }
 }
