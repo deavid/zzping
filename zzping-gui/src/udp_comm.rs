@@ -18,8 +18,10 @@ use crate::custom_errors::GuiError;
 
 pub struct UdpStats {
     pub addr: String,
+    #[allow(dead_code)]
     pub inflight_count: u16,
     pub avg_time_us: u32,
+    #[allow(dead_code)]
     pub last_pckt_ms: u32,
     pub packet_loss_x100_000: u32,
 }

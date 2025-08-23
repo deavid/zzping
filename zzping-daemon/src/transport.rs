@@ -138,7 +138,7 @@ impl Destination {
             last_pckt_sent: Instant::now() - interval,
             interval,
             seq: 1,
-            ident: rand::thread_rng().r#gen(),
+            ident: rand::rng().random(),
             inflight_packets: vec![],
             recv_packets: vec![],
             lost_packets: vec![],
@@ -275,7 +275,7 @@ impl Destination {
     /// then this function will randomly be a no-op to avoid DoS to a device, and
     /// also to avoid having insane amounts of packets to search later.
     pub fn send(&mut self, tx: &mut TransportSender, min_delay: Duration) -> bool {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let inflight = self.inflight_packets.len() as u16;
         /*
@@ -283,7 +283,7 @@ impl Destination {
          the queues. It is currently fixed (by looking and cleaning up >1 pckt
          on recv), but the hack stays just in case.
         */
-        let rnd_num = rng.gen_range(16..64);
+        let rnd_num = rng.random_range(16..64);
         if rnd_num < inflight {
             return false;
         }
@@ -294,17 +294,18 @@ impl Destination {
         match res_packet {
             Ok(packet) => {
                 self.ping_sent(self.seq);
-                self.last_pckt_sent = Instant::now() - Duration::from_micros(rng.gen_range(0..101));
+                self.last_pckt_sent =
+                    Instant::now() - Duration::from_micros(rng.random_range(0..101));
                 self.inflight_packets.push(packet);
 
                 // The sequence is random to avoid a device "guessing" what the next sequence will be.
-                self.seq = rng.r#gen();
+                self.seq = rng.random();
                 while self
                     .inflight_packets
                     .iter()
                     .any(|p| p.data.seqn == self.seq)
                 {
-                    self.seq = rng.r#gen();
+                    self.seq = rng.random();
                 }
                 self.sent_count += 1;
                 true

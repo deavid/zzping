@@ -92,6 +92,7 @@ pub struct PacketSent {
     /// When it was sent, monotonic clock. (Used to calculate received Duration later)
     pub sent: Instant,
     /// When it was sent, system clock.
+    #[allow(dead_code)]
     pub when: SystemTime,
     /// Wether it was received, and how long it took to be received.
     pub received: Option<Duration>,

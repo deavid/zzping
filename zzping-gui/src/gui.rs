@@ -133,7 +133,7 @@ impl PingmonGUI {
                 if self.posdx_slider.abs() < 0.01 {
                     self.posdx_slider = 0.0;
                 }
-                self.posx_slider = self.posx_slider.max(0.0).min(1.0);
+                self.posx_slider = self.posx_slider.clamp(0.0, 1.0);
                 self.update_posx();
             }
         }
@@ -143,7 +143,7 @@ impl PingmonGUI {
         // let z = (self.zoomx_slider as f64).exp();
         // let dx = self.posdx_slider as f64 / z;
         // let fx = x;
-        self.fdqgraph.set_posx(x.max(0.0).min(1.0));
+        self.fdqgraph.set_posx(x.clamp(0.0, 1.0));
     }
 }
 
@@ -214,7 +214,7 @@ impl Application for PingmonGUI {
         Command::none()
     }
 
-    fn view(&mut self) -> Element<Message> {
+    fn view(&mut self) -> Element<'_, Message> {
         let mut window: Column<Message> = Column::new().padding(0);
         if self.otheropts.input_file.is_none() {
             for (_addr, (graph, _cache)) in self

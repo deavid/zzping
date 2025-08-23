@@ -75,7 +75,7 @@ fn get_logfile_now() -> String {
     strnow
 }
 fn main() {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     let opts: Opts = Opts::parse();
     let cfg = read_config(&opts.config);
@@ -114,7 +114,7 @@ fn main() {
     for target in cfg.ping_targets {
         let interval = Duration::from_secs(1) / target.frequency;
         // Add a random amount to avoid having all targets at exactly the same time
-        let rng_time: u64 = rng.gen_range(0..interval.as_millis()) as u64 + 1;
+        let rng_time: u64 = rng.random_range(0..interval.as_millis()) as u64 + 1;
         let interval_n = interval + Duration::from_nanos(rng_time);
 
         t.add_destination(&target.address, interval_n);

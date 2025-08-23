@@ -188,7 +188,7 @@ impl Application for FirTest {
         super::subscr_time::every(std::time::Duration::from_millis(1000)).map(Msg::Tick)
     }
 
-    fn view(&mut self) -> Elem {
+    fn view(&mut self) -> Elem<'_> {
         let input = self.flags.otheropts.input_file.clone().unwrap_or_default();
         Column::new()
             .padding(5)
