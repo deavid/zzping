@@ -9,16 +9,15 @@ edition = "2021"
 [dependencies]
 rmp = "0.8"
 chrono = "0.4"
-clap = { version = "3.2", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 rustfft = "6.4"
+bit-vec = "0.6"                                   # for huffman, also for serializing
 huffman-compress = "0.6"
-bit-vec = "0.6"  # for huffman, also for serializing
 anyhow = "1.0"
-thiserror = "1.0"
-probability = "0.18"
+thiserror = "2.0"
+probability = "0.20"
 rustdct = "0.7"
 log = "0.4"
-rand = "0.8"
-env_logger = "0.9"
+rand = "0.9"
+env_logger = "0.11"
 lazy_static = "1.5"
-
