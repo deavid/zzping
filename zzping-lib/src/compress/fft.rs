@@ -487,7 +487,7 @@ impl Compress<f32> for FFTPolarCompress {
     fn decompress(&self) -> Result<Vec<f32>, Error> {
         let radius = self.huffman_r.decompress()?;
         let theta = self.huffman_t.decompress()?;
-        let polar_half_fft: Vec<(f32, f32)> = radius.into_iter().zip(theta.into_iter()).collect();
+        let polar_half_fft: Vec<(f32, f32)> = radius.into_iter().zip(theta).collect();
         let len = polar_half_fft.len();
         let polar_half_adj: Vec<(f32, f32)> = polar_half_fft
             .into_iter()

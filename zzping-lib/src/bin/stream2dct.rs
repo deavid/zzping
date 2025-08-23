@@ -238,7 +238,7 @@ impl DctWriter {
 
     /// Undoes the normalization step from normalize_u8_forward.
     fn normalize_u8_backward(val: f64, min_val: f64, range: f64) -> f64 {
-        let j = val as f64 / (u8::MAX) as f64;
+        let j = val / (u8::MAX) as f64;
         j * range + min_val
     }
 

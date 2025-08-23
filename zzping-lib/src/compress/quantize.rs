@@ -101,7 +101,7 @@ impl Compress<f32> for LogQuantizer {
         Ok(self
             .serialize_metadata()?
             .into_iter()
-            .chain(self.serialize_data()?.into_iter())
+            .chain(self.serialize_data()?)
             .collect())
     }
 
@@ -157,7 +157,7 @@ impl Compress<f32> for LogQuantizer {
         let bits = u8::from_be_bytes(bbits) as usize;
         self.bits = bits as u8;
         let total_bits: usize = size * bits;
-        let total_bytes: usize = (total_bits + 7) / 8;
+        let total_bytes: usize = total_bits.div_ceil(8);
         let final_bytes = total_bytes + 5; // 5 bytes from header.
         let databits = BitVec::from_bytes(&payload[5..final_bytes]);
         self.data = Vec::with_capacity(size);
@@ -192,7 +192,7 @@ impl CompressTo<f32, u64> for LogQuantizer {
     }
 }
 
-//// -*---
+/// -*---
 
 #[derive(Debug)]
 pub struct LinearQuantizer {
@@ -330,7 +330,7 @@ impl LinearLogQuantizer {
         if enc_val.abs().round() as i64 <= self.linear_part {
             return enc_val.round() as i64;
         }
-        let z: f64 = enc_val.abs() as f64;
+        let z: f64 = enc_val.abs();
         let w1 = z - self.linear_part as f64;
         let w2 = w1 * self.ln1p;
         let w = w2.exp();

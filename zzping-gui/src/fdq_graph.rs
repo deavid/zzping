@@ -138,9 +138,9 @@ impl FDQGraph {
         let mut last_dt = None;
         for mut fdq in fdreader {
             self.max_inflight = self.max_inflight.max(fdq.inflight);
-            stdmean_inflight += (fdq.inflight as f32).powi(2);
+            stdmean_inflight += fdq.inflight.powi(2);
             self.max_lostpackets = self.max_lostpackets.max(fdq.lost_packets);
-            stdmean_lostpackets += (fdq.lost_packets as f32).powi(2);
+            stdmean_lostpackets += fdq.lost_packets.powi(2);
             self.max_recv = self.max_recv.max(fdq.recv_us[6]);
             if fdq.recv_us_len == 0 {
                 fdq.recv_us = [0, 0, 0, 0, 0, 0, 0];
@@ -284,9 +284,7 @@ impl canvas::Program<Message> for FDQGraph {
         let fill_r4 = fill_color(color_r4);
         let fill_r5 = fill_color(color_r5);
         let fill_r6 = fill_color(color_r6);
-        let fill_recv = vec![
-            fill_r0, fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6,
-        ];
+        let fill_recv = [fill_r0, fill_r1, fill_r2, fill_r3, fill_r4, fill_r5, fill_r6];
         let fill_inflight = fill_color(color_inflight);
         let fill_lost = fill_color(color_lost);
 

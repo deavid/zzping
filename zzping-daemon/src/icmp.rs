@@ -108,7 +108,7 @@ pub struct PacketReceived {
 impl PacketSent {
     /// Send a PacketData using the TransportSender specified. Constructs a PacketSent with the details.
     pub fn new(data: PacketData, tx: &mut TransportSender) -> Result<Self> {
-        let mut payload = vec![0; 16];
+        let mut payload = [0; 16];
         let echo_packet = data.create_echo_packet(&mut payload[..]);
         tx.send_to(echo_packet, data.addr)
             .context("pnet_transport::TransportSender.send_to in PacketSent.new")?;

@@ -140,7 +140,7 @@ impl<Complete> FrameDataQ<Complete> {
         let e = tsv.1 + ts.map(|x| x.timestamp_subsec_millis()).unwrap_or_default();
 
         Self {
-            phantom: PhantomData::default(),
+            phantom: PhantomData,
             timestamp: ts.map(|x| x.timestamp()),
             subsec_ms: SubSecType::Abs(e),
             inflight: fd.inflight as f32,
@@ -184,7 +184,7 @@ impl<Complete> FrameDataQ<Complete> {
     }
     fn into_encoded(self) -> FrameDataQ<Encoded> {
         FrameDataQ {
-            phantom: PhantomData::default(),
+            phantom: PhantomData,
             timestamp: self.timestamp,
             subsec_ms: self.subsec_ms,
             inflight: self.inflight,
@@ -201,7 +201,7 @@ impl<Complete> FrameDataQ<Complete> {
         let timestamp = Some((mean_ts / 1000) as i64);
         let subsec_ms = SubSecType::Abs((mean_ts % 1000) as u32);
         // let inflight: usize = data.iter().map(|x| x.inflight).max().unwrap();
-        let inflight: f32 = (data.iter().map(|x| x.inflight.powi(2)).sum::<f32>() as f32
+        let inflight: f32 = (data.iter().map(|x| x.inflight.powi(2)).sum::<f32>()
             / datalen as f32)
             .powf(2.0_f32.recip());
         let lost_packets: f32 = data.iter().map(|x| x.lost_packets).sum::<f32>() / datalen as f32;
@@ -236,7 +236,7 @@ impl<Complete> FrameDataQ<Complete> {
         // ];
 
         FrameDataQ {
-            phantom: PhantomData::default(),
+            phantom: PhantomData,
             timestamp,
             subsec_ms,
             inflight,
@@ -250,7 +250,7 @@ impl<Complete> FrameDataQ<Complete> {
 impl<Encoded> FrameDataQ<Encoded> {
     fn into_complete(self) -> FrameDataQ<Complete> {
         FrameDataQ {
-            phantom: PhantomData::default(),
+            phantom: PhantomData,
             timestamp: self.timestamp,
             subsec_ms: self.subsec_ms,
             inflight: self.inflight,
@@ -611,7 +611,7 @@ impl RMPCodec for FrameDataQ<Encoded> {
             lost_packets,
             recv_us_len,
             recv_us,
-            phantom: PhantomData::default(),
+            phantom: PhantomData,
         })
     }
 }

@@ -36,7 +36,7 @@ impl Viewport {
         self.top_pos = self.top_pos.max(y);
         self.bottom_pos = self.bottom_pos.min(y);
         if self.left_time == self.right_time {
-            self.right_time = self.right_time + chrono::Duration::nanoseconds(1);
+            self.right_time += chrono::Duration::nanoseconds(1);
         }
         if self.top_pos == self.bottom_pos {
             self.top_pos += 0.000000001;

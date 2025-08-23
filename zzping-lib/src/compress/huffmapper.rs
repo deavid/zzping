@@ -72,7 +72,7 @@ impl HuffmanMapSBlock {
         HuffmanKey {
             qtype: ValueType::Corrected,
             key: huffkey * sign,
-            extra_bits: self.block_size_bits as usize,
+            extra_bits: self.block_size_bits,
             extra_data: extra,
             metadata: HKeyMetadata::Block(*self),
         }
