@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use iced::{
-    canvas::{self, Frame, Stroke},
+    widget::canvas::{self, Frame, Stroke},
     Point, Size,
 };
 use zzping_lib::{

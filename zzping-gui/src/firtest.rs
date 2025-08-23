@@ -1,7 +1,8 @@
 use crate::{basicgraph, flags::Flags};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use iced::{slider, Alignment, Application, Canvas, Column, Slider, Subscription, Text};
+use iced::{Alignment, Subscription, Task};
+use iced::widget::{slider, Canvas, Column, Slider, Text};
 use log::{info, warn};
 use std::{collections::VecDeque, fs::File, io::BufReader, time::Instant};
 use zzping_lib::{
@@ -33,7 +34,7 @@ pub struct FirTest {
     widgets: Widgets,
 }
 
-type Cmd = iced::Command<Msg>;
+type Cmd = iced::Task<Msg>;
 type Elem<'a> = iced::Element<'a, Msg>;
 
 impl FirTest {
@@ -185,7 +186,7 @@ impl Application for FirTest {
         Cmd::none()
     }
     fn subscription(&self) -> Subscription<Msg> {
-        super::subscr_time::every(std::time::Duration::from_millis(1000)).map(Msg::Tick)
+                iced::time::every(std::time::Duration::from_millis(1000)).map(Msg::Tick)
     }
 
     fn view(&mut self) -> Elem<'_> {
