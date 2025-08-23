@@ -14,8 +14,8 @@ pnet_macros_support = "0.31"
 rand = "0.8"
 rmp = "0.8"
 ron = "0.7"
-clap = { version = "3.1", features = ["derive"] }
+clap = { version = "3.2", features = ["derive"] }
 serde = "1.0"
 chrono = "0.4"
-tempfile = "3.2"
+tempfile = "3.21"
 anyhow = "1.0"
