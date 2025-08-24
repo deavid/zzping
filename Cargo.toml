@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["zzping-lib", "zzping-daemon", "zzping-gui", "zzping-icedtest"]
+members = [
+    "zzping-lib",
+    "zzping-daemon",
+    "zzping-gui",
+]
 
 [profile.dev]
 opt-level = 1
