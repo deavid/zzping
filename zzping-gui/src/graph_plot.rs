@@ -82,13 +82,10 @@ impl<Message> canvas::Program<Message> for LatencyGraph {
         _cursor: iced::mouse::Cursor,
     ) -> Vec<iced::widget::canvas::Geometry> {
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
-            // All coordinates inside this closure are local to the frame.
-            // (0, 0) is the top-left corner of our canvas.
+            let right = bounds.width;
+            let bottom = bounds.height;
 
-            let right = frame.width();
-            let bottom = frame.height();
-
-            // Create strokes using the new API, matching original alpha values
+            // Create strokes using the new API
             let green_stroke = canvas::Stroke::default()
                 .with_width(1.0)
                 .with_color(Color::from_rgba(0.0, 1.0, 0.0, 0.3));
@@ -102,9 +99,9 @@ impl<Message> canvas::Program<Message> for LatencyGraph {
                 .with_width(3.0)
                 .with_color(Color::from_rgba(0.0, 0.0, 0.0, 0.2));
 
-            // Fill background. The path must be relative to the frame's origin.
-            let background = canvas::Path::rectangle(Point::ORIGIN, frame.size());
-            frame.fill(&background, Color::from_rgba(0.7, 0.7, 0.7, 0.2));
+            // Fill background
+            let space = canvas::Path::rectangle(Point::new(0.0, 0.0), bounds.size());
+            frame.fill(&space, Color::from_rgba(0.4, 0.4, 0.4, 1.0));
 
             // Draw title text
             let avg_latency: u32 =
@@ -116,24 +113,20 @@ impl<Message> canvas::Program<Message> for LatencyGraph {
                     self.display_address,
                     avg_latency as f32 / 1000.0
                 ),
-                position: Point::new(0.0, 0.0), // Position relative to frame
+                position: Point::new(0.0, 0.0),
                 color: Color::from_rgba(1.0, 1.0, 1.0, 0.9),
                 size: iced::Pixels(12.0),
-                vertical_alignment: iced::alignment::Vertical::Top,
-                horizontal_alignment: iced::alignment::Horizontal::Left,
                 ..Text::default()
             });
 
             if self.latency_us.is_empty() {
                 let botright = Point::new(right, bottom);
-                let line = canvas::Path::line(Point::ORIGIN, botright);
+                let line = canvas::Path::line(Point::new(0.0, 0.0), botright);
                 frame.stroke(&line, red_stroke);
-                // IMPORTANT: Return here to prevent panic from .max().unwrap() on empty vec
                 return;
             }
 
             let ms: f32 = 1000.0;
-            // This is now safe because we returned if the vec was empty
             let max = self
                 .latency_us
                 .iter()
