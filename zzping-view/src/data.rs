@@ -1,9 +1,9 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use byteorder::{LittleEndian, ReadBytesExt};
 use chrono::{DateTime, Duration, TimeZone, Utc};
 use std::io::Cursor;
 
-const MAGIC_NUMBER: u64 = 0x7A7A505245535331;
+const MAGIC_NUMBER: u64 = 0x7A7A504E47434150;
 const HEADER_SIZE: usize = 16;
 const RECORD_SIZE: usize = 4;
 
