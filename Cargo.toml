@@ -29,8 +29,8 @@ async-std = { version = "1.13", features = ["unstable"] }
 byteorder = "1.4"
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
-eframe = "0.22"
-egui = "0.22"
+eframe = "0.32"
+egui = "0.32"
 env_logger = "0.11"
 lazy_static = "1.5"
 log = "0.4"
