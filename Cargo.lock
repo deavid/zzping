@@ -3749,3 +3749,11 @@ dependencies = [
  "rustfft",
  "thiserror 2.0.16",
 ]
+
+[[package]]
+name = "zzping-press"
+version = "0.2.2-beta2"
+dependencies = [
+ "anyhow",
+ "clap",
+]
