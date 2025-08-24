@@ -24,6 +24,7 @@ bit-vec = "0.6"
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
 env_logger = "0.11"
+# NOTE: huffman-compress is 4 years old without updates, and pulls bit-vec 0.6 to the project.
 huffman-compress = "0.6"
 iced = { version = "0.4", features = ["canvas"] }
 iced_native = { version = "0.5" }
