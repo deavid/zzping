@@ -20,8 +20,12 @@ use crate::{
 use super::flags::GuiConfig;
 use super::graph_plot::LatencyGraph;
 use super::udp_comm::UdpStats;
-use iced::widget::{Canvas, Column, Row, Slider, Text};
-use iced::{Element, Length, Subscription, Task};
+use iced::widget::{
+    Canvas, Column, Row, Slider, Text,
+};
+use iced::{
+    Element, Length, Subscription, Task,
+};
 use std::net::UdpSocket;
 use std::time::Instant;
 
@@ -33,7 +37,6 @@ pub enum Message {
     // PosXSliderChanged(f32),
     PosDXSliderChanged(f32),
     Tick(Instant),
-    #[allow(dead_code)]
     Startup,
 }
 
@@ -76,7 +79,7 @@ impl PingmonGUI {
     fn startup(&mut self) {
         let input_file = self.otheropts.input_file.as_ref();
         match input_file {
-            Some(_filename) => { /* self.fdqgraph.load_file(filename) */ }
+            Some(_filename) => { /* self.fdqgraph.load_file(filename) */ },
             None => {
                 let socket = UdpSocket::bind(&self.guiconfig.udp_listen_address).unwrap();
                 socket.set_nonblocking(true).unwrap();
@@ -202,11 +205,13 @@ impl PingmonGUI {
                 .zip(self.graph.iter().zip(self.graph_cache.iter()))
             {
                 // Use Canvas with reference instead of clone in iced 0.13
-                let widget_graph = Canvas::new(graph).width(Length::Fill).height(Length::Fill);
+                let widget_graph = Canvas::new(graph)
+                    .width(Length::Fill)
+                    .height(Length::Fill);
                 content = content.push(widget_graph);
             }
         } else {
-            // FDQ Graph - re-enabled with iced 0.13 placeholder implementation
+            // FDQ Graph - re-enabled with iced 0.13 placeholder implementation  
             let graph = Canvas::new(&self.fdqgraph)
                 .width(Length::Fill)
                 .height(Length::Fill);
@@ -216,23 +221,39 @@ impl PingmonGUI {
                 .spacing(5)
                 .push(Text::new("sf").size(20))
                 .push(
-                    Slider::new(-2.0..=2.0, self.zoomw_slider, Message::ZoomWSliderChanged)
-                        .step(0.01),
+                    Slider::new(
+                        -2.0..=2.0,
+                        self.zoomw_slider,
+                        Message::ZoomWSliderChanged,
+                    )
+                    .step(0.01),
                 )
                 .push(Text::new("y").size(20))
                 .push(
-                    Slider::new(0.0..=8.0, self.zoomy_slider, Message::ZoomYSliderChanged)
-                        .step(0.01),
+                    Slider::new(
+                        0.0..=8.0,
+                        self.zoomy_slider,
+                        Message::ZoomYSliderChanged,
+                    )
+                    .step(0.01),
                 )
                 .push(Text::new("z").size(20))
                 .push(
-                    Slider::new(0.0..=10.0, self.zoomx_slider, Message::ZoomXSliderChanged)
-                        .step(0.01),
+                    Slider::new(
+                        0.0..=10.0,
+                        self.zoomx_slider,
+                        Message::ZoomXSliderChanged,
+                    )
+                    .step(0.01),
                 )
                 .push(Text::new("dx").size(20))
                 .push(
-                    Slider::new(-1.0..=1.0, self.posdx_slider, Message::PosDXSliderChanged)
-                        .step(0.01),
+                    Slider::new(
+                        -1.0..=1.0,
+                        self.posdx_slider,
+                        Message::PosDXSliderChanged,
+                    )
+                    .step(0.01),
                 );
 
             content = content.push(graph).push(controls);

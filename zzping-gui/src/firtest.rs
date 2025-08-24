@@ -1,10 +1,10 @@
 use crate::{basicgraph, flags::Flags};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
+use iced::{Alignment, Subscription, Element, Length, Task};
 use iced::widget::{Canvas, Column, Slider, Text};
-use iced::{Alignment, Element, Length, Subscription, Task};
 use log::{info, warn};
-use std::{collections::VecDeque, fs::File, io::BufReader};
+use std::{collections::VecDeque, fs::File, io::BufReader, time::Instant};
 use zzping_lib::{
     framedataq::FDCodecIter,
     pingdata::{Ping, StreamData, StreamEventType, StreamPingIO},
@@ -13,7 +13,7 @@ use zzping_lib::{
 #[derive(Debug, Clone, Copy)]
 pub enum Msg {
     Startup,
-    Tick,
+    Tick(Instant),
     ZoomChange(f64),
     TestChange(f64),
 }
@@ -143,7 +143,7 @@ impl FirTest {
         match msg {
             Msg::TestChange(x) => self.on_test_change(x),
             Msg::ZoomChange(x) => self.on_zoom_change(x),
-            Msg::Tick => self.tick(),
+            Msg::Tick(_) => self.tick(),
             Msg::Startup => self.startup().context("startup error")?,
         }
         Ok(())
@@ -172,7 +172,6 @@ impl FirTest {
         (ret, task)
     }
 
-    #[allow(dead_code)]
     pub fn title(&self) -> String {
         "FIR Test".to_string()
     }
@@ -185,9 +184,9 @@ impl FirTest {
         }
         Task::none()
     }
-
+    
     pub fn subscription(&self) -> Subscription<Msg> {
-        iced::time::every(std::time::Duration::from_millis(1000)).map(|_| Msg::Tick)
+        iced::time::every(std::time::Duration::from_millis(1000)).map(Msg::Tick)
     }
 
     pub fn view(&self) -> Element<'_, Msg> {
@@ -214,12 +213,10 @@ impl FirTest {
             .into()
     }
 
-    #[allow(dead_code)]
     pub fn background_color(&self) -> iced::Color {
         iced::Color::from_rgb(0.25, 0.25, 0.30)
     }
 
-    #[allow(dead_code)]
     pub fn should_exit(&self) -> bool {
         self.should_quit
     }

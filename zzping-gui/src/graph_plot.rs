@@ -38,7 +38,7 @@ impl LatencyGraph {
             cache: Cache::default(),
         }
     }
-
+    
     pub fn update(&mut self, now: Instant, stats: &[UdpStats]) -> bool {
         let mut modified = false;
         for s in stats.iter() {
@@ -84,7 +84,7 @@ impl<Message> canvas::Program<Message> for LatencyGraph {
         let geometry = self.cache.draw(renderer, bounds.size(), |frame| {
             let right = bounds.width;
             let bottom = bounds.height;
-
+            
             // Create strokes using the new API
             let green_stroke = canvas::Stroke::default()
                 .with_width(1.0)
@@ -106,7 +106,7 @@ impl<Message> canvas::Program<Message> for LatencyGraph {
             // Draw title text
             let avg_latency: u32 =
                 self.latency_us.iter().sum::<u32>() / (self.latency_us.len().max(1) as u32);
-
+            
             frame.fill_text(Text {
                 content: format!(
                     "{} - {:.2}ms avg",
@@ -118,7 +118,7 @@ impl<Message> canvas::Program<Message> for LatencyGraph {
                 size: iced::Pixels(12.0),
                 ..Text::default()
             });
-
+            
             if self.latency_us.is_empty() {
                 let botright = Point::new(right, bottom);
                 let line = canvas::Path::line(Point::new(0.0, 0.0), botright);
@@ -143,7 +143,7 @@ impl<Message> canvas::Program<Message> for LatencyGraph {
             let y10ms = bottom - 10.0 * ms * sy;
             let y30ms = bottom - 30.0 * ms * sy;
             let y100ms = bottom - 100.0 * ms * sy;
-
+            
             // Draw reference lines and labels
             if y3ms > 0.0 {
                 frame.stroke(
@@ -205,7 +205,7 @@ impl<Message> canvas::Program<Message> for LatencyGraph {
                     ..Text::default()
                 });
             }
-
+            
             // Draw latency data
             let mut oldp: Option<Point> = None;
             for (n, p) in self.latency_us.iter().enumerate() {
@@ -224,7 +224,7 @@ impl<Message> canvas::Program<Message> for LatencyGraph {
                 }
                 oldp = Some(point);
             }
-
+            
             // Draw packet loss data
             let sy: f32 = (frame.height() / 100000.0) * 1.0;
             let mut oldp: Option<Point> = None;

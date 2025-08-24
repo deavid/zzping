@@ -42,7 +42,6 @@ impl Viewport {
             self.top_pos += 0.000000001;
         }
     }
-    #[allow(dead_code)]
     pub fn zoom(&self, z: f64) -> Self {
         let mut r = self.clone();
         let w = (self.right_time - self.left_time).as_secs_f64() / z.max(1.0);
@@ -130,7 +129,6 @@ impl PointGraph {
         Point::new(x as f32, y as f32)
     }
 
-    #[allow(dead_code)]
     pub fn from_fir(fir: &FirPing) -> Self {
         let mut ret = Self::default();
         let mut x = fir.cfg.start.timestamp_f64();
@@ -157,7 +155,6 @@ impl PointGraph {
         }
         ret
     }
-    #[allow(dead_code)]
     pub fn from_firdctdbg(fir: &FirPing) -> Self {
         let mean = fir.dct.data[0];
         let mut x = fir.cfg.start.timestamp_f64();
@@ -193,7 +190,6 @@ impl Point2D {
         Self { x, y }
     }
 
-    #[allow(dead_code)]
     pub fn from_fir() {}
 }
 
