@@ -91,18 +91,20 @@ impl Graph {
     }
 }
 
-impl<Message> Program<Message> for Graph {
+impl Program<Msg> for &mut Graph {
     type State = ();
 
     fn update(
         &self,
         _state: &mut Self::State,
         _event: iced::widget::canvas::Event,
-        _bounds: iced::Rectangle,
+        bounds: iced::Rectangle,
         _cursor: iced::mouse::Cursor,
-    ) -> (event::Status, Option<Message>) {
-        // Note: In iced 0.13, canvas Programs are generally immutable
-        // Size tracking should be handled differently
+    ) -> (event::Status, Option<Msg>) {
+        if self.size != Some(bounds.size()) {
+            self.size = Some(bounds.size());
+            self.redraw();
+        }
         (event::Status::Ignored, None)
     }
     fn draw(
@@ -125,17 +127,21 @@ impl<Message> Program<Message> for Graph {
         //     color: Color::from_rgba8(255, 192, 0, 0.5),
         //     ..Stroke::default()
         // };
-        let orange_st = Stroke::default()
-            .with_width(0.5)
-            .with_color(Color::from_rgba8(255, 64, 0, 0.9));
+        let orange_st = Stroke {
+            width: 0.5,
+            color: Color::from_rgba8(255, 64, 0, 0.9),
+            ..Stroke::default()
+        };
         // let black_st = Stroke {
         //     width: 1.5,
         //     color: Color::from_rgba8(0, 0, 0, 0.9),
         //     ..Stroke::default()
         // };
-        let white_st = Stroke::default()
-            .with_width(0.5)
-            .with_color(Color::from_rgba8(255, 255, 255, 0.8));
+        let white_st = Stroke {
+            width: 0.5,
+            color: Color::from_rgba8(255, 255, 255, 0.8),
+            ..Stroke::default()
+        };
 
         // self.raw_pings.draw(&mut frame, green_st, &self.vw);
         self.stddevup_pings.draw(&mut frame, orange_st, &self.vw);

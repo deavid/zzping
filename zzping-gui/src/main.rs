@@ -14,9 +14,9 @@
 
 extern crate zzping_lib;
 
-mod basicgraph;
+// mod basicgraph;
 mod custom_errors;
-mod fdq_graph;
+// mod fdq_graph;
 // mod firtest;
 mod flags;
 mod graph_plot;

@@ -1,9 +1,8 @@
 use crate::{basicgraph, flags::Flags};
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use iced::{Alignment, Subscription};
-use iced::application::Application;
-use iced::widget::{Canvas, Column, Slider, Text};
+use iced::{Alignment, Subscription, Task};
+use iced::widget::{slider, Canvas, Column, Slider, Text};
 use log::{info, warn};
 use std::{collections::VecDeque, fs::File, io::BufReader, time::Instant};
 use zzping_lib::{
@@ -22,7 +21,9 @@ pub enum Msg {
 pub struct Widgets {
     ping_graph: basicgraph::Graph,
     loss_graph: basicgraph::Graph,
+    zoom_state: slider::State,
     zoom: f64,
+    test_state: slider::State,
     test: f64,
 }
 
