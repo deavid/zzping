@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["zzping-lib", "zzping-daemon", "zzping-gui", "zzping-press", "zzping-capture"]
+members = ["zzping-lib", "zzping-daemon", "zzping-view", "zzping-press", "zzping-capture"]
 
 [workspace.package]
 version = "0.2.2-beta2"
