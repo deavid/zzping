@@ -14,18 +14,20 @@
 
 extern crate zzping_lib;
 
-// mod basicgraph;
+mod basicgraph;
 mod custom_errors;
-// mod fdq_graph;
-// mod firtest;
+mod fdq_graph;
+mod firtest;
 mod flags;
 mod graph_plot;
 mod graphutils;
 mod gui;
+mod subscr_time;
 mod udp_comm;
 
 use flags::{Flags, GuiConfig, OtherOpts};
 use gui::PingmonGUI;
+use iced::Settings;
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -52,32 +54,27 @@ pub fn main() -> Result<()> {
         .init();
 
     let opts: Opts = Opts::parse();
-    let guiconfig = GuiConfig::from_filepath(&opts.config)?;
+    let guiconfig = GuiConfig::from_filepath(&opts.config).unwrap();
     let flags = Flags {
         guiconfig,
         otheropts: OtherOpts {
             input_file: opts.input,
         },
     };
-
-    /* TODO: Migrate firtest.rs to iced 0.13
+    let settings = Settings {
+        antialiasing: true,
+        window: iced::window::Settings {
+            size: (1600, 400),
+            ..iced::window::Settings::default()
+        },
+        flags,
+        ..Settings::default()
+    };
+    use iced::Application; // <- Trait run
     if opts.firtest {
-        iced::application(
-            "FirTest",
-            firtest::FirTest::update,
-            firtest::FirTest::view,
-        )
-        .subscription(firtest::FirTest::subscription)
-        .run_with(|| (firtest::FirTest::new(flags.clone()), iced::Task::none()))
-        .context("FirTest error")
-    } else */ {
-        iced::application(
-            "Ping Monitor",
-            PingmonGUI::update,
-            PingmonGUI::view,
-        )
-        .subscription(PingmonGUI::subscription)
-        .run_with(|| (PingmonGUI::new(flags), iced::Task::none()))
-        .context("PingmonGUI errored out")
+        firtest::FirTest::run(settings).context("FirTest error")?;
+    } else {
+        PingmonGUI::run(settings).context("PingmonGUI errored out")?;
     }
+    Ok(())
 }

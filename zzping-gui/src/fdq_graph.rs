@@ -15,8 +15,8 @@
 use std::{fs::File, io::BufReader, time::Instant};
 
 use iced::{
-    widget::canvas::{self, path, Path, Stroke, Cache, Text},
-    Color, Point, Size, Vector, Rectangle,
+    canvas::{self, path, Path, Stroke},
+    Color, Point, Size, Vector,
 };
 use zzping_lib::framedataq::{Complete, FDCodecIter, FrameDataQ, IterFold, SubSecType};
 
@@ -104,7 +104,7 @@ impl PlotAssist {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default, Clone)]
 pub struct FDQGraph {
     fd: Vec<FrameDataQ<Complete>>,
     fdcache: Vec<(i64, Vec<FrameDataQ<Complete>>)>,
@@ -116,25 +116,6 @@ pub struct FDQGraph {
     max_inflight: f32,
     max_lostpackets: f32,
     scale_factor: f64,
-    cache: Cache,
-}
-
-impl Default for FDQGraph {
-    fn default() -> Self {
-        Self {
-            fd: Default::default(),
-            fdcache: Default::default(),
-            changed: Default::default(),
-            zoomx: Default::default(),
-            posx: Default::default(),
-            zoomy: Default::default(),
-            max_recv: Default::default(),
-            max_inflight: Default::default(),
-            max_lostpackets: Default::default(),
-            scale_factor: Default::default(),
-            cache: Cache::new(),
-        }
-    }
 }
 
 impl FDQGraph {
@@ -262,17 +243,12 @@ fn fill_color(color: Color) -> iced::widget::canvas::Fill {
     }
 }
 
-impl<Message> canvas::Program<Message> for FDQGraph {
-    type State = ();
-
+impl canvas::Program<Message> for FDQGraph {
     fn draw(
         &self,
-        _state: &Self::State,
-        renderer: &iced::Renderer,
-        _theme: &iced::Theme,
-        bounds: Rectangle,
-        _cursor: iced::mouse::Cursor,
-    ) -> Vec<iced::widget::canvas::Geometry> {
+        bounds: iced::Rectangle,
+        _cursor: iced::canvas::Cursor,
+    ) -> std::vec::Vec<iced::canvas::Geometry> {
         let timer_begin = Instant::now();
         let f = FrameScaler::new(&bounds);
         let mut frame = canvas::Frame::new(bounds.size());

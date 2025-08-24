@@ -1,21 +1,15 @@
 use std::time::Duration;
 
 use iced::{
-    widget::canvas::{event, Frame, Program, Stroke},
+    canvas::{event, Frame, Program, Stroke},
     Color,
 };
 use zzping_lib::pingdata::{FirPing, FirPingConfig, Ping};
 
 use crate::{
-    // firtest::Msg,
+    firtest::Msg,
     graphutils::{PointGraph, Viewport},
 };
-
-// Temporary message type since firtest is disabled
-#[derive(Debug, Clone, Copy)]
-pub enum Msg {
-    Tick(std::time::Instant),
-}
 
 #[derive(Debug, Default)]
 pub struct Graph {
@@ -92,15 +86,12 @@ impl Graph {
 }
 
 impl Program<Msg> for &mut Graph {
-    type State = ();
-
     fn update(
-        &self,
-        _state: &mut Self::State,
-        _event: iced::widget::canvas::Event,
+        &mut self,
+        _event: iced::canvas::Event,
         bounds: iced::Rectangle,
-        _cursor: iced::mouse::Cursor,
-    ) -> (event::Status, Option<Msg>) {
+        _cursor: iced::canvas::Cursor,
+    ) -> (iced::canvas::event::Status, Option<Msg>) {
         if self.size != Some(bounds.size()) {
             self.size = Some(bounds.size());
             self.redraw();
@@ -109,14 +100,11 @@ impl Program<Msg> for &mut Graph {
     }
     fn draw(
         &self,
-        _state: &Self::State,
-        renderer: &iced::Renderer,
-        _theme: &iced::Theme,
         bounds: iced::Rectangle,
-        _cursor: iced::mouse::Cursor,
-    ) -> Vec<iced::widget::canvas::Geometry> {
+        _cursor: iced::canvas::Cursor,
+    ) -> Vec<iced::canvas::Geometry> {
         let sz = bounds.size();
-        let mut frame = Frame::new(renderer, sz);
+        let mut frame = Frame::new(sz);
         // let green_st = Stroke {
         //     width: 0.5,
         //     color: Color::from_rgba8(0, 200, 0, 0.8),
