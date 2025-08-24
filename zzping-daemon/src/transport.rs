@@ -209,12 +209,11 @@ impl Destination {
         self.streampingio = Some(StreamPingIO::from_header(sdata));
     }
     pub fn ping_xxx(&mut self, seqn: u16, ev: SIOEvent) {
-        if let Some(f) = self.sdlogfile.as_mut() {
-            if let Some(sdata) = self.streampingio.as_mut() {
-                if let Err(e) = sdata.write_ping(f, ev, seqn) {
-                    error!("ping_xxx: write_ping: {:?}", e);
-                }
-            }
+        if let Some(f) = self.sdlogfile.as_mut()
+            && let Some(sdata) = self.streampingio.as_mut()
+            && let Err(e) = sdata.write_ping(f, ev, seqn)
+        {
+            error!("ping_xxx: write_ping: {:?}", e);
         }
     }
 

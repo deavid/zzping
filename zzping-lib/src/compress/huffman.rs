@@ -210,13 +210,13 @@ impl Compress<u64> for HuffmanU64 {
                         .get_key_value(&kr)
                         .or_else(|| weights.get_key_value(&kl));
 
-                    if let Some(kv) = new {
-                        if !translate.contains_key(kv.0) {
-                            let dk: u64 = *kv.0;
-                            translate.insert(k, dk);
-                            *weights.get_mut(&k).unwrap() = 0;
-                            *weights.get_mut(&dk).unwrap() += v;
-                        }
+                    if let Some(kv) = new
+                        && !translate.contains_key(kv.0)
+                    {
+                        let dk: u64 = *kv.0;
+                        translate.insert(k, dk);
+                        *weights.get_mut(&k).unwrap() = 0;
+                        *weights.get_mut(&dk).unwrap() += v;
                     }
                 }
             }

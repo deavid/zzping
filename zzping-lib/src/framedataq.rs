@@ -418,11 +418,11 @@ impl FDCodecState {
                     SubSecType::Delta(extra_subsecs + subsec_ms_part - self.last_subsec_ms);
             }
         };
-        if let Some(llq) = self.cfg.recv_llq {
-            if d.recv_us_len > 0 {
-                for val in d.recv_us.iter_mut() {
-                    *val = llq.encode(*val) - self.last_recvq_0;
-                }
+        if let Some(llq) = self.cfg.recv_llq
+            && d.recv_us_len > 0
+        {
+            for val in d.recv_us.iter_mut() {
+                *val = llq.encode(*val) - self.last_recvq_0;
             }
         }
         d.into_encoded()
@@ -444,11 +444,11 @@ impl FDCodecState {
         ts += ((subsec_ms - subsec_ms_part) / 1000) as i64;
         d.timestamp = Some(ts);
         d.subsec_ms = SubSecType::Abs(subsec_ms_part);
-        if let Some(llq) = self.cfg.recv_llq {
-            if d.recv_us_len > 0 {
-                for val in d.recv_us.iter_mut() {
-                    *val = llq.decode(*val);
-                }
+        if let Some(llq) = self.cfg.recv_llq
+            && d.recv_us_len > 0
+        {
+            for val in d.recv_us.iter_mut() {
+                *val = llq.decode(*val);
             }
         }
 

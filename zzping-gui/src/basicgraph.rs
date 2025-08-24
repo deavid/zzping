@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use iced::{
-    canvas::{event, Frame, Program, Stroke},
     Color,
+    canvas::{Frame, Program, Stroke, event},
 };
 use zzping_lib::pingdata::{FirPing, FirPingConfig, Ping};
 
@@ -63,16 +63,15 @@ impl Graph {
         dbg!(self.firdata3.rtt.len());
     }
     pub fn redraw(&mut self) {
-        if let Some(sz) = self.size {
-            if !self.firdata3.dct.data.is_empty() {
-                self.mean_pings =
-                    PointGraph::from_firdct(&self.firdata3, self.vw.zoom, sz, self.test);
-                // self.mean_pings = PointGraph::from_firdctdbg(&self.firdata3);
-                self.stddevup_pings =
-                    PointGraph::from_firdct(&self.firdata2, self.vw.zoom, sz, self.test);
-                // self.stddevdown_pings =
-                //     PointGraph::from_firdct(&self.firdata, self.vw.zoom, sz, self.test);
-            }
+        if let Some(sz) = self.size
+            && !self.firdata3.dct.data.is_empty()
+        {
+            self.mean_pings = PointGraph::from_firdct(&self.firdata3, self.vw.zoom, sz, self.test);
+            // self.mean_pings = PointGraph::from_firdctdbg(&self.firdata3);
+            self.stddevup_pings =
+                PointGraph::from_firdct(&self.firdata2, self.vw.zoom, sz, self.test);
+            // self.stddevdown_pings =
+            //     PointGraph::from_firdct(&self.firdata, self.vw.zoom, sz, self.test);
         }
     }
     pub fn update_zoom(&mut self, zoom: f64) {

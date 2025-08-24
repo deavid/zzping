@@ -525,10 +525,10 @@ impl StreamPingIO {
         let mut sp = match StreamPing::from_reader(r) {
             Ok(v) => v,
             Err(e) => {
-                if let Some(e) = e.downcast_ref::<std::io::Error>() {
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                        return Ok(None);
-                    }
+                if let Some(e) = e.downcast_ref::<std::io::Error>()
+                    && e.kind() == std::io::ErrorKind::UnexpectedEof
+                {
+                    return Ok(None);
                 }
                 Err(e)?
             }
