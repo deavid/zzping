@@ -11,6 +11,9 @@ repository = "https://github.com/deavid/zzping"
 description = "Tools to monitor home network latency and packet loss"
 
 [workspace.dependencies]
+# NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
+# ...   and instead use "cratename.workspace = true" to refer to it.
+
 # Internal dependencies
 zzping-lib = { path = "zzping-lib" }
 

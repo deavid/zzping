@@ -10,6 +10,9 @@ description = "Common tooling for reading and writing messages for zzping binari
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+# NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
+# ...   and instead use "cratename.workspace = true" to refer to it.
+
 anyhow.workspace = true
 bit-vec.workspace = true
 chrono.workspace = true

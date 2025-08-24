@@ -8,6 +8,9 @@ repository.workspace = true
 description = "A graphical interface that shows real-time network latency and packet loss graphs"
 
 [dependencies]
+# NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
+# ...   and instead use "cratename.workspace = true" to refer to it.
+
 zzping-lib.workspace = true
 anyhow.workspace = true
 async-std.workspace = true
