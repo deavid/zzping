@@ -17,7 +17,7 @@ extern crate zzping_lib;
 mod basicgraph;
 mod custom_errors;
 mod fdq_graph;
-mod firtest;
+// mod firtest;
 mod flags;
 mod graph_plot;
 mod graphutils;
@@ -60,6 +60,7 @@ pub fn main() -> Result<()> {
         },
     };
 
+    /* TODO: Migrate firtest.rs to iced 0.13
     if opts.firtest {
         iced::application(
             "FirTest",
@@ -67,12 +68,9 @@ pub fn main() -> Result<()> {
             firtest::FirTest::view,
         )
         .subscription(firtest::FirTest::subscription)
-        .run_with({
-            let flags = flags.clone();
-            move || firtest::FirTest::new(flags)
-        })
+        .run_with(|| (firtest::FirTest::new(flags.clone()), iced::Task::none()))
         .context("FirTest error")
-    } else {
+    } else */ {
         iced::application(
             "Ping Monitor",
             PingmonGUI::update,
