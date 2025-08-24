@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["zzping-lib", "zzping-daemon", "zzping-gui", "zzping-press"]
+members = ["zzping-lib", "zzping-daemon", "zzping-gui", "zzping-press", "zzping-capture"]
 
 [workspace.package]
 version = "0.2.2-beta2"
@@ -30,6 +30,7 @@ iced = { version = "0.4", features = ["canvas"] }
 iced_native = { version = "0.5" }
 lazy_static = "1.5"
 log = "0.4"
+ping-rs = "0.1.2"
 pnet = "0.35"
 pnet_transport = "0.35"
 pnet_macros_support = "0.35"
@@ -42,6 +43,8 @@ rustfft = "6.4"
 serde = { version = "1.0", features = ["derive"] }
 tempfile = "3.21"
 thiserror = "2.0.16"
+tokio = { version = "1", features = ["full"] }
+
 
 [profile.dev]
 opt-level = 1
