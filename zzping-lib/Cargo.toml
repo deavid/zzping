@@ -14,11 +14,9 @@ description = "Common tooling for reading and writing messages for zzping binari
 # ...   and instead use "cratename.workspace = true" to refer to it.
 
 anyhow.workspace = true
-bit-vec.workspace = true
 chrono.workspace = true
 clap.workspace = true
 env_logger.workspace = true
-huffman-compress.workspace = true
 lazy_static.workspace = true
 log.workspace = true
 probability.workspace = true
@@ -27,3 +25,8 @@ rmp.workspace = true
 rustdct.workspace = true
 rustfft.workspace = true
 thiserror.workspace = true
+
+# TODO: REMOVE THESE DEPENDENCIES - marked for removal
+# These dependencies are old and should be replaced/removed in future versions
+bit-vec = "0.6"          # TODO: Remove - for huffman, also for serializing
+huffman-compress = "0.6" # TODO: Remove - 4 years old without updates

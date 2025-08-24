@@ -17,8 +17,6 @@ async-std.workspace = true
 chrono.workspace = true
 clap.workspace = true
 env_logger.workspace = true
-iced.workspace = true
-iced_native.workspace = true
 log.workspace = true
 rand.workspace = true
 rmp.workspace = true
@@ -26,3 +24,10 @@ ron.workspace = true
 rustdct.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+
+# TODO: REMOVE THESE DEPENDENCIES - marked for removal
+# These GUI dependencies are planned to be replaced with a different UI framework
+iced = { version = "0.4", features = [
+    "canvas",
+] } # TODO: Remove - replace with different UI framework
+iced_native = { version = "0.5" } # TODO: Remove - replace with different UI framework

@@ -5,12 +5,12 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description.workspace = true
+description = "An egui-based viewer for analyzing zzping log files and network data"
 
 [dependencies]
-anyhow = "1.0"
-byteorder = "1.4"
-chrono = "0.4"
-clap = { version = "4.0", features = ["derive"] }
-eframe = "0.22"
-egui = "0.22"
+anyhow.workspace = true
+byteorder.workspace = true
+chrono.workspace = true
+clap.workspace = true
+eframe.workspace = true
+egui.workspace = true

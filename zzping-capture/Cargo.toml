@@ -5,10 +5,10 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "A command-line tool to perform high-frequency ICMP pings and save the raw results."
+description = "A command-line tool to perform high-frequency ICMP pings and save the raw results"
 
 [dependencies]
-tokio = { workspace = true }
-ping-rs = { workspace = true }
-clap = { workspace = true }
-chrono = { workspace = true }
+tokio.workspace = true
+ping-rs.workspace = true
+clap.workspace = true
+chrono.workspace = true
