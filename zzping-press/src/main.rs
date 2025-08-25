@@ -1,6 +1,5 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::marker::PhantomData;
@@ -40,7 +39,10 @@ impl FromBytes for RawDataRecord {
     fn from_le_bytes(bytes: &[u8]) -> Result<Self> {
         let sent_nanos = u64::from_le_bytes(bytes[0..8].try_into()?);
         let rtt_nanos = u64::from_le_bytes(bytes[8..16].try_into()?);
-        Ok(Self { sent_nanos, rtt_nanos })
+        Ok(Self {
+            sent_nanos,
+            rtt_nanos,
+        })
     }
 }
 
@@ -49,7 +51,10 @@ impl FromBytes for CompressedDataRecord {
     fn from_le_bytes(bytes: &[u8]) -> Result<Self> {
         let sent_delta_micros = u16::from_le_bytes(bytes[0..2].try_into()?);
         let rtt_micros = u16::from_le_bytes(bytes[2..4].try_into()?);
-        Ok(Self { sent_delta_micros, rtt_micros })
+        Ok(Self {
+            sent_delta_micros,
+            rtt_micros,
+        })
     }
 }
 
@@ -60,7 +65,10 @@ struct RecordIterator<R: Read, T: FromBytes> {
 
 impl<R: Read, T: FromBytes> RecordIterator<R, T> {
     fn new(reader: R) -> Self {
-        Self { reader, _phantom: PhantomData }
+        Self {
+            reader,
+            _phantom: PhantomData,
+        }
     }
 }
 
@@ -83,9 +91,18 @@ impl<R: Read, T: FromBytes> Iterator for RecordIterator<R, T> {
 struct Cli {
     #[arg(long, value_name = "FILE_PATH")]
     input: PathBuf,
-    #[arg(long, value_name = "FILE_PATH")]
-    output: PathBuf,
-    #[arg(long, value_name = "STRATEGY_NAME")]
+    #[arg(
+        long,
+        value_name = "FILE_PATH",
+        help = "Output file path. If not specified, will add extension based on compression strategy to input file"
+    )]
+    output: Option<PathBuf>,
+    #[arg(
+        long,
+        value_name = "STRATEGY_NAME",
+        default_value = "delta-quantized-v1",
+        help = "Compression strategy to use"
+    )]
     strategy: Strategy,
 }
 
@@ -94,17 +111,60 @@ enum Strategy {
     DeltaQuantizedV1,
 }
 
+impl Strategy {
+    fn file_extension(&self) -> &'static str {
+        match self {
+            Strategy::DeltaQuantizedV1 => "dqv1",
+        }
+    }
+}
+
+fn get_output_path(
+    input: &std::path::Path,
+    output: Option<PathBuf>,
+    strategy: &Strategy,
+) -> PathBuf {
+    match output {
+        Some(path) => path,
+        None => {
+            let mut output_path = input.to_path_buf();
+            let extension = strategy.file_extension();
+            output_path.set_extension(extension);
+            output_path
+        }
+    }
+}
+
 // --- Main Application Logic ---
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    // Determine the output path
+    let output_path = get_output_path(&cli.input, cli.output, &cli.strategy);
+
     // --- Compression Phase ---
     let (header, raw_records_iterator) = read_raw_records(&cli.input)?;
     let mut records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
 
-    let mut writer = BufWriter::new(File::create(&cli.output)
-        .with_context(|| format!("Failed to create output file: {}", cli.output.display()))?);
+    // Debug: Sample first 10 records to verify data makes sense
+    println!("Header start timestamp: {} ns", header.start_timestamp_ns);
+    println!("Total records read: {}", records.len());
+    println!("Sampling first 10 raw records:");
+    for (i, record) in records.iter().take(10).enumerate() {
+        let sent_us = record.sent_nanos as f64 / 1000.0;
+        let rtt_display = if record.rtt_nanos == u64::MAX {
+            "LOST".to_string()
+        } else {
+            format!("{:.1} us", record.rtt_nanos as f64 / 1000.0)
+        };
+        println!("  {}: sent={:.1}us, rtt={}", i, sent_us, rtt_display);
+    }
+
+    let mut writer = BufWriter::new(
+        File::create(&output_path)
+            .with_context(|| format!("Failed to create output file: {}", output_path.display()))?,
+    );
     write_press_header(&mut writer, header.start_timestamp_ns)?;
 
     let records_written = match cli.strategy {
@@ -115,12 +175,27 @@ fn main() -> Result<()> {
     println!(
         "Successfully wrote {} compressed records to {}.",
         records_written,
-        cli.output.display()
+        output_path.display()
     );
 
     // --- Verification Phase ---
-    let compressed_records_iterator = read_compressed_records(&cli.output)?;
+    let compressed_records_iterator = read_compressed_records(&output_path)?;
     let read_compressed_records: Vec<_> = compressed_records_iterator.collect::<Result<_>>()?;
+
+    // Debug: Sample first 10 compressed records
+    println!("Sampling first 10 compressed records:");
+    for (i, record) in read_compressed_records.iter().take(10).enumerate() {
+        let rtt_display = if record.rtt_micros == u16::MAX {
+            "LOST".to_string()
+        } else {
+            format!("{} us", record.rtt_micros)
+        };
+        println!(
+            "  {}: delta={}us, rtt={}",
+            i, record.sent_delta_micros, rtt_display
+        );
+    }
+
     let decompressed_records = decompress_delta_quantized_v1(&read_compressed_records);
 
     print_metrics(&cli.input, &read_compressed_records, &decompressed_records)?;
@@ -132,12 +207,17 @@ fn main() -> Result<()> {
 
 fn read_raw_records(
     path: &PathBuf,
-) -> Result<(CaptureHeader, RecordIterator<BufReader<File>, RawDataRecord>)> {
+) -> Result<(
+    CaptureHeader,
+    RecordIterator<BufReader<File>, RawDataRecord>,
+)> {
     let file = File::open(path)
         .with_context(|| format!("Failed to open input file: {}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut header_buf = [0u8; 16];
-    reader.read_exact(&mut header_buf).context("Failed to read capture header")?;
+    reader
+        .read_exact(&mut header_buf)
+        .context("Failed to read capture header")?;
     let magic = u64::from_le_bytes(header_buf[0..8].try_into()?);
     if magic != CAPTURE_MAGIC {
         bail!("Invalid magic number in input file. Expected {CAPTURE_MAGIC:x}, found {magic:x}");
@@ -154,10 +234,14 @@ fn read_compressed_records(
         .with_context(|| format!("Failed to open compressed file: {}", path.display()))?;
     let mut reader = BufReader::new(file);
     let mut header_buf = [0u8; 16];
-    reader.read_exact(&mut header_buf).context("Failed to read press header")?;
+    reader
+        .read_exact(&mut header_buf)
+        .context("Failed to read press header")?;
     let magic = u64::from_le_bytes(header_buf[0..8].try_into()?);
     if magic != PRESS_MAGIC_V1 {
-        bail!("Invalid magic number in compressed file. Expected {PRESS_MAGIC_V1:x}, found {magic:x}");
+        bail!(
+            "Invalid magic number in compressed file. Expected {PRESS_MAGIC_V1:x}, found {magic:x}"
+        );
     }
     // Read the timestamp to advance the reader, but we don't use it.
     let _original_start_timestamp_ns = u64::from_le_bytes(header_buf[8..16].try_into()?);
@@ -176,7 +260,26 @@ fn stream_compress_delta_quantized_v1(
     records: &mut [RawDataRecord],
     writer: &mut impl Write,
 ) -> Result<usize> {
+    // Debug: Check first few records before and after sorting
+    println!(
+        "First 5 records BEFORE sorting: {:?}",
+        records
+            .iter()
+            .take(5)
+            .map(|r| (r.sent_nanos, r.rtt_nanos))
+            .collect::<Vec<_>>()
+    );
+
     records.sort_by_key(|r| r.sent_nanos);
+
+    println!(
+        "First 5 records AFTER sorting: {:?}",
+        records
+            .iter()
+            .take(5)
+            .map(|r| (r.sent_nanos, r.rtt_nanos))
+            .collect::<Vec<_>>()
+    );
     let mut last_sent_nanos: u64 = 0;
     for record in records.iter() {
         let sent_delta_nanos = record.sent_nanos - last_sent_nanos;
@@ -195,7 +298,9 @@ fn stream_compress_delta_quantized_v1(
     Ok(records.len())
 }
 
-fn decompress_delta_quantized_v1(compressed_records: &[CompressedDataRecord]) -> Vec<RawDataRecord> {
+fn decompress_delta_quantized_v1(
+    compressed_records: &[CompressedDataRecord],
+) -> Vec<RawDataRecord> {
     let mut decompressed_records = Vec::with_capacity(compressed_records.len());
     let mut last_sent_nanos: u64 = 0;
     for compressed in compressed_records {
@@ -206,7 +311,10 @@ fn decompress_delta_quantized_v1(compressed_records: &[CompressedDataRecord]) ->
         } else {
             compressed.rtt_micros as u64 * 1000
         };
-        decompressed_records.push(RawDataRecord { sent_nanos, rtt_nanos });
+        decompressed_records.push(RawDataRecord {
+            sent_nanos,
+            rtt_nanos,
+        });
     }
     decompressed_records
 }
@@ -222,41 +330,99 @@ fn print_metrics(
     let compressed_size = 16 + std::mem::size_of_val(compressed_records);
     let compression_ratio = original_size as f64 / compressed_size as f64;
 
+    // Calculate MiB/day based on actual time span in the data
+    let mut mib_per_day_text = String::new();
+    if !decompressed_records.is_empty() {
+        let first_timestamp = decompressed_records
+            .iter()
+            .map(|r| r.sent_nanos)
+            .min()
+            .unwrap_or(0);
+        let last_timestamp = decompressed_records
+            .iter()
+            .map(|r| r.sent_nanos)
+            .max()
+            .unwrap_or(0);
+        let time_span_seconds = (last_timestamp - first_timestamp) as f64 / 1_000_000_000.0;
+
+        if time_span_seconds > 0.0 {
+            let records_per_second = decompressed_records.len() as f64 / time_span_seconds;
+            let records_per_day = records_per_second * 86400.0;
+            let original_mib_per_day = (records_per_day * 16.0 + 16.0) / (1024.0 * 1024.0);
+            let compressed_mib_per_day = (records_per_day * 4.0 + 16.0) / (1024.0 * 1024.0);
+
+            mib_per_day_text = format!(
+                "\nOriginal storage:    {original_mib_per_day:.2} MiB/day\nCompressed storage:  {compressed_mib_per_day:.2} MiB/day"
+            );
+        }
+    }
+
     println!("\n--- Verification Metrics ---");
     println!("Original size:    {original_size} bytes");
     println!("Compressed size:  {compressed_size} bytes");
-    println!("Compression ratio: {compression_ratio:.2}:1");
+    println!("Compression ratio: {compression_ratio:.2}:1{mib_per_day_text}");
 
-    let decompressed_map: HashMap<u64, u64> = decompressed_records
-        .iter()
-        .map(|r| (r.sent_nanos, r.rtt_nanos))
-        .collect();
-
+    // Read original records to compare by order, not by timestamp
     let (_header, original_records_iterator) = read_raw_records(input_path)?;
+    let mut original_records: Vec<_> = original_records_iterator.collect::<Result<Vec<_>>>()?;
+
+    // Sort both datasets by timestamp to ensure same ordering for comparison
+    original_records.sort_by_key(|r| r.sent_nanos);
+    // Convert to Vec and sort decompressed records to match
+    let mut decompressed_sorted = decompressed_records.to_vec();
+    decompressed_sorted.sort_by_key(|r| r.sent_nanos);
+
+    // Now both are in the same order, so compare by index
     let mut squared_error_sum = 0.0;
     let mut valid_rtt_count = 0;
+    let mut skipped_lost_packets = 0;
+    let mut skipped_overflow = 0;
 
-    for original_result in original_records_iterator {
-        let original = original_result?;
-        if let Some(decompressed_rtt_nanos) = decompressed_map.get(&original.sent_nanos) {
-            if original.rtt_nanos == u64::MAX {
-                continue;
-            }
-            let original_rtt_micros = original.rtt_nanos / 1000;
-            if original_rtt_micros >= (u16::MAX - 1) as u64 {
-                continue;
-            }
-            let decompressed_rtt_micros = decompressed_rtt_nanos / 1000;
-            let error = original_rtt_micros as i64 - decompressed_rtt_micros as i64;
-            squared_error_sum += (error * error) as f64;
-            valid_rtt_count += 1;
+    let min_len = original_records.len().min(decompressed_sorted.len());
+
+    for i in 0..min_len {
+        let original = &original_records[i];
+        let decompressed = &decompressed_sorted[i];
+
+        // Skip lost packets (RTT = u64::MAX)
+        if original.rtt_nanos == u64::MAX {
+            skipped_lost_packets += 1;
+            continue;
         }
+
+        // Skip RTTs that would overflow u16 when compressed (using f64 for precise division)
+        let original_rtt_micros_f64 = original.rtt_nanos as f64 / 1000.0;
+        if original_rtt_micros_f64 >= (u16::MAX - 1) as f64 {
+            skipped_overflow += 1;
+            continue;
+        }
+
+        // Compare at nanosecond level using f64 for all statistical calculations
+        let original_rtt_nanos_f64 = original.rtt_nanos as f64;
+        let decompressed_rtt_nanos_f64 = decompressed.rtt_nanos as f64;
+        let error_nanos_f64 = original_rtt_nanos_f64 - decompressed_rtt_nanos_f64;
+
+        // Debug: Print some errors to see what's happening
+        if valid_rtt_count < 5 || error_nanos_f64.abs() > 1000.0 {
+            println!(
+                "  Sample {}: orig_rtt={}ns, decomp_rtt={}ns, error={:.1}ns",
+                valid_rtt_count, original.rtt_nanos, decompressed.rtt_nanos, error_nanos_f64
+            );
+        }
+
+        squared_error_sum += error_nanos_f64 * error_nanos_f64;
+        valid_rtt_count += 1;
     }
+
+    println!(
+        "RMSE Debug: total_records={}, valid_rtt_count={}, skipped_lost={}, skipped_overflow={}",
+        min_len, valid_rtt_count, skipped_lost_packets, skipped_overflow
+    );
 
     if valid_rtt_count > 0 {
         let mean_squared_error = squared_error_sum / valid_rtt_count as f64;
         let root_mean_squared_error = mean_squared_error.sqrt();
-        println!("RTT Precision Loss (RMSE): {root_mean_squared_error:.2} microseconds");
+        println!("RTT Precision Loss (RMSE): {root_mean_squared_error:.2} nanoseconds");
     } else {
         println!("RTT Precision Loss (RMSE): Not applicable (no valid RTTs to compare).");
     }
