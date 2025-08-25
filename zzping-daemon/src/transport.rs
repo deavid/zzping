@@ -171,7 +171,7 @@ impl Destination {
     /// switch to the new file. If the file exists, it will be replaced by a new
     /// one.
     ///
-    /// The filename follows the format ./logs/pingd-log-{str_addr}-{now}.log
+    /// The filename follows the format ./logs/pingd-log-{now}-{str_addr}-{n:04}.log
     pub fn create_log_file(&mut self, now: &str) {
         let mut n = 1;
         let mut filename = format!("logs/pingd-log-{}-{}-{:04}.log", now, self.str_addr, n);
@@ -193,7 +193,7 @@ impl Destination {
         // Streamdata logging
         let filename = format!(
             "logs/pingd-streamdata-{}-{}-{:04}.log",
-            self.str_addr, now, n
+            now, self.str_addr, n
         );
         let f = File::create(&filename)
             .unwrap_or_else(|e| panic!("unable to create file {}: {}", &filename, &e));

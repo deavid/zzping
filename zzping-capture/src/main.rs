@@ -49,7 +49,7 @@ struct LogFile {
 
 impl LogFile {
     async fn new(dir: &Path, target: IpAddr, date_str: &str) -> Result<Self> {
-        let file_path = dir.join(format!("{target}-{date_str}.dat"));
+        let file_path = dir.join(format!("{date_str}-{target}.dat"));
         eprintln!("Creating new log file: {}", file_path.display());
         let file = OpenOptions::new()
             .create(true)
@@ -130,6 +130,7 @@ async fn logger_task(
     cli: Arc<Cli>,
     mut rx: mpsc::Receiver<PingResult>,
     rate_ns: Arc<AtomicU64>,
+    ping_semaphore: Arc<Semaphore>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) -> Result<()> {
     let mut current_log_file: Option<LogFile> = None;
@@ -187,8 +188,27 @@ async fn logger_task(
                 let sent_count = recent_results.len();
                 let received_count = recent_results.iter().filter(|r| r.rtt.is_some()).count();
 
-                let p = if sent_count > 0 { received_count as f64 / sent_count as f64 } else { 1.0 };
-                let new_rate = 1.0 + ((max_rate - 1) as f64 * p);
+                let loss_rate = if sent_count > 0 {
+                    1.0 - (received_count as f64 / sent_count as f64)
+                } else {
+                    0.0
+                };
+
+                // Stepped backoff based on loss percentage
+                let rate_multiplier = if loss_rate < 0.10 {
+                    // <10% loss: run at 100%
+                    1.0
+                } else if loss_rate < 0.20 {
+                    0.5
+                } else if loss_rate < 0.50 {
+                    0.2
+                } else if loss_rate < 0.90 {
+                    0.1
+                } else {
+                    0.01
+                };
+
+                let new_rate = (max_rate as f64 * rate_multiplier).max(2.0);
                 let new_interval_ns = (1_000_000_000.0 / new_rate) as u64;
                 rate_ns.store(new_interval_ns, Ordering::SeqCst);
             },
@@ -222,6 +242,10 @@ async fn logger_task(
                 let received_count = rtts.len();
                 let loss_count = sent_count - received_count;
 
+                // Semaphore statistics for actual concurrency control
+                let semaphore_available = ping_semaphore.available_permits();
+                let semaphore_in_use = cli.max_in_flight - semaphore_available;
+
                 let loss_percent = if sent_count > 0 { (loss_count as f64 / sent_count as f64) * 100.0 } else { 0.0 };
 
                 // Calculate PPS based on actual time window, not fixed 5 seconds
@@ -240,7 +264,7 @@ async fn logger_task(
                 let current_rate = 1_000_000_000.0 / rate_ns.load(Ordering::Relaxed) as f64;
                 let timestamp = Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
-                print!("{timestamp} | Rate: {current_rate:>4.1} pps | PPS: {pps:>4.1} | Loss: {loss_percent:>4.1}%");
+                print!("{timestamp} | Rate: {current_rate:>4.1} pps | PPS: {pps:>4.1} | Loss: {loss_percent:>4.1}% | InFlight: {semaphore_in_use}/{}", cli.max_in_flight);
                 if let Some(std_dev) = ipg_stats {
                      print!(" | IPG std_dev: {std_dev:.2?}");
                 }
@@ -300,6 +324,7 @@ async fn main() -> Result<()> {
         cli.clone(),
         rx,
         rate_ns.clone(),
+        ping_semaphore.clone(),
         shutdown_tx.subscribe(),
     ));
 
