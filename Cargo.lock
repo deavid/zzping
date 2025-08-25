@@ -4773,6 +4773,7 @@ dependencies = [
 name = "zzping-capture"
 version = "0.2.2-beta2"
 dependencies = [
+ "anyhow",
  "chrono",
  "clap",
  "rand",

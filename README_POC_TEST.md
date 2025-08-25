@@ -1,5 +1,13 @@
 # ZZPing v0.3 PoC Lab - Developer Testing Guide
 
+Enable:
+
+sudo sysctl -w net.ipv4.ping_group_range="0 2147483647"
+
+
+----
+
+
 This document provides instructions for compiling, running, and validating the three proof-of-concept (PoC) tools for the zzping v0.3 architecture.
 
 ## 1. Project Setup

@@ -8,6 +8,7 @@ repository.workspace = true
 description = "A command-line tool to perform high-frequency ICMP pings and save the raw results."
 
 [dependencies]
+anyhow = { workspace = true }
 tokio = { workspace = true }
 surge-ping = { workspace = true }
 clap = { workspace = true }
