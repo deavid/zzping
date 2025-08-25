@@ -2,8 +2,8 @@ use chrono::Utc;
 use clap::Parser;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence};
 use tokio::fs::{self, File, OpenOptions};
 use tokio::io::{AsyncWriteExt, BufWriter};
 use tokio::signal;
@@ -51,7 +51,6 @@ impl LogFile {
 
         let mut writer = BufWriter::new(file);
 
-        // Header is always written for a new file now.
         let start_time_system = SystemTime::now();
         let start_time_unix_nanos = start_time_system
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -88,27 +87,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Pinging at {} pps", cli.rate);
     eprintln!("Output directory: {}", cli.output_dir.display());
 
-    let interval_duration = Duration::from_secs_f64(1.0 / cli.rate as f64);
-    let mut interval = tokio::time::interval(interval_duration);
-    interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+    let config = Config::default();
+    let client = Client::new(&config)?;
+    let mut pinger = client.pinger(cli.target, PingIdentifier(rand::random())).await;
+    pinger.timeout(Duration::from_secs(2));
 
-    let target_ip = cli.target;
-    let data_arc = Arc::new(&[][..]);
-    let timeout = Duration::from_secs(2);
+    let interval_duration = Duration::from_secs_f64(1.0 / cli.rate as f64);
+    let mut ticker = tokio::time::interval(interval_duration);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     let mut current_log_file: Option<LogFile> = None;
     let mut last_date_str = String::new();
+    let mut sequence_idx: u16 = 0;
 
     loop {
-        let _ = tokio::select! {
-            biased;
-            _ = signal::ctrl_c() => {
-                eprintln!("\nShutdown signal received. Exiting...");
-                break;
-            }
-            instant = interval.tick() => instant,
-        };
-
         let now = Utc::now();
         let date_str = now.format("%Y%m%d").to_string();
 
@@ -116,25 +108,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(mut log_file) = current_log_file.take() {
                 log_file.flush().await?;
             }
-            let log_file = LogFile::new(&cli.output_dir, target_ip, &date_str).await?;
+            let log_file = LogFile::new(&cli.output_dir, cli.target, &date_str).await?;
             current_log_file = Some(log_file);
             last_date_str = date_str;
         }
 
-        if let Some(log_file) = current_log_file.as_mut() {
-            let sent_instant = Instant::now();
-            let sent_nanos = sent_instant
-                .duration_since(log_file.start_time_monotonic)
-                .as_nanos() as u64;
+        tokio::select! {
+            biased;
+            _ = signal::ctrl_c() => {
+                eprintln!("\nShutdown signal received. Exiting...");
+                break;
+            }
+            _ = ticker.tick() => {
+                if let Some(log_file) = current_log_file.as_mut() {
+                    let sent_instant = Instant::now();
+                    let sent_nanos = sent_instant
+                        .duration_since(log_file.start_time_monotonic)
+                        .as_nanos() as u64;
 
-            let future = ping_rs::send_ping_async(&target_ip, timeout, data_arc.clone(), None);
-            let rtt_nanos = match future.await {
-                Ok(reply) => (reply.rtt as u64) * 1_000_000,
-                Err(_) => u64::MAX,
-            };
-
-            log_file.write_record(sent_nanos, rtt_nanos).await?;
-        }
+                    // This is a guess, the API might be different
+                    match pinger.ping(PingSequence(sequence_idx), &[0; 8]).await {
+                        Ok((IcmpPacket::V4(_), rtt)) => {
+                             log_file.write_record(sent_nanos, rtt.as_nanos() as u64).await?;
+                        },
+                        Ok((IcmpPacket::V6(_), rtt)) => {
+                             log_file.write_record(sent_nanos, rtt.as_nanos() as u64).await?;
+                        },
+                        Err(_) => {
+                            log_file.write_record(sent_nanos, u64::MAX).await?;
+                        }
+                    }
+                    sequence_idx = sequence_idx.wrapping_add(1);
+                }
+            }
+        };
     }
 
     if let Some(mut log_file) = current_log_file.take() {

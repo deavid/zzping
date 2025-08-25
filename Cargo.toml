@@ -45,6 +45,7 @@ ron = "0.10"
 rustdct = "0.7"
 rustfft = "6.4"
 serde = { version = "1.0", features = ["derive"] }
+surge-ping = "0.8.2"
 tempfile = "3.21"
 thiserror = "2.0.16"
 tokio = { version = "1", features = ["full"] }
