@@ -23,8 +23,8 @@ struct RawDataRecord {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct CompressedDataRecord {
-    sent_delta_micros: u16,
-    rtt_micros: u16,
+    sent_delta_deciseconds: u16, // Time delta in deciseconds (0.1ms precision), max 6.5s
+    rtt_deciseconds: u16, // RTT in deciseconds (0.1ms precision), max 6.5s, u16::MAX = packet lost
 }
 
 // --- Generic Record Reading Infrastructure ---
@@ -49,11 +49,11 @@ impl FromBytes for RawDataRecord {
 impl FromBytes for CompressedDataRecord {
     const SIZE: usize = 4;
     fn from_le_bytes(bytes: &[u8]) -> Result<Self> {
-        let sent_delta_micros = u16::from_le_bytes(bytes[0..2].try_into()?);
-        let rtt_micros = u16::from_le_bytes(bytes[2..4].try_into()?);
+        let sent_delta_deciseconds = u16::from_le_bytes(bytes[0..2].try_into()?);
+        let rtt_deciseconds = u16::from_le_bytes(bytes[2..4].try_into()?);
         Ok(Self {
-            sent_delta_micros,
-            rtt_micros,
+            sent_delta_deciseconds,
+            rtt_deciseconds,
         })
     }
 }
@@ -150,8 +150,8 @@ fn main() -> Result<()> {
     // Debug: Sample first 10 records to verify data makes sense
     println!("Header start timestamp: {} ns", header.start_timestamp_ns);
     println!("Total records read: {}", records.len());
-    println!("Sampling first 10 raw records:");
-    for (i, record) in records.iter().take(10).enumerate() {
+    println!("Sampling first 5 raw records:");
+    for (i, record) in records.iter().take(5).enumerate() {
         let sent_us = record.sent_nanos as f64 / 1000.0;
         let rtt_display = if record.rtt_nanos == u64::MAX {
             "LOST".to_string()
@@ -182,17 +182,19 @@ fn main() -> Result<()> {
     let compressed_records_iterator = read_compressed_records(&output_path)?;
     let read_compressed_records: Vec<_> = compressed_records_iterator.collect::<Result<_>>()?;
 
-    // Debug: Sample first 10 compressed records
-    println!("Sampling first 10 compressed records:");
-    for (i, record) in read_compressed_records.iter().take(10).enumerate() {
-        let rtt_display = if record.rtt_micros == u16::MAX {
+    // Debug: Sample first 5 compressed records
+    println!("Sampling first 5 compressed records:");
+    for (i, record) in read_compressed_records.iter().take(5).enumerate() {
+        let rtt_display = if record.rtt_deciseconds == u16::MAX {
             "LOST".to_string()
         } else {
-            format!("{} us", record.rtt_micros)
+            format!("{:.1} ms", record.rtt_deciseconds as f64 / 10.0)
         };
         println!(
-            "  {}: delta={}us, rtt={}",
-            i, record.sent_delta_micros, rtt_display
+            "  {}: delta={:.1}ms, rtt={}",
+            i,
+            record.sent_delta_deciseconds as f64 / 10.0,
+            rtt_display
         );
     }
 
@@ -260,40 +262,28 @@ fn stream_compress_delta_quantized_v1(
     records: &mut [RawDataRecord],
     writer: &mut impl Write,
 ) -> Result<usize> {
-    // Debug: Check first few records before and after sorting
-    println!(
-        "First 5 records BEFORE sorting: {:?}",
-        records
-            .iter()
-            .take(5)
-            .map(|r| (r.sent_nanos, r.rtt_nanos))
-            .collect::<Vec<_>>()
-    );
-
     records.sort_by_key(|r| r.sent_nanos);
 
-    println!(
-        "First 5 records AFTER sorting: {:?}",
-        records
-            .iter()
-            .take(5)
-            .map(|r| (r.sent_nanos, r.rtt_nanos))
-            .collect::<Vec<_>>()
-    );
     let mut last_sent_nanos: u64 = 0;
     for record in records.iter() {
         let sent_delta_nanos = record.sent_nanos - last_sent_nanos;
-        let sent_delta_us = sent_delta_nanos / 1000;
-        let sent_delta_micros = (sent_delta_us).min(u16::MAX as u64) as u16;
+        let sent_delta_deciseconds_f64 = sent_delta_nanos as f64 / 100_000.0; // Convert to deciseconds (0.1ms)
+        let sent_delta_deciseconds =
+            (sent_delta_deciseconds_f64.round() as u64).min(u16::MAX as u64) as u16;
         last_sent_nanos = record.sent_nanos;
-        let rtt_micros = if record.rtt_nanos == u64::MAX {
-            u16::MAX
+        let rtt_deciseconds = if record.rtt_nanos == u64::MAX {
+            u16::MAX // Packet lost
         } else {
-            let rtt_us = record.rtt_nanos / 1000;
-            (rtt_us).min((u16::MAX - 1) as u64) as u16
+            let rtt_deciseconds_f64 = record.rtt_nanos as f64 / 100_000.0; // Convert to deciseconds
+            let rtt_ds = rtt_deciseconds_f64.round() as u64;
+            if rtt_ds >= (u16::MAX - 100) as u64 {
+                u16::MAX - 100 // Too long, but not packet lost - reserve top 100 values
+            } else {
+                rtt_ds as u16
+            }
         };
-        writer.write_all(&sent_delta_micros.to_le_bytes())?;
-        writer.write_all(&rtt_micros.to_le_bytes())?;
+        writer.write_all(&sent_delta_deciseconds.to_le_bytes())?;
+        writer.write_all(&rtt_deciseconds.to_le_bytes())?;
     }
     Ok(records.len())
 }
@@ -304,12 +294,13 @@ fn decompress_delta_quantized_v1(
     let mut decompressed_records = Vec::with_capacity(compressed_records.len());
     let mut last_sent_nanos: u64 = 0;
     for compressed in compressed_records {
-        let sent_nanos = last_sent_nanos.saturating_add(compressed.sent_delta_micros as u64 * 1000);
+        let sent_nanos =
+            last_sent_nanos.saturating_add(compressed.sent_delta_deciseconds as u64 * 100_000);
         last_sent_nanos = sent_nanos;
-        let rtt_nanos = if compressed.rtt_micros == u16::MAX {
-            u64::MAX
+        let rtt_nanos = if compressed.rtt_deciseconds == u16::MAX {
+            u64::MAX // Packet lost
         } else {
-            compressed.rtt_micros as u64 * 1000
+            compressed.rtt_deciseconds as u64 * 100_000 // Convert deciseconds back to nanoseconds
         };
         decompressed_records.push(RawDataRecord {
             sent_nanos,
@@ -390,9 +381,9 @@ fn print_metrics(
             continue;
         }
 
-        // Skip RTTs that would overflow u16 when compressed (using f64 for precise division)
-        let original_rtt_micros_f64 = original.rtt_nanos as f64 / 1000.0;
-        if original_rtt_micros_f64 >= (u16::MAX - 1) as f64 {
+        // Skip RTTs that would overflow u16 when compressed (using deciseconds now)
+        let original_rtt_deciseconds_f64 = original.rtt_nanos as f64 / 100_000.0;
+        if original_rtt_deciseconds_f64 >= (u16::MAX - 100) as f64 {
             skipped_overflow += 1;
             continue;
         }
@@ -403,7 +394,7 @@ fn print_metrics(
         let error_nanos_f64 = original_rtt_nanos_f64 - decompressed_rtt_nanos_f64;
 
         // Debug: Print some errors to see what's happening
-        if valid_rtt_count < 5 || error_nanos_f64.abs() > 1000.0 {
+        if valid_rtt_count < 3 {
             println!(
                 "  Sample {}: orig_rtt={}ns, decomp_rtt={}ns, error={:.1}ns",
                 valid_rtt_count, original.rtt_nanos, decompressed.rtt_nanos, error_nanos_f64
