@@ -10,3 +10,4 @@ description = "A tool for stress testing and network performance analysis"
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
+rerun = "0.24.1"

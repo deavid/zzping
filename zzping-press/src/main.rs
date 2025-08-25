@@ -1,9 +1,11 @@
 use anyhow::{Context, Result, bail};
 use clap::Parser;
+use rerun::RecordingStreamBuilder;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
 use std::marker::PhantomData;
 use std::path::PathBuf;
+use std::time::Duration;
 
 const CAPTURE_MAGIC: u64 = 0x7A7A504E47434150; // zzPNGCAP
 const PRESS_MAGIC_V1: u64 = 0x7A7A505245535331; // zzPRESS1
@@ -109,12 +111,15 @@ struct Cli {
 #[derive(clap::ValueEnum, Clone, Debug)]
 enum Strategy {
     DeltaQuantizedV1,
+    /// Output the data to a Rerun RRD file for visualization.
+    Rerun,
 }
 
 impl Strategy {
     fn file_extension(&self) -> &'static str {
         match self {
             Strategy::DeltaQuantizedV1 => "dqv1",
+            Strategy::Rerun => "rrd",
         }
     }
 }
@@ -143,64 +148,114 @@ fn main() -> Result<()> {
     // Determine the output path
     let output_path = get_output_path(&cli.input, cli.output, &cli.strategy);
 
-    // --- Compression Phase ---
-    let (header, raw_records_iterator) = read_raw_records(&cli.input)?;
-    let mut records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
-
-    // Debug: Sample first 10 records to verify data makes sense
-    println!("Header start timestamp: {} ns", header.start_timestamp_ns);
-    println!("Total records read: {}", records.len());
-    println!("Sampling first 5 raw records:");
-    for (i, record) in records.iter().take(5).enumerate() {
-        let sent_us = record.sent_nanos as f64 / 1000.0;
-        let rtt_display = if record.rtt_nanos == u64::MAX {
-            "LOST".to_string()
-        } else {
-            format!("{:.1} us", record.rtt_nanos as f64 / 1000.0)
-        };
-        println!("  {}: sent={:.1}us, rtt={}", i, sent_us, rtt_display);
-    }
-
-    let mut writer = BufWriter::new(
-        File::create(&output_path)
-            .with_context(|| format!("Failed to create output file: {}", output_path.display()))?,
-    );
-    write_press_header(&mut writer, header.start_timestamp_ns)?;
-
-    let records_written = match cli.strategy {
+    match cli.strategy {
         Strategy::DeltaQuantizedV1 => {
-            stream_compress_delta_quantized_v1(&mut records, &mut writer)?
+            // --- Compression Phase ---
+            let (header, raw_records_iterator) = read_raw_records(&cli.input)?;
+            let mut records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
+
+            // Debug: Sample first 10 records to verify data makes sense
+            println!("Header start timestamp: {} ns", header.start_timestamp_ns);
+            println!("Total records read: {}", records.len());
+            println!("Sampling first 5 raw records:");
+            for (i, record) in records.iter().take(5).enumerate() {
+                let sent_us = record.sent_nanos as f64 / 1000.0;
+                let rtt_display = if record.rtt_nanos == u64::MAX {
+                    "LOST".to_string()
+                } else {
+                    format!("{:.1} us", record.rtt_nanos as f64 / 1000.0)
+                };
+                println!("  {}: sent={:.1}us, rtt={}", i, sent_us, rtt_display);
+            }
+
+            let mut writer = BufWriter::new(File::create(&output_path).with_context(|| {
+                format!("Failed to create output file: {}", output_path.display())
+            })?);
+            write_press_header(&mut writer, header.start_timestamp_ns)?;
+
+            let records_written = stream_compress_delta_quantized_v1(&mut records, &mut writer)?;
+            println!(
+                "Successfully wrote {} compressed records to {}.",
+                records_written,
+                output_path.display()
+            );
+
+            // --- Verification Phase ---
+            let compressed_records_iterator = read_compressed_records(&output_path)?;
+            let read_compressed_records: Vec<_> =
+                compressed_records_iterator.collect::<Result<_>>()?;
+
+            // Debug: Sample first 5 compressed records
+            println!("Sampling first 5 compressed records:");
+            for (i, record) in read_compressed_records.iter().take(5).enumerate() {
+                let rtt_display = if record.rtt_deciseconds == u16::MAX {
+                    "LOST".to_string()
+                } else {
+                    format!("{:.1} ms", record.rtt_deciseconds as f64 / 10.0)
+                };
+                println!(
+                    "  {}: delta={:.1}ms, rtt={}",
+                    i,
+                    record.sent_delta_deciseconds as f64 / 10.0,
+                    rtt_display
+                );
+            }
+
+            let decompressed_records = decompress_delta_quantized_v1(&read_compressed_records);
+
+            print_metrics(&cli.input, &read_compressed_records, &decompressed_records)?;
         }
-    };
-    println!(
-        "Successfully wrote {} compressed records to {}.",
-        records_written,
-        output_path.display()
-    );
+        Strategy::Rerun => {
+            // --- Rerun Export Implementation ---
+            // This block handles the full process of converting a raw zzping data file
+            // into a Rerun RRD file for visualization.
 
-    // --- Verification Phase ---
-    let compressed_records_iterator = read_compressed_records(&output_path)?;
-    let read_compressed_records: Vec<_> = compressed_records_iterator.collect::<Result<_>>()?;
+            // 1. Initialize the Rerun RecordingStream.
+            //    The `save()` method configures the stream to write all subsequent
+            //    log data directly to the specified `.rrd` file. This is more
+            //    efficient than buffering in memory.
+            let rec = RecordingStreamBuilder::new("zzping-press").save(&output_path)?;
 
-    // Debug: Sample first 5 compressed records
-    println!("Sampling first 5 compressed records:");
-    for (i, record) in read_compressed_records.iter().take(5).enumerate() {
-        let rtt_display = if record.rtt_deciseconds == u16::MAX {
-            "LOST".to_string()
-        } else {
-            format!("{:.1} ms", record.rtt_deciseconds as f64 / 10.0)
-        };
-        println!(
-            "  {}: delta={:.1}ms, rtt={}",
-            i,
-            record.sent_delta_deciseconds as f64 / 10.0,
-            rtt_display
-        );
+            // 2. Read all raw records into memory.
+            //    This is necessary because the data must be sorted by timestamp
+            //    to be displayed correctly as a time-series plot.
+            let (_header, raw_records_iterator) = read_raw_records(&cli.input)?;
+            let mut records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
+            records.sort_by_key(|r| r.sent_nanos);
+
+            println!("Logging {} records to Rerun file...", records.len());
+
+            // 3. Iterate through sorted records and log them to Rerun.
+            for record in records {
+                // RTT is meaningless for lost packets, so we skip them.
+                if record.rtt_nanos == u64::MAX {
+                    continue;
+                }
+
+                // 3a. Set the time for the following log calls.
+                //     We define a custom timeline named "sent_time" and use the
+                //     monotonic `sent_nanos` from our data as the time value.
+                //     This ensures the x-axis of our plot is the send time.
+                rec.set_time("sent_time", Duration::from_nanos(record.sent_nanos));
+
+                // 3b. Log the RTT as a scalar value.
+                //     We give it the entity path "ping/rtt_ms", which will create a
+                //     plot named "rtt_ms" inside a "ping" group in the Rerun UI.
+                //     We convert the RTT to milliseconds for readability.
+                let rtt_ms = record.rtt_nanos as f64 / 1_000_000.0;
+                rec.log("ping/rtt_ms", &rerun::Scalars::new([rtt_ms]))?;
+            }
+
+            println!(
+                "Successfully wrote Rerun data to {}.",
+                output_path.display()
+            );
+
+            // 4. Report the final file size as requested.
+            let metadata = std::fs::metadata(&output_path)?;
+            println!("Final RRD file size: {} bytes", metadata.len());
+        }
     }
-
-    let decompressed_records = decompress_delta_quantized_v1(&read_compressed_records);
-
-    print_metrics(&cli.input, &read_compressed_records, &decompressed_records)?;
 
     Ok(())
 }
