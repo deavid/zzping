@@ -1,0 +1,16 @@
+[package]
+name = "zzping-view"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "An egui-based viewer for analyzing zzping log files and network data"
+
+[dependencies]
+anyhow.workspace = true
+byteorder.workspace = true
+chrono.workspace = true
+clap.workspace = true
+eframe.workspace = true
+egui.workspace = true

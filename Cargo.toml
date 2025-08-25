@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["zzping-lib", "zzping-daemon", "zzping-gui"]
+members = [
+    "zzping-lib",
+    "zzping-daemon",
+    "zzping-view",
+    "zzping-press",
+    "zzping-capture",
+]
 
 [workspace.package]
 version = "0.2.2-beta2"
@@ -20,16 +26,15 @@ zzping-lib = { path = "zzping-lib" }
 # External dependencies
 anyhow = "1.0"
 async-std = { version = "1.13", features = ["unstable"] }
-bit-vec = "0.6"
+byteorder = "1.4"
 chrono = "0.4"
 clap = { version = "4.5", features = ["derive"] }
+eframe = "0.32"
+egui = "0.32"
 env_logger = "0.11"
-# NOTE: huffman-compress is 4 years old without updates, and pulls bit-vec 0.6 to the project.
-huffman-compress = "0.6"
-iced = { version = "0.4", features = ["canvas"] }
-iced_native = { version = "0.5" }
 lazy_static = "1.5"
 log = "0.4"
+ping-rs = "0.1.2"
 pnet = "0.35"
 pnet_transport = "0.35"
 pnet_macros_support = "0.35"
@@ -40,8 +45,11 @@ ron = "0.10"
 rustdct = "0.7"
 rustfft = "6.4"
 serde = { version = "1.0", features = ["derive"] }
+surge-ping = "0.8.2"
 tempfile = "3.21"
 thiserror = "2.0.16"
+tokio = { version = "1", features = ["full"] }
+
 
 [profile.dev]
 opt-level = 1

@@ -1,0 +1,13 @@
+[package]
+name = "zzping-press"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A tool for stress testing and network performance analysis"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+rerun = "0.24.1"
