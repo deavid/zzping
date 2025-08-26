@@ -5,7 +5,7 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "An egui-based viewer for analyzing zzping log files and network data"
+description = "An egui-based viewer for analyzing zzping-capture data files with interactive graphs, pan/zoom controls, and RTT visualization"
 
 [dependencies]
 anyhow.workspace = true
