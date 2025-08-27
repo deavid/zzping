@@ -1,96 +1,38 @@
-use anyhow::{Context, Result, bail};
-use clap::Parser;
+use anyhow::{bail, Context, Result};
+use clap::{Parser, Subcommand};
 use rerun::RecordingStreamBuilder;
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::time::Duration;
+use zzping_press::{
+    chunked_v1, CaptureHeader, CompressedDataRecord, FromBytes, RawDataRecord, RecordIterator,
+};
 
 const CAPTURE_MAGIC: u64 = 0x7A7A504E47434150; // zzPNGCAP
 const PRESS_MAGIC_V1: u64 = 0x7A7A505245535331; // zzPRESS1
-
-// --- Data Structs ---
-
-#[derive(Debug, Clone, Copy)]
-struct CaptureHeader {
-    start_timestamp_ns: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct RawDataRecord {
-    sent_nanos: u64,
-    rtt_nanos: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CompressedDataRecord {
-    sent_delta_deciseconds: u16, // Time delta in deciseconds (0.1ms precision), max 6.5s
-    rtt_deciseconds: u16, // RTT in deciseconds (0.1ms precision), max 6.5s, u16::MAX = packet lost
-}
-
-// --- Generic Record Reading Infrastructure ---
-
-trait FromBytes: Sized {
-    const SIZE: usize;
-    fn from_le_bytes(bytes: &[u8]) -> Result<Self>;
-}
-
-impl FromBytes for RawDataRecord {
-    const SIZE: usize = 16;
-    fn from_le_bytes(bytes: &[u8]) -> Result<Self> {
-        let sent_nanos = u64::from_le_bytes(bytes[0..8].try_into()?);
-        let rtt_nanos = u64::from_le_bytes(bytes[8..16].try_into()?);
-        Ok(Self {
-            sent_nanos,
-            rtt_nanos,
-        })
-    }
-}
-
-impl FromBytes for CompressedDataRecord {
-    const SIZE: usize = 4;
-    fn from_le_bytes(bytes: &[u8]) -> Result<Self> {
-        let sent_delta_deciseconds = u16::from_le_bytes(bytes[0..2].try_into()?);
-        let rtt_deciseconds = u16::from_le_bytes(bytes[2..4].try_into()?);
-        Ok(Self {
-            sent_delta_deciseconds,
-            rtt_deciseconds,
-        })
-    }
-}
-
-struct RecordIterator<R: Read, T: FromBytes> {
-    reader: R,
-    _phantom: PhantomData<T>,
-}
-
-impl<R: Read, T: FromBytes> RecordIterator<R, T> {
-    fn new(reader: R) -> Self {
-        Self {
-            reader,
-            _phantom: PhantomData,
-        }
-    }
-}
-
-impl<R: Read, T: FromBytes> Iterator for RecordIterator<R, T> {
-    type Item = Result<T>;
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut buffer = vec![0; T::SIZE];
-        match self.reader.read_exact(&mut buffer) {
-            Ok(()) => Some(T::from_le_bytes(&buffer)),
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => None,
-            Err(e) => Some(Err(e.into())),
-        }
-    }
-}
 
 // --- CLI Definition ---
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Compresses a raw .dat file into a compressed format.
+    Press(PressArgs),
+    /// Inspects a raw .dat file and prints metadata.
+    Inspect(InspectArgs),
+    /// Creates a fixture file by slicing a raw .dat file.
+    CreateFixture(CreateFixtureArgs),
+}
+
+#[derive(Parser, Debug)]
+struct PressArgs {
     #[arg(long, value_name = "FILE_PATH")]
     input: PathBuf,
     #[arg(
@@ -108,9 +50,28 @@ struct Cli {
     strategy: Strategy,
 }
 
+#[derive(Parser, Debug)]
+struct InspectArgs {
+    #[arg(long, value_name = "FILE_PATH")]
+    input: PathBuf,
+}
+
+#[derive(Parser, Debug)]
+struct CreateFixtureArgs {
+    #[arg(long, value_name = "FILE_PATH")]
+    input: PathBuf,
+    #[arg(long, value_name = "FILE_PATH")]
+    output: PathBuf,
+    #[arg(long, help = "Number of minutes to skip from the beginning")]
+    skip: u64,
+    #[arg(long, help = "Number of minutes to include in the fixture")]
+    take: u64,
+}
+
 #[derive(clap::ValueEnum, Clone, Debug)]
 enum Strategy {
     DeltaQuantizedV1,
+    ChunkedV1,
     /// Output the data to a Rerun RRD file for visualization.
     Rerun,
 }
@@ -119,6 +80,7 @@ impl Strategy {
     fn file_extension(&self) -> &'static str {
         match self {
             Strategy::DeltaQuantizedV1 => "dqv1",
+            Strategy::ChunkedV1 => "zzp1",
             Strategy::Rerun => "rrd",
         }
     }
@@ -145,13 +107,59 @@ fn get_output_path(
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Determine the output path
-    let output_path = get_output_path(&cli.input, cli.output, &cli.strategy);
+    match cli.command {
+        Commands::Press(args) => handle_press(args),
+        Commands::Inspect(args) => handle_inspect(args),
+        Commands::CreateFixture(args) => handle_create_fixture(args),
+    }
+}
 
-    match cli.strategy {
+fn handle_press(args: PressArgs) -> Result<()> {
+    // Determine the output path
+    let output_path = get_output_path(&args.input, args.output, &args.strategy);
+
+    match args.strategy {
+        Strategy::ChunkedV1 => {
+            let (_header, raw_records_iterator) = read_raw_records(&args.input)?;
+            let mut records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
+            records.sort();
+
+            println!("Compressing {} records with chunked-v1 strategy...", records.len());
+
+            let start_time = std::time::Instant::now();
+            let compressed_data = chunked_v1::compress_chunked_v1(&records)?;
+            let duration = start_time.elapsed();
+
+            let original_size = records.len() * std::mem::size_of::<RawDataRecord>();
+            let compressed_size = compressed_data.len();
+            let ratio = if compressed_size > 0 {
+                original_size as f64 / compressed_size as f64
+            } else {
+                0.0
+            };
+            let records_per_sec = records.len() as f64 / duration.as_secs_f64();
+
+            println!("--- Compression Summary ---");
+            println!("Original size: {} bytes", original_size);
+            println!("Compressed size: {} bytes", compressed_size);
+            println!("Compression ratio: {:.2}:1", ratio);
+            println!("Processing speed: {:.2} Million Records/sec", records_per_sec / 1_000_000.0);
+
+
+            let mut writer = BufWriter::new(File::create(&output_path).with_context(|| {
+                format!("Failed to create output file: {}", output_path.display())
+            })?);
+            writer.write_all(&compressed_data)?;
+
+            println!(
+                "\nSuccessfully wrote {} compressed bytes to {}.",
+                compressed_data.len(),
+                output_path.display()
+            );
+        }
         Strategy::DeltaQuantizedV1 => {
             // --- Compression Phase ---
-            let (header, raw_records_iterator) = read_raw_records(&cli.input)?;
+            let (header, raw_records_iterator) = read_raw_records(&args.input)?;
             let mut records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
 
             // Debug: Sample first 10 records to verify data makes sense
@@ -203,45 +211,22 @@ fn main() -> Result<()> {
 
             let decompressed_records = decompress_delta_quantized_v1(&read_compressed_records);
 
-            print_metrics(&cli.input, &read_compressed_records, &decompressed_records)?;
+            print_metrics(&args.input, &read_compressed_records, &decompressed_records)?;
         }
         Strategy::Rerun => {
             // --- Rerun Export Implementation ---
-            // This block handles the full process of converting a raw zzping data file
-            // into a Rerun RRD file for visualization.
-
-            // 1. Initialize the Rerun RecordingStream.
-            //    The `save()` method configures the stream to write all subsequent
-            //    log data directly to the specified `.rrd` file. This is more
-            //    efficient than buffering in memory.
             let rec = RecordingStreamBuilder::new("zzping-press").save(&output_path)?;
-
-            // 2. Read all raw records into memory.
-            //    This is necessary because the data must be sorted by timestamp
-            //    to be displayed correctly as a time-series plot.
-            let (_header, raw_records_iterator) = read_raw_records(&cli.input)?;
+            let (_header, raw_records_iterator) = read_raw_records(&args.input)?;
             let mut records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
             records.sort_by_key(|r| r.sent_nanos);
 
             println!("Logging {} records to Rerun file...", records.len());
 
-            // 3. Iterate through sorted records and log them to Rerun.
             for record in records {
-                // RTT is meaningless for lost packets, so we skip them.
                 if record.rtt_nanos == u64::MAX {
                     continue;
                 }
-
-                // 3a. Set the time for the following log calls.
-                //     We define a custom timeline named "sent_time" and use the
-                //     monotonic `sent_nanos` from our data as the time value.
-                //     This ensures the x-axis of our plot is the send time.
                 rec.set_time("sent_time", Duration::from_nanos(record.sent_nanos));
-
-                // 3b. Log the RTT as a scalar value.
-                //     We give it the entity path "ping/rtt_ms", which will create a
-                //     plot named "rtt_ms" inside a "ping" group in the Rerun UI.
-                //     We convert the RTT to milliseconds for readability.
                 let rtt_ms = record.rtt_nanos as f64 / 1_000_000.0;
                 rec.log("ping/rtt_ms", &rerun::Scalars::new([rtt_ms]))?;
             }
@@ -251,14 +236,84 @@ fn main() -> Result<()> {
                 output_path.display()
             );
 
-            // 4. Report the final file size as requested.
             let metadata = std::fs::metadata(&output_path)?;
             println!("Final RRD file size: {} bytes", metadata.len());
         }
     }
+    Ok(())
+}
+
+fn handle_inspect(args: InspectArgs) -> Result<()> {
+    let (_header, raw_records_iterator) = read_raw_records(&args.input)?;
+    let records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
+
+    if records.is_empty() {
+        println!("File contains no records.");
+        return Ok(());
+    }
+
+    let first_ts = records.iter().map(|r| r.sent_nanos).min().unwrap_or(0);
+    let last_ts = records.iter().map(|r| r.sent_nanos).max().unwrap_or(0);
+    let duration_ns = last_ts - first_ts;
+    let duration_secs = duration_ns as f64 / 1_000_000_000.0;
+    let duration_mins = duration_secs / 60.0;
+
+    println!("--- Inspecting Raw Data File ---");
+    println!("File: {}", args.input.display());
+    println!("Total records: {}", records.len());
+    println!("Total duration: {:.2} seconds ({:.2} minutes)", duration_secs, duration_mins);
 
     Ok(())
 }
+
+fn handle_create_fixture(args: CreateFixtureArgs) -> Result<()> {
+    let (header, raw_records_iterator) = read_raw_records(&args.input)?;
+    let mut records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
+    records.sort();
+
+    if records.is_empty() {
+        bail!("Input file has no records, cannot create fixture.");
+    }
+
+    let first_ts = records[0].sent_nanos;
+    let skip_ns = args.skip * 60 * 1_000_000_000;
+    let take_ns = args.take * 60 * 1_000_000_000;
+
+    let start_ts = first_ts + skip_ns;
+    let end_ts = start_ts + take_ns;
+
+    let fixture_records: Vec<_> = records
+        .into_iter()
+        .filter(|r| r.sent_nanos >= start_ts && r.sent_nanos < end_ts)
+        .collect();
+
+    if let Some(parent) = args.output.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let mut writer = BufWriter::new(File::create(&args.output).with_context(|| {
+        format!("Failed to create output file: {}", args.output.display())
+    })?);
+
+    // Write header
+    writer.write_all(&CAPTURE_MAGIC.to_le_bytes())?;
+    writer.write_all(&header.start_timestamp_ns.to_le_bytes())?;
+
+    // Write records
+    for record in &fixture_records {
+        writer.write_all(&record.sent_nanos.to_le_bytes())?;
+        writer.write_all(&record.rtt_nanos.to_le_bytes())?;
+    }
+
+    println!("--- Creating Fixture ---");
+    println!("Input: {}", args.input.display());
+    println!("Output: {}", args.output.display());
+    println!("Skipped {} minutes, Took {} minutes.", args.skip, args.take);
+    println!("Wrote {} records to fixture file.", fixture_records.len());
+
+    Ok(())
+}
+
 
 // --- File I/O Functions ---
 

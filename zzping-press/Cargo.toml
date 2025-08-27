@@ -11,3 +11,6 @@ description = "A tool for stress testing and network performance analysis"
 anyhow.workspace = true
 clap.workspace = true
 rerun = "0.24.1"
+constriction = "0.4.1"
+byteorder = "1.5.0"
+bitflags = "2.5.0"
