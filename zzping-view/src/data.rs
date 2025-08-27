@@ -74,13 +74,11 @@ pub fn load_and_parse_with_limit(raw_data: &[u8], limit: Option<usize>) -> Resul
 
     if let Some(_limit) = limit {
         eprintln!(
-            "Loading {} ping records from zzping-capture format (limited from {} total)",
-            actual_records, num_records
+            "Loading {actual_records} ping records from zzping-capture format (limited from {num_records} total)"
         );
     } else {
         eprintln!(
-            "Loading {} ping records from zzping-capture format",
-            num_records
+            "Loading {num_records} ping records from zzping-capture format"
         );
     }
     eprintln!(
@@ -115,7 +113,7 @@ pub fn load_and_parse_with_limit(raw_data: &[u8], limit: Option<usize>) -> Resul
 
         // Log progress for large files
         if record_idx > 0 && record_idx % 100_000 == 0 {
-            eprintln!("Processed {} records...", record_idx);
+            eprintln!("Processed {record_idx} records...");
         }
     }
 

@@ -6,7 +6,7 @@ use constriction::stream::{
         DefaultNonContiguousCategoricalDecoderModel, DefaultNonContiguousCategoricalEncoderModel,
     },
     stack::DefaultAnsCoder,
-    Decode, Encode,
+    Decode,
 };
 use std::io::{Cursor, Read, Write};
 use std::time::Duration;
@@ -33,7 +33,7 @@ impl Quantizer {
         }
         let encoded_value = (time_in_ms / 100.0 + 1.0).ln() / self.ln_1_001;
         let symbol = encoded_value.round() as u16;
-        if symbol >= PACKET_LOST_SYMBOL {
+        if symbol == PACKET_LOST_SYMBOL {
             PACKET_LOST_SYMBOL - 1
         } else {
             symbol
@@ -41,7 +41,7 @@ impl Quantizer {
     }
 
     pub fn symbol_to_duration(&self, symbol: u16) -> Duration {
-        if symbol >= PACKET_LOST_SYMBOL {
+        if symbol == PACKET_LOST_SYMBOL {
             return Duration::from_secs(u64::MAX);
         }
         let time_in_ms = (self.ln_1_001 * symbol as f64).exp() - 1.0;
@@ -211,7 +211,7 @@ impl ChunkHeader {
         let constant_rate_avg_interval = r.read_f64::<BigEndian>()?;
         let rtt_stats = AggregateEntry::read(&mut r)?;
 
-        let send_time_stats = if flags.contains(ChunkFlags::IS_VARIABLE_RATE) && !flags.contains(ChunkFlags::RAW_DELTAS) {
+        let send_time_stats = if flags.contains(ChunkFlags::IS_VARIABLE_RATE) {
             Some(AggregateEntry::read(&mut r)?)
         } else {
             None
@@ -337,8 +337,8 @@ fn build_model_and_encode(
                 let symbol_range_size = (end_symbol - start_symbol) + 1;
                 let freq = (bucket_count as f64 / symbol_range_size as f64).ceil() as u32;
                 let freq = freq.max(1);
-                for s in start_symbol..=end_symbol {
-                    frequencies[s] = freq;
+                for f in frequencies.iter_mut().take(end_symbol + 1).skip(start_symbol) {
+                    *f = freq;
                 }
             }
         }
@@ -361,7 +361,7 @@ fn build_model_and_encode(
         }
     }
 
-    let (mut symbols_with_freq, mut probabilities): (Vec<_>, Vec<_>) = frequencies
+    let (symbols_with_freq, probabilities): (Vec<_>, Vec<_>) = frequencies
         .iter()
         .enumerate()
         .filter(|&(_, f)| *f > 0)
@@ -418,7 +418,7 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
     let mut aggregate_entries = Vec::new();
     let mut index_entries = Vec::new();
 
-    for (minute_index, chunk_records) in chunks {
+    for (_minute_index, chunk_records) in chunks {
         let valid_rtts: Vec<Duration> = chunk_records
             .iter()
             .filter(|r| r.rtt_nanos != u64::MAX)
@@ -453,12 +453,11 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
                 }
                 SendTimeStrategy::VariableRate { deltas } => {
                     flags |= ChunkFlags::IS_VARIABLE_RATE;
-                    flags |= ChunkFlags::RAW_DELTAS;
-                    let mut data = Vec::new();
-                    for delta in deltas {
-                        data.write_u64::<BigEndian>(delta.as_nanos() as u64)?;
-                    }
-                    (data, deltas.len() as u32, None)
+                    let symbols: Vec<u16> = deltas.iter().map(|d| quantizer.duration_to_symbol(*d)).collect();
+                    let stats = calculate_duration_stats(deltas, &quantizer);
+                    let data_u32 = build_model_and_encode(&symbols, &stats)?;
+                    let data_u8: Vec<u8> = data_u32.iter().flat_map(|w| w.to_be_bytes()).collect();
+                    (data_u8, symbols.len() as u32, Some(stats))
                 }
             };
 
@@ -547,8 +546,8 @@ fn build_model_for_decode(
                 let symbol_range_size = (end_symbol - start_symbol) + 1;
                 let freq = (bucket_count as f64 / symbol_range_size as f64).ceil() as u32;
                 let freq = freq.max(1);
-                for s in start_symbol..=end_symbol {
-                    frequencies[s] = freq;
+                for f in frequencies.iter_mut().take(end_symbol + 1).skip(start_symbol) {
+                    *f = freq;
                 }
             }
         }
@@ -572,7 +571,7 @@ fn build_model_for_decode(
         .map(|(s, f)| (s as u16, *f))
         .unzip();
 
-    if symbols_with_freq.len() == 1 {
+    if symbols_with_freq.len() <= 1 {
         let dummy_symbol = if symbols_with_freq.is_empty() || symbols_with_freq[0] == 0 { 1 } else { 0 };
         symbols_with_freq.push(dummy_symbol);
         probabilities.push(1);
@@ -663,11 +662,11 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
         };
 
         let mut current_sent_nanos = chunk_header.start_time_unix_ns as f64;
-        for i in 0..chunk_header.rtt_symbol_count as usize {
-            let rtt_nanos = if rtt_symbols[i] == PACKET_LOST_SYMBOL {
+        for (i, &rtt_symbol) in rtt_symbols.iter().enumerate() {
+            let rtt_nanos = if rtt_symbol == PACKET_LOST_SYMBOL {
                 u64::MAX
             } else {
-                quantizer.symbol_to_duration(rtt_symbols[i]).as_nanos() as u64
+                quantizer.symbol_to_duration(rtt_symbol).as_nanos() as u64
             };
 
             if i > 0 {

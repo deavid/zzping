@@ -62,7 +62,7 @@ fn read_config(filepath: &str) -> config::ServerConfig {
     match config::ServerConfig::from_filepath(filepath) {
         Ok(cfg) => cfg,
         Err(e) => {
-            panic!("Error parsing config file '{}': {:?}", filepath, e);
+            panic!("Error parsing config file '{filepath}': {e:?}");
         }
     }
 }
@@ -204,7 +204,7 @@ fn main() {
                     Ok(msg) => {
                         udp_ok = udp_ok && socket.send_to(&msg, &cfg.udp_client_address).is_ok()
                     }
-                    Err(e) => println!("UDP Encode error: {}", e),
+                    Err(e) => println!("UDP Encode error: {e}"),
                 }
             }
             if !udp_ok {
@@ -232,7 +232,7 @@ fn main() {
                         recv_us: last_recv_us,
                     };
                     if let Err(e) = framedata.encode(&mut f) {
-                        println!("Error writing to file: {:?}", e);
+                        println!("Error writing to file: {e:?}");
                     }
                 }
             }

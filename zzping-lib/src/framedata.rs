@@ -125,7 +125,7 @@ impl FrameDataVec {
         let mut next = 1;
         for n in 0..count {
             if n >= next {
-                println!("{}", n);
+                println!("{n}");
                 next *= 2;
             }
             let mut fd = FrameData::decode(rd)?;

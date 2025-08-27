@@ -78,7 +78,7 @@ fn main() {
                     buf.write_all(&rmp).unwrap();
                 }
                 None => {
-                    println!("{}", fdq);
+                    println!("{fdq}");
                 }
             }
         }

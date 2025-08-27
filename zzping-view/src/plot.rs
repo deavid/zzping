@@ -74,13 +74,13 @@ impl<'a> Widget for PlotWidget<'a> {
         if should_debug {
             eprintln!("=== TIME CALCULATION DEBUG ===");
             eprintln!("Full time range: {} seconds", full_time_range.num_seconds());
-            eprintln!("View duration nanos: {}", view_duration_nanos);
+            eprintln!("View duration nanos: {view_duration_nanos}");
             eprintln!("View duration: {} seconds", view_duration.num_seconds());
-            eprintln!("View start time: {}", view_start_time);
-            eprintln!("View end time: {}", view_end_time);
+            eprintln!("View start time: {view_start_time}");
+            eprintln!("View end time: {view_end_time}");
             eprintln!("Start millis: {}", view_start_time.timestamp_millis());
             eprintln!("End millis: {}", view_end_time.timestamp_millis());
-            eprintln!("Max RTT ms: {}", max_rtt_ms);
+            eprintln!("Max RTT ms: {max_rtt_ms}");
         }
 
         // Calculate duration in milliseconds for better precision
@@ -116,12 +116,11 @@ impl<'a> Widget for PlotWidget<'a> {
 
         if should_debug {
             eprintln!("=== DATA RECT DEBUG ===");
-            eprintln!("Data rect X range: 0 to {}", view_duration_millis);
+            eprintln!("Data rect X range: 0 to {view_duration_millis}");
             eprintln!(
-                "Data rect Y range: {} to 0 (inverted for proper RTT display)",
-                max_rtt_ms
+                "Data rect Y range: {max_rtt_ms} to 0 (inverted for proper RTT display)"
             );
-            eprintln!("Screen rect: {:?}", rect);
+            eprintln!("Screen rect: {rect:?}");
         }
 
         let to_screen = RectTransform::from_to(data_rect, rect);
@@ -148,17 +147,16 @@ impl<'a> Widget for PlotWidget<'a> {
                 view_start_time.format("%H:%M:%S%.3f"),
                 view_end_time.format("%H:%M:%S%.3f")
             );
-            eprintln!("Visible points in view: {}", visible_points_count);
-            eprintln!("Available width: {} pixels", available_width);
+            eprintln!("Visible points in view: {visible_points_count}");
+            eprintln!("Available width: {available_width} pixels");
             eprintln!(
                 "Points per pixel: {:.2}",
                 visible_points_count as f32 / available_width
             );
             eprintln!(
-                "Threshold for point rendering: < {:.0} points",
-                available_width
+                "Threshold for point rendering: < {available_width:.0} points"
             );
-            eprintln!("Use point rendering: {}", use_point_rendering);
+            eprintln!("Use point rendering: {use_point_rendering}");
             eprintln!("========================");
         }
 
@@ -377,7 +375,7 @@ impl<'a> PlotWidget<'a> {
                 let label = if rtt_ms >= 1000.0 {
                     format!("{:.1}s", rtt_ms / 1000.0)
                 } else {
-                    format!("{:.1}ms", rtt_ms)
+                    format!("{rtt_ms:.1}ms")
                 };
                 painter.text(
                     Pos2::new(rect.min.x + 5.0, y_pos - 8.0),
@@ -421,7 +419,7 @@ impl<'a> PlotWidget<'a> {
                     // Less than 1 minute: show seconds.milliseconds
                     let secs = actual_time.format("%S").to_string();
                     let millis = actual_time.timestamp_millis() % 1000;
-                    format!("{}.{:03}s", secs, millis)
+                    format!("{secs}.{millis:03}s")
                 };
 
                 painter.text(

@@ -327,7 +327,7 @@ impl StreamData {
         let addr: IpAddr = buf[left.len()..buf.len()]
             .trim()
             .parse()
-            .with_context(|| format!("addr value from: {:?}", buf))?;
+            .with_context(|| format!("addr value from: {buf:?}"))?;
 
         // Send Interval micros
         buf.clear();
@@ -340,7 +340,7 @@ impl StreamData {
         let send_interval_us: u64 = buf[left.len()..buf.len()]
             .trim()
             .parse()
-            .with_context(|| format!("send_interval_us value from: {:?}", buf))?;
+            .with_context(|| format!("send_interval_us value from: {buf:?}"))?;
         let send_interval = Duration::from_micros(send_interval_us);
 
         // Initial Time
@@ -353,7 +353,7 @@ impl StreamData {
         }
         let initial_time: DateTime<Utc> =
             DateTime::parse_from_rfc3339(buf[left.len()..buf.len()].trim().trim_matches('"'))
-                .with_context(|| format!("initial_time value from: {:?}", buf))?
+                .with_context(|| format!("initial_time value from: {buf:?}"))?
                 .into();
 
         // Pending pings

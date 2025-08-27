@@ -64,7 +64,7 @@ impl eframe::App for ZzpingViewApp {
                 let mins = pan_duration.num_minutes() % 60;
                 let secs = pan_duration.num_seconds() % 60;
                 let millis = pan_duration.num_milliseconds() % 1000;
-                let pan_display = format!("{}h {}min {}.{:03}s", hours, mins, secs, millis);
+                let pan_display = format!("{hours}h {mins}min {secs}.{millis:03}s");
 
                 ui.label("Pan:");
                 ui.label(pan_display);
@@ -103,7 +103,7 @@ impl eframe::App for ZzpingViewApp {
                 ui.separator();
                 ui.label(format!("Points: {}", self.data.points.len()));
                 let lost_count = self.data.points.iter().filter(|p| p.rtt.is_none()).count();
-                ui.label(format!("Lost: {}", lost_count));
+                ui.label(format!("Lost: {lost_count}"));
 
                 // Show zoom level as a percentage of full dataset
                 ui.label(format!("Zoom: {:.1}x", self.zoom));

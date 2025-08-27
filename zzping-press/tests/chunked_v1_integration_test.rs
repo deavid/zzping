@@ -41,8 +41,7 @@ fn test_round_trip() -> Result<()> {
 
         assert!(
             cumulative_drift_ns.abs() <= MAX_CUMULATIVE_DRIFT_NS,
-            "Cumulative sent_time drift exceeded 2ms. Drift is {}ns at index {}",
-            cumulative_drift_ns, i
+            "Cumulative sent_time drift exceeded 2ms. Drift is {cumulative_drift_ns}ns at index {i}"
         );
 
         // Assert RTT tolerance
@@ -53,9 +52,7 @@ fn test_round_trip() -> Result<()> {
             let tolerance_ns = (500_000).max((original.rtt_nanos as f64 * 0.002).round() as i64);
             assert!(
                 rtt_diff_ns <= tolerance_ns,
-                "RTT difference {}ns exceeded tolerance {}ns",
-                rtt_diff_ns,
-                tolerance_ns
+                "RTT difference {rtt_diff_ns}ns exceeded tolerance {tolerance_ns}ns"
             );
         }
     }

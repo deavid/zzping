@@ -153,11 +153,11 @@ impl HuffmanU64 {
                 //         d = 0;
                 //     }
             }
-            println!("{}", v);
+            println!("{v}");
             buf.push(v as i64);
             pos = k + 1;
         }
-        println!("Diff: {:?}", buf);
+        println!("Diff: {buf:?}");
         dbg!(buf.len());
     }
 }

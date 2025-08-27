@@ -6,7 +6,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 use zzping_press::{
-    chunked_v1, CaptureHeader, CompressedDataRecord, FromBytes, RawDataRecord, RecordIterator,
+    chunked_v1, CaptureHeader, CompressedDataRecord, RawDataRecord, RecordIterator,
 };
 
 const CAPTURE_MAGIC: u64 = 0x7A7A504E47434150; // zzPNGCAP
@@ -140,9 +140,9 @@ fn handle_press(args: PressArgs) -> Result<()> {
             let records_per_sec = records.len() as f64 / duration.as_secs_f64();
 
             println!("--- Compression Summary ---");
-            println!("Original size: {} bytes", original_size);
-            println!("Compressed size: {} bytes", compressed_size);
-            println!("Compression ratio: {:.2}:1", ratio);
+            println!("Original size: {original_size} bytes");
+            println!("Compressed size: {compressed_size} bytes");
+            println!("Compression ratio: {ratio:.2}:1");
             println!("Processing speed: {:.2} Million Records/sec", records_per_sec / 1_000_000.0);
 
 
@@ -173,7 +173,7 @@ fn handle_press(args: PressArgs) -> Result<()> {
                 } else {
                     format!("{:.1} us", record.rtt_nanos as f64 / 1000.0)
                 };
-                println!("  {}: sent={:.1}us, rtt={}", i, sent_us, rtt_display);
+                println!("  {i}: sent={sent_us:.1}us, rtt={rtt_display}");
             }
 
             let mut writer = BufWriter::new(File::create(&output_path).with_context(|| {
@@ -261,7 +261,7 @@ fn handle_inspect(args: InspectArgs) -> Result<()> {
     println!("--- Inspecting Raw Data File ---");
     println!("File: {}", args.input.display());
     println!("Total records: {}", records.len());
-    println!("Total duration: {:.2} seconds ({:.2} minutes)", duration_secs, duration_mins);
+    println!("Total duration: {duration_secs:.2} seconds ({duration_mins:.2} minutes)");
 
     Ok(())
 }
@@ -516,8 +516,7 @@ fn print_metrics(
     }
 
     println!(
-        "RMSE Debug: total_records={}, valid_rtt_count={}, skipped_lost={}, skipped_overflow={}",
-        min_len, valid_rtt_count, skipped_lost_packets, skipped_overflow
+        "RMSE Debug: total_records={min_len}, valid_rtt_count={valid_rtt_count}, skipped_lost={skipped_lost_packets}, skipped_overflow={skipped_overflow}"
     );
 
     if valid_rtt_count > 0 {

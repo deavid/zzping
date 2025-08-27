@@ -237,7 +237,7 @@ impl<T: WeightFn> HuffmanMapS<T> {
         let mut mapv: Vec<_> = self.map.iter().collect();
         mapv.sort_unstable();
         for (k, v) in mapv.iter() {
-            println!("{}:\t{}", k, v);
+            println!("{k}:\t{v}");
         }
     }
     pub fn update_from_fn_range(

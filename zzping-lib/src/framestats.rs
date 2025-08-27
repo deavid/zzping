@@ -53,7 +53,7 @@ impl FrameStats {
         };
         match stat.encode(&mut v) {
             Ok(()) => Ok(v),
-            Err(e) => Err(format!("encode_stats: FrameStats: {:?}", e)),
+            Err(e) => Err(format!("encode_stats: FrameStats: {e:?}")),
         }
     }
 }

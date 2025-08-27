@@ -46,7 +46,7 @@ pub fn parse_ipaddr(ipaddr: &str) -> Option<IpAddr> {
     match addr {
         Ok(valid_addr) => Some(valid_addr),
         Err(e) => {
-            error!("Error parsing ip address {}. Error: {}", ipaddr, e);
+            error!("Error parsing ip address {ipaddr}. Error: {e}");
             None
         }
     }
@@ -213,7 +213,7 @@ impl Destination {
             && let Some(sdata) = self.streampingio.as_mut()
             && let Err(e) = sdata.write_ping(f, ev, seqn)
         {
-            error!("ping_xxx: write_ping: {:?}", e);
+            error!("ping_xxx: write_ping: {e:?}");
         }
     }
 

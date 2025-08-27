@@ -110,11 +110,11 @@ pub fn half_fft_cmplx(fft: &[Complex<f32>]) -> &[Complex<f32>] {
         let d1 = l.im + r.im;
         if d0.abs() > eps || d1.abs() > eps {
             errors += 1;
-            println!("{}, {:.9} {:.9}", i, d0, d1);
+            println!("{i}, {d0:.9} {d1:.9}");
         }
     }
     if errors > 0 {
-        panic!("Found {} errors!", errors);
+        panic!("Found {errors} errors!");
     }
     let mid = fft[len / 2];
     if mid.im.abs() > eps {
@@ -139,11 +139,11 @@ pub fn half_fft_polar(fft: &[(f32, f32)]) -> &[(f32, f32)] {
         let d1 = l.1 + r.1;
         if d0.abs() > eps || d1.abs() > eps {
             errors += 1;
-            println!("{}, {:.9} {:.9}", i, d0, d1);
+            println!("{i}, {d0:.9} {d1:.9}");
         }
     }
     if errors > 0 {
-        panic!("Found {} errors!", errors);
+        panic!("Found {errors} errors!");
     }
     let mid = Complex::from_polar(fft[len / 2].0, fft[len / 2].1);
     if mid.im.abs() > eps {
@@ -194,7 +194,7 @@ pub fn _print_vcplx(x: &[Complex<f32>]) {
 
 pub fn print_polar(x: &[(f32, f32)]) {
     for (m, a) in x {
-        println!("{:.9},{:.9}", m, a);
+        println!("{m:.9},{a:.9}");
     }
 }
 

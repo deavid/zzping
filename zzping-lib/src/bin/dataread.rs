@@ -78,7 +78,7 @@ fn main() {
     let mut stats: Vec<_> = stats.into_iter().collect();
     stats.sort_unstable_by_key(|x| x.0);
     for (n, (k, v)) in stats.iter().enumerate() {
-        print!("{}: {:.3}, ", k, v);
+        print!("{k}: {v:.3}, ");
         if n % 10 == 9 {
             println!();
         }
@@ -113,7 +113,7 @@ fn main() {
                 let diff = DiffValue::new_corrected(nval);
                 let hkey = hmaps.to_hkey(diff);
                 if let Err(e) = huffman.encode(&mut bitbuf, hkey.key) {
-                    panic!("Error trying to encode value: {} {:?}", val, e);
+                    panic!("Error trying to encode value: {val} {e:?}");
                 }
                 let mut extra_data = hkey.encode_extra();
                 bitbuf.append(&mut extra_data);
@@ -228,7 +228,7 @@ fn test_serializer(v: Vec<FrameData>) {
     {
         if *s != *d {
             if errors < 10 {
-                println!("{}: {} != {}", n, s, d);
+                println!("{n}: {s} != {d}");
             }
             errors += 1;
         }

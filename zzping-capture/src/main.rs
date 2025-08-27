@@ -379,8 +379,8 @@ async fn main() -> Result<()> {
 
     match shutdown_result {
         Ok(Ok(Ok(()))) => eprintln!("Graceful shutdown completed."),
-        Ok(Ok(Err(e))) => eprintln!("Logger task finished with error: {}", e),
-        Ok(Err(e)) => eprintln!("Logger task panicked: {}", e),
+        Ok(Ok(Err(e))) => eprintln!("Logger task finished with error: {e}"),
+        Ok(Err(e)) => eprintln!("Logger task panicked: {e}"),
         Err(_) => eprintln!("Forced shutdown after 3 seconds timeout."),
     }
 

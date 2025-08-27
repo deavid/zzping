@@ -498,15 +498,14 @@ pub trait RMPCodec: Sized + std::fmt::Debug {
     fn to_rmp(&self) -> Vec<u8> {
         match self.try_to_rmp() {
             Err(e) => panic!(
-                "Error trying to serialize to MsgPck: {:?}.\nValue:\n{:?}",
-                e, self
+                "Error trying to serialize to MsgPck: {e:?}.\nValue:\n{self:?}"
             ),
             Ok(v) => v,
         }
     }
     fn from_rmp<R: std::io::Read>(rd: &mut R) -> Self {
         match Self::try_from_rmp(rd) {
-            Err(e) => panic!("Error trying to deserialize from MsgPck: {:?}", e),
+            Err(e) => panic!("Error trying to deserialize from MsgPck: {e:?}"),
             Ok(v) => v,
         }
     }
@@ -637,7 +636,7 @@ impl<R: std::io::Read> Iterator for FDCodecIter<R> {
                 if matches!(e.downcast_ref::<XError>(), Some(XError::EOF)) {
                     None
                 } else {
-                    println!("FDCodecIter::iterator::next(): Error: {}", e);
+                    println!("FDCodecIter::iterator::next(): Error: {e}");
                     for cause in e.chain() {
                         dbg!(cause);
                     }
