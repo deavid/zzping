@@ -6,7 +6,7 @@ use constriction::stream::{
         DefaultNonContiguousCategoricalDecoderModel, DefaultNonContiguousCategoricalEncoderModel,
     },
     stack::DefaultAnsCoder,
-    Decode,
+    Decode, Encode,
 };
 use std::io::{Cursor, Read, Write};
 use std::time::Duration;
@@ -211,7 +211,7 @@ impl ChunkHeader {
         let constant_rate_avg_interval = r.read_f64::<BigEndian>()?;
         let rtt_stats = AggregateEntry::read(&mut r)?;
 
-        let send_time_stats = if flags.contains(ChunkFlags::IS_VARIABLE_RATE) {
+        let send_time_stats = if flags.contains(ChunkFlags::IS_VARIABLE_RATE) && !flags.contains(ChunkFlags::RAW_DELTAS) {
             Some(AggregateEntry::read(&mut r)?)
         } else {
             None
@@ -309,26 +309,25 @@ fn analyze_send_times(records: &[RawDataRecord]) -> SendTimeStrategy {
     }
 }
 
-fn build_model_and_encode(
-    symbols: &[u16],
+fn build_model(
     stats: &AggregateEntry,
-) -> Result<Vec<u32>> {
+    symbol_count: usize,
+) -> Result<(Vec<u16>, Vec<f64>)> {
     let mut frequencies = vec![0u32; u16::MAX as usize + 1];
-    let valid_symbols_count = symbols.len() - stats.lost_packet_count as usize;
+    let valid_symbols_count = symbol_count - stats.lost_packet_count as usize;
 
     if valid_symbols_count > 0 {
+        let percentile_points = [
+            stats.p00_symbol, stats.p10_symbol, stats.p20_symbol, stats.p30_symbol,
+            stats.p40_symbol, stats.p50_symbol, stats.p60_symbol, stats.p70_symbol,
+            stats.p80_symbol, stats.p90_symbol, stats.p100_symbol,
+        ];
+
         if valid_symbols_count < 10 {
-            for &s in symbols {
-                if s != PACKET_LOST_SYMBOL {
-                    frequencies[s as usize] += 1;
-                }
+            for &p in &percentile_points {
+                frequencies[p as usize] += 1;
             }
         } else {
-            let percentile_points = [
-                stats.p00_symbol, stats.p10_symbol, stats.p20_symbol, stats.p30_symbol,
-                stats.p40_symbol, stats.p50_symbol, stats.p60_symbol, stats.p70_symbol,
-                stats.p80_symbol, stats.p90_symbol, stats.p100_symbol,
-            ];
             let bucket_count = valid_symbols_count / 10;
             for i in 0..10 {
                 let start_symbol = percentile_points[i] as usize;
@@ -337,8 +336,8 @@ fn build_model_and_encode(
                 let symbol_range_size = (end_symbol - start_symbol) + 1;
                 let freq = (bucket_count as f64 / symbol_range_size as f64).ceil() as u32;
                 let freq = freq.max(1);
-                for f in frequencies.iter_mut().take(end_symbol + 1).skip(start_symbol) {
-                    *f = freq;
+                for s in start_symbol..=end_symbol {
+                    frequencies[s] = freq;
                 }
             }
         }
@@ -355,26 +354,26 @@ fn build_model_and_encode(
         }
     }
 
-    for &s in symbols {
-        if frequencies[s as usize] == 0 {
-            frequencies[s as usize] = 1;
-        }
-    }
-
-    let (symbols_with_freq, probabilities): (Vec<_>, Vec<_>) = frequencies
+    let (mut symbols_with_freq, mut probabilities): (Vec<_>, Vec<_>) = frequencies
         .iter()
         .enumerate()
         .filter(|&(_, f)| *f > 0)
         .map(|(s, f)| (s as u16, *f))
         .unzip();
 
-    if symbols_with_freq.len() <= 1 {
-        return Ok(Vec::new());
+    if symbols_with_freq.len() == 1 {
+        let dummy_symbol = if symbols_with_freq.is_empty() || symbols_with_freq[0] == 0 { 1 } else { 0 };
+        symbols_with_freq.push(dummy_symbol);
+        probabilities.push(1);
+    }
+
+    if symbols_with_freq.is_empty() {
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let total_freq: u32 = probabilities.iter().sum();
     if total_freq == 0 {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     let mut probabilities_f64: Vec<f64> = probabilities
@@ -387,16 +386,7 @@ fn build_model_and_encode(
         *last_prob += 1.0 - total_prob;
     }
 
-    let model = DefaultNonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_fast(
-        symbols_with_freq,
-        &probabilities_f64,
-        None,
-    )
-    .map_err(|_| anyhow!("Failed to create categorical model"))?;
-
-    let mut encoder = DefaultAnsCoder::new();
-    encoder.encode_iid_symbols_reverse(symbols, &model)?;
-    Ok(encoder.into_compressed()?)
+    Ok((symbols_with_freq, probabilities_f64))
 }
 
 pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
@@ -453,16 +443,26 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
                 }
                 SendTimeStrategy::VariableRate { deltas } => {
                     flags |= ChunkFlags::IS_VARIABLE_RATE;
-                    let symbols: Vec<u16> = deltas.iter().map(|d| quantizer.duration_to_symbol(*d)).collect();
-                    let stats = calculate_duration_stats(deltas, &quantizer);
-                    let data_u32 = build_model_and_encode(&symbols, &stats)?;
-                    let data_u8: Vec<u8> = data_u32.iter().flat_map(|w| w.to_be_bytes()).collect();
-                    (data_u8, symbols.len() as u32, Some(stats))
+                    flags |= ChunkFlags::RAW_DELTAS;
+                    let mut data = Vec::new();
+                    for delta in deltas {
+                        data.write_u64::<BigEndian>(delta.as_nanos() as u64)?;
+                    }
+                    (data, deltas.len() as u32, None)
                 }
             };
 
-        let rtt_encoded_data_u32 = build_model_and_encode(&rtt_symbols, &rtt_stats)?;
-        let rtt_encoded_data: Vec<u8> = rtt_encoded_data_u32.iter().flat_map(|w| w.to_be_bytes()).collect();
+        let (rtt_s, rtt_p) = build_model(&rtt_stats, rtt_symbols.len())?;
+        let rtt_encoded_data = if !rtt_s.is_empty() {
+            let rtt_model = DefaultNonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_fast(rtt_s, &rtt_p, None)
+                .map_err(|_| anyhow!("Failed to create categorical model"))?;
+            let mut rtt_encoder = DefaultAnsCoder::new();
+            rtt_encoder.encode_iid_symbols_reverse(&rtt_symbols, &rtt_model)?;
+            let rtt_encoded_data_u32 = rtt_encoder.into_compressed()?;
+            rtt_encoded_data_u32.iter().flat_map(|w| w.to_be_bytes()).collect()
+        } else {
+            Vec::new()
+        };
 
         let chunk_header = ChunkHeader {
             start_time_unix_ns: chunk_records.first().map_or(0, |r| r.sent_nanos),
@@ -519,83 +519,7 @@ fn build_model_for_decode(
     stats: &AggregateEntry,
     symbol_count: usize,
 ) -> Result<DefaultNonContiguousCategoricalDecoderModel<u16>> {
-    let mut frequencies = vec![0u32; u16::MAX as usize + 1];
-    let valid_symbols_count = symbol_count - stats.lost_packet_count as usize;
-
-    if valid_symbols_count > 0 {
-        if valid_symbols_count < 10 {
-            let percentile_points = [
-                stats.p00_symbol, stats.p10_symbol, stats.p20_symbol, stats.p30_symbol,
-                stats.p40_symbol, stats.p50_symbol, stats.p60_symbol, stats.p70_symbol,
-                stats.p80_symbol, stats.p90_symbol, stats.p100_symbol,
-            ];
-            for &p in &percentile_points {
-                frequencies[p as usize] += 1;
-            }
-        } else {
-            let percentile_points = [
-                stats.p00_symbol, stats.p10_symbol, stats.p20_symbol, stats.p30_symbol,
-                stats.p40_symbol, stats.p50_symbol, stats.p60_symbol, stats.p70_symbol,
-                stats.p80_symbol, stats.p90_symbol, stats.p100_symbol,
-            ];
-            let bucket_count = valid_symbols_count / 10;
-            for i in 0..10 {
-                let start_symbol = percentile_points[i] as usize;
-                let end_symbol = percentile_points[i + 1] as usize;
-                if start_symbol > end_symbol { continue; }
-                let symbol_range_size = (end_symbol - start_symbol) + 1;
-                let freq = (bucket_count as f64 / symbol_range_size as f64).ceil() as u32;
-                let freq = freq.max(1);
-                for f in frequencies.iter_mut().take(end_symbol + 1).skip(start_symbol) {
-                    *f = freq;
-                }
-            }
-        }
-    }
-
-    if stats.lost_packet_count > 0 {
-        let total_valid_freq: u32 = frequencies.iter().sum();
-        if valid_symbols_count > 0 {
-            let avg_freq_per_symbol = total_valid_freq as f64 / valid_symbols_count as f64;
-            let lost_freq = (avg_freq_per_symbol * stats.lost_packet_count as f64).round() as u32;
-            frequencies[PACKET_LOST_SYMBOL as usize] = lost_freq.max(1);
-        } else {
-            frequencies[PACKET_LOST_SYMBOL as usize] = 1;
-        }
-    }
-
-    let (mut symbols_with_freq, mut probabilities): (Vec<_>, Vec<_>) = frequencies
-        .iter()
-        .enumerate()
-        .filter(|&(_, f)| *f > 0)
-        .map(|(s, f)| (s as u16, *f))
-        .unzip();
-
-    if symbols_with_freq.len() <= 1 {
-        let dummy_symbol = if symbols_with_freq.is_empty() || symbols_with_freq[0] == 0 { 1 } else { 0 };
-        symbols_with_freq.push(dummy_symbol);
-        probabilities.push(1);
-    }
-
-    if symbols_with_freq.is_empty() {
-        return Err(anyhow!("Cannot build model with no symbols"));
-    }
-
-    let total_freq: u32 = probabilities.iter().sum();
-    if total_freq == 0 {
-        return Err(anyhow!("Cannot build model with no symbols"));
-    }
-
-    let mut probabilities_f64: Vec<f64> = probabilities
-        .iter()
-        .map(|&f| f as f64 / total_freq as f64)
-        .collect();
-
-    let total_prob = probabilities_f64.iter().sum::<f64>();
-    if let Some(last_prob) = probabilities_f64.last_mut() {
-        *last_prob += 1.0 - total_prob;
-    }
-
+    let (symbols_with_freq, probabilities_f64) = build_model(stats, symbol_count)?;
     DefaultNonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast(
         symbols_with_freq,
         &probabilities_f64,
@@ -662,11 +586,11 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
         };
 
         let mut current_sent_nanos = chunk_header.start_time_unix_ns as f64;
-        for (i, &rtt_symbol) in rtt_symbols.iter().enumerate() {
-            let rtt_nanos = if rtt_symbol == PACKET_LOST_SYMBOL {
+        for i in 0..chunk_header.rtt_symbol_count as usize {
+            let rtt_nanos = if rtt_symbols[i] == PACKET_LOST_SYMBOL {
                 u64::MAX
             } else {
-                quantizer.symbol_to_duration(rtt_symbol).as_nanos() as u64
+                quantizer.symbol_to_duration(rtt_symbols[i]).as_nanos() as u64
             };
 
             if i > 0 {
@@ -677,7 +601,7 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
                     let delta = delta_cursor.read_u64::<BigEndian>()?;
                     current_sent_nanos += delta as f64;
                 } else {
-                    current_sent_nanos += chunk_header.constant_rate_avg_interval;
+                    current_sent_nanos = chunk_header.start_time_unix_ns as f64 + (i as f64 * chunk_header.constant_rate_avg_interval);
                 }
             }
 
@@ -711,9 +635,9 @@ mod tests {
             p100_symbol: 200,
             lost_packet_count: 0,
         };
-        let symbols = vec![100, 150, 200];
-        let result = build_model_and_encode(&symbols, &stats);
-        assert!(result.is_ok());
+        let (s, p) = build_model(&stats, 100).unwrap();
+        let model = DefaultNonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_fast(s, &p, None);
+        assert!(model.is_ok());
     }
 
     #[test]
@@ -732,8 +656,7 @@ mod tests {
             p100_symbol: 100,
             lost_packet_count: 0,
         };
-        let symbols = vec![100];
-        let result = build_model_and_encode(&symbols, &stats);
+        let result = build_model(&stats, 1);
         assert!(result.is_ok(), "Failed with error: {:?}", result.err());
     }
 }
