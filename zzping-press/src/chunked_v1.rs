@@ -332,10 +332,7 @@ fn analyze_send_times(records: &[RawDataRecord]) -> SendTimeStrategy {
     }
 
     // Always use quantized variable rate to ensure precise timing reconstruction
-    println!(
-        "Always using QuantizedVariable with base_interval_ns={}",
-        base_interval_ns
-    );
+    println!("Always using QuantizedVariable with base_interval_ns={base_interval_ns}");
 
     let mut delta_symbols = Vec::new();
     let mut large_deltas = Vec::new();
@@ -397,8 +394,8 @@ fn build_model(stats: &AggregateEntry, symbol_count: usize) -> Result<(Vec<u16>,
                 let symbol_range_size = (end_symbol - start_symbol) + 1;
                 let freq = (bucket_count as f64 / symbol_range_size as f64).ceil() as u32;
                 let freq = freq.max(1);
-                for s in start_symbol..=end_symbol {
-                    frequencies[s] = freq;
+                for freq_s in frequencies.iter_mut().take(end_symbol + 1).skip(start_symbol) {
+                    *freq_s = freq;
                 }
             }
         }
@@ -513,9 +510,9 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
 
         let (send_time_encoded_data, send_time_symbol_count, send_time_stats) =
             match &send_time_strategy {
-                SendTimeStrategy::ConstantRate { base_interval_ns } => (Vec::new(), 0, None),
+                SendTimeStrategy::ConstantRate { base_interval_ns: _ } => (Vec::new(), 0, None),
                 SendTimeStrategy::QuantizedVariable {
-                    base_interval_ns,
+                    base_interval_ns: _,
                     delta_symbols,
                     large_deltas,
                 } => {
@@ -732,11 +729,11 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
             send_time_data = Some((base_interval_ns, delta_symbols, large_deltas));
         }
 
-        for i in 0..chunk_header.rtt_symbol_count as usize {
-            let rtt_nanos = if rtt_symbols[i] == PACKET_LOST_SYMBOL {
+        for (i, &rtt_symbol) in rtt_symbols.iter().enumerate() {
+            let rtt_nanos = if rtt_symbol == PACKET_LOST_SYMBOL {
                 u64::MAX
             } else {
-                quantizer.symbol_to_duration(rtt_symbols[i]).as_nanos() as u64
+                quantizer.symbol_to_duration(rtt_symbol).as_nanos() as u64
             };
 
             if i > 0 {

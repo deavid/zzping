@@ -10,31 +10,46 @@
 // - Memory exhaustion attempts
 // - Statistical edge cases that could break entropy coding
 
-use anyhow::Result;
-use zzping_press::{RawDataRecord, chunked_v1};
+use zzping_press::{
+    chunked_v1::{compress_chunked_v1, decompress_chunked_v1},
+    RawDataRecord,
+};
+use std::time::Duration;
 
-// TODO: Implement test_adversarial_all_packet_loss()
+const PACKET_LOSS: u64 = u64::MAX;
+
+enum AttackType {
+    AllPacketLoss,
+    ExtremeOutliers,
+    BimodalDistribution,
+}
+
 // Test chunks with 100% packet loss for entire periods
 #[test]
-#[ignore = "TODO: Implement all packet loss adversarial testing"]
+#[ignore = "BUG: Fails when chunk is 100% packet loss. Same bug as in loss_test.rs"]
 fn test_adversarial_all_packet_loss() {
-    todo!("Test 100% packet loss scenarios");
+    let records = create_pathological_data(AttackType::AllPacketLoss, 120);
+    let compressed = compress_chunked_v1(&records).unwrap();
+    let decompressed = decompress_chunked_v1(&compressed).unwrap();
+    verify_attack_resilience(&records, &decompressed);
 }
 
-// TODO: Implement test_adversarial_extreme_outliers()
 // Test data with extreme RTT outliers designed to break statistical models
 #[test]
-#[ignore = "TODO: Implement extreme outlier testing"]
 fn test_adversarial_extreme_outliers() {
-    todo!("Test extreme RTT outliers (stable 10ms + single 30s spike)");
+    let records = create_pathological_data(AttackType::ExtremeOutliers, 100);
+    let compressed = compress_chunked_v1(&records).unwrap();
+    let decompressed = decompress_chunked_v1(&compressed).unwrap();
+    verify_attack_resilience(&records, &decompressed);
 }
 
-// TODO: Implement test_adversarial_bimodal_distribution()
 // Test bimodal RTT distributions that could confuse percentile calculations
 #[test]
-#[ignore = "TODO: Implement bimodal distribution testing"]
 fn test_adversarial_bimodal_distribution() {
-    todo!("Test bimodal RTT distributions (oscillating 10ms/800ms)");
+    let records = create_pathological_data(AttackType::BimodalDistribution, 200);
+    let compressed = compress_chunked_v1(&records).unwrap();
+    let decompressed = decompress_chunked_v1(&compressed).unwrap();
+    verify_attack_resilience(&records, &decompressed);
 }
 
 // TODO: Implement test_adversarial_pathological_timing()
@@ -78,11 +93,67 @@ fn test_adversarial_integer_overflow() {
 }
 
 // Helper to create pathological test data
-fn create_pathological_data(attack_type: &str) -> Vec<RawDataRecord> {
-    todo!("Create data designed to exploit specific vulnerabilities");
+fn create_pathological_data(attack_type: AttackType, num_records: usize) -> Vec<RawDataRecord> {
+    let mut records = Vec::with_capacity(num_records);
+    let start_time = 1_672_531_200_000_000_000;
+
+    match attack_type {
+        AttackType::AllPacketLoss => {
+            for i in 0..num_records {
+                records.push(RawDataRecord {
+                    sent_nanos: start_time + (i as u64 * 1_000_000_000),
+                    rtt_nanos: PACKET_LOSS,
+                });
+            }
+        }
+        AttackType::ExtremeOutliers => {
+            for i in 0..num_records {
+                let rtt_nanos = if i == num_records / 2 {
+                    Duration::from_secs(30).as_nanos() as u64 // 30s spike
+                } else {
+                    Duration::from_millis(10).as_nanos() as u64 // Stable 10ms
+                };
+                records.push(RawDataRecord {
+                    sent_nanos: start_time + (i as u64 * 1_000_000_000),
+                    rtt_nanos,
+                });
+            }
+        }
+        AttackType::BimodalDistribution => {
+            for i in 0..num_records {
+                let rtt_nanos = if i % 2 == 0 {
+                    Duration::from_millis(10).as_nanos() as u64 // 10ms
+                } else {
+                    Duration::from_millis(800).as_nanos() as u64 // 800ms
+                };
+                records.push(RawDataRecord {
+                    sent_nanos: start_time + (i as u64 * 1_000_000_000),
+                    rtt_nanos,
+                });
+            }
+        }
+    }
+    records
 }
 
 // Helper to verify resilience against attacks
-fn verify_attack_resilience(data: &[RawDataRecord]) -> Result<()> {
-    todo!("Verify format handles pathological inputs gracefully");
+fn verify_attack_resilience(original: &[RawDataRecord], decompressed: &[RawDataRecord]) {
+    assert_eq!(original.len(), decompressed.len());
+    for (orig, decomp) in original.iter().zip(decompressed.iter()) {
+        assert_eq!(orig.sent_nanos, decomp.sent_nanos, "Timestamp mismatch");
+        let orig_is_loss = orig.rtt_nanos == PACKET_LOSS;
+        let decomp_is_loss = decomp.rtt_nanos == PACKET_LOSS;
+        assert_eq!(orig_is_loss, decomp_is_loss, "Packet loss mismatch");
+
+        if !orig_is_loss {
+            let tolerance_ns = std::cmp::max(100_000, orig.rtt_nanos / 1000);
+            let error_ns = (orig.rtt_nanos as i64 - decomp.rtt_nanos as i64).abs() as u64;
+            assert!(
+                error_ns <= tolerance_ns,
+                "RTT tolerance failed. Original RTT: {}ns, Decompressed RTT: {}ns",
+                orig.rtt_nanos,
+                decomp.rtt_nanos
+            );
+        }
+    }
 }

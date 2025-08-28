@@ -11,23 +11,44 @@
 // - Field validation (all length fields match actual data)
 // - Version compatibility testing
 
-use anyhow::Result;
-use zzping_press::{RawDataRecord, chunked_v1};
+use zzping_press::{
+    chunked_v1::{compress_chunked_v1, FileHeader, FILE_MAGIC, FORMAT_VERSION},
+    RawDataRecord,
+};
+use std::time::Duration;
+use byteorder::{BigEndian, ReadBytesExt};
 
-// TODO: Implement test_format_compliance_header_structure()
 // Verify header magic number, version, and field layout
 #[test]
-#[ignore = "TODO: Implement header structure testing"]
 fn test_format_compliance_header_structure() {
-    todo!("Test header magic, version, and field layout compliance");
+    let records = vec![RawDataRecord {
+        sent_nanos: 1_672_531_200_000_000_000,
+        rtt_nanos: Duration::from_millis(20).as_nanos() as u64,
+    }];
+    let compressed_data = compress_chunked_v1(&records).unwrap();
+
+    let magic = (&compressed_data[0..8]).read_u64::<BigEndian>().unwrap();
+    assert_eq!(magic, FILE_MAGIC, "Incorrect magic number");
+
+    let version = (&compressed_data[8..10]).read_u16::<BigEndian>().unwrap();
+    assert_eq!(version, FORMAT_VERSION, "Incorrect format version");
 }
 
-// TODO: Implement test_format_compliance_byte_ordering()
 // Verify BigEndian byte ordering throughout format
 #[test]
-#[ignore = "TODO: Implement byte ordering testing"]
 fn test_format_compliance_byte_ordering() {
-    todo!("Test BigEndian compliance for all multi-byte fields");
+    let start_time = 1_672_531_200_000_000_000;
+    let records = vec![RawDataRecord {
+        sent_nanos: start_time,
+        rtt_nanos: Duration::from_millis(20).as_nanos() as u64,
+    }];
+    let compressed_data = compress_chunked_v1(&records).unwrap();
+    let header = FileHeader::read(&compressed_data[..]).unwrap();
+
+    // Manually parse the start_time_unix_ns (bytes 10-17) as BigEndian
+    let start_time_manual = u64::from_be_bytes(compressed_data[10..18].try_into().unwrap());
+
+    assert_eq!(header.start_time_unix_ns, start_time_manual, "Byte ordering for start_time_unix_ns is not BigEndian");
 }
 
 // TODO: Implement test_format_compliance_chunk_layout()
@@ -71,16 +92,16 @@ fn test_format_compliance_version_handling() {
 }
 
 // Helper to parse and validate raw format structure
-fn validate_raw_format_structure(data: &[u8]) -> Result<()> {
+fn _validate_raw_format_structure(_data: &[u8]) -> anyhow::Result<()> {
     todo!("Validate raw binary format structure");
 }
 
 // Helper to check field alignment and padding
-fn verify_field_alignment(data: &[u8]) -> Result<()> {
+fn _verify_field_alignment(_data: &[u8]) -> anyhow::Result<()> {
     todo!("Verify proper field alignment and padding");
 }
 
 // Helper to validate cross-platform compatibility
-fn test_cross_platform_compatibility() -> Result<()> {
+fn _test_cross_platform_compatibility() -> anyhow::Result<()> {
     todo!("Test format compatibility across different platforms");
 }
