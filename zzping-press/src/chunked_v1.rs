@@ -597,31 +597,33 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
     let mut final_data = header_buf;
     final_data.extend_from_slice(&payload_buffer);
 
-    // Print compression debug summary
-    println!("=== COMPRESSION DEBUG SUMMARY ===");
-    println!(
-        "Total chunks: {} ({} constant rate, {} variable rate)",
-        constant_rate_chunks + variable_rate_chunks,
-        constant_rate_chunks,
-        variable_rate_chunks
-    );
-    println!("RTT data: {} bytes", total_rtt_bytes);
-    println!("Timing data: {} bytes", total_timing_bytes);
-    println!("Header size: {} bytes", HEADER_SIZE);
-    println!("Payload size: {} bytes", payload_buffer.len());
-    println!("Total size: {} bytes", final_data.len());
-
-    if constant_rate_chunks > 0 && variable_rate_chunks > 0 {
+    // Print compression debug summary only if explicitly requested
+    if std::env::var("ZZPING_DEBUG_COMPRESSION").is_ok() {
+        println!("=== COMPRESSION DEBUG SUMMARY ===");
         println!(
-            "WARNING: Mixed chunk types detected! {} constant, {} variable",
-            constant_rate_chunks, variable_rate_chunks
+            "Total chunks: {} ({} constant rate, {} variable rate)",
+            constant_rate_chunks + variable_rate_chunks,
+            constant_rate_chunks,
+            variable_rate_chunks
         );
-    } else if variable_rate_chunks > 0 {
-        println!("All chunks are variable rate - constant rate optimization not being used!");
-    } else {
-        println!("All chunks are constant rate - timing optimization working correctly");
+        println!("RTT data: {} bytes", total_rtt_bytes);
+        println!("Timing data: {} bytes", total_timing_bytes);
+        println!("Header size: {} bytes", HEADER_SIZE);
+        println!("Payload size: {} bytes", payload_buffer.len());
+        println!("Total size: {} bytes", final_data.len());
+
+        if constant_rate_chunks > 0 && variable_rate_chunks > 0 {
+            println!(
+                "WARNING: Mixed chunk types detected! {} constant, {} variable",
+                constant_rate_chunks, variable_rate_chunks
+            );
+        } else if variable_rate_chunks > 0 {
+            println!("All chunks are variable rate - constant rate optimization not being used!");
+        } else {
+            println!("All chunks are constant rate - timing optimization working correctly");
+        }
+        println!("==================================");
     }
-    println!("==================================");
 
     Ok(final_data)
 }

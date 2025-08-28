@@ -5,6 +5,9 @@ use zzping_press::{
     chunked_v1::{compress_chunked_v1, decompress_chunked_v1},
 };
 
+type IntervalFunction = Box<dyn Fn(usize) -> u64>;
+type VariableScenario = (&'static str, IntervalFunction);
+
 #[derive(Debug)]
 struct BenchmarkMetrics {
     size: usize,
@@ -126,6 +129,99 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     group.finish();
 
+    // Add high-jitter scenarios to test variable rate compression
+    let mut group = c.benchmark_group("chunked_v1_variable_rate");
+    group.sample_size(10);
+    group.measurement_time(std::time::Duration::from_secs(3));
+
+    println!("\n=== VARIABLE RATE COMPRESSION ANALYSIS ===");
+
+    // Define scenario functions separately to avoid closure type mismatch
+    let jitter_10ms = |i: usize| {
+        let base = 1_000_000_000; // 1 second base
+        let jitter = ((i % 21) as i64 - 10) * 10_000_000; // ±10ms jitter
+        (base as i64 + jitter) as u64
+    };
+
+    let random_intervals = |i: usize| {
+        // Pseudo-random intervals between 50ms and 1.5s
+        let seed = (i as u64).wrapping_mul(1103515245).wrapping_add(12345);
+        let range = 1_450_000_000; // 1.45s range (1.5s - 0.05s)
+        50_000_000 + (seed % range) // 50ms + random up to 1.45s
+    };
+
+    let burst_pattern = |i: usize| {
+        // Alternating between 100ms bursts and 2s gaps
+        if (i / 10) % 2 == 0 {
+            100_000_000
+        } else {
+            2_000_000_000
+        }
+    };
+
+    let variable_scenarios: Vec<VariableScenario> = vec![
+        ("jitter_±10ms", Box::new(jitter_10ms)),
+        ("rand_1.5s", Box::new(random_intervals)),
+        ("burst_pattern", Box::new(burst_pattern)),
+    ];
+
+    let mut variable_metrics = Vec::new();
+
+    for (scenario_name, interval_fn) in variable_scenarios.iter() {
+        let records = generate_test_data(
+            100_000,
+            interval_fn,
+            |i| Duration::from_millis(20 + (i as u64 % 10)).as_nanos() as u64,
+            start_time,
+        );
+
+        // Enable debug output to see compression decisions
+        unsafe {
+            std::env::set_var("ZZPING_DEBUG_COMPRESSION", "1");
+        }
+        let compressed_data = compress_chunked_v1(&records).unwrap();
+        unsafe {
+            std::env::remove_var("ZZPING_DEBUG_COMPRESSION");
+        }
+
+        let uncompressed_size = records.len() * std::mem::size_of::<RawDataRecord>();
+
+        // Quick timing measurement for variable rate scenarios
+        let start = std::time::Instant::now();
+        for _ in 0..3 {
+            std::hint::black_box(compress_chunked_v1(&records).unwrap());
+        }
+        let compression_time_us = start.elapsed().as_secs_f64() * 1_000_000.0 / 3.0;
+
+        let start = std::time::Instant::now();
+        for _ in 0..3 {
+            std::hint::black_box(decompress_chunked_v1(&compressed_data).unwrap());
+        }
+        let decompression_time_us = start.elapsed().as_secs_f64() * 1_000_000.0 / 3.0;
+
+        variable_metrics.push((
+            scenario_name.to_string(),
+            BenchmarkMetrics {
+                size: records.len(),
+                compression_time_us,
+                decompression_time_us,
+                compressed_size: compressed_data.len(),
+                uncompressed_size,
+            },
+        ));
+
+        group.bench_with_input(
+            BenchmarkId::new("compress", scenario_name),
+            &records,
+            |b, r| b.iter(|| compress_chunked_v1(r).unwrap()),
+        );
+    }
+
+    group.finish();
+
+    // Print variable rate summary table
+    print_variable_rate_summary(&variable_metrics);
+
     // Print summary table
     print_benchmark_summary(&metrics_collection);
 
@@ -192,6 +288,59 @@ fn print_benchmark_summary(metrics: &[BenchmarkMetrics]) {
     );
     println!(
         "      Avg Bits/RTT shows average storage requirement per RTT record in compressed format"
+    );
+    println!();
+}
+
+fn print_variable_rate_summary(metrics: &[(String, BenchmarkMetrics)]) {
+    println!();
+    println!(
+        "╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════════╗"
+    );
+    println!(
+        "║                                      ZZPING VARIABLE RATE COMPRESSION SUMMARY                                                 ║"
+    );
+    println!(
+        "╠═══════════════╤════════════════╤══════════════╤════════════════╤═════════════╤═══════════════════════╤═══════════════════════╣"
+    );
+    println!(
+        "║   Scenario    │  Uncompressed  │  Compressed  │   Size Ratio   │ Avg Bits/   │     Compression       │    Decompression      ║"
+    );
+    println!(
+        "║               │      Size      │     Size     │                │    RTT      │  MiB/s  │   MRTTs/s   │  MiB/s  │   MRTTs/s   ║"
+    );
+    println!(
+        "╠═══════════════╪════════════════╪══════════════╪════════════════╪═════════════╪═════════╪═════════════╪═════════╪═════════════╣"
+    );
+
+    for (scenario_name, metric) in metrics {
+        let ratio_str = format!("{:.2}x", metric.compression_ratio());
+
+        println!(
+            "║ {:>13} │ {:>12} B │ {:>10} B │ {:>14} │ {:>11.1} │ {:>7.1} │ {:>11.1} │ {:>7.1} │ {:>11.1} ║",
+            scenario_name,
+            format_number(metric.uncompressed_size),
+            format_number(metric.compressed_size),
+            ratio_str,
+            metric.avg_bits_per_rtt(),
+            metric.compression_throughput_mibs(),
+            metric.compression_rtts_per_sec() / 1_000_000.0,
+            metric.decompression_throughput_mibs(),
+            metric.decompression_rtts_per_sec() / 1_000_000.0
+        );
+    }
+
+    println!(
+        "╚═══════════════╧════════════════╧══════════════╧════════════════╧═════════════╧═════════╧═════════════╧═════════╧═════════════╝"
+    );
+    println!(
+        "Note: Variable rate scenarios force timing data storage due to irregular send intervals"
+    );
+    println!(
+        "      High bits/RTT values indicate the cost of storing timing information vs constant rate"
+    );
+    println!(
+        "      Compare with constant rate scenarios above to see timing optimization benefits"
     );
     println!();
 }

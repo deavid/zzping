@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use rerun::RecordingStreamBuilder;
 use std::fs::File;
@@ -6,7 +6,7 @@ use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 use zzping_press::{
-    chunked_v1, CaptureHeader, CompressedDataRecord, RawDataRecord, RecordIterator,
+    CaptureHeader, CompressedDataRecord, RawDataRecord, RecordIterator, chunked_v1,
 };
 
 const CAPTURE_MAGIC: u64 = 0x7A7A504E47434150; // zzPNGCAP
@@ -38,7 +38,7 @@ struct PressArgs {
     #[arg(
         long,
         value_name = "FILE_PATH",
-        help = "Output file path. If not specified, will add extension based on compression strategy to input file"
+        help = "Output file path. If not specified, will add extension based to input file"
     )]
     output: Option<PathBuf>,
     #[arg(
@@ -48,6 +48,8 @@ struct PressArgs {
         help = "Compression strategy to use"
     )]
     strategy: Strategy,
+    #[arg(long, help = "Enable debug output during compression")]
+    debug: bool,
 }
 
 #[derive(Parser, Debug)]
@@ -120,11 +122,21 @@ fn handle_press(args: PressArgs) -> Result<()> {
 
     match args.strategy {
         Strategy::ChunkedV1 => {
+            // Enable debug output if requested
+            if args.debug {
+                unsafe {
+                    std::env::set_var("ZZPING_DEBUG_COMPRESSION", "1");
+                }
+            }
+
             let (_header, raw_records_iterator) = read_raw_records(&args.input)?;
             let mut records: Vec<RawDataRecord> = raw_records_iterator.collect::<Result<_>>()?;
             records.sort();
 
-            println!("Compressing {} records with chunked-v1 strategy...", records.len());
+            println!(
+                "Compressing {} records with chunked-v1 strategy...",
+                records.len()
+            );
 
             let start_time = std::time::Instant::now();
             let compressed_data = chunked_v1::compress_chunked_v1(&records)?;
@@ -143,8 +155,10 @@ fn handle_press(args: PressArgs) -> Result<()> {
             println!("Original size: {original_size} bytes");
             println!("Compressed size: {compressed_size} bytes");
             println!("Compression ratio: {ratio:.2}:1");
-            println!("Processing speed: {:.2} Million Records/sec", records_per_sec / 1_000_000.0);
-
+            println!(
+                "Processing speed: {:.2} Million Records/sec",
+                records_per_sec / 1_000_000.0
+            );
 
             let mut writer = BufWriter::new(File::create(&output_path).with_context(|| {
                 format!("Failed to create output file: {}", output_path.display())
@@ -291,9 +305,10 @@ fn handle_create_fixture(args: CreateFixtureArgs) -> Result<()> {
         std::fs::create_dir_all(parent)?;
     }
 
-    let mut writer = BufWriter::new(File::create(&args.output).with_context(|| {
-        format!("Failed to create output file: {}", args.output.display())
-    })?);
+    let mut writer = BufWriter::new(
+        File::create(&args.output)
+            .with_context(|| format!("Failed to create output file: {}", args.output.display()))?,
+    );
 
     // Write header
     writer.write_all(&CAPTURE_MAGIC.to_le_bytes())?;
@@ -313,7 +328,6 @@ fn handle_create_fixture(args: CreateFixtureArgs) -> Result<()> {
 
     Ok(())
 }
-
 
 // --- File I/O Functions ---
 
