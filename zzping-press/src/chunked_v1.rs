@@ -325,7 +325,7 @@ fn analyze_send_times(records: &[RawDataRecord]) -> SendTimeStrategy {
     }
 
     // Always use quantized variable rate to ensure precise timing reconstruction
-    println!("Always using QuantizedVariable with base_interval_ns={base_interval_ns}");
+    // println!("Always using QuantizedVariable with base_interval_ns={base_interval_ns}");
 
     let mut delta_symbols = Vec::new();
     let mut large_deltas = Vec::new();

@@ -18,3 +18,8 @@ rand.workspace = true
 
 [dev-dependencies]
 chrono = "0.4"
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+name = "chunked_v1_benches"
+harness = false
