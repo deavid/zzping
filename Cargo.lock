@@ -10928,6 +10928,7 @@ dependencies = [
  "byteorder",
  "clap",
  "constriction",
+ "rand 0.9.2",
  "rerun",
 ]
 

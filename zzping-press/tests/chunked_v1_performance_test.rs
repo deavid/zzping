@@ -14,20 +14,20 @@
 // - Decompression speed benchmarks
 // - Compression ratio analysis for various data types
 
-use zzping_press::{
-    chunked_v1::{compress_chunked_v1, decompress_chunked_v1},
-    RawDataRecord,
-};
 use std::time::{Duration, Instant};
+use zzping_press::{
+    RawDataRecord,
+    chunked_v1::{compress_chunked_v1, decompress_chunked_v1},
+};
 
 // Helper to generate a large dataset for performance testing
-fn generate_test_data(num_records: usize) -> Vec<RawDataRecord> {
+fn generate_test_data(num_records: usize, rtt_pattern: fn(usize) -> u64) -> Vec<RawDataRecord> {
     let mut records = Vec::with_capacity(num_records);
     let start_time = 1_672_531_200_000_000_000; // 2023-01-01 00:00:00 UTC
     for i in 0..num_records {
         records.push(RawDataRecord {
             sent_nanos: start_time + (i as u64 * 1_000_000_000), // 1s interval
-            rtt_nanos: Duration::from_millis(20 + (i as u64 % 20)).as_nanos() as u64,
+            rtt_nanos: rtt_pattern(i),
         });
     }
     records
@@ -37,7 +37,9 @@ fn generate_test_data(num_records: usize) -> Vec<RawDataRecord> {
 #[test]
 #[ignore = "Performance tests are slow and should be run manually"]
 fn test_performance_compression_speed() {
-    let records = generate_test_data(100_000);
+    let records = generate_test_data(100_000, |i| {
+        Duration::from_millis(20 + (i as u64 % 20)).as_nanos() as u64
+    });
     let start = Instant::now();
     let compressed_data = compress_chunked_v1(&records).unwrap();
     let duration = start.elapsed();
@@ -53,7 +55,9 @@ fn test_performance_compression_speed() {
 #[test]
 #[ignore = "Performance tests are slow and should be run manually"]
 fn test_performance_decompression_speed() {
-    let records = generate_test_data(100_000);
+    let records = generate_test_data(100_000, |i| {
+        Duration::from_millis(20 + (i as u64 % 20)).as_nanos() as u64
+    });
     let compressed_data = compress_chunked_v1(&records).unwrap();
 
     let start = Instant::now();
@@ -63,43 +67,83 @@ fn test_performance_decompression_speed() {
     println!("Decompression speed: {:.0} records/sec", records_per_sec);
 }
 
-
-// TODO: Implement test_performance_large_datasets()
-// Test processing of GB-sized datasets
+// Analyze compression ratios for various data patterns
 #[test]
-#[ignore = "TODO: Implement large dataset performance testing"]
-fn test_performance_large_datasets() {
-    todo!("Test performance with GB-sized datasets");
+#[ignore = "Performance tests are slow and should be run manually"]
+fn test_performance_compression_ratios() {
+    let constant_rtt_records =
+        generate_test_data(1000, |_| Duration::from_millis(20).as_nanos() as u64);
+    let compressed_constant = compress_chunked_v1(&constant_rtt_records).unwrap();
+    let ratio_constant =
+        (constant_rtt_records.len() * 16) as f64 / compressed_constant.len() as f64;
+    println!("Compression ratio (constant RTT): {:.2}x", ratio_constant);
+
+    let variable_rtt_records = generate_test_data(1000, |i| {
+        Duration::from_millis(20 + (i as u64 % 100)).as_nanos() as u64
+    });
+    let compressed_variable = compress_chunked_v1(&variable_rtt_records).unwrap();
+    let ratio_variable =
+        (variable_rtt_records.len() * 16) as f64 / compressed_variable.len() as f64;
+    println!("Compression ratio (variable RTT): {:.2}x", ratio_variable);
 }
 
-// TODO: Implement test_performance_memory_usage()
+// Test processing of GB-sized datasets
+#[test]
+#[ignore = "Performance tests are slow and should be run manually"]
+fn test_performance_large_datasets() {
+    let records = generate_test_data(1_000_000, |i| {
+        Duration::from_millis(20 + (i as u64 % 20)).as_nanos() as u64
+    });
+    let compressed = compress_chunked_v1(&records).unwrap();
+    let decompressed = decompress_chunked_v1(&compressed).unwrap();
+    assert_eq!(records.len(), decompressed.len());
+}
+
 // Profile memory usage and ensure bounded consumption
 #[test]
-#[ignore = "TODO: Implement memory usage testing"]
+#[ignore = "TODO: Manual profiling required for memory usage analysis"]
 fn test_performance_memory_usage() {
+    // This test requires external profiling tools (e.g. Valgrind, Heaptrack)
+    // to measure memory usage accurately. It is not automated.
     todo!("Test memory usage stays below limits");
 }
 
-// TODO: Implement test_performance_compression_ratios()
-// Analyze compression ratios for various data patterns
-#[test]
-#[ignore = "TODO: Implement compression ratio analysis"]
-fn test_performance_compression_ratios() {
-    todo!("Analyze compression ratios for different data types");
-}
-
-// TODO: Implement test_performance_constant_vs_variable_rate()
 // Compare performance between constant and variable rate modes
 #[test]
-#[ignore = "TODO: Implement rate mode performance comparison"]
+#[ignore = "Performance tests are slow and should be run manually"]
 fn test_performance_constant_vs_variable_rate() {
-    todo!("Compare constant rate vs variable rate performance");
+    println!("--- Constant Rate Performance ---");
+    let const_rate_records =
+        generate_test_data(100_000, |_| Duration::from_millis(20).as_nanos() as u64);
+    let start_const_compress = Instant::now();
+    let compressed_const = compress_chunked_v1(&const_rate_records).unwrap();
+    let duration_const_compress = start_const_compress.elapsed();
+    println!("Compression (const): {:.2?}", duration_const_compress);
+
+    let start_const_decompress = Instant::now();
+    decompress_chunked_v1(&compressed_const).unwrap();
+    let duration_const_decompress = start_const_decompress.elapsed();
+    println!("Decompression (const): {:.2?}", duration_const_decompress);
+
+    println!("\n--- Variable Rate Performance ---");
+    let var_rate_records = generate_test_data(100_000, |i| {
+        Duration::from_millis(20 + (i as u64 % 20)).as_nanos() as u64
+    });
+    let start_var_compress = Instant::now();
+    let compressed_var = compress_chunked_v1(&var_rate_records).unwrap();
+    let duration_var_compress = start_var_compress.elapsed();
+    println!("Compression (var): {:.2?}", duration_var_compress);
+
+    let start_var_decompress = Instant::now();
+    decompress_chunked_v1(&compressed_var).unwrap();
+    let duration_var_decompress = start_var_decompress.elapsed();
+    println!("Decompression (var): {:.2?}", duration_var_decompress);
 }
 
 // Helper to measure and report performance metrics
 fn _measure_performance<F>(_operation: F, _dataset_size: usize) -> (f64, f64)
 where
-    F: FnOnce() -> (),
+    F: FnOnce(),
 {
     todo!("Measure operation performance and calculate records/second");
 }

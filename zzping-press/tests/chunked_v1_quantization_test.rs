@@ -18,7 +18,8 @@ use zzping_press::chunked_v1::Quantizer;
 #[test]
 fn test_quantization_accuracy_small_rtts() {
     let quantizer = Quantizer::new();
-    for micros in (100..=1000).step_by(10) { // 0.1ms to 1ms
+    for micros in (100..=1000).step_by(10) {
+        // 0.1ms to 1ms
         let original_duration = Duration::from_micros(micros);
         let symbol = quantizer.duration_to_symbol(original_duration);
         let decompressed_duration = quantizer.symbol_to_duration(symbol);
@@ -35,7 +36,8 @@ fn test_quantization_accuracy_small_rtts() {
 #[test]
 fn test_quantization_accuracy_medium_rtts() {
     let quantizer = Quantizer::new();
-    for millis in 1..=100 { // 1ms to 100ms
+    for millis in 1..=100 {
+        // 1ms to 100ms
         let original_duration = Duration::from_millis(millis);
         let symbol = quantizer.duration_to_symbol(original_duration);
         let decompressed_duration = quantizer.symbol_to_duration(symbol);
@@ -52,7 +54,8 @@ fn test_quantization_accuracy_medium_rtts() {
 #[test]
 fn test_quantization_accuracy_large_rtts() {
     let quantizer = Quantizer::new();
-    for millis in (100..=1000).step_by(10) { // 100ms to 1000ms
+    for millis in (100..=1000).step_by(10) {
+        // 100ms to 1000ms
         let original_duration = Duration::from_millis(millis);
         let symbol = quantizer.duration_to_symbol(original_duration);
         let decompressed_duration = quantizer.symbol_to_duration(symbol);
@@ -67,9 +70,37 @@ fn test_quantization_accuracy_large_rtts() {
 
 // Test values near quantization boundaries for precision edge cases
 #[test]
-#[ignore = "TODO: Implement boundary value testing"]
 fn test_quantization_boundary_values() {
-    todo!("Test RTT values at quantization boundaries");
+    let quantizer = Quantizer::new();
+    let ln_1_001 = 1.001f64.ln();
+
+    for x in &[100, 500, 1000] {
+        let boundary_val = (*x as f64 + 0.5) * ln_1_001;
+        let time_in_ms = (boundary_val.exp() - 1.0) * 100.0;
+
+        // A small epsilon to push the value just over or under the boundary
+        let epsilon_ms = 0.000001;
+
+        let duration_below = Duration::from_secs_f64((time_in_ms - epsilon_ms) / 1000.0);
+        let duration_above = Duration::from_secs_f64((time_in_ms + epsilon_ms) / 1000.0);
+
+        let symbol_below = quantizer.duration_to_symbol(duration_below);
+        let symbol_above = quantizer.duration_to_symbol(duration_above);
+
+        assert_eq!(
+            symbol_below, *x as u16,
+            "Value below boundary for x={} quantized incorrectly. Got {}, expected {}",
+            x, symbol_below, *x
+        );
+        assert_eq!(
+            symbol_above,
+            (*x + 1) as u16,
+            "Value above boundary for x={} quantized incorrectly. Got {}, expected {}",
+            x,
+            symbol_above,
+            *x + 1
+        );
+    }
 }
 
 // Test zero RTT, maximum RTT, and other edge conditions
@@ -96,7 +127,7 @@ fn test_quantization_edge_cases() {
 fn test_quantization_roundtrip_accuracy() {
     let quantizer = Quantizer::new();
     let test_durations = [
-        Duration::from_micros(50),      // Lower than small
+        Duration::from_micros(50), // Lower than small
         Duration::from_micros(123),
         Duration::from_millis(1),
         Duration::from_millis(42),
@@ -124,6 +155,6 @@ fn check_rtt_tolerance(original: Duration, quantized: Duration) -> bool {
         100_000,                             // 0.1ms minimum tolerance
         (original.as_nanos() / 1000) as u64, // 0.1% of original
     );
-    let error_ns = (original.as_nanos() as i64 - quantized.as_nanos() as i64).abs() as u64;
+    let error_ns = (original.as_nanos() as i64 - quantized.as_nanos() as i64).unsigned_abs();
     error_ns <= tolerance_ns
 }

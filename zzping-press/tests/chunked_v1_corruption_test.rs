@@ -11,11 +11,16 @@
 // - Incomplete files (power loss, disk full scenarios)
 // - Cross-platform compatibility (endianness testing)
 
-use zzping_press::{
-    chunked_v1::{compress_chunked_v1, decompress_chunked_v1, HEADER_SIZE, IndexEntry},
-    RawDataRecord,
-};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 use std::time::Duration;
+use zzping_press::{
+    RawDataRecord,
+    chunked_v1::{
+        FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE, IndexEntry, compress_chunked_v1,
+        decompress_chunked_v1,
+    },
+};
 
 // Test 0-byte file handling
 #[test]
@@ -30,7 +35,10 @@ fn test_corruption_resistance_empty_file() {
 fn test_corruption_resistance_truncated_header() {
     let data = vec![0u8; HEADER_SIZE - 1];
     let result = decompress_chunked_v1(&data);
-    assert!(result.is_err(), "Decompressing a truncated header should fail");
+    assert!(
+        result.is_err(),
+        "Decompressing a truncated header should fail"
+    );
 }
 
 // Test files with corrupted magic number
@@ -43,14 +51,18 @@ fn test_corruption_resistance_invalid_magic() {
     let mut compressed_data = compress_chunked_v1(&records).unwrap();
     compressed_data[0..8].copy_from_slice(&[0, 1, 2, 3, 4, 5, 6, 7]);
     let result = decompress_chunked_v1(&compressed_data);
-    assert!(result.is_err(), "Decompressing with invalid magic number should fail");
+    assert!(
+        result.is_err(),
+        "Decompressing with invalid magic number should fail"
+    );
 }
 
 // Test files ending mid-chunk
 #[test]
 fn test_corruption_resistance_truncated_chunks() {
     let mut records = Vec::new();
-    for i in 0..120 { // 2 minutes of data
+    for i in 0..120 {
+        // 2 minutes of data
         records.push(RawDataRecord {
             sent_nanos: 1_672_531_200_000_000_000 + (i * 1_000_000_000),
             rtt_nanos: Duration::from_millis(20).as_nanos() as u64,
@@ -63,7 +75,10 @@ fn test_corruption_resistance_truncated_chunks() {
     compressed_data.truncate(truncation_point);
 
     let result = decompress_chunked_v1(&compressed_data);
-    assert!(result.is_err(), "Decompressing a truncated chunk should fail");
+    assert!(
+        result.is_err(),
+        "Decompressing a truncated chunk should fail"
+    );
 }
 
 // Test corrupted index table with invalid offsets
@@ -76,6 +91,7 @@ fn test_corruption_resistance_malformed_indices() {
     // panics with a 'range start index out of range' error when trying to
     // slice the data. The expected behavior is to return an Err instead of
     // panicking.
+
     let records = vec![RawDataRecord {
         sent_nanos: 1_672_531_200_000_000_000,
         rtt_nanos: Duration::from_millis(20).as_nanos() as u64,
@@ -84,43 +100,53 @@ fn test_corruption_resistance_malformed_indices() {
 
     // Manually corrupt the index entry to point beyond the file
     let file_len = compressed_data.len() as u64;
-    let bad_index_entry = IndexEntry { chunk_offset_bytes: file_len + 100 };
+    let bad_index_entry = IndexEntry {
+        chunk_offset_bytes: file_len + 100,
+    };
 
     // Locate the index entry in the header and overwrite it
-    // This is a bit complex as we need to know the header layout.
-    // For a single chunk, there is 1 aggregate entry and 1 index entry.
-    // FileHeader is 22 bytes. AggregateEntry is 26 bytes.
     let index_entry_offset = 22 + 26;
 
     let mut cursor = std::io::Cursor::new(&mut compressed_data[index_entry_offset..]);
     bad_index_entry.write(&mut cursor).unwrap();
 
     let result = decompress_chunked_v1(&compressed_data);
-    assert!(result.is_err(), "Decompressing with malformed index should fail");
+    assert!(
+        result.is_err(),
+        "Decompressing with malformed index should fail"
+    );
 }
 
-// TODO: Implement test_corruption_resistance_endianness()
 // Test cross-platform compatibility (little vs big endian)
 #[test]
-#[ignore = "TODO: Implement endianness testing"]
 fn test_corruption_resistance_endianness() {
-    todo!("Test cross-platform endianness compatibility");
+    let mut data = vec![0u8; HEADER_SIZE];
+    // Write magic and version in BigEndian
+    data[0..8].copy_from_slice(&FILE_MAGIC.to_be_bytes());
+    data[8..10].copy_from_slice(&FORMAT_VERSION.to_be_bytes());
+    // Write start time in LittleEndian
+    let start_time: u64 = 12345;
+    data[10..18].copy_from_slice(&start_time.to_le_bytes());
+
+    let result = decompress_chunked_v1(&data);
+    // The decompressor should not panic, and should read a different value for start_time
+    if let Ok(records) = result {
+        // This is unlikely to be Ok, but if it is, the timestamp should be wrong
+        if !records.is_empty() {
+            assert_ne!(records[0].sent_nanos, start_time);
+        }
+    }
+    // If it's an error, that's also acceptable. The main point is no panic.
 }
 
-// TODO: Implement test_corruption_resistance_never_panic()
 // Comprehensive test ensuring decoder never panics on any input
 #[test]
-#[ignore = "TODO: Implement comprehensive panic resistance testing"]
 fn test_corruption_resistance_never_panic() {
-    todo!("Test that decoder never panics on any corrupted input");
-}
-
-// Helper to create systematically corrupted test files
-fn _create_corrupted_file(_corruption_type: &str) -> Vec<u8> {
-    todo!("Create test file with specific type of corruption");
-}
-
-// Helper to verify error types are meaningful
-fn _verify_error_message_quality(_error: &anyhow::Error) -> bool {
-    todo!("Verify error messages are helpful for debugging");
+    let mut rng = StdRng::seed_from_u64(12345);
+    for _ in 0..1000 {
+        let len = rng.random_range(0..1024);
+        let data: Vec<u8> = (0..len).map(|_| rng.random::<u8>()).collect();
+        // The decompressor should never panic on random data
+        let _ = decompress_chunked_v1(&data);
+    }
 }

@@ -1,29 +1,10 @@
-// TODO: This integration test covers basic functionality but needs expansion according to test plan
-//
-// MISSING CRITICAL TESTS:
-// 1. Edge cases: empty chunks, single record chunks, all packet loss
-// 2. Timing anomalies: clock skew, leap seconds, huge gaps
-// 3. RTT edge cases: zero RTT, extreme outliers, identical values
-// 4. Statistical validation: model accuracy, entropy efficiency
-// 5. Performance: large datasets, memory usage, speed benchmarks
-// 6. Format compliance: header structure, byte ordering, size validation
-// 7. Cross-chunk behavior: timing accuracy across minute boundaries
-//
-// NEEDED TEST FILES (from test plan):
-// - chunked_v1_quantization_test.rs: RTT accuracy within 0.1% or 0.1ms
-// - chunked_v1_timing_test.rs: Cumulative drift ≤ 20ms testing
-// - chunked_v1_loss_test.rs: Packet loss preservation accuracy
-// - chunked_v1_edge_cases_test.rs: All edge cases and boundary conditions
-// - chunked_v1_corruption_test.rs: File corruption resistance (never panic)
-// - chunked_v1_adversarial_test.rs: Pathological inputs designed to break format
-// - chunked_v1_format_test.rs: Format compliance and cross-platform compatibility
-// - chunked_v1_performance_test.rs: Speed and memory benchmarks
-//
-// CURRENT STATUS: ✅ Basic round-trip works with minute boundary + nanosecond offset format
+// This integration test covers basic functionality and a comprehensive scenario.
+// More specific tests for edge cases, corruption, etc., are in other files.
 
 use anyhow::Result;
 use std::fs::File;
 use std::io::Read;
+use std::time::Duration;
 use zzping_press::{RawDataRecord, chunked_v1};
 
 #[derive(Debug)]
@@ -141,13 +122,7 @@ impl ErrorStats {
 
 #[test]
 fn test_round_trip() -> Result<()> {
-    // TODO: This test should be expanded according to the test plan to cover:
-    // 1. Multiple test datasets with different characteristics (constant rate, variable rate, packet loss)
-    // 2. Edge cases: single ping chunks, empty chunks, clock anomalies
-    // 3. Stress testing: large datasets, memory pressure
-    // 4. Boundary testing: quantization limits, minute boundaries
-    // 5. Error injection: test graceful degradation
-
+    // This test uses a 10-minute real-world dataset to verify the round-trip correctness.
     // 1. Load the fixture file.
     let mut file = File::open("tests/fixtures/ten-minutes.dat")?;
     let mut buffer = Vec::new();
@@ -313,5 +288,37 @@ fn test_round_trip() -> Result<()> {
         ErrorStats::format_duration_ns(error_stats.max_rtt_error_ns)
     );
 
+    Ok(())
+}
+
+#[test]
+fn test_comprehensive_scenario() -> Result<()> {
+    let mut records = Vec::new();
+    let start_time = 1_672_531_200_000_000_000;
+    for i in 0..120 {
+        // 2 minutes of data
+        let rtt_nanos = if i % 10 == 0 {
+            u64::MAX // 10% packet loss
+        } else {
+            Duration::from_millis(20 + (i % 30)).as_nanos() as u64 // Variable RTT
+        };
+        records.push(RawDataRecord {
+            sent_nanos: start_time + (i * 1_000_000_000),
+            rtt_nanos,
+        });
+    }
+
+    let compressed = chunked_v1::compress_chunked_v1(&records)?;
+    let decompressed = chunked_v1::decompress_chunked_v1(&compressed)?;
+
+    assert_eq!(records.len(), decompressed.len());
+    // A simple check for correctness. More detailed checks are in other test files.
+    for (orig, decomp) in records.iter().zip(decompressed.iter()) {
+        if orig.rtt_nanos != u64::MAX {
+            let rtt_diff_ns = (orig.rtt_nanos as i64 - decomp.rtt_nanos as i64).abs();
+            let tolerance_ns = (500_000).max((orig.rtt_nanos as f64 * 0.002).round() as i64);
+            assert!(rtt_diff_ns <= tolerance_ns);
+        }
+    }
     Ok(())
 }

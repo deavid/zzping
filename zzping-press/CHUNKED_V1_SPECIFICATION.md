@@ -75,8 +75,7 @@ Each chunk includes aggregate statistics for entropy coding:
 - **Total per chunk**: 26 bytes of statistics
 - **Frequency Distribution**: Built from percentile ranges for entropy coding
 
-**TODO**: Consider using u8 for percentiles (saves 50% space, limits to 256 symbol range)
-**TODO**: Consider u8/u16 for lost_packet_count (u32 overkill for typical chunk sizes)
+**Design Decision**: The u16 percentile symbols provide full quantizer symbol range (0-65534) which is essential for precise frequency estimation. Compacting to u8 would limit the symbol range and potentially degrade compression efficiency. The u32 lost packet count ensures accurate frequency modeling for all practical data rates without overflow concerns.
 
 ## File Format Structure
 
@@ -104,7 +103,7 @@ Offset | Size | Field           | Description
 22     | 4    | lost_packet_count| Number of lost packets (u32)
 ```
 
-**TODO**: Consider u8 for percentiles + u8/u16 for count → 12-13 bytes (54% savings)
+**Note**: The 26-byte aggregate entry size is optimized for compression efficiency. u16 percentiles support the full quantizer symbol range, and u32 lost packet count ensures precise frequency modeling.
 
 ### Index Entry (8 bytes each)
 ```

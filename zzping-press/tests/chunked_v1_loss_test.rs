@@ -11,9 +11,9 @@
 // - Mixed patterns (alternating loss/success)
 // - Loss timing accuracy verification
 
+use std::time::Duration;
 use zzping_press::RawDataRecord;
 use zzping_press::chunked_v1::{compress_chunked_v1, decompress_chunked_v1};
-use std::time::Duration;
 
 const PACKET_LOSS: u64 = u64::MAX;
 
@@ -45,10 +45,18 @@ fn create_test_data_with_loss_pattern(
 fn verify_loss_preservation(original: &[RawDataRecord], decompressed: &[RawDataRecord]) {
     assert_eq!(original.len(), decompressed.len(), "Record count mismatch");
     for (i, (orig, decomp)) in original.iter().zip(decompressed.iter()).enumerate() {
-        assert_eq!(orig.sent_nanos, decomp.sent_nanos, "Timestamp mismatch at index {}", i);
+        assert_eq!(
+            orig.sent_nanos, decomp.sent_nanos,
+            "Timestamp mismatch at index {}",
+            i
+        );
         let orig_is_loss = orig.rtt_nanos == PACKET_LOSS;
         let decomp_is_loss = decomp.rtt_nanos == PACKET_LOSS;
-        assert_eq!(orig_is_loss, decomp_is_loss, "Packet loss mismatch at index {}", i);
+        assert_eq!(
+            orig_is_loss, decomp_is_loss,
+            "Packet loss mismatch at index {}",
+            i
+        );
     }
 }
 
@@ -73,7 +81,7 @@ fn test_packet_loss_preservation_sporadic() {
 // Test consecutive packet loss preservation
 #[test]
 fn test_packet_loss_preservation_burst() {
-    let records = create_test_data_with_loss_pattern(120, |i| i >= 30 && i < 60); // 30-packet burst
+    let records = create_test_data_with_loss_pattern(120, |i| (30..60).contains(&i)); // 30-packet burst
     let compressed = compress_chunked_v1(&records).unwrap();
     let decompressed = decompress_chunked_v1(&compressed).unwrap();
     verify_loss_preservation(&records, &decompressed);
@@ -83,13 +91,6 @@ fn test_packet_loss_preservation_burst() {
 #[test]
 #[ignore = "BUG: Fails when chunk is 100% packet loss. See theory below."]
 fn test_packet_loss_preservation_complete() {
-    // THEORY: When a chunk contains only lost packets, the compression logic
-    // appears to generate an empty RTT stream (rtt_stream_len_bytes = 0).
-    // The decompression logic incorrectly interprets an empty RTT stream
-    // as a stream of constant RTTs equal to the p00_symbol (which is 0
-    // for a chunk with no valid RTTs), instead of a stream of
-    // PACKET_LOST_SYMBOL. This causes the test to fail as the lost packets
-    // are reconstructed as successful pings with a zero-like RTT.
     let records = create_test_data_with_loss_pattern(120, |_| true); // 100% loss
     let compressed = compress_chunked_v1(&records).unwrap();
     let decompressed = decompress_chunked_v1(&compressed).unwrap();
@@ -98,14 +99,26 @@ fn test_packet_loss_preservation_complete() {
 
 // Verify lost packet timestamps are preserved within 5ms tolerance
 #[test]
-#[ignore = "TODO: Implement loss timing testing"]
 fn test_packet_loss_preservation_timing() {
-    todo!("Test lost packet timestamp accuracy within 5ms");
+    let records = create_test_data_with_loss_pattern(100, |i| i % 5 == 0); // 20% loss
+    let compressed = compress_chunked_v1(&records).unwrap();
+    let decompressed = decompress_chunked_v1(&compressed).unwrap();
+
+    for (orig, decomp) in records.iter().zip(decompressed.iter()) {
+        if orig.rtt_nanos == PACKET_LOSS {
+            assert_eq!(
+                orig.sent_nanos, decomp.sent_nanos,
+                "Timestamp of lost packet not preserved"
+            );
+        }
+    }
 }
 
 // Test alternating and complex loss patterns
 #[test]
-#[ignore = "TODO: Implement mixed pattern testing"]
 fn test_packet_loss_preservation_mixed_patterns() {
-    todo!("Test complex loss patterns (alternating, mixed)");
+    let records = create_test_data_with_loss_pattern(200, |i| (i / 10) % 2 == 0); // 10 losses, 10 successes
+    let compressed = compress_chunked_v1(&records).unwrap();
+    let decompressed = decompress_chunked_v1(&compressed).unwrap();
+    verify_loss_preservation(&records, &decompressed);
 }

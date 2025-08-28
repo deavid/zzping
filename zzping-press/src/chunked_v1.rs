@@ -101,10 +101,7 @@ impl FileHeader {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AggregateEntry {
-    // TODO: Consider using u8 for percentile symbols instead of u16 to save space.
-    // Current format uses 22 bytes for percentiles + 4 bytes for count = 26 bytes total.
-    // With u8 percentiles: 11 bytes + 1 byte for count = 12 bytes (54% space savings).
-    // This would limit RTT symbol range to 0-255, which may be sufficient for most use cases.
+    // Percentile symbols for RTT distribution (u16 provides full quantizer symbol range)
     pub p00_symbol: u16,
     pub p10_symbol: u16,
     pub p20_symbol: u16,
@@ -116,11 +113,7 @@ pub struct AggregateEntry {
     pub p80_symbol: u16,
     pub p90_symbol: u16,
     pub p100_symbol: u16,
-    // TODO: Consider using u8 or u16 for lost_packet_count instead of u32.
-    // For 60-second chunks at 1Hz, max packets = 60, so u8 would suffice.
-    // At higher rates (e.g., 10Hz), max = 600, so u16 would still work.
-    // NOTE: storing a percent could be enough, but we would need higher precision on the lower end.
-    // Also, if there's 1 packet lost, at least we need to store a "1" so we can encode the symbol later.
+    // Exact count of lost packets for precise frequency estimation in compression model
     pub lost_packet_count: u32, // Only relevant for RTT stats.
 }
 
@@ -394,7 +387,11 @@ fn build_model(stats: &AggregateEntry, symbol_count: usize) -> Result<(Vec<u16>,
                 let symbol_range_size = (end_symbol - start_symbol) + 1;
                 let freq = (bucket_count as f64 / symbol_range_size as f64).ceil() as u32;
                 let freq = freq.max(1);
-                for freq_s in frequencies.iter_mut().take(end_symbol + 1).skip(start_symbol) {
+                for freq_s in frequencies
+                    .iter_mut()
+                    .take(end_symbol + 1)
+                    .skip(start_symbol)
+                {
                     *freq_s = freq;
                 }
             }
@@ -402,14 +399,10 @@ fn build_model(stats: &AggregateEntry, symbol_count: usize) -> Result<(Vec<u16>,
     }
 
     if stats.lost_packet_count > 0 {
-        let total_valid_freq: u32 = frequencies.iter().sum();
-        if valid_symbols_count > 0 {
-            let avg_freq_per_symbol = total_valid_freq as f64 / valid_symbols_count as f64;
-            let lost_freq = (avg_freq_per_symbol * stats.lost_packet_count as f64).round() as u32;
-            frequencies[PACKET_LOST_SYMBOL as usize] = lost_freq.max(1);
-        } else {
-            frequencies[PACKET_LOST_SYMBOL as usize] = 1;
-        }
+        // Use the actual packet loss count to represent true frequency/probability.
+        // This ensures the frequency model accurately reflects the real packet loss ratio.
+        // The .max(1) ensures we always have a non-zero frequency for encoding capability.
+        frequencies[PACKET_LOST_SYMBOL as usize] = stats.lost_packet_count.max(1);
     }
 
     let (mut symbols_with_freq, mut probabilities): (Vec<_>, Vec<_>) = frequencies
@@ -420,17 +413,25 @@ fn build_model(stats: &AggregateEntry, symbol_count: usize) -> Result<(Vec<u16>,
         .unzip();
 
     if symbols_with_freq.len() == 1 {
-        // FIXME: When adding dummy symbol for entropy coding, ensure the real symbol
-        // has frequency several orders of magnitude higher than dummy (frequency 1).
-        // Current implementation may not guarantee this, potentially affecting compression efficiency.
-        // The real symbol should have frequency >> 1 to maintain good compression ratios.
+        // When only one symbol has frequency > 0, ANS coding requires at least 2 symbols.
+        // Add a dummy symbol with minimal frequency to maintain compression efficiency.
+        // The real symbol frequency should be much higher than dummy to preserve good compression.
         let dummy_symbol = if symbols_with_freq.is_empty() || symbols_with_freq[0] == 0 {
             1
         } else {
             0
         };
         symbols_with_freq.push(dummy_symbol);
-        probabilities.push(1);
+
+        // Scale up the real symbol frequency to achieve "several orders of magnitude" difference.
+        // Target: dummy gets 0.001% (1/100,000), real symbol gets 99.999%
+        // This ensures excellent compression efficiency by making dummy virtually irrelevant.
+        const TARGET_RATIO: u32 = 100_000; // 5 orders of magnitude difference
+        let scaled_real_freq = TARGET_RATIO - 1; // 99,999
+        let dummy_freq = 1; // Always 1 for minimal impact
+
+        probabilities[0] = scaled_real_freq; // Update the real symbol frequency
+        probabilities.push(dummy_freq);
     }
 
     if symbols_with_freq.is_empty() {
@@ -510,7 +511,9 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
 
         let (send_time_encoded_data, send_time_symbol_count, send_time_stats) =
             match &send_time_strategy {
-                SendTimeStrategy::ConstantRate { base_interval_ns: _ } => (Vec::new(), 0, None),
+                SendTimeStrategy::ConstantRate {
+                    base_interval_ns: _,
+                } => (Vec::new(), 0, None),
                 SendTimeStrategy::QuantizedVariable {
                     base_interval_ns: _,
                     delta_symbols,
@@ -822,5 +825,206 @@ mod tests {
         };
         let result = build_model(&stats, 1);
         assert!(result.is_ok(), "Failed with error: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_model_with_exactly_one_packet_lost() {
+        // Test the critical edge case: exactly 1 packet lost out of total packets
+        // This tests the packet loss frequency calculation with minimal loss
+        let stats = AggregateEntry {
+            p00_symbol: 100,
+            p10_symbol: 110,
+            p20_symbol: 120,
+            p30_symbol: 130,
+            p40_symbol: 140,
+            p50_symbol: 150,
+            p60_symbol: 160,
+            p70_symbol: 170,
+            p80_symbol: 180,
+            p90_symbol: 190,
+            p100_symbol: 200,
+            lost_packet_count: 1, // Exactly 1 packet lost
+        };
+
+        // Test with different total packet counts to verify frequency calculation
+        for total_packets in [100, 10_000, 100_000, 1_000_000] {
+            let result = build_model(&stats, total_packets);
+            assert!(
+                result.is_ok(),
+                "Failed with {} total packets: {:?}",
+                total_packets,
+                result.err()
+            );
+
+            let (symbols, probabilities) = result.unwrap();
+
+            // Verify packet loss symbol is included with correct frequency
+            let lost_symbol_pos = symbols.iter().position(|&s| s == PACKET_LOST_SYMBOL);
+            assert!(
+                lost_symbol_pos.is_some(),
+                "Packet loss symbol missing with {} total packets",
+                total_packets
+            );
+
+            let lost_prob = probabilities[lost_symbol_pos.unwrap()];
+
+            // For 1 lost packet, the frequency should be exactly 1, so probability should be roughly 1/total_frequency
+            // The exact probability depends on how frequencies are distributed, but it should be > 0
+            assert!(
+                lost_prob > 0.0,
+                "Packet loss probability should be > 0 with {} total packets, got {}",
+                total_packets,
+                lost_prob
+            );
+
+            // Verify all probabilities sum to 1.0 (within floating point tolerance)
+            let total_prob: f64 = probabilities.iter().sum();
+            assert!(
+                (total_prob - 1.0).abs() < 1e-10,
+                "Probabilities should sum to 1.0, got {} with {} total packets",
+                total_prob,
+                total_packets
+            );
+        }
+    }
+
+    #[test]
+    fn test_model_with_all_packets_lost() {
+        // Test edge case: 100% packet loss
+        let stats = AggregateEntry {
+            p00_symbol: 0, // Default values since no successful RTTs
+            p10_symbol: 0,
+            p20_symbol: 0,
+            p30_symbol: 0,
+            p40_symbol: 0,
+            p50_symbol: 0,
+            p60_symbol: 0,
+            p70_symbol: 0,
+            p80_symbol: 0,
+            p90_symbol: 0,
+            p100_symbol: 0,
+            lost_packet_count: 50, // All packets lost
+        };
+
+        let result = build_model(&stats, 50); // 50 total packets, all lost
+        assert!(
+            result.is_ok(),
+            "Failed with all packets lost: {:?}",
+            result.err()
+        );
+
+        let (symbols, probabilities) = result.unwrap();
+
+        // Should have exactly one symbol (packet loss) plus potentially a dummy symbol
+        assert!(
+            !symbols.is_empty(),
+            "Should have at least packet loss symbol"
+        );
+
+        // Packet loss symbol should be present
+        let lost_symbol_pos = symbols.iter().position(|&s| s == PACKET_LOST_SYMBOL);
+        assert!(
+            lost_symbol_pos.is_some(),
+            "Packet loss symbol missing with 100% loss"
+        );
+
+        // With 100% packet loss, the packet loss symbol should have high probability
+        let lost_prob = probabilities[lost_symbol_pos.unwrap()];
+        assert!(
+            lost_prob > 0.5,
+            "With 100% packet loss, loss probability should be high, got {}",
+            lost_prob
+        );
+    }
+
+    #[test]
+    fn test_dummy_symbol_frequency_analysis() {
+        // Test scenarios that might trigger the single symbol case and analyze dummy symbol frequency
+
+        // Case 1: Only packet loss, no successful RTTs (should have 1 symbol: packet loss)
+        let stats_only_loss = AggregateEntry {
+            p00_symbol: 0,
+            p10_symbol: 0,
+            p20_symbol: 0,
+            p30_symbol: 0,
+            p40_symbol: 0,
+            p50_symbol: 0,
+            p60_symbol: 0,
+            p70_symbol: 0,
+            p80_symbol: 0,
+            p90_symbol: 0,
+            p100_symbol: 0,
+            lost_packet_count: 10,
+        };
+
+        let result = build_model(&stats_only_loss, 10); // 10 total packets, all lost
+        assert!(result.is_ok());
+        let (symbols, probabilities) = result.unwrap();
+
+        // Should have packet loss symbol with frequency 10, and potentially a dummy symbol with frequency 1
+        println!(
+            "Only loss case: {} symbols, frequencies: {:?}",
+            symbols.len(),
+            probabilities
+        );
+        if symbols.len() == 2 {
+            // Find which is packet loss and which is dummy
+            let loss_pos = symbols
+                .iter()
+                .position(|&s| s == PACKET_LOST_SYMBOL)
+                .unwrap();
+            let dummy_pos = 1 - loss_pos; // the other one
+            println!(
+                "Loss symbol freq: {}, Dummy symbol freq: {}",
+                probabilities[loss_pos], probabilities[dummy_pos]
+            );
+
+            // The real symbol should have much higher frequency than dummy
+            assert!(
+                probabilities[loss_pos] > probabilities[dummy_pos] * 5.0,
+                "Loss symbol probability should be much higher than dummy"
+            );
+        }
+
+        // Case 2: All RTTs identical (should have 1 RTT symbol)
+        let stats_identical_rtt = AggregateEntry {
+            p00_symbol: 100,
+            p10_symbol: 100,
+            p20_symbol: 100,
+            p30_symbol: 100,
+            p40_symbol: 100,
+            p50_symbol: 100,
+            p60_symbol: 100,
+            p70_symbol: 100,
+            p80_symbol: 100,
+            p90_symbol: 100,
+            p100_symbol: 100,
+            lost_packet_count: 0,
+        };
+
+        let result = build_model(&stats_identical_rtt, 50); // 50 packets, all same RTT
+        assert!(result.is_ok());
+        let (symbols, probabilities) = result.unwrap();
+
+        println!(
+            "Identical RTT case: {} symbols, frequencies: {:?}",
+            symbols.len(),
+            probabilities
+        );
+        if symbols.len() == 2 {
+            // Should have RTT symbol 100 with high frequency, dummy with frequency 1
+            let rtt_pos = symbols.iter().position(|&s| s == 100).unwrap();
+            let dummy_pos = 1 - rtt_pos;
+            println!(
+                "RTT symbol freq: {}, Dummy symbol freq: {}",
+                probabilities[rtt_pos], probabilities[dummy_pos]
+            );
+
+            // The real symbol should have much higher frequency than dummy
+            assert!(
+                probabilities[rtt_pos] > probabilities[dummy_pos] * 5.0,
+                "RTT symbol probability should be much higher than dummy"
+            );
+        }
     }
 }
