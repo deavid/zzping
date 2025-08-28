@@ -10926,6 +10926,7 @@ dependencies = [
  "anyhow",
  "bitflags 2.9.3",
  "byteorder",
+ "chrono",
  "clap",
  "constriction",
  "rand 0.9.2",

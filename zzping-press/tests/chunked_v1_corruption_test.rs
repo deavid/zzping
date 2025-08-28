@@ -83,7 +83,6 @@ fn test_corruption_resistance_truncated_chunks() {
 
 // Test corrupted index table with invalid offsets
 #[test]
-#[ignore = "BUG: Decompressor panics on out-of-bounds index offset. See theory."]
 fn test_corruption_resistance_malformed_indices() {
     // THEORY: The decompressor does not validate that the chunk offsets from
     // the index table are within the bounds of the file. When an index entry
@@ -91,7 +90,8 @@ fn test_corruption_resistance_malformed_indices() {
     // panics with a 'range start index out of range' error when trying to
     // slice the data. The expected behavior is to return an Err instead of
     // panicking.
-
+    //
+    // FIXED: Added bounds checking in decompress_chunked_v1()
     let records = vec![RawDataRecord {
         sent_nanos: 1_672_531_200_000_000_000,
         rtt_nanos: Duration::from_millis(20).as_nanos() as u64,

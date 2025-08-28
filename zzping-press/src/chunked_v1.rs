@@ -180,7 +180,7 @@ bitflags::bitflags! {
 
 pub struct ChunkHeader {
     pub minute_boundary_unix_ns: u64, // Unix timestamp rounded to minute boundary
-    pub first_ping_offset_ns: u32, // Nanoseconds from minute boundary to first ping (0-59999999999)
+    pub first_ping_offset_ns: u64, // Nanoseconds from minute boundary to first ping (0-59999999999)
     pub rtt_symbol_count: u32,
     pub send_time_symbol_count: u32,
     pub rtt_stream_len_bytes: u32,
@@ -192,9 +192,9 @@ pub struct ChunkHeader {
 }
 
 impl ChunkHeader {
-    pub fn write(&self, mut w: impl Write) -> std::io::Result<()> {
+    pub fn write(&self, mut w: impl Write) -> Result<(), std::io::Error> {
         w.write_u64::<BigEndian>(self.minute_boundary_unix_ns)?;
-        w.write_u32::<BigEndian>(self.first_ping_offset_ns)?;
+        w.write_u64::<BigEndian>(self.first_ping_offset_ns)?;
         w.write_u32::<BigEndian>(self.rtt_symbol_count)?;
         w.write_u32::<BigEndian>(self.send_time_symbol_count)?;
         w.write_u32::<BigEndian>(self.rtt_stream_len_bytes)?;
@@ -210,7 +210,7 @@ impl ChunkHeader {
 
     pub fn read(mut r: impl Read) -> Result<Self, std::io::Error> {
         let minute_boundary_unix_ns = r.read_u64::<BigEndian>()?;
-        let first_ping_offset_ns = r.read_u32::<BigEndian>()?;
+        let first_ping_offset_ns = r.read_u64::<BigEndian>()?;
         let rtt_symbol_count = r.read_u32::<BigEndian>()?;
         let send_time_symbol_count = r.read_u32::<BigEndian>()?;
         let rtt_stream_len_bytes = r.read_u32::<BigEndian>()?;
@@ -559,7 +559,7 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
         let first_ping_time = chunk_records.first().map_or(0, |r| r.sent_nanos);
         let minute_boundary_unix_ns =
             (first_ping_time / (60 * 1_000_000_000)) * (60 * 1_000_000_000);
-        let first_ping_offset_ns = (first_ping_time - minute_boundary_unix_ns) as u32;
+        let first_ping_offset_ns = first_ping_time - minute_boundary_unix_ns;
 
         // Extract base interval from strategy
         let base_interval_ns = match &send_time_strategy {
@@ -674,6 +674,16 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
 
     for index_entry in &index_table {
         let chunk_offset = index_entry.chunk_offset_bytes as usize;
+
+        // Validate chunk offset is within bounds
+        if chunk_offset >= data.len() {
+            return Err(anyhow!(
+                "Chunk offset {} is beyond file size {}",
+                chunk_offset,
+                data.len()
+            ));
+        }
+
         let mut chunk_cursor = Cursor::new(&data[chunk_offset..]);
         let chunk_header = ChunkHeader::read(&mut chunk_cursor)?;
 
@@ -681,6 +691,16 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
 
         let rtt_stream_start = chunk_offset + header_len;
         let rtt_stream_end = rtt_stream_start + chunk_header.rtt_stream_len_bytes as usize;
+
+        // Validate stream bounds
+        if rtt_stream_end > data.len() {
+            return Err(anyhow!(
+                "RTT stream extends beyond file: {} > {}",
+                rtt_stream_end,
+                data.len()
+            ));
+        }
+
         let rtt_data_u8 = &data[rtt_stream_start..rtt_stream_end];
 
         let rtt_symbols = if chunk_header.rtt_stream_len_bytes > 0 {
@@ -705,14 +725,26 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
         // Parse send times based on chunk format
         // Calculate start time from minute boundary + offset
         let chunk_start_time =
-            chunk_header.minute_boundary_unix_ns + chunk_header.first_ping_offset_ns as u64;
+            chunk_header.minute_boundary_unix_ns + chunk_header.first_ping_offset_ns;
         let mut current_sent_nanos = chunk_start_time;
         let mut send_time_data = None;
 
         if chunk_header.flags.contains(ChunkFlags::RAW_DELTAS) {
             // Parse quantized variable rate data
             let send_time_stream_start = rtt_stream_end;
-            let mut time_cursor = Cursor::new(&data[send_time_stream_start..]);
+            let send_time_stream_end =
+                send_time_stream_start + chunk_header.send_time_stream_len_bytes as usize;
+
+            // Validate send time stream bounds
+            if send_time_stream_end > data.len() {
+                return Err(anyhow!(
+                    "Send time stream extends beyond file: {} > {}",
+                    send_time_stream_end,
+                    data.len()
+                ));
+            }
+
+            let mut time_cursor = Cursor::new(&data[send_time_stream_start..send_time_stream_end]);
 
             // Don't read base_interval_ns from stream anymore - it's in the header
             let base_interval_ns = chunk_header.base_interval_ns;
@@ -934,6 +966,40 @@ mod tests {
             lost_prob > 0.5,
             "With 100% packet loss, loss probability should be high, got {}",
             lost_prob
+        );
+    }
+
+    #[test]
+    fn test_basic_compression_roundtrip() {
+        use chrono::{TimeZone, Utc};
+        let base_time = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
+        let start_time = base_time.timestamp_nanos_opt().unwrap() as u64 + 59_900_000_000u64; // 59.9 seconds offset
+
+        let records = vec![RawDataRecord {
+            sent_nanos: start_time,
+            rtt_nanos: Duration::from_millis(20).as_nanos() as u64,
+        }];
+
+        let compressed = compress_chunked_v1(&records).unwrap();
+        let decompressed = decompress_chunked_v1(&compressed).unwrap();
+
+        assert_eq!(records.len(), decompressed.len());
+        assert_eq!(records[0].sent_nanos, decompressed[0].sent_nanos);
+
+        // RTT values are quantized for compression, so check they're approximately equal
+        let original_rtt = records[0].rtt_nanos;
+        let decompressed_rtt = decompressed[0].rtt_nanos;
+        let diff = original_rtt.abs_diff(decompressed_rtt);
+
+        // Should be within 1% of original value due to quantization
+        let tolerance = original_rtt / 100;
+        assert!(
+            diff <= tolerance,
+            "RTT quantization error too large: original={}, decompressed={}, diff={}, tolerance={}",
+            original_rtt,
+            decompressed_rtt,
+            diff,
+            tolerance
         );
     }
 
