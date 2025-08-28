@@ -11,7 +11,6 @@ use zzping_press::{RawDataRecord, chunked_v1};
 struct ErrorStats {
     drift_violations: Vec<DriftViolation>,
     rtt_violations: Vec<RttViolation>,
-    max_cumulative_drift_ns: i64,
     max_individual_drift_ns: i64,
     max_rtt_error_ns: i64,
     total_drift_violations: usize,
@@ -41,7 +40,6 @@ impl ErrorStats {
         Self {
             drift_violations: Vec::new(),
             rtt_violations: Vec::new(),
-            max_cumulative_drift_ns: 0,
             max_individual_drift_ns: 0,
             max_rtt_error_ns: 0,
             total_drift_violations: 0,
@@ -65,14 +63,10 @@ impl ErrorStats {
     fn print_summary(&self) {
         println!("\n=== ERROR STATISTICS SUMMARY ===");
         println!("Total records analyzed: (will be set by caller)");
-        println!("Drift violations: {}", self.total_drift_violations);
+        println!("Timestamp violations: {}", self.total_drift_violations);
         println!("RTT violations: {}", self.total_rtt_violations);
         println!(
-            "Max cumulative drift: {}",
-            Self::format_duration_ns(self.max_cumulative_drift_ns)
-        );
-        println!(
-            "Max individual drift: {}",
+            "Max individual timestamp error: {}",
             Self::format_duration_ns(self.max_individual_drift_ns)
         );
         println!(
@@ -161,9 +155,38 @@ fn test_round_trip() -> Result<()> {
     // 4. Assert correctness.
     assert_eq!(original_records.len(), decompressed_records.len());
 
-    let mut cumulative_drift_ns: i64 = 0;
     let mut error_stats = ErrorStats::new();
-    const MAX_CUMULATIVE_DRIFT_NS: i64 = 20 * 1_000_000; // 20ms
+
+    // === PROPER TIMING VALIDATION ===
+
+    // 1. End-to-end duration preservation (most important metric)
+    let original_duration =
+        original_records.last().unwrap().sent_nanos - original_records[0].sent_nanos;
+    let decompressed_duration =
+        decompressed_records.last().unwrap().sent_nanos - decompressed_records[0].sent_nanos;
+    let duration_error_ns = (original_duration as i64 - decompressed_duration as i64).abs();
+    const MAX_DURATION_ERROR_NS: i64 = 10_000_000; // 10ms total duration tolerance
+
+    // 2. Individual timestamp precision
+    const MAX_INDIVIDUAL_TIMESTAMP_ERROR_NS: i64 = 5_000_000; // 5ms per timestamp
+
+    // 3. Interval accuracy (timing between consecutive pings)
+    let mut max_interval_error_ns = 0i64;
+    let mut interval_violations = 0;
+    const MAX_INTERVAL_ERROR_NS: i64 = 10_000_000; // 10ms per interval
+
+    // Calculate original and decompressed intervals
+    for i in 1..original_records.len() {
+        let orig_interval = original_records[i].sent_nanos - original_records[i - 1].sent_nanos;
+        let decomp_interval =
+            decompressed_records[i].sent_nanos - decompressed_records[i - 1].sent_nanos;
+        let interval_error = (orig_interval as i64 - decomp_interval as i64).abs();
+
+        max_interval_error_ns = max_interval_error_ns.max(interval_error);
+        if interval_error > MAX_INTERVAL_ERROR_NS {
+            interval_violations += 1;
+        }
+    }
 
     // Collect all errors before failing
     for (i, (original, decompressed)) in original_records
@@ -171,28 +194,21 @@ fn test_round_trip() -> Result<()> {
         .zip(decompressed_records.iter())
         .enumerate()
     {
-        // Check sent_time drift
-        let individual_drift = original.sent_nanos as i64 - decompressed.sent_nanos as i64;
-        cumulative_drift_ns += individual_drift;
+        // Check individual timestamp precision
+        let timestamp_error = (original.sent_nanos as i64 - decompressed.sent_nanos as i64).abs();
+        error_stats.max_individual_drift_ns =
+            error_stats.max_individual_drift_ns.max(timestamp_error);
 
-        // Track maximum drifts
-        error_stats.max_cumulative_drift_ns = error_stats
-            .max_cumulative_drift_ns
-            .max(cumulative_drift_ns.abs());
-        error_stats.max_individual_drift_ns = error_stats
-            .max_individual_drift_ns
-            .max(individual_drift.abs());
-
-        // Check for cumulative drift violations
-        if cumulative_drift_ns.abs() > MAX_CUMULATIVE_DRIFT_NS {
+        // Check for timestamp precision violations
+        if timestamp_error > MAX_INDIVIDUAL_TIMESTAMP_ERROR_NS {
             error_stats.total_drift_violations += 1;
 
             // Sample the first few violations for detailed analysis
             if error_stats.drift_violations.len() < 5 {
                 error_stats.drift_violations.push(DriftViolation {
                     index: i,
-                    cumulative_drift_ns,
-                    individual_drift_ns: individual_drift,
+                    cumulative_drift_ns: timestamp_error, // Reusing field for individual error
+                    individual_drift_ns: timestamp_error,
                     original_sent_ns: original.sent_nanos,
                     decompressed_sent_ns: decompressed.sent_nanos,
                 });
@@ -259,13 +275,53 @@ fn test_round_trip() -> Result<()> {
     println!("\nTotal records analyzed: {}", original_records.len());
     error_stats.print_summary();
 
-    // Final assertions with readable error messages
+    // Print new timing metrics
+    println!("\n=== TIMING VALIDATION RESULTS ===");
+    println!(
+        "End-to-end duration error: {} (limit: {})",
+        ErrorStats::format_duration_ns(duration_error_ns),
+        ErrorStats::format_duration_ns(MAX_DURATION_ERROR_NS)
+    );
+    println!(
+        "Max individual timestamp error: {} (limit: {})",
+        ErrorStats::format_duration_ns(error_stats.max_individual_drift_ns),
+        ErrorStats::format_duration_ns(MAX_INDIVIDUAL_TIMESTAMP_ERROR_NS)
+    );
+    println!(
+        "Max interval error: {} (limit: {})",
+        ErrorStats::format_duration_ns(max_interval_error_ns),
+        ErrorStats::format_duration_ns(MAX_INTERVAL_ERROR_NS)
+    );
+    println!(
+        "Interval violations: {} out of {}",
+        interval_violations,
+        original_records.len() - 1
+    );
+
+    // Final assertions with proper error messages
+    if duration_error_ns > MAX_DURATION_ERROR_NS {
+        panic!(
+            "End-to-end duration error too large: {} (limit: {})",
+            ErrorStats::format_duration_ns(duration_error_ns),
+            ErrorStats::format_duration_ns(MAX_DURATION_ERROR_NS)
+        );
+    }
+
     if error_stats.total_drift_violations > 0 {
         panic!(
-            "Found {} timing drift violations! Max cumulative drift: {} (limit: {}). See detailed statistics above.",
+            "Found {} individual timestamp violations! Max error: {} (limit: {}). See detailed statistics above.",
             error_stats.total_drift_violations,
-            ErrorStats::format_duration_ns(error_stats.max_cumulative_drift_ns),
-            ErrorStats::format_duration_ns(MAX_CUMULATIVE_DRIFT_NS)
+            ErrorStats::format_duration_ns(error_stats.max_individual_drift_ns),
+            ErrorStats::format_duration_ns(MAX_INDIVIDUAL_TIMESTAMP_ERROR_NS)
+        );
+    }
+
+    if interval_violations > 0 {
+        panic!(
+            "Found {} interval violations! Max interval error: {} (limit: {})",
+            interval_violations,
+            ErrorStats::format_duration_ns(max_interval_error_ns),
+            ErrorStats::format_duration_ns(MAX_INTERVAL_ERROR_NS)
         );
     }
 
@@ -277,11 +333,14 @@ fn test_round_trip() -> Result<()> {
         );
     }
 
-    println!("✅ All accuracy tests passed!");
+    println!("✅ All timing precision tests passed!");
     println!(
-        "   Max cumulative drift: {} (limit: {})",
-        ErrorStats::format_duration_ns(error_stats.max_cumulative_drift_ns),
-        ErrorStats::format_duration_ns(MAX_CUMULATIVE_DRIFT_NS)
+        "   End-to-end duration preserved within {} tolerance",
+        ErrorStats::format_duration_ns(MAX_DURATION_ERROR_NS)
+    );
+    println!(
+        "   Max individual timestamp error: {}",
+        ErrorStats::format_duration_ns(error_stats.max_individual_drift_ns)
     );
     println!(
         "   Max RTT error: {}",
