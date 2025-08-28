@@ -1,12 +1,12 @@
 use crate::RawDataRecord;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use constriction::stream::{
+    Decode,
     model::{
         DefaultNonContiguousCategoricalDecoderModel, DefaultNonContiguousCategoricalEncoderModel,
     },
     stack::DefaultAnsCoder,
-    Decode, Encode,
 };
 use std::io::{Cursor, Read, Write};
 use std::time::Duration;
@@ -15,6 +15,9 @@ use std::time::Duration;
 
 const PACKET_LOST_SYMBOL: u16 = 65535;
 
+// TODO: Add quantization accuracy tests to verify this stays within 0.1% or 0.1ms tolerance
+// TODO: Test edge cases: zero RTT, maximum valid RTT, boundary values
+// TODO: Verify symbol_to_duration(duration_to_symbol(x)) roundtrip accuracy
 pub struct Quantizer {
     ln_1_001: f64,
 }
@@ -98,6 +101,10 @@ impl FileHeader {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AggregateEntry {
+    // TODO: Consider using u8 for percentile symbols instead of u16 to save space.
+    // Current format uses 22 bytes for percentiles + 4 bytes for count = 26 bytes total.
+    // With u8 percentiles: 11 bytes + 1 byte for count = 12 bytes (54% space savings).
+    // This would limit RTT symbol range to 0-255, which may be sufficient for most use cases.
     pub p00_symbol: u16,
     pub p10_symbol: u16,
     pub p20_symbol: u16,
@@ -109,6 +116,11 @@ pub struct AggregateEntry {
     pub p80_symbol: u16,
     pub p90_symbol: u16,
     pub p100_symbol: u16,
+    // TODO: Consider using u8 or u16 for lost_packet_count instead of u32.
+    // For 60-second chunks at 1Hz, max packets = 60, so u8 would suffice.
+    // At higher rates (e.g., 10Hz), max = 600, so u16 would still work.
+    // NOTE: storing a percent could be enough, but we would need higher precision on the lower end.
+    // Also, if there's 1 packet lost, at least we need to store a "1" so we can encode the symbol later.
     pub lost_packet_count: u32, // Only relevant for RTT stats.
 }
 
@@ -174,26 +186,28 @@ bitflags::bitflags! {
 }
 
 pub struct ChunkHeader {
-    pub start_time_unix_ns: u64,
+    pub minute_boundary_unix_ns: u64, // Unix timestamp rounded to minute boundary
+    pub first_ping_offset_ns: u32, // Nanoseconds from minute boundary to first ping (0-59999999999)
     pub rtt_symbol_count: u32,
     pub send_time_symbol_count: u32,
     pub rtt_stream_len_bytes: u32,
     pub send_time_stream_len_bytes: u32,
     pub flags: ChunkFlags,
-    pub constant_rate_avg_interval: f64,
+    pub base_interval_ns: u64, // Base interval in nanoseconds (exact integer)
     pub rtt_stats: AggregateEntry,
     pub send_time_stats: Option<AggregateEntry>,
 }
 
 impl ChunkHeader {
     pub fn write(&self, mut w: impl Write) -> std::io::Result<()> {
-        w.write_u64::<BigEndian>(self.start_time_unix_ns)?;
+        w.write_u64::<BigEndian>(self.minute_boundary_unix_ns)?;
+        w.write_u32::<BigEndian>(self.first_ping_offset_ns)?;
         w.write_u32::<BigEndian>(self.rtt_symbol_count)?;
         w.write_u32::<BigEndian>(self.send_time_symbol_count)?;
         w.write_u32::<BigEndian>(self.rtt_stream_len_bytes)?;
         w.write_u32::<BigEndian>(self.send_time_stream_len_bytes)?;
         w.write_u8(self.flags.bits())?;
-        w.write_f64::<BigEndian>(self.constant_rate_avg_interval)?;
+        w.write_u64::<BigEndian>(self.base_interval_ns)?;
         self.rtt_stats.write(&mut w)?;
         if let Some(stats) = &self.send_time_stats {
             stats.write(&mut w)?;
@@ -202,29 +216,33 @@ impl ChunkHeader {
     }
 
     pub fn read(mut r: impl Read) -> Result<Self, std::io::Error> {
-        let start_time_unix_ns = r.read_u64::<BigEndian>()?;
+        let minute_boundary_unix_ns = r.read_u64::<BigEndian>()?;
+        let first_ping_offset_ns = r.read_u32::<BigEndian>()?;
         let rtt_symbol_count = r.read_u32::<BigEndian>()?;
         let send_time_symbol_count = r.read_u32::<BigEndian>()?;
         let rtt_stream_len_bytes = r.read_u32::<BigEndian>()?;
         let send_time_stream_len_bytes = r.read_u32::<BigEndian>()?;
         let flags = ChunkFlags::from_bits_truncate(r.read_u8()?);
-        let constant_rate_avg_interval = r.read_f64::<BigEndian>()?;
+        let base_interval_ns = r.read_u64::<BigEndian>()?;
         let rtt_stats = AggregateEntry::read(&mut r)?;
 
-        let send_time_stats = if flags.contains(ChunkFlags::IS_VARIABLE_RATE) && !flags.contains(ChunkFlags::RAW_DELTAS) {
+        let send_time_stats = if flags.contains(ChunkFlags::IS_VARIABLE_RATE)
+            && !flags.contains(ChunkFlags::RAW_DELTAS)
+        {
             Some(AggregateEntry::read(&mut r)?)
         } else {
             None
         };
 
         Ok(Self {
-            start_time_unix_ns,
+            minute_boundary_unix_ns,
+            first_ping_offset_ns,
             rtt_symbol_count,
             send_time_symbol_count,
             rtt_stream_len_bytes,
             send_time_stream_len_bytes,
             flags,
-            constant_rate_avg_interval,
+            base_interval_ns,
             rtt_stats,
             send_time_stats,
         })
@@ -233,10 +251,7 @@ impl ChunkHeader {
 
 // --- Compression Logic ---
 
-fn calculate_duration_stats(
-    durations: &[Duration],
-    quantizer: &Quantizer,
-) -> AggregateEntry {
+fn calculate_duration_stats(durations: &[Duration], quantizer: &Quantizer) -> AggregateEntry {
     if durations.is_empty() {
         return AggregateEntry::default();
     }
@@ -266,61 +281,105 @@ fn calculate_duration_stats(
     }
 }
 
+// TODO: Add tests for this timing strategy selection logic
+// TODO: Test edge cases: single record chunks, identical timestamps, extreme jitter
+// TODO: Verify minute boundary alignment works correctly across timezones and DST
+// TODO: Add test for quantization precision: ensure 1ns quantum doesn't cause overflow
 enum SendTimeStrategy {
-    ConstantRate { avg_interval: f64 },
-    VariableRate { deltas: Vec<Duration> },
+    ConstantRate {
+        base_interval_ns: u64,
+    },
+    QuantizedVariable {
+        base_interval_ns: u64,
+        delta_symbols: Vec<u8>, // TODO: Test delta symbol range limits (±127 steps)
+        large_deltas: Vec<(u16, i32)>, // TODO: Test large delta fallback behavior
+    },
+}
+
+// Helper function to calculate the most common interval (mode)
+fn calculate_mode_interval(intervals: &[u64]) -> u64 {
+    if intervals.is_empty() {
+        return 1_000_000_000; // Default 1 second
+    }
+
+    // For efficiency with large datasets, we'll use a simple approach:
+    // Find the median as an approximation of the mode for regular intervals
+    let mut sorted_intervals = intervals.to_vec();
+    sorted_intervals.sort_unstable();
+    sorted_intervals[sorted_intervals.len() / 2]
 }
 
 fn analyze_send_times(records: &[RawDataRecord]) -> SendTimeStrategy {
     if records.len() < 2 {
-        return SendTimeStrategy::ConstantRate { avg_interval: 0.0 };
+        return SendTimeStrategy::ConstantRate {
+            base_interval_ns: 0,
+        };
     }
 
-    let total_duration = records.last().unwrap().sent_nanos - records.first().unwrap().sent_nanos;
-    let avg_interval = total_duration as f64 / (records.len() - 1) as f64;
+    // Calculate all intervals between consecutive records
+    let intervals: Vec<u64> = records
+        .windows(2)
+        .map(|w| w[1].sent_nanos - w[0].sent_nanos)
+        .collect();
 
-    if avg_interval == 0.0 {
-        let deltas = records
-            .windows(2)
-            .map(|r| Duration::from_nanos(r[1].sent_nanos - r[0].sent_nanos))
-            .collect();
-        return SendTimeStrategy::VariableRate { deltas };
+    let base_interval_ns = calculate_mode_interval(&intervals);
+
+    if base_interval_ns == 0 {
+        // All records have same timestamp - treat as constant with 0 interval
+        return SendTimeStrategy::ConstantRate {
+            base_interval_ns: 0,
+        };
     }
 
-    let first_ts = records.first().unwrap().sent_nanos;
-    let mut max_drift_ns: f64 = 0.0;
+    // Always use quantized variable rate to ensure precise timing reconstruction
+    println!(
+        "Always using QuantizedVariable with base_interval_ns={}",
+        base_interval_ns
+    );
 
-    for (i, record) in records.iter().enumerate() {
-        let ideal_ts = first_ts as f64 + (i as f64 * avg_interval);
-        let drift = (record.sent_nanos as f64 - ideal_ts).abs();
-        max_drift_ns = max_drift_ns.max(drift);
+    let mut delta_symbols = Vec::new();
+    let mut large_deltas = Vec::new();
+
+    const DELTA_QUANTUM_NS: i32 = 1; // 1ns quantum for maximum precision
+
+    for (i, &interval) in intervals.iter().enumerate() {
+        let deviation = interval as i64 - base_interval_ns as i64;
+        let quantized_steps = deviation / DELTA_QUANTUM_NS as i64;
+
+        if quantized_steps.abs() <= 127 {
+            // Store as u8: 0-127 = negative steps, 128-255 = positive steps
+            delta_symbols.push((quantized_steps + 128) as u8);
+        } else {
+            // Store as exception
+            delta_symbols.push(255); // Exception marker
+            large_deltas.push((i as u16, deviation as i32));
+        }
     }
 
-    const DRIFT_THRESHOLD_NS: f64 = 2_000_000.0; // 2ms
-
-    if max_drift_ns <= DRIFT_THRESHOLD_NS {
-        SendTimeStrategy::ConstantRate { avg_interval }
-    } else {
-        let deltas = records
-            .windows(2)
-            .map(|r| Duration::from_nanos(r[1].sent_nanos - r[0].sent_nanos))
-            .collect();
-        SendTimeStrategy::VariableRate { deltas }
+    SendTimeStrategy::QuantizedVariable {
+        base_interval_ns,
+        delta_symbols,
+        large_deltas,
     }
 }
 
-fn build_model(
-    stats: &AggregateEntry,
-    symbol_count: usize,
-) -> Result<(Vec<u16>, Vec<f64>)> {
+fn build_model(stats: &AggregateEntry, symbol_count: usize) -> Result<(Vec<u16>, Vec<f64>)> {
     let mut frequencies = vec![0u32; u16::MAX as usize + 1];
     let valid_symbols_count = symbol_count - stats.lost_packet_count as usize;
 
     if valid_symbols_count > 0 {
         let percentile_points = [
-            stats.p00_symbol, stats.p10_symbol, stats.p20_symbol, stats.p30_symbol,
-            stats.p40_symbol, stats.p50_symbol, stats.p60_symbol, stats.p70_symbol,
-            stats.p80_symbol, stats.p90_symbol, stats.p100_symbol,
+            stats.p00_symbol,
+            stats.p10_symbol,
+            stats.p20_symbol,
+            stats.p30_symbol,
+            stats.p40_symbol,
+            stats.p50_symbol,
+            stats.p60_symbol,
+            stats.p70_symbol,
+            stats.p80_symbol,
+            stats.p90_symbol,
+            stats.p100_symbol,
         ];
 
         if valid_symbols_count < 10 {
@@ -332,7 +391,9 @@ fn build_model(
             for i in 0..10 {
                 let start_symbol = percentile_points[i] as usize;
                 let end_symbol = percentile_points[i + 1] as usize;
-                if start_symbol > end_symbol { continue; }
+                if start_symbol > end_symbol {
+                    continue;
+                }
                 let symbol_range_size = (end_symbol - start_symbol) + 1;
                 let freq = (bucket_count as f64 / symbol_range_size as f64).ceil() as u32;
                 let freq = freq.max(1);
@@ -362,7 +423,15 @@ fn build_model(
         .unzip();
 
     if symbols_with_freq.len() == 1 {
-        let dummy_symbol = if symbols_with_freq.is_empty() || symbols_with_freq[0] == 0 { 1 } else { 0 };
+        // FIXME: When adding dummy symbol for entropy coding, ensure the real symbol
+        // has frequency several orders of magnitude higher than dummy (frequency 1).
+        // Current implementation may not guarantee this, potentially affecting compression efficiency.
+        // The real symbol should have frequency >> 1 to maintain good compression ratios.
+        let dummy_symbol = if symbols_with_freq.is_empty() || symbols_with_freq[0] == 0 {
+            1
+        } else {
+            0
+        };
         symbols_with_freq.push(dummy_symbol);
         probabilities.push(1);
     }
@@ -389,6 +458,14 @@ fn build_model(
     Ok((symbols_with_freq, probabilities_f64))
 }
 
+// TODO: Add comprehensive tests for this compression function covering:
+// - Empty input (handled)
+// - Single record chunks
+// - Large datasets (GB-sized)
+// - All packet loss scenarios
+// - Clock anomalies (backward time, leap seconds)
+// - Memory usage under stress
+// - Compression ratio benchmarks vs expectations
 pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
     if records.is_empty() {
         return Ok(Vec::new());
@@ -433,22 +510,33 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
             .collect();
 
         let mut flags = ChunkFlags::empty();
-        let mut constant_rate_avg_interval = 0.0;
 
         let (send_time_encoded_data, send_time_symbol_count, send_time_stats) =
             match &send_time_strategy {
-                SendTimeStrategy::ConstantRate { avg_interval } => {
-                    constant_rate_avg_interval = *avg_interval;
-                    (Vec::new(), 0, None)
-                }
-                SendTimeStrategy::VariableRate { deltas } => {
+                SendTimeStrategy::ConstantRate { base_interval_ns } => (Vec::new(), 0, None),
+                SendTimeStrategy::QuantizedVariable {
+                    base_interval_ns,
+                    delta_symbols,
+                    large_deltas,
+                } => {
                     flags |= ChunkFlags::IS_VARIABLE_RATE;
-                    flags |= ChunkFlags::RAW_DELTAS;
+                    flags |= ChunkFlags::RAW_DELTAS; // Reusing existing flag for now
+
                     let mut data = Vec::new();
-                    for delta in deltas {
-                        data.write_u64::<BigEndian>(delta.as_nanos() as u64)?;
+
+                    // Don't encode base interval here anymore - it's in the chunk header
+                    // Encode delta symbols count and data
+                    data.write_u32::<BigEndian>(delta_symbols.len() as u32)?;
+                    data.extend_from_slice(delta_symbols);
+
+                    // Encode large deltas count and data
+                    data.write_u32::<BigEndian>(large_deltas.len() as u32)?;
+                    for (index, delta) in large_deltas {
+                        data.write_u16::<BigEndian>(*index)?;
+                        data.write_i32::<BigEndian>(*delta)?;
                     }
-                    (data, deltas.len() as u32, None)
+
+                    (data, delta_symbols.len() as u32, None)
                 }
             };
 
@@ -459,19 +547,37 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
             let mut rtt_encoder = DefaultAnsCoder::new();
             rtt_encoder.encode_iid_symbols_reverse(&rtt_symbols, &rtt_model)?;
             let rtt_encoded_data_u32 = rtt_encoder.into_compressed()?;
-            rtt_encoded_data_u32.iter().flat_map(|w| w.to_be_bytes()).collect()
+            rtt_encoded_data_u32
+                .iter()
+                .flat_map(|w| w.to_be_bytes())
+                .collect()
         } else {
             Vec::new()
         };
 
+        // Calculate minute boundary and offset for first ping
+        let first_ping_time = chunk_records.first().map_or(0, |r| r.sent_nanos);
+        let minute_boundary_unix_ns =
+            (first_ping_time / (60 * 1_000_000_000)) * (60 * 1_000_000_000);
+        let first_ping_offset_ns = (first_ping_time - minute_boundary_unix_ns) as u32;
+
+        // Extract base interval from strategy
+        let base_interval_ns = match &send_time_strategy {
+            SendTimeStrategy::ConstantRate { base_interval_ns } => *base_interval_ns,
+            SendTimeStrategy::QuantizedVariable {
+                base_interval_ns, ..
+            } => *base_interval_ns,
+        };
+
         let chunk_header = ChunkHeader {
-            start_time_unix_ns: chunk_records.first().map_or(0, |r| r.sent_nanos),
+            minute_boundary_unix_ns,
+            first_ping_offset_ns,
             rtt_symbol_count: rtt_symbols.len() as u32,
             send_time_symbol_count,
             rtt_stream_len_bytes: rtt_encoded_data.len() as u32,
             send_time_stream_len_bytes: send_time_encoded_data.len() as u32,
             flags,
-            constant_rate_avg_interval,
+            base_interval_ns,
             rtt_stats,
             send_time_stats,
         };
@@ -528,7 +634,13 @@ fn build_model_for_decode(
     .map_err(|_| anyhow!("Failed to create categorical model"))
 }
 
-
+// TODO: Add comprehensive corruption resistance tests for this decompression function:
+// - Truncated files at every possible offset
+// - Invalid magic numbers, corrupted headers
+// - Malformed chunk data, corrupted indices
+// - Never panic policy: always return graceful errors
+// - Test cross-platform compatibility (endianness)
+// - Memory pressure scenarios with large files
 pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
     if data.len() < HEADER_SIZE {
         return Err(anyhow!("Data is smaller than header size"));
@@ -569,7 +681,7 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
 
         let rtt_stream_start = chunk_offset + header_len;
         let rtt_stream_end = rtt_stream_start + chunk_header.rtt_stream_len_bytes as usize;
-        let rtt_data_u8 = &data[rtt_stream_start .. rtt_stream_end];
+        let rtt_data_u8 = &data[rtt_stream_start..rtt_stream_end];
 
         let rtt_symbols = if chunk_header.rtt_stream_len_bytes > 0 {
             let rtt_data_u32: Vec<u32> = rtt_data_u8
@@ -577,15 +689,49 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
                 .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
                 .collect();
 
-            let rtt_model = build_model_for_decode(&chunk_header.rtt_stats, chunk_header.rtt_symbol_count as usize)?;
+            let rtt_model = build_model_for_decode(
+                &chunk_header.rtt_stats,
+                chunk_header.rtt_symbol_count as usize,
+            )?;
             let mut decoder = DefaultAnsCoder::from_compressed(rtt_data_u32)
                 .map_err(|_| anyhow!("Invalid compressed data for RTT stream"))?;
-            decoder.decode_iid_symbols(chunk_header.rtt_symbol_count as usize, &rtt_model).collect::<Result<Vec<_>,_>>()?
+            decoder
+                .decode_iid_symbols(chunk_header.rtt_symbol_count as usize, &rtt_model)
+                .collect::<Result<Vec<_>, _>>()?
         } else {
             vec![chunk_header.rtt_stats.p00_symbol; chunk_header.rtt_symbol_count as usize]
         };
 
-        let mut current_sent_nanos = chunk_header.start_time_unix_ns as f64;
+        // Parse send times based on chunk format
+        // Calculate start time from minute boundary + offset
+        let chunk_start_time =
+            chunk_header.minute_boundary_unix_ns + chunk_header.first_ping_offset_ns as u64;
+        let mut current_sent_nanos = chunk_start_time;
+        let mut send_time_data = None;
+
+        if chunk_header.flags.contains(ChunkFlags::RAW_DELTAS) {
+            // Parse quantized variable rate data
+            let send_time_stream_start = rtt_stream_end;
+            let mut time_cursor = Cursor::new(&data[send_time_stream_start..]);
+
+            // Don't read base_interval_ns from stream anymore - it's in the header
+            let base_interval_ns = chunk_header.base_interval_ns;
+            let delta_count = time_cursor.read_u32::<BigEndian>()? as usize;
+
+            let mut delta_symbols = vec![0u8; delta_count];
+            time_cursor.read_exact(&mut delta_symbols)?;
+
+            let large_delta_count = time_cursor.read_u32::<BigEndian>()? as usize;
+            let mut large_deltas = Vec::new();
+            for _ in 0..large_delta_count {
+                let index = time_cursor.read_u16::<BigEndian>()?;
+                let delta = time_cursor.read_i32::<BigEndian>()?;
+                large_deltas.push((index, delta));
+            }
+
+            send_time_data = Some((base_interval_ns, delta_symbols, large_deltas));
+        }
+
         for i in 0..chunk_header.rtt_symbol_count as usize {
             let rtt_nanos = if rtt_symbols[i] == PACKET_LOST_SYMBOL {
                 u64::MAX
@@ -594,19 +740,40 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
             };
 
             if i > 0 {
-                if chunk_header.flags.contains(ChunkFlags::RAW_DELTAS) {
-                    let send_time_stream_start = rtt_stream_end;
-                    let delta_offset = send_time_stream_start + (i - 1) * 8;
-                    let mut delta_cursor = Cursor::new(&data[delta_offset..]);
-                    let delta = delta_cursor.read_u64::<BigEndian>()?;
-                    current_sent_nanos += delta as f64;
+                if let Some((base_interval_ns, ref delta_symbols, ref large_deltas)) =
+                    send_time_data
+                {
+                    // Quantized variable rate: calculate exact interval using integer math
+                    let delta_index = i - 1;
+                    let interval = if delta_index < delta_symbols.len() {
+                        let delta_symbol = delta_symbols[delta_index];
+                        if delta_symbol == 255 {
+                            // Look up in large deltas
+                            let large_delta = large_deltas
+                                .iter()
+                                .find(|(idx, _)| *idx as usize == delta_index)
+                                .map(|(_, delta)| *delta)
+                                .unwrap_or(0);
+                            (base_interval_ns as i64 + large_delta as i64) as u64
+                        } else {
+                            // Convert back from quantized representation
+                            const DELTA_QUANTUM_NS: i32 = 1; // 1ns quantum to match compression
+                            let quantized_steps = delta_symbol as i32 - 128;
+                            let deviation = quantized_steps * DELTA_QUANTUM_NS;
+                            (base_interval_ns as i64 + deviation as i64) as u64
+                        }
+                    } else {
+                        base_interval_ns
+                    };
+                    current_sent_nanos += interval;
                 } else {
-                    current_sent_nanos = chunk_header.start_time_unix_ns as f64 + (i as f64 * chunk_header.constant_rate_avg_interval);
+                    // Constant rate: use base interval from header
+                    current_sent_nanos += chunk_header.base_interval_ns;
                 }
             }
 
             all_records.push(RawDataRecord {
-                sent_nanos: current_sent_nanos.round() as u64,
+                sent_nanos: current_sent_nanos,
                 rtt_nanos,
             });
         }
