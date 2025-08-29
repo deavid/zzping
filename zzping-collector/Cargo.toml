@@ -1,0 +1,25 @@
+[package]
+name = "zzping-collector"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Collector service for zzping"
+
+[dependencies]
+zzping-common = { path = "../zzping-common" }
+anyhow.workspace = true
+bytes = "1"
+chrono = { workspace = true, features = ["serde"] }
+clap = { workspace = true, features = ["derive"] }
+env_logger.workspace = true
+log.workspace = true
+rand.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1.0"
+surge-ping.workspace = true
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-util", "sync", "time"] }
+
+[dev-dependencies]
+byteorder.workspace = true

@@ -1,0 +1,26 @@
+[package]
+name = "zzping-database"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Database service for zzping"
+
+[dependencies]
+zzping-common = { path = "../zzping-common" }
+anyhow.workspace = true
+bitflags.workspace = true
+byteorder.workspace = true
+bytes = "1"
+chrono = { workspace = true, features = ["serde"] }
+constriction.workspace = true
+crc32fast.workspace = true
+env_logger.workspace = true
+log.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json = "1.0"
+tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-util", "sync", "time"] }
+
+[dev-dependencies]
+tempfile.workspace = true

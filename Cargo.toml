@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["zzping-view", "zzping-press", "zzping-capture"]
+members = ["zzping-gui", "zzping-database", "zzping-collector", "zzping-common"]
 
 [workspace.package]
 version = "0.2.2-beta2"
@@ -49,6 +49,7 @@ rerun = "0.24"
 constriction = "0.4"
 bitflags = "2.9"
 crc32fast = "1.3"
+crossbeam-channel = "0.5"
 
 # Dev dependencies
 criterion = { version = "0.7", features = ["html_reports"] }

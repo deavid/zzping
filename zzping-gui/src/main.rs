@@ -1,64 +1,75 @@
-use chrono::Duration;
-use clap::Parser;
+use anyhow::Result;
+use chrono::{DateTime, Duration};
+use crossbeam_channel::{unbounded, Receiver};
 use eframe::egui;
-use std::path::PathBuf;
+use zzping_common::RawDataRecord;
 
 mod data;
+mod network;
 mod plot;
-use data::PingData;
-
-/// A viewer for zzping-capture data files.
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Cli {
-    /// The path to the zzping-capture data file (.dat) to be visualized.
-    #[arg()]
-    input_file: PathBuf,
-
-    /// Limit the number of data points loaded for faster debugging (default: no limit)
-    #[arg(long, short = 'l')]
-    limit: Option<usize>,
-}
 
 struct ZzpingViewApp {
-    data: PingData,
-    /// Pan offset, in microseconds (internal representation)
+    points: Vec<data::DataPoint>,
     pan_micros: i64,
-    /// Zoom level: 1.0 shows full view, higher values zoom in
     zoom: f32,
+    data_rx: Receiver<Vec<RawDataRecord>>,
 }
 
 impl ZzpingViewApp {
-    fn new(data: PingData) -> Self {
+    fn new(data_rx: Receiver<Vec<RawDataRecord>>) -> Self {
         Self {
-            data,
+            points: Vec::new(),
             pan_micros: 0,
             zoom: 1.0,
+            data_rx,
+        }
+    }
+
+    fn update_data(&mut self) {
+        if let Ok(mut new_records) = self.data_rx.try_recv() {
+            if !new_records.is_empty() {
+                // Sort records by timestamp, as the database doesn't guarantee order
+                new_records.sort_by_key(|r| r.sent_nanos);
+
+                self.points = new_records
+                    .into_iter()
+                    .map(|rec| data::DataPoint {
+                        time: DateTime::from_timestamp_nanos(rec.sent_nanos as i64),
+                        rtt: if rec.rtt_nanos == u64::MAX {
+                            None
+                        } else {
+                            Some(Duration::nanoseconds(rec.rtt_nanos as i64))
+                        },
+                    })
+                    .collect();
+            } else {
+                // If we receive an empty vec, clear our points
+                self.points.clear();
+            }
         }
     }
 }
 
 impl eframe::App for ZzpingViewApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.update_data();
+        ctx.request_repaint();
+
         egui::TopBottomPanel::bottom("controls").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                // Calculate the valid range for the pan slider based on the data time range
-                let full_time_range = if let (Some(first), Some(last)) =
-                    (self.data.points.first(), self.data.points.last())
-                {
-                    last.time - first.time
-                } else {
-                    Duration::zero()
-                };
+                let full_time_range =
+                    if let (Some(first), Some(last)) = (self.points.first(), self.points.last()) {
+                        last.time - first.time
+                    } else {
+                        Duration::zero()
+                    };
 
                 let view_duration = full_time_range / self.zoom as i32;
                 let max_pan = full_time_range - view_duration;
                 let max_pan_micros = max_pan.num_microseconds().unwrap_or(0);
 
-                // Clamp pan to the valid range
                 self.pan_micros = self.pan_micros.min(max_pan_micros).max(0);
 
-                // Convert pan to human-readable format
                 let pan_duration = Duration::microseconds(self.pan_micros);
                 let hours = pan_duration.num_hours();
                 let mins = pan_duration.num_minutes() % 60;
@@ -69,7 +80,6 @@ impl eframe::App for ZzpingViewApp {
                 ui.label("Pan:");
                 ui.label(pan_display);
 
-                // Add a slider that shows percentage of dataset
                 let pan_percentage = if max_pan_micros > 0 {
                     (self.pan_micros as f32 / max_pan_micros as f32) * 100.0
                 } else {
@@ -82,62 +92,58 @@ impl eframe::App for ZzpingViewApp {
                         .show_value(false),
                 );
 
-                // Convert percentage back to microseconds
                 self.pan_micros = ((pan_percent / 100.0) * max_pan_micros as f32) as i64;
 
                 ui.label("Zoom:");
-                // Calculate maximum useful zoom based on data size and time span
-                // Prevent zoom levels that would result in sub-millisecond view windows
-                let max_useful_zoom = if !self.data.points.is_empty() {
-                    let time_span_ms = (self.data.points.last().unwrap().time
-                        - self.data.points[0].time)
+                let max_useful_zoom = if !self.points.is_empty() {
+                    let time_span_ms = (self.points.last().unwrap().time - self.points[0].time)
                         .num_milliseconds() as f32;
-                    // Minimum view window of 10 milliseconds
                     (time_span_ms / 10.0).clamp(1.0, 100.0)
                 } else {
                     100.0
                 };
                 ui.add(egui::Slider::new(&mut self.zoom, 1.0..=max_useful_zoom).logarithmic(true));
 
-                // Add some info about the dataset
                 ui.separator();
-                ui.label(format!("Points: {}", self.data.points.len()));
-                let lost_count = self.data.points.iter().filter(|p| p.rtt.is_none()).count();
+                ui.label(format!("Points: {}", self.points.len()));
+                let lost_count = self.points.iter().filter(|p| p.rtt.is_none()).count();
                 ui.label(format!("Lost: {lost_count}"));
 
-                // Show zoom level as a percentage of full dataset
                 ui.label(format!("Zoom: {:.1}x", self.zoom));
             });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            let widget = plot::PlotWidget::new(&self.data.points, self.pan_micros, self.zoom);
+            let widget = plot::PlotWidget::new(&self.points, self.pan_micros, self.zoom);
             ui.add(widget);
         });
     }
 }
 
-fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+fn main() -> Result<()> {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
 
-    eprintln!(
-        "Loading zzping-capture data from: {}",
-        cli.input_file.display()
-    );
-    let raw_data = std::fs::read(&cli.input_file)?;
-    let ping_data = data::load_and_parse_with_limit(&raw_data, cli.limit)?;
+    let _guard = rt.enter();
+
+    let (tx, rx) = unbounded();
+
+    std::thread::spawn(move || {
+        rt.block_on(network::fetch_data_loop(tx));
+    });
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1280.0, 720.0])
-            .with_title("zzping-view - Ping Data Visualizer"),
+            .with_title("zzping-gui - Live Network Monitor"),
         ..Default::default()
     };
 
     eframe::run_native(
-        "zzping-view",
+        "zzping-gui",
         options,
-        Box::new(|_cc| Ok(Box::new(ZzpingViewApp::new(ping_data)))),
+        Box::new(|_cc| Ok(Box::new(ZzpingViewApp::new(rx)))),
     )
     .map_err(|e| anyhow::anyhow!("Failed to run GUI application: {}", e))?;
 
