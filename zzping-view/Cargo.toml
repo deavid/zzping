@@ -8,6 +8,9 @@ repository.workspace = true
 description = "An egui-based viewer for analyzing zzping-capture data files with interactive graphs, pan/zoom controls, and RTT visualization"
 
 [dependencies]
+# NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
+# ...   and instead use "cratename.workspace = true" to refer to it.
+
 anyhow.workspace = true
 byteorder.workspace = true
 chrono.workspace = true

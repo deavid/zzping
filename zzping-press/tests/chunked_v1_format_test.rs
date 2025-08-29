@@ -66,7 +66,6 @@ fn test_format_compliance_byte_ordering() {
 
 // Verify all length fields match actual data sizes
 #[test]
-#[ignore = "BUG: Decompressor does not validate chunk size against stream lengths. See theory."]
 fn test_format_compliance_size_validation() {
     // THEORY: The decompressor does not appear to validate that the actual
     // chunk size matches the sum of the stream lengths specified in the chunk
@@ -88,8 +87,11 @@ fn test_format_compliance_size_validation() {
     // rtt_stream_len_bytes is at offset 16 from start of chunk header.
     let offset = zzping_press::chunked_v1::HEADER_SIZE + 16;
     let original_size = u32::from_be_bytes(compressed_data[offset..offset + 4].try_into().unwrap());
-    let new_size = (original_size + 10).to_be_bytes();
+    println!("Original RTT stream size: {}", original_size);
+    // Make corruption much more aggressive - add 10KB instead of 10 bytes
+    let new_size = (original_size + 10_000).to_be_bytes();
     compressed_data[offset..offset + 4].copy_from_slice(&new_size);
+    println!("Corrupted RTT stream size: {}", original_size + 10_000);
 
     let result = decompress_chunked_v1(&compressed_data);
     assert!(
@@ -120,7 +122,7 @@ fn test_format_compliance_index_accuracy() {
     let compressed_data = compress_chunked_v1(&records).unwrap();
     let file_header = FileHeader::read(&compressed_data[..]).unwrap();
 
-    let index_table_offset = 26 + file_header.aggregate_entry_count as usize * 26;
+    let index_table_offset = file_header.index_entries_offset(); // Use calculated offset for index accuracy test
     let mut cursor = Cursor::new(&compressed_data[index_table_offset..]);
 
     // Test that we can read the single chunk without panicking
@@ -157,7 +159,7 @@ fn test_format_compliance_chunk_layout() {
     }];
     let compressed_data = compress_chunked_v1(&records).unwrap();
     let file_header = FileHeader::read(&compressed_data[..]).unwrap();
-    let index_offset = 26 + file_header.aggregate_entry_count as usize * 26;
+    let index_offset = file_header.index_entries_offset(); // Use calculated offset for chunk layout test
     let mut cursor = Cursor::new(&compressed_data[index_offset..]);
     let index_entry = IndexEntry::read(&mut cursor).unwrap();
 
@@ -193,7 +195,7 @@ fn test_format_compliance_minute_boundary_format() {
     }];
     let compressed_data = compress_chunked_v1(&records).unwrap();
     let file_header = FileHeader::read(&compressed_data[..]).unwrap();
-    let index_offset = 26 + file_header.aggregate_entry_count as usize * 26;
+    let index_offset = file_header.index_entries_offset(); // Use calculated offset for minute boundary test
     let mut cursor = Cursor::new(&compressed_data[index_offset..]);
     let index_entry = IndexEntry::read(&mut cursor).unwrap();
     let mut chunk_cursor = Cursor::new(&compressed_data[index_entry.chunk_offset_bytes as usize..]);

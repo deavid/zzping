@@ -56,11 +56,92 @@ impl Default for Quantizer {
     }
 }
 
+// --- Validation Functions (Phase 2) ---
+
+/// Calculate CRC32 for file header excluding the CRC32 field itself
+fn calculate_file_header_crc32(header: &FileHeader) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+
+    // Hash all fields except header_crc32
+    hasher.update(&header.magic.to_be_bytes());
+    hasher.update(&header.format_version.to_be_bytes());
+    hasher.update(&header.start_time_unix_ns.to_be_bytes());
+    hasher.update(&header.aggregate_entry_count.to_be_bytes());
+    hasher.update(&header.index_entry_count.to_be_bytes());
+
+    hasher.finalize()
+}
+
+/// Calculate CRC32 for chunk header excluding the CRC32 field itself
+fn calculate_chunk_header_crc32(header: &ChunkHeader) -> u32 {
+    let mut hasher = crc32fast::Hasher::new();
+
+    // Hash all fields except chunk_crc32
+    hasher.update(&header.minute_boundary_unix_ns.to_be_bytes());
+    hasher.update(&header.first_ping_offset_ns.to_be_bytes());
+    hasher.update(&header.rtt_symbol_count.to_be_bytes());
+    hasher.update(&header.send_time_symbol_count.to_be_bytes());
+    hasher.update(&header.rtt_stream_len_bytes.to_be_bytes());
+    hasher.update(&header.send_time_stream_len_bytes.to_be_bytes());
+    hasher.update(&[header.flags.bits()]);
+    hasher.update(&header.base_interval_ns.to_be_bytes());
+
+    // Hash rtt_stats
+    let mut stats_buf = Vec::new();
+    header.rtt_stats.write(&mut stats_buf).unwrap();
+    hasher.update(&stats_buf);
+
+    // Hash send_time_stats if present
+    if let Some(ref stats) = header.send_time_stats {
+        let mut stats_buf = Vec::new();
+        stats.write(&mut stats_buf).unwrap();
+        hasher.update(&stats_buf);
+    }
+
+    hasher.finalize()
+}
+
 // --- File Format Structs ---
 
+/// # IMPORTANT: Avoiding Hardcoded Size Bugs
+///
+/// This module was previously affected by hardcoded size values in tests that became
+/// incorrect when CRC32 fields were added. The FileHeader size changed from 26 to 30 bytes,
+/// but tests were hardcoded to use 26, causing them to read from wrong offsets.
+///
+/// **SOLUTION**: All struct sizes are now calculated using `serialized_size()` methods
+/// and verified at compile-time with const assertions. Tests use calculated offsets
+/// via `file_header.index_entries_offset()` instead of hardcoded values.
+///
+/// **PREVENTION**:
+/// - Use `FileHeader::serialized_size()` instead of hardcoding sizes
+/// - Use `file_header.index_entries_offset()` for calculated offsets
+/// - Compile-time assertions prevent size miscalculations
+/// - Runtime tests verify calculations match actual serialization
 pub const FILE_MAGIC: u64 = 0x5A5A504356312020;
 pub const FORMAT_VERSION: u16 = 1;
 pub const HEADER_SIZE: usize = 65536;
+
+// Compile-time verification that our header size calculations are sane
+const _: () = {
+    // Ensure FileHeader fits within reasonable bounds (should be around 30 bytes)
+    assert!(FileHeader::serialized_size() >= 26); // Minimum expected size
+    assert!(FileHeader::serialized_size() <= 100); // Maximum reasonable size
+
+    // Ensure AggregateEntry size is reasonable (should be around 26 bytes)
+    assert!(AggregateEntry::serialized_size() >= 20);
+    assert!(AggregateEntry::serialized_size() <= 50);
+
+    // Ensure IndexEntry is exactly 8 bytes as expected
+    assert!(IndexEntry::serialized_size() == 8);
+};
+
+// FORMAT DESIGN LIMITATION: This format is designed for 24-hour data periods.
+// The 64KiB header can accommodate approximately 1440 chunks (one per minute for 24 hours).
+// Attempting to compress data spanning multiple days will fail due to header overflow.
+// Each index entry requires 8 bytes, so max chunks ≈ (65536 - overhead) / 8 ≈ 8000 theoretical,
+// but in practice ~1440 chunks (24 hours) is the intended design limit.
+pub const MAX_RECOMMENDED_CHUNKS: usize = 1440; // 24 hours * 60 minutes
 
 pub struct FileHeader {
     pub magic: u64,
@@ -68,15 +149,52 @@ pub struct FileHeader {
     pub start_time_unix_ns: u64,
     pub aggregate_entry_count: u32,
     pub index_entry_count: u32,
+    pub header_crc32: u32, // Phase 2: CRC32 of entire file header (excluding this field)
 }
 
 impl FileHeader {
+    /// Calculate the exact size of a FileHeader when serialized
+    pub const fn serialized_size() -> usize {
+        8 + 2 + 8 + 4 + 4 + 4 // magic + format_version + start_time + aggregate_count + index_count + crc32
+    }
+
+    /// Calculate the offset where aggregate entries start in the header
+    pub const fn aggregate_entries_offset() -> usize {
+        Self::serialized_size()
+    }
+
+    /// Calculate the offset where index entries start in the header
+    pub fn index_entries_offset(&self) -> usize {
+        Self::aggregate_entries_offset()
+            + (self.aggregate_entry_count as usize * AggregateEntry::serialized_size())
+    }
+
+    /// Calculate the total used header space for this file
+    pub fn total_header_used(&self) -> usize {
+        self.index_entries_offset()
+            + (self.index_entry_count as usize * IndexEntry::serialized_size())
+    }
+
+    /// Validate that the header will fit within the allocated header space
+    pub fn validate_header_fits(&self) -> Result<()> {
+        let used_space = self.total_header_used();
+        if used_space > HEADER_SIZE {
+            return Err(anyhow!(
+                "Header space exceeded: {} bytes used, {} bytes available. Reduce aggregate/index entries.",
+                used_space,
+                HEADER_SIZE
+            ));
+        }
+        Ok(())
+    }
+
     pub fn write(&self, mut w: impl Write) -> std::io::Result<()> {
         w.write_u64::<BigEndian>(self.magic)?;
         w.write_u16::<BigEndian>(self.format_version)?;
         w.write_u64::<BigEndian>(self.start_time_unix_ns)?;
         w.write_u32::<BigEndian>(self.aggregate_entry_count)?;
         w.write_u32::<BigEndian>(self.index_entry_count)?;
+        w.write_u32::<BigEndian>(self.header_crc32)?;
         Ok(())
     }
 
@@ -86,12 +204,14 @@ impl FileHeader {
         let start_time_unix_ns = r.read_u64::<BigEndian>()?;
         let aggregate_entry_count = r.read_u32::<BigEndian>()?;
         let index_entry_count = r.read_u32::<BigEndian>()?;
+        let header_crc32 = r.read_u32::<BigEndian>()?;
         Ok(Self {
             magic,
             format_version,
             start_time_unix_ns,
             aggregate_entry_count,
             index_entry_count,
+            header_crc32,
         })
     }
 }
@@ -115,6 +235,11 @@ pub struct AggregateEntry {
 }
 
 impl AggregateEntry {
+    /// Calculate the exact size of an AggregateEntry when serialized
+    pub const fn serialized_size() -> usize {
+        11 * 2 + 4 // 11 u16 percentile symbols + 1 u32 lost_packet_count
+    }
+
     pub fn write(&self, mut w: impl Write) -> std::io::Result<()> {
         w.write_u16::<BigEndian>(self.p00_symbol)?;
         w.write_u16::<BigEndian>(self.p10_symbol)?;
@@ -155,6 +280,11 @@ pub struct IndexEntry {
 }
 
 impl IndexEntry {
+    /// Calculate the exact size of an IndexEntry when serialized
+    pub const fn serialized_size() -> usize {
+        8 // chunk_offset_bytes: u64
+    }
+
     pub fn write(&self, mut w: impl Write) -> std::io::Result<()> {
         w.write_u64::<BigEndian>(self.chunk_offset_bytes)?;
         Ok(())
@@ -186,6 +316,7 @@ pub struct ChunkHeader {
     pub base_interval_ns: u64, // Base interval in nanoseconds (exact integer)
     pub rtt_stats: AggregateEntry,
     pub send_time_stats: Option<AggregateEntry>,
+    pub chunk_crc32: u32, // Phase 2: CRC32 of chunk header (excluding this field)
 }
 
 impl ChunkHeader {
@@ -202,6 +333,7 @@ impl ChunkHeader {
         if let Some(stats) = &self.send_time_stats {
             stats.write(&mut w)?;
         }
+        w.write_u32::<BigEndian>(self.chunk_crc32)?;
         Ok(())
     }
 
@@ -224,6 +356,8 @@ impl ChunkHeader {
             None
         };
 
+        let chunk_crc32 = r.read_u32::<BigEndian>()?;
+
         Ok(Self {
             minute_boundary_unix_ns,
             first_ping_offset_ns,
@@ -235,6 +369,7 @@ impl ChunkHeader {
             base_interval_ns,
             rtt_stats,
             send_time_stats,
+            chunk_crc32,
         })
     }
 }
@@ -271,6 +406,39 @@ fn calculate_duration_stats(durations: &[Duration], quantizer: &Quantizer) -> Ag
     }
 }
 
+fn calculate_interval_stats(intervals: &[u64]) -> AggregateEntry {
+    if intervals.is_empty() {
+        return AggregateEntry::default();
+    }
+
+    let mut sorted_intervals = intervals.to_vec();
+    sorted_intervals.sort();
+
+    const QUANTUM_NS: u64 = 100_000; // 0.1ms quantum
+
+    let n = sorted_intervals.len() - 1;
+    let get_percentile = |p: usize| -> u16 {
+        let index = (p as f64 / 100.0 * n as f64).round() as usize;
+        // Direct quantization for intervals, no jump tokens needed for stats
+        (sorted_intervals[index] / QUANTUM_NS) as u16
+    };
+
+    AggregateEntry {
+        p00_symbol: get_percentile(0),
+        p10_symbol: get_percentile(10),
+        p20_symbol: get_percentile(20),
+        p30_symbol: get_percentile(30),
+        p40_symbol: get_percentile(40),
+        p50_symbol: get_percentile(50),
+        p60_symbol: get_percentile(60),
+        p70_symbol: get_percentile(70),
+        p80_symbol: get_percentile(80),
+        p90_symbol: get_percentile(90),
+        p100_symbol: get_percentile(100),
+        lost_packet_count: 0, // Not applicable to intervals
+    }
+}
+
 // TODO: Add tests for this timing strategy selection logic
 // TODO: Test edge cases: single record chunks, identical timestamps, extreme jitter
 // TODO: Verify minute boundary alignment works correctly across timezones and DST
@@ -281,8 +449,8 @@ enum SendTimeStrategy {
     },
     QuantizedVariable {
         base_interval_ns: u64,
-        delta_symbols: Vec<u8>, // TODO: Test delta symbol range limits (±127 steps)
-        large_deltas: Vec<(u16, i32)>, // TODO: Test large delta fallback behavior
+        timing_symbols: Vec<u16>, // 0.1ms quantized intervals + jump tokens
+        intervals: Vec<u64>,      // Raw intervals for stats calculation
     },
 }
 
@@ -340,29 +508,30 @@ fn analyze_send_times(records: &[RawDataRecord]) -> SendTimeStrategy {
     }
 
     // Use quantized variable rate for variable timing
-    let mut delta_symbols = Vec::new();
-    let mut large_deltas = Vec::new();
+    let mut timing_symbols = Vec::new();
 
-    const DELTA_QUANTUM_NS: i32 = 1; // 1ns quantum for maximum precision
+    const QUANTUM_NS: u64 = 100_000; // 0.1ms quantum
+    const MAX_SYMBOL_NS: u64 = 6_553_500_000; // 6.5535s (65535 * 0.1ms)
+    const JUMP_FORWARD_SYMBOL: u16 = 65535; // Jump forward 6.5535s
 
-    for (i, &interval) in intervals.iter().enumerate() {
-        let deviation = interval as i64 - base_interval_ns as i64;
-        let quantized_steps = deviation / DELTA_QUANTUM_NS as i64;
+    for &interval in intervals.iter() {
+        let mut remaining_ns = interval;
 
-        if quantized_steps.abs() <= 127 {
-            // Store as u8: 0-127 = negative steps, 128-255 = positive steps
-            delta_symbols.push((quantized_steps + 128) as u8);
-        } else {
-            // Store as exception
-            delta_symbols.push(255); // Exception marker
-            large_deltas.push((i as u16, deviation as i32));
+        // Emit jump tokens for intervals > 6.5535s
+        while remaining_ns > MAX_SYMBOL_NS {
+            timing_symbols.push(JUMP_FORWARD_SYMBOL);
+            remaining_ns -= MAX_SYMBOL_NS;
         }
+
+        // Emit the final symbol for the remaining interval
+        let quantized_symbol = (remaining_ns / QUANTUM_NS) as u16;
+        timing_symbols.push(quantized_symbol);
     }
 
     SendTimeStrategy::QuantizedVariable {
         base_interval_ns,
-        delta_symbols,
-        large_deltas,
+        timing_symbols,
+        intervals,
     }
 }
 
@@ -422,6 +591,13 @@ fn build_model(stats: &AggregateEntry, chunk_symbol_count: usize) -> Result<(Vec
     Ok((symbols_with_freq, probabilities_f64))
 }
 
+// Compress ping data using the chunked v1 format.
+//
+// DESIGN LIMITATION: This format is intended for 24-hour data collection periods.
+// The 64KiB header can accommodate approximately 1440 chunks (one per minute for 24 hours).
+// Data spanning multiple days will fail with "failed to write whole buffer" due to header overflow.
+// For multi-day datasets, split data by day and compress each day separately.
+//
 // TODO: Add comprehensive tests for this compression function covering:
 // - Empty input (handled)
 // - Single record chunks
@@ -443,6 +619,16 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
     for record in records {
         let minute_index = record.sent_nanos / (60 * 1_000_000_000);
         chunks.entry(minute_index).or_default().push(*record);
+    }
+
+    // Check for format design limitation: too many chunks for 24-hour format
+    if chunks.len() > MAX_RECOMMENDED_CHUNKS {
+        return Err(anyhow!(
+            "Format limitation exceeded: {} chunks requested, but format designed for max {} chunks (24 hours). \
+             For multi-day data, split into separate files by day.",
+            chunks.len(),
+            MAX_RECOMMENDED_CHUNKS
+        ));
     }
 
     let mut payload_buffer = Vec::new();
@@ -490,30 +676,69 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
                 }
                 SendTimeStrategy::QuantizedVariable {
                     base_interval_ns: _,
-                    delta_symbols,
-                    large_deltas,
+                    timing_symbols,
+                    intervals,
                 } => {
                     variable_rate_chunks += 1;
                     flags |= ChunkFlags::IS_VARIABLE_RATE;
-                    flags |= ChunkFlags::RAW_DELTAS; // Reusing existing flag for now
+
+                    let send_time_stats = calculate_interval_stats(intervals);
+
+                    // Build frequency table for timing symbols
+                    let mut timing_frequencies = vec![0u32; u16::MAX as usize + 1];
+                    for &symbol in timing_symbols {
+                        timing_frequencies[symbol as usize] += 1;
+                    }
+
+                    // Build ANS model for timing symbols
+                    let (timing_symbols_vec, timing_probabilities): (Vec<_>, Vec<_>) =
+                        timing_frequencies
+                            .iter()
+                            .enumerate()
+                            .filter(|&(_, f)| *f > 0)
+                            .map(|(s, f)| (s as u16, *f))
+                            .unzip();
+
+                    let total_freq: u32 = timing_probabilities.iter().sum();
+                    let timing_probabilities_f64: Vec<f64> = timing_probabilities
+                        .iter()
+                        .map(|&f| f as f64 / total_freq as f64)
+                        .collect();
+
+                    // Encode timing symbols using ANS
+                    let timing_encoded_data = if !timing_symbols_vec.is_empty() {
+                        let timing_model = DefaultNonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_fast(timing_symbols_vec.clone(), &timing_probabilities_f64, None)
+                            .map_err(|_| anyhow!("Failed to create timing model"))?;
+                        let mut timing_encoder = DefaultAnsCoder::new();
+                        timing_encoder.encode_iid_symbols_reverse(timing_symbols, &timing_model)?;
+                        let timing_encoded_data_u32 = timing_encoder.into_compressed()?;
+                        let data: Vec<u8> = timing_encoded_data_u32
+                            .iter()
+                            .flat_map(|w| w.to_be_bytes())
+                            .collect();
+                        data
+                    } else {
+                        Vec::new()
+                    };
 
                     let mut data = Vec::new();
 
-                    // Don't encode base interval here anymore - it's in the chunk header
-                    // Encode delta symbols count and data
-                    data.write_u32::<BigEndian>(delta_symbols.len() as u32)?;
-                    data.extend_from_slice(delta_symbols);
-
-                    // Encode large deltas count and data
-                    data.write_u32::<BigEndian>(large_deltas.len() as u32)?;
-                    for (index, delta) in large_deltas {
-                        data.write_u16::<BigEndian>(*index)?;
-                        data.write_i32::<BigEndian>(*delta)?;
+                    // Store timing model (symbols and probabilities)
+                    data.write_u32::<BigEndian>(timing_symbols_vec.len() as u32)?;
+                    for &symbol in &timing_symbols_vec {
+                        data.write_u16::<BigEndian>(symbol)?;
                     }
+                    for &prob in &timing_probabilities {
+                        data.write_u32::<BigEndian>(prob)?;
+                    }
+
+                    // Store compressed timing data
+                    data.write_u32::<BigEndian>(timing_encoded_data.len() as u32)?;
+                    data.extend_from_slice(&timing_encoded_data);
 
                     total_timing_bytes += data.len();
 
-                    (data, delta_symbols.len() as u32, None)
+                    (data, timing_symbols.len() as u32, Some(send_time_stats))
                 }
             };
 
@@ -548,7 +773,7 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
             } => *base_interval_ns,
         };
 
-        let chunk_header = ChunkHeader {
+        let mut chunk_header = ChunkHeader {
             minute_boundary_unix_ns,
             first_ping_offset_ns,
             rtt_symbol_count: rtt_symbols.len() as u32,
@@ -559,29 +784,47 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
             base_interval_ns,
             rtt_stats,
             send_time_stats,
+            chunk_crc32: 0, // Will be calculated below
         };
+
+        // Calculate and set the chunk header CRC32 (Phase 2)
+        chunk_header.chunk_crc32 = calculate_chunk_header_crc32(&chunk_header);
 
         let mut chunk_buffer = Vec::new();
         chunk_header.write(&mut chunk_buffer)?;
         chunk_buffer.extend_from_slice(&rtt_encoded_data);
         chunk_buffer.extend_from_slice(&send_time_encoded_data);
 
+        // Phase 4: Add asterisk delimiters and chunk CRC32
+        let asterisk_delimiter = b"*"; // Single asterisk byte as chunk delimiter
+        let chunk_data_crc32 = crc32fast::hash(&chunk_buffer);
+
         index_entries.push(IndexEntry {
-            chunk_offset_bytes: (HEADER_SIZE + payload_buffer.len()) as u64,
+            chunk_offset_bytes: (HEADER_SIZE + payload_buffer.len() + asterisk_delimiter.len())
+                as u64,
         });
+
+        // Write: *[chunk_data][crc32]*
+        payload_buffer.extend_from_slice(asterisk_delimiter); // Start delimiter
         payload_buffer.extend_from_slice(&chunk_buffer);
+        payload_buffer.extend_from_slice(&chunk_data_crc32.to_be_bytes()); // CRC32 of chunk data
+        payload_buffer.extend_from_slice(asterisk_delimiter); // End delimiter
     }
 
     // --- 3. Finalize the file ---
     let mut header_buf = vec![0u8; HEADER_SIZE];
 
-    let file_header = FileHeader {
+    let mut file_header = FileHeader {
         magic: FILE_MAGIC,
         format_version: FORMAT_VERSION,
         start_time_unix_ns: records.first().map_or(0, |r| r.sent_nanos),
         aggregate_entry_count: aggregate_entries.len() as u32,
         index_entry_count: index_entries.len() as u32,
+        header_crc32: 0, // Will be calculated below
     };
+
+    // Calculate and set the file header CRC32 (Phase 2)
+    file_header.header_crc32 = calculate_file_header_crc32(&file_header);
 
     let mut cursor = Cursor::new(&mut header_buf[..]);
     file_header.write(&mut cursor)?;
@@ -666,6 +909,16 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
         ));
     }
 
+    // Phase 2: File header CRC32 validation
+    let computed_crc32 = calculate_file_header_crc32(&file_header);
+    if computed_crc32 != file_header.header_crc32 {
+        return Err(anyhow!(
+            "File header CRC32 mismatch: expected 0x{:08x}, computed 0x{:08x}",
+            file_header.header_crc32,
+            computed_crc32
+        ));
+    }
+
     let mut aggregate_table = Vec::with_capacity(file_header.aggregate_entry_count as usize);
     for _ in 0..file_header.aggregate_entry_count {
         aggregate_table.push(AggregateEntry::read(&mut cursor)?);
@@ -679,8 +932,15 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
     let quantizer = Quantizer::new();
     let mut all_records = Vec::new();
 
-    for index_entry in &index_table {
+    for (chunk_index, index_entry) in index_table.iter().enumerate() {
         let chunk_offset = index_entry.chunk_offset_bytes as usize;
+
+        // Calculate chunk end boundary (next chunk start or file end)
+        let chunk_end = if chunk_index + 1 < index_table.len() {
+            index_table[chunk_index + 1].chunk_offset_bytes as usize
+        } else {
+            data.len()
+        };
 
         // Validate chunk offset is within bounds
         if chunk_offset >= data.len() {
@@ -691,20 +951,41 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
             ));
         }
 
+        // Phase 4: Validate asterisk delimiter at chunk start
+        if chunk_offset == 0 || data[chunk_offset - 1] != b'*' {
+            return Err(anyhow!(
+                "Missing start asterisk delimiter for chunk {} at offset {}",
+                chunk_index,
+                chunk_offset
+            ));
+        }
+
         let mut chunk_cursor = Cursor::new(&data[chunk_offset..]);
         let chunk_header = ChunkHeader::read(&mut chunk_cursor)?;
+
+        // Phase 2: Chunk header CRC32 validation
+        let computed_chunk_crc32 = calculate_chunk_header_crc32(&chunk_header);
+        if computed_chunk_crc32 != chunk_header.chunk_crc32 {
+            return Err(anyhow!(
+                "Chunk {} header CRC32 mismatch: expected 0x{:08x}, computed 0x{:08x}",
+                chunk_index,
+                chunk_header.chunk_crc32,
+                computed_chunk_crc32
+            ));
+        }
 
         let header_len = chunk_cursor.position() as usize;
 
         let rtt_stream_start = chunk_offset + header_len;
         let rtt_stream_end = rtt_stream_start + chunk_header.rtt_stream_len_bytes as usize;
 
-        // Validate stream bounds
-        if rtt_stream_end > data.len() {
+        // Validate RTT stream bounds against chunk boundary (Phase 1 validation)
+        if rtt_stream_end > chunk_end {
             return Err(anyhow!(
-                "RTT stream extends beyond file: {} > {}",
+                "RTT stream extends beyond chunk boundary: {} > {} (chunk {} boundary)",
                 rtt_stream_end,
-                data.len()
+                chunk_end,
+                chunk_index
             ));
         }
 
@@ -722,9 +1003,21 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
             )?;
             let mut decoder = DefaultAnsCoder::from_compressed(rtt_data_u32)
                 .map_err(|_| anyhow!("Invalid compressed data for RTT stream"))?;
-            decoder
+            let symbols = decoder
                 .decode_iid_symbols(chunk_header.rtt_symbol_count as usize, &rtt_model)
-                .collect::<Result<Vec<_>, _>>()?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            // Phase 3: Data integrity validation - verify symbol count matches header
+            if symbols.len() != chunk_header.rtt_symbol_count as usize {
+                return Err(anyhow!(
+                    "RTT symbol count mismatch in chunk {}: expected {}, decoded {}",
+                    chunk_index,
+                    chunk_header.rtt_symbol_count,
+                    symbols.len()
+                ));
+            }
+
+            symbols
         } else {
             vec![chunk_header.rtt_stats.p00_symbol; chunk_header.rtt_symbol_count as usize]
         };
@@ -734,42 +1027,73 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
         let chunk_start_time =
             chunk_header.minute_boundary_unix_ns + chunk_header.first_ping_offset_ns;
         let mut current_sent_nanos = chunk_start_time;
-        let mut send_time_data = None;
+        let mut send_time_data: Option<Vec<u16>> = None;
 
-        if chunk_header.flags.contains(ChunkFlags::RAW_DELTAS) {
-            // Parse quantized variable rate data
+        if chunk_header.flags.contains(ChunkFlags::IS_VARIABLE_RATE) {
+            // Parse new quantized variable rate data
             let send_time_stream_start = rtt_stream_end;
             let send_time_stream_end =
                 send_time_stream_start + chunk_header.send_time_stream_len_bytes as usize;
 
-            // Validate send time stream bounds
-            if send_time_stream_end > data.len() {
+            // Validate send time stream bounds against chunk boundary (Phase 1 validation)
+            if send_time_stream_end > chunk_end {
                 return Err(anyhow!(
-                    "Send time stream extends beyond file: {} > {}",
+                    "Send time stream extends beyond chunk boundary: {} > {} (chunk {} boundary)",
                     send_time_stream_end,
-                    data.len()
+                    chunk_end,
+                    chunk_index
                 ));
             }
 
             let mut time_cursor = Cursor::new(&data[send_time_stream_start..send_time_stream_end]);
 
-            // Don't read base_interval_ns from stream anymore - it's in the header
-            let base_interval_ns = chunk_header.base_interval_ns;
-            let delta_count = time_cursor.read_u32::<BigEndian>()? as usize;
+            // Read timing model
 
-            let mut delta_symbols = vec![0u8; delta_count];
-            time_cursor.read_exact(&mut delta_symbols)?;
-
-            let large_delta_count = time_cursor.read_u32::<BigEndian>()? as usize;
-            let mut large_deltas = Vec::new();
-            for _ in 0..large_delta_count {
-                let index = time_cursor.read_u16::<BigEndian>()?;
-                let delta = time_cursor.read_i32::<BigEndian>()?;
-                large_deltas.push((index, delta));
+            let timing_symbol_count = time_cursor.read_u32::<BigEndian>()? as usize;
+            let mut timing_symbols_vec = Vec::with_capacity(timing_symbol_count);
+            for _ in 0..timing_symbol_count {
+                timing_symbols_vec.push(time_cursor.read_u16::<BigEndian>()?);
             }
 
-            send_time_data = Some((base_interval_ns, delta_symbols, large_deltas));
+            let mut timing_frequencies = Vec::with_capacity(timing_symbol_count);
+            for _ in 0..timing_symbol_count {
+                timing_frequencies.push(time_cursor.read_u32::<BigEndian>()?);
+            }
+
+            // Convert frequencies to probabilities
+            let total_freq: u32 = timing_frequencies.iter().sum();
+            let timing_probabilities: Vec<f64> = timing_frequencies
+                .iter()
+                .map(|&f| f as f64 / total_freq as f64)
+                .collect();
+
+            // Read compressed timing data
+            let timing_data_len = time_cursor.read_u32::<BigEndian>()? as usize;
+            let mut timing_data_bytes = vec![0u8; timing_data_len];
+            time_cursor.read_exact(&mut timing_data_bytes)?;
+
+            // Convert bytes back to u32 words
+            let timing_data_u32: Vec<u32> = timing_data_bytes
+                .chunks_exact(4)
+                .map(|chunk| u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect();
+
+            // Decode timing symbols
+            let timing_model = DefaultNonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast(timing_symbols_vec, &timing_probabilities, None)
+                .map_err(|_| anyhow!("Failed to create timing decoder model"))?;
+            let mut timing_decoder = DefaultAnsCoder::from_compressed(timing_data_u32)
+                .map_err(|_| anyhow!("Failed to create timing decoder"))?;
+
+            let timing_symbols: Vec<u16> = timing_decoder
+                .decode_iid_symbols(chunk_header.send_time_symbol_count as usize, &timing_model)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| anyhow!("Failed to decode timing symbols"))?;
+
+            send_time_data = Some(timing_symbols);
         }
+
+        // Track position in timing symbols array for variable rate decompression
+        let mut timing_symbol_position = 0usize;
 
         for (i, &rtt_symbol) in rtt_symbols.iter().enumerate() {
             let rtt_nanos = if rtt_symbol == PACKET_LOST_SYMBOL {
@@ -779,32 +1103,30 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
             };
 
             if i > 0 {
-                if let Some((base_interval_ns, ref delta_symbols, ref large_deltas)) =
-                    send_time_data
-                {
-                    // Quantized variable rate: calculate exact interval using integer math
-                    let delta_index = i - 1;
-                    let interval = if delta_index < delta_symbols.len() {
-                        let delta_symbol = delta_symbols[delta_index];
-                        if delta_symbol == 255 {
-                            // Look up in large deltas
-                            let large_delta = large_deltas
-                                .iter()
-                                .find(|(idx, _)| *idx as usize == delta_index)
-                                .map(|(_, delta)| *delta)
-                                .unwrap_or(0);
-                            (base_interval_ns as i64 + large_delta as i64) as u64
+                if let Some(ref timing_symbols) = send_time_data {
+                    // New quantized variable rate: decode timing symbols
+                    let mut total_interval = 0u64;
+
+                    const QUANTUM_NS: u64 = 100_000; // 0.1ms quantum
+                    const JUMP_FORWARD_SYMBOL: u16 = 65535; // Jump forward 6.5535s
+                    const MAX_SYMBOL_NS: u64 = 6_553_500_000; // 6.5535s
+
+                    // Process timing symbols until we get the complete interval
+                    while timing_symbol_position < timing_symbols.len() {
+                        let timing_symbol = timing_symbols[timing_symbol_position];
+                        timing_symbol_position += 1;
+
+                        if timing_symbol == JUMP_FORWARD_SYMBOL {
+                            total_interval += MAX_SYMBOL_NS;
+                            // Continue to next symbol - this was a jump token
                         } else {
-                            // Convert back from quantized representation
-                            const DELTA_QUANTUM_NS: i32 = 1; // 1ns quantum to match compression
-                            let quantized_steps = delta_symbol as i32 - 128;
-                            let deviation = quantized_steps * DELTA_QUANTUM_NS;
-                            (base_interval_ns as i64 + deviation as i64) as u64
+                            // This is the final interval symbol
+                            total_interval += timing_symbol as u64 * QUANTUM_NS;
+                            break;
                         }
-                    } else {
-                        base_interval_ns
-                    };
-                    current_sent_nanos += interval;
+                    }
+
+                    current_sent_nanos += total_interval;
                 } else {
                     // Constant rate: use base interval from header
                     current_sent_nanos += chunk_header.base_interval_ns;
@@ -816,6 +1138,49 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
                 rtt_nanos,
             });
         }
+
+        // Phase 4: Validate chunk data CRC32 and end asterisk delimiter
+        let chunk_data_end = rtt_stream_start
+            + chunk_header.rtt_stream_len_bytes as usize
+            + chunk_header.send_time_stream_len_bytes as usize;
+        let expected_crc32_start = chunk_data_end;
+        let expected_end_asterisk = expected_crc32_start + 4; // After 4-byte CRC32
+
+        if expected_end_asterisk >= chunk_end {
+            return Err(anyhow!(
+                "Chunk {} data extends beyond chunk boundary: {} >= {}",
+                chunk_index,
+                expected_end_asterisk,
+                chunk_end
+            ));
+        }
+
+        // Validate chunk data CRC32
+        let chunk_data = &data[chunk_offset..chunk_data_end];
+        let computed_chunk_crc32 = crc32fast::hash(chunk_data);
+        let stored_crc32 = u32::from_be_bytes(
+            data[expected_crc32_start..expected_crc32_start + 4]
+                .try_into()
+                .unwrap(),
+        );
+
+        if computed_chunk_crc32 != stored_crc32 {
+            return Err(anyhow!(
+                "Chunk {} data CRC32 mismatch: expected 0x{:08x}, computed 0x{:08x}",
+                chunk_index,
+                stored_crc32,
+                computed_chunk_crc32
+            ));
+        }
+
+        // Validate end asterisk delimiter
+        if data[expected_end_asterisk] != b'*' {
+            return Err(anyhow!(
+                "Missing end asterisk delimiter for chunk {} at offset {}",
+                chunk_index,
+                expected_end_asterisk
+            ));
+        }
     }
 
     Ok(all_records)
@@ -824,6 +1189,500 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Compile-time verification that our size calculations are correct
+    #[test]
+    fn test_size_calculations_are_correct() {
+        // Verify FileHeader size calculation
+        let dummy_header = FileHeader {
+            magic: 0,
+            format_version: 0,
+            start_time_unix_ns: 0,
+            aggregate_entry_count: 0,
+            index_entry_count: 0,
+            header_crc32: 0,
+        };
+        let mut buf = Vec::new();
+        dummy_header.write(&mut buf).unwrap();
+        assert_eq!(
+            buf.len(),
+            FileHeader::serialized_size(),
+            "FileHeader::serialized_size() doesn't match actual serialized size"
+        );
+
+        // Verify AggregateEntry size calculation
+        let dummy_aggregate = AggregateEntry::default();
+        let mut buf = Vec::new();
+        dummy_aggregate.write(&mut buf).unwrap();
+        assert_eq!(
+            buf.len(),
+            AggregateEntry::serialized_size(),
+            "AggregateEntry::serialized_size() doesn't match actual serialized size"
+        );
+
+        // Verify IndexEntry size calculation
+        let dummy_index = IndexEntry {
+            chunk_offset_bytes: 0,
+        };
+        let mut buf = Vec::new();
+        dummy_index.write(&mut buf).unwrap();
+        assert_eq!(
+            buf.len(),
+            IndexEntry::serialized_size(),
+            "IndexEntry::serialized_size() doesn't match actual serialized size"
+        );
+    }
+
+    #[test]
+    fn test_comprehensive_serialized_sizes() {
+        // Test FileHeader with various values to ensure size is consistent
+        let test_headers = [
+            FileHeader {
+                magic: 0,
+                format_version: 0,
+                start_time_unix_ns: 0,
+                aggregate_entry_count: 0,
+                index_entry_count: 0,
+                header_crc32: 0,
+            },
+            FileHeader {
+                magic: FILE_MAGIC,
+                format_version: FORMAT_VERSION,
+                start_time_unix_ns: 1672531200000000000,
+                aggregate_entry_count: 100,
+                index_entry_count: 50,
+                header_crc32: 0xDEADBEEF,
+            },
+            FileHeader {
+                magic: u64::MAX,
+                format_version: u16::MAX,
+                start_time_unix_ns: u64::MAX,
+                aggregate_entry_count: u32::MAX,
+                index_entry_count: u32::MAX,
+                header_crc32: u32::MAX,
+            },
+        ];
+
+        for (i, header) in test_headers.iter().enumerate() {
+            let mut buf = Vec::new();
+            header.write(&mut buf).unwrap();
+            assert_eq!(
+                buf.len(),
+                FileHeader::serialized_size(),
+                "FileHeader #{}: serialized size {} doesn't match calculated size {}",
+                i,
+                buf.len(),
+                FileHeader::serialized_size()
+            );
+        }
+
+        // Test AggregateEntry with various values
+        let test_aggregates = [
+            AggregateEntry::default(),
+            AggregateEntry {
+                p00_symbol: 100,
+                p10_symbol: 200,
+                p20_symbol: 300,
+                p30_symbol: 400,
+                p40_symbol: 500,
+                p50_symbol: 600,
+                p60_symbol: 700,
+                p70_symbol: 800,
+                p80_symbol: 900,
+                p90_symbol: 1000,
+                p100_symbol: 1100,
+                lost_packet_count: 42,
+            },
+            AggregateEntry {
+                p00_symbol: u16::MAX,
+                p10_symbol: u16::MAX,
+                p20_symbol: u16::MAX,
+                p30_symbol: u16::MAX,
+                p40_symbol: u16::MAX,
+                p50_symbol: u16::MAX,
+                p60_symbol: u16::MAX,
+                p70_symbol: u16::MAX,
+                p80_symbol: u16::MAX,
+                p90_symbol: u16::MAX,
+                p100_symbol: u16::MAX,
+                lost_packet_count: u32::MAX,
+            },
+        ];
+
+        for (i, aggregate) in test_aggregates.iter().enumerate() {
+            let mut buf = Vec::new();
+            aggregate.write(&mut buf).unwrap();
+            assert_eq!(
+                buf.len(),
+                AggregateEntry::serialized_size(),
+                "AggregateEntry #{}: serialized size {} doesn't match calculated size {}",
+                i,
+                buf.len(),
+                AggregateEntry::serialized_size()
+            );
+        }
+
+        // Test IndexEntry with various values
+        let test_indices = [
+            IndexEntry {
+                chunk_offset_bytes: 0,
+            },
+            IndexEntry {
+                chunk_offset_bytes: 65536,
+            },
+            IndexEntry {
+                chunk_offset_bytes: 1024 * 1024 * 1024,
+            }, // 1GB
+            IndexEntry {
+                chunk_offset_bytes: u64::MAX,
+            },
+        ];
+
+        for (i, index) in test_indices.iter().enumerate() {
+            let mut buf = Vec::new();
+            index.write(&mut buf).unwrap();
+            assert_eq!(
+                buf.len(),
+                IndexEntry::serialized_size(),
+                "IndexEntry #{}: serialized size {} doesn't match calculated size {}",
+                i,
+                buf.len(),
+                IndexEntry::serialized_size()
+            );
+        }
+    }
+
+    #[test]
+    fn test_chunked_header_serialized_size_analysis() {
+        // ChunkHeader doesn't have a serialized_size() method because it's variable-sized
+        // (optional send_time_stats), but let's verify our understanding of its size
+
+        // Test minimum size ChunkHeader (no send_time_stats)
+        let minimal_header = ChunkHeader {
+            minute_boundary_unix_ns: 0,
+            first_ping_offset_ns: 0,
+            rtt_symbol_count: 0,
+            send_time_symbol_count: 0,
+            rtt_stream_len_bytes: 0,
+            send_time_stream_len_bytes: 0,
+            flags: ChunkFlags::empty(),
+            base_interval_ns: 0,
+            rtt_stats: AggregateEntry::default(),
+            send_time_stats: None,
+            chunk_crc32: 0,
+        };
+
+        let mut buf = Vec::new();
+        minimal_header.write(&mut buf).unwrap();
+        let minimal_size = buf.len();
+
+        // Expected size: 8+8+4+4+4+4+1+8+26+4 = 71 bytes
+        // (minute_boundary + first_ping_offset + rtt_symbol_count + send_time_symbol_count +
+        //  rtt_stream_len + send_time_stream_len + flags + base_interval + rtt_stats + chunk_crc32)
+        let expected_minimal_size =
+            8 + 8 + 4 + 4 + 4 + 4 + 1 + 8 + AggregateEntry::serialized_size() + 4;
+        assert_eq!(
+            minimal_size, expected_minimal_size,
+            "Minimal ChunkHeader size: expected {}, got {}",
+            expected_minimal_size, minimal_size
+        );
+
+        // Test maximum size ChunkHeader (with send_time_stats)
+        let maximal_header = ChunkHeader {
+            minute_boundary_unix_ns: u64::MAX,
+            first_ping_offset_ns: u64::MAX,
+            rtt_symbol_count: u32::MAX,
+            send_time_symbol_count: u32::MAX,
+            rtt_stream_len_bytes: u32::MAX,
+            send_time_stream_len_bytes: u32::MAX,
+            flags: ChunkFlags::IS_VARIABLE_RATE, // This enables send_time_stats
+            base_interval_ns: u64::MAX,
+            rtt_stats: AggregateEntry {
+                p00_symbol: u16::MAX,
+                p10_symbol: u16::MAX,
+                p20_symbol: u16::MAX,
+                p30_symbol: u16::MAX,
+                p40_symbol: u16::MAX,
+                p50_symbol: u16::MAX,
+                p60_symbol: u16::MAX,
+                p70_symbol: u16::MAX,
+                p80_symbol: u16::MAX,
+                p90_symbol: u16::MAX,
+                p100_symbol: u16::MAX,
+                lost_packet_count: u32::MAX,
+            },
+            send_time_stats: Some(AggregateEntry {
+                p00_symbol: u16::MAX,
+                p10_symbol: u16::MAX,
+                p20_symbol: u16::MAX,
+                p30_symbol: u16::MAX,
+                p40_symbol: u16::MAX,
+                p50_symbol: u16::MAX,
+                p60_symbol: u16::MAX,
+                p70_symbol: u16::MAX,
+                p80_symbol: u16::MAX,
+                p90_symbol: u16::MAX,
+                p100_symbol: u16::MAX,
+                lost_packet_count: u32::MAX,
+            }),
+            chunk_crc32: u32::MAX,
+        };
+
+        let mut buf = Vec::new();
+        maximal_header.write(&mut buf).unwrap();
+        let maximal_size = buf.len();
+
+        // Expected size: minimal_size + additional AggregateEntry
+        let expected_maximal_size = expected_minimal_size + AggregateEntry::serialized_size();
+        assert_eq!(
+            maximal_size, expected_maximal_size,
+            "Maximal ChunkHeader size: expected {}, got {}",
+            expected_maximal_size, maximal_size
+        );
+
+        println!("ChunkHeader sizes verified:");
+        println!("  Minimal (no send_time_stats): {} bytes", minimal_size);
+        println!("  Maximal (with send_time_stats): {} bytes", maximal_size);
+        println!(
+            "  Difference: {} bytes (one AggregateEntry)",
+            maximal_size - minimal_size
+        );
+    }
+
+    #[test]
+    fn test_header_layout_calculations() {
+        // Test that our offset calculations work correctly with real data
+        let file_header = FileHeader {
+            magic: FILE_MAGIC,
+            format_version: FORMAT_VERSION,
+            start_time_unix_ns: 1672531200000000000,
+            aggregate_entry_count: 5,
+            index_entry_count: 3,
+            header_crc32: 0,
+        };
+
+        // Test that calculated offsets match actual serialization layout
+        let mut buf = Vec::new();
+
+        // Write file header
+        file_header.write(&mut buf).unwrap();
+        assert_eq!(buf.len(), FileHeader::serialized_size());
+        assert_eq!(buf.len(), FileHeader::aggregate_entries_offset());
+
+        // Write aggregate entries
+        let start_aggregates = buf.len();
+        for _ in 0..file_header.aggregate_entry_count {
+            AggregateEntry::default().write(&mut buf).unwrap();
+        }
+        let end_aggregates = buf.len();
+        assert_eq!(
+            end_aggregates - start_aggregates,
+            file_header.aggregate_entry_count as usize * AggregateEntry::serialized_size()
+        );
+        assert_eq!(end_aggregates, file_header.index_entries_offset());
+
+        // Write index entries
+        let start_indices = buf.len();
+        for i in 0..file_header.index_entry_count {
+            IndexEntry {
+                chunk_offset_bytes: i as u64 * 1000,
+            }
+            .write(&mut buf)
+            .unwrap();
+        }
+        let end_indices = buf.len();
+        assert_eq!(
+            end_indices - start_indices,
+            file_header.index_entry_count as usize * IndexEntry::serialized_size()
+        );
+        assert_eq!(end_indices, file_header.total_header_used());
+
+        println!("Header layout verification:");
+        println!("  FileHeader: {} bytes", FileHeader::serialized_size());
+        println!(
+            "  {} AggregateEntries: {} bytes",
+            file_header.aggregate_entry_count,
+            file_header.aggregate_entry_count as usize * AggregateEntry::serialized_size()
+        );
+        println!(
+            "  {} IndexEntries: {} bytes",
+            file_header.index_entry_count,
+            file_header.index_entry_count as usize * IndexEntry::serialized_size()
+        );
+        println!(
+            "  Total header used: {} bytes",
+            file_header.total_header_used()
+        );
+        println!("  Available header space: {} bytes", HEADER_SIZE);
+        println!(
+            "  Remaining space: {} bytes",
+            HEADER_SIZE - file_header.total_header_used()
+        );
+    }
+
+    #[test]
+    fn test_serialization_round_trip_preserves_size() {
+        // Test that serialization -> deserialization -> serialization produces identical byte counts
+
+        // Test FileHeader round trip
+        let original_header = FileHeader {
+            magic: FILE_MAGIC,
+            format_version: FORMAT_VERSION,
+            start_time_unix_ns: 1672531200000000000,
+            aggregate_entry_count: 42,
+            index_entry_count: 24,
+            header_crc32: 0xCAFEBABE,
+        };
+
+        let mut buf1 = Vec::new();
+        original_header.write(&mut buf1).unwrap();
+
+        let parsed_header = FileHeader::read(&buf1[..]).unwrap();
+        let mut buf2 = Vec::new();
+        parsed_header.write(&mut buf2).unwrap();
+
+        assert_eq!(buf1.len(), buf2.len(), "FileHeader round-trip changed size");
+        assert_eq!(buf1, buf2, "FileHeader round-trip changed content");
+        assert_eq!(buf1.len(), FileHeader::serialized_size());
+
+        // Test AggregateEntry round trip
+        let original_aggregate = AggregateEntry {
+            p00_symbol: 100,
+            p10_symbol: 200,
+            p20_symbol: 300,
+            p30_symbol: 400,
+            p40_symbol: 500,
+            p50_symbol: 600,
+            p60_symbol: 700,
+            p70_symbol: 800,
+            p80_symbol: 900,
+            p90_symbol: 1000,
+            p100_symbol: 1100,
+            lost_packet_count: 42,
+        };
+
+        let mut buf1 = Vec::new();
+        original_aggregate.write(&mut buf1).unwrap();
+
+        let parsed_aggregate = AggregateEntry::read(&buf1[..]).unwrap();
+        let mut buf2 = Vec::new();
+        parsed_aggregate.write(&mut buf2).unwrap();
+
+        assert_eq!(
+            buf1.len(),
+            buf2.len(),
+            "AggregateEntry round-trip changed size"
+        );
+        assert_eq!(buf1, buf2, "AggregateEntry round-trip changed content");
+        assert_eq!(buf1.len(), AggregateEntry::serialized_size());
+
+        // Test IndexEntry round trip
+        let original_index = IndexEntry {
+            chunk_offset_bytes: 0x123456789ABCDEF0,
+        };
+
+        let mut buf1 = Vec::new();
+        original_index.write(&mut buf1).unwrap();
+
+        let parsed_index = IndexEntry::read(&buf1[..]).unwrap();
+        let mut buf2 = Vec::new();
+        parsed_index.write(&mut buf2).unwrap();
+
+        assert_eq!(buf1.len(), buf2.len(), "IndexEntry round-trip changed size");
+        assert_eq!(buf1, buf2, "IndexEntry round-trip changed content");
+        assert_eq!(buf1.len(), IndexEntry::serialized_size());
+    }
+
+    #[test]
+    fn test_size_calculation_edge_cases() {
+        // Test that size calculations work correctly in boundary conditions
+
+        // Test minimum possible header configuration
+        let min_header = FileHeader {
+            magic: FILE_MAGIC,
+            format_version: FORMAT_VERSION,
+            start_time_unix_ns: 0,
+            aggregate_entry_count: 0,
+            index_entry_count: 0,
+            header_crc32: 0,
+        };
+
+        assert_eq!(
+            FileHeader::aggregate_entries_offset(),
+            FileHeader::serialized_size()
+        );
+        assert_eq!(
+            min_header.index_entries_offset(),
+            FileHeader::serialized_size()
+        ); // No aggregates
+        assert_eq!(
+            min_header.total_header_used(),
+            FileHeader::serialized_size()
+        ); // No aggregates or indices
+
+        // Verify minimum header fits comfortably
+        assert!(min_header.total_header_used() < HEADER_SIZE);
+        min_header.validate_header_fits().unwrap();
+
+        // Test realistic configuration (24 hours of minute chunks)
+        let realistic_header = FileHeader {
+            magic: FILE_MAGIC,
+            format_version: FORMAT_VERSION,
+            start_time_unix_ns: 1672531200000000000,
+            aggregate_entry_count: 1440, // 24 hours * 60 minutes
+            index_entry_count: 1440,     // One chunk per minute
+            header_crc32: 0,
+        };
+
+        let realistic_used = realistic_header.total_header_used();
+        println!("Realistic 24-hour configuration:");
+        println!("  Header used: {} bytes", realistic_used);
+        println!("  Available: {} bytes", HEADER_SIZE);
+        println!(
+            "  Utilization: {:.1}%",
+            realistic_used as f64 / HEADER_SIZE as f64 * 100.0
+        );
+
+        // Should fit comfortably within 64KiB header
+        assert!(realistic_used < HEADER_SIZE);
+        realistic_header.validate_header_fits().unwrap();
+
+        // Test near-maximum configuration (stress test)
+        let max_aggregates =
+            (HEADER_SIZE - FileHeader::serialized_size()) / AggregateEntry::serialized_size();
+        let stress_header = FileHeader {
+            magic: FILE_MAGIC,
+            format_version: FORMAT_VERSION,
+            start_time_unix_ns: u64::MAX,
+            aggregate_entry_count: max_aggregates as u32,
+            index_entry_count: 0, // No room for indices
+            header_crc32: u32::MAX,
+        };
+
+        let stress_used = stress_header.total_header_used();
+        println!("Maximum aggregates configuration:");
+        println!("  Max possible aggregates: {}", max_aggregates);
+        println!("  Header used: {} bytes", stress_used);
+        println!("  Remaining: {} bytes", HEADER_SIZE - stress_used);
+
+        // Should still fit
+        assert!(stress_used <= HEADER_SIZE);
+        stress_header.validate_header_fits().unwrap();
+
+        // Test configuration that exceeds header space (should fail validation)
+        let oversized_header = FileHeader {
+            magic: FILE_MAGIC,
+            format_version: FORMAT_VERSION,
+            start_time_unix_ns: 0,
+            aggregate_entry_count: 10000, // Way too many
+            index_entry_count: 10000,     // Way too many
+            header_crc32: 0,
+        };
+
+        // Should exceed header space and fail validation
+        assert!(oversized_header.total_header_used() > HEADER_SIZE);
+        assert!(oversized_header.validate_header_fits().is_err());
+    }
 
     #[test]
     fn test_simple_model_creation() {
@@ -1008,6 +1867,66 @@ mod tests {
             diff,
             tolerance
         );
+    }
+
+    #[test]
+    fn test_simple_variable_rate() {
+        use chrono::{TimeZone, Utc};
+        let base_time = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
+        let start_time = base_time.timestamp_nanos_opt().unwrap() as u64 + 59_900_000_000u64;
+
+        let records = vec![
+            RawDataRecord {
+                sent_nanos: start_time,
+                rtt_nanos: Duration::from_millis(20).as_nanos() as u64,
+            },
+            RawDataRecord {
+                sent_nanos: start_time + 1_100_000_000, // 1.1 seconds later (variable timing)
+                rtt_nanos: Duration::from_millis(25).as_nanos() as u64,
+            },
+        ];
+
+        let compressed = compress_chunked_v1(&records).unwrap();
+        let decompressed = decompress_chunked_v1(&compressed).unwrap();
+
+        assert_eq!(records.len(), decompressed.len());
+        assert_eq!(records[0].sent_nanos, decompressed[0].sent_nanos);
+        assert_eq!(records[1].sent_nanos, decompressed[1].sent_nanos);
+    }
+
+    #[test]
+    fn test_multi_chunk_variable_rate() {
+        use chrono::{TimeZone, Utc};
+        let base_time = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
+        let start_time = base_time.timestamp_nanos_opt().unwrap() as u64;
+
+        // Create records that span multiple chunks (more than 50 records to force multiple chunks)
+        let mut records = Vec::new();
+        let mut timestamp = start_time;
+        for i in 0..100 {
+            records.push(RawDataRecord {
+                sent_nanos: timestamp,
+                rtt_nanos: Duration::from_millis(20).as_nanos() as u64,
+            });
+            // Alternate between different intervals to create variable timing
+            if i % 2 == 0 {
+                timestamp += 1_100_000_000; // 1.1 seconds
+            } else {
+                timestamp += 900_000_000; // 0.9 seconds
+            }
+        }
+
+        let compressed = compress_chunked_v1(&records).unwrap();
+        let decompressed = decompress_chunked_v1(&compressed).unwrap();
+
+        assert_eq!(records.len(), decompressed.len());
+        for (i, (original, decompressed)) in records.iter().zip(decompressed.iter()).enumerate() {
+            assert_eq!(
+                original.sent_nanos, decompressed.sent_nanos,
+                "Mismatch at record {}",
+                i
+            );
+        }
     }
 
     #[test]

@@ -105,7 +105,10 @@ fn test_corruption_resistance_malformed_indices() {
     };
 
     // Locate the index entry in the header and overwrite it
-    let index_entry_offset = 22 + 26;
+    // FileHeader: 8+2+8+4+4+4 = 30 bytes
+    // AggregateEntry: 26 bytes (with 1 aggregate entry for this single record)
+    // IndexEntry starts at: 30 + 26 = 56
+    let index_entry_offset = 30 + 26;
 
     let mut cursor = std::io::Cursor::new(&mut compressed_data[index_entry_offset..]);
     bad_index_entry.write(&mut cursor).unwrap();
@@ -149,4 +152,42 @@ fn test_corruption_resistance_never_panic() {
         // The decompressor should never panic on random data
         let _ = decompress_chunked_v1(&data);
     }
+}
+
+// Test Phase 4: Chunk data CRC32 validation
+#[test]
+fn test_corruption_resistance_chunk_data_crc32() {
+    let records = vec![RawDataRecord {
+        sent_nanos: 1_672_531_200_000_000_000,
+        rtt_nanos: Duration::from_millis(20).as_nanos() as u64,
+    }];
+    let mut compressed_data = compress_chunked_v1(&records).unwrap();
+
+    // Corrupt a byte in the chunk data (not header, not index)
+    // This should pass Phase 1 (bounds checking) and Phase 2 (header CRC32)
+    // but fail on Phase 4 (chunk data CRC32)
+
+    // Find chunk start (after header)
+    let chunk_start = HEADER_SIZE + 1; // Skip the asterisk delimiter
+
+    // Corrupt one byte in the chunk header area
+    if chunk_start < compressed_data.len() {
+        compressed_data[chunk_start] = compressed_data[chunk_start].wrapping_add(1);
+    }
+
+    let result = decompress_chunked_v1(&compressed_data);
+    assert!(
+        result.is_err(),
+        "Decompressing with corrupted chunk data should fail on Phase 4 CRC32 validation"
+    );
+
+    // Verify it's specifically a CRC32 error
+    let error_message = result.unwrap_err().to_string();
+    assert!(
+        error_message.contains("CRC32")
+            || error_message.contains("asterisk")
+            || error_message.contains("header"),
+        "Error should be related to CRC32 validation, got: {}",
+        error_message
+    );
 }

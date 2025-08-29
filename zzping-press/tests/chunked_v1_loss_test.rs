@@ -89,7 +89,6 @@ fn test_packet_loss_preservation_burst() {
 
 // Test entire minutes with no successful responses
 #[test]
-#[ignore = "BUG: Fails when chunk is 100% packet loss. See theory below."]
 fn test_packet_loss_preservation_complete() {
     let records = create_test_data_with_loss_pattern(120, |_| true); // 100% loss
     let compressed = compress_chunked_v1(&records).unwrap();

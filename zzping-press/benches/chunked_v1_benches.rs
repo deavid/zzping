@@ -78,16 +78,20 @@ fn criterion_benchmark(c: &mut Criterion) {
     let start_time = 1_672_531_200_000_000_000; // 2023-01-01 00:00:00 UTC
     let mut metrics_collection = Vec::new();
 
-    for size in [100_000, 1_000_000, 10_000_000].iter() {
+    for size in [100_000, 1_000_000, 5_000_000].iter() {
         group.throughput(criterion::Throughput::Elements(*size as u64));
-        let interval = if *size >= 1_000_000 {
-            1_000_000
+        // Use high frequency to keep within 24-hour limit
+        // 5M records × 1ms = 5000 seconds = 83 minutes (well within 24 hours)
+        let interval = if *size >= 5_000_000 {
+            1_000_000 // 1ms for 5M records = 83 minutes
+        } else if *size >= 1_000_000 {
+            10_000_000 // 10ms for 1M records = 167 minutes
         } else {
-            1_000_000_000
+            100_000_000 // 100ms for 100K records = 167 minutes
         };
         let records = generate_test_data(
             *size,
-            |_| interval, // 1ms for 1M, 1s for others
+            |_| interval, // Variable intervals to stay within 24-hour limit
             |i| Duration::from_millis(20 + (i as u64 % 10)).as_nanos() as u64,
             start_time,
         );
@@ -138,24 +142,24 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     // Define scenario functions separately to avoid closure type mismatch
     let jitter_10ms = |i: usize| {
-        let base = 1_000_000_000; // 1 second base
-        let jitter = ((i % 21) as i64 - 10) * 10_000_000; // ±10ms jitter
+        let base = 100_000_000; // 100ms base for higher frequency
+        let jitter = ((i % 21) as i64 - 10) * 1_000_000; // ±1ms jitter
         (base as i64 + jitter) as u64
     };
 
     let random_intervals = |i: usize| {
-        // Pseudo-random intervals between 50ms and 1.5s
+        // Pseudo-random intervals between 50ms and 150ms for higher frequency
         let seed = (i as u64).wrapping_mul(1103515245).wrapping_add(12345);
-        let range = 1_450_000_000; // 1.45s range (1.5s - 0.05s)
-        50_000_000 + (seed % range) // 50ms + random up to 1.45s
+        let range = 100_000_000; // 100ms range (150ms - 50ms)
+        50_000_000 + (seed % range) // 50ms + random up to 100ms
     };
 
     let burst_pattern = |i: usize| {
-        // Alternating between 100ms bursts and 2s gaps
+        // Alternating between 10ms bursts and 200ms gaps for higher frequency
         if (i / 10) % 2 == 0 {
-            100_000_000
+            10_000_000 // 10ms
         } else {
-            2_000_000_000
+            200_000_000 // 200ms
         }
     };
 
@@ -230,7 +234,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(2));
     let records = generate_test_data(
         100_000,
-        |_| 1_000_000_000,
+        |_| 100_000_000, // 100ms intervals = 10Hz for timing accuracy test
         |_| Duration::from_millis(20).as_nanos() as u64,
         start_time,
     );

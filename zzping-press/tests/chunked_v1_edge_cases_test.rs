@@ -57,7 +57,6 @@ fn test_edge_case_zero_rtt() {
 
 // Test hours-long gaps in data collection
 #[test]
-#[ignore = "BUG: Fails with large time gaps between chunks. See theory below."]
 fn test_edge_case_massive_time_gaps() {
     // THEORY: The timestamp reconstruction for the first record in a chunk
     // after a large time gap is incorrect. The error is exactly 2^33 ns,
@@ -72,7 +71,6 @@ fn test_edge_case_massive_time_gaps() {
 
 // Test chunks with no data for entire minute periods
 #[test]
-#[ignore = "BUG: Fails with time gaps between chunks. Same bug as massive_time_gaps."]
 fn test_edge_case_empty_minutes() {
     let records = create_edge_case_data(EdgeCase::EmptyMinutes);
     let compressed = compress_chunked_v1(&records).unwrap();
@@ -125,7 +123,6 @@ fn test_edge_case_quantization_boundaries() {
 
 // Test data spanning midnight Dec 31/Jan 1
 #[test]
-#[ignore = "BUG: Fails when data crosses a year boundary. Same bug as massive_time_gaps."]
 fn test_edge_case_year_boundaries() {
     let records = create_edge_case_data(EdgeCase::YearBoundaries);
     let compressed = compress_chunked_v1(&records).unwrap();

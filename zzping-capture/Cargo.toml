@@ -8,6 +8,9 @@ repository.workspace = true
 description = "A command-line tool to perform high-frequency ICMP pings and save the raw results."
 
 [dependencies]
+# NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
+# ...   and instead use "cratename.workspace = true" to refer to it.
+
 anyhow = { workspace = true }
 tokio = { workspace = true }
 surge-ping = { workspace = true }

@@ -28,5 +28,7 @@ thiserror.workspace = true
 
 # TODO: REMOVE THESE DEPENDENCIES - marked for removal
 # These dependencies are old and should be replaced/removed in future versions
+# NOTE: These are intentionally NOT in workspace dependencies since they're only used
+# by zzping-lib and are planned for removal - no point in centralizing them
 bit-vec = "0.6"          # TODO: Remove - for huffman, also for serializing
 huffman-compress = "0.6" # TODO: Remove - 4 years old without updates

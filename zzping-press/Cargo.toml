@@ -8,17 +8,21 @@ repository.workspace = true
 description = "A tool for stress testing and network performance analysis"
 
 [dependencies]
+# NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
+# ...   and instead use "cratename.workspace = true" to refer to it.
+
 anyhow.workspace = true
 clap.workspace = true
-rerun = "0.24.1"
-constriction = "0.4.1"
-byteorder = "1.5.0"
-bitflags = "2.5.0"
+rerun.workspace = true
+constriction.workspace = true
+byteorder.workspace = true
+bitflags.workspace = true
 rand.workspace = true
+crc32fast.workspace = true
 
 [dev-dependencies]
-chrono = "0.4"
-criterion = { version = "0.7", features = ["html_reports"] }
+chrono.workspace = true
+criterion.workspace = true
 
 [[bench]]
 name = "chunked_v1_benches"
