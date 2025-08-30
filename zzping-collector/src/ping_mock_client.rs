@@ -2,15 +2,20 @@
 
 use crate::ping_client::{PingClient, PingResult};
 use async_trait::async_trait;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::sync::{mpsc, OwnedSemaphorePermit};
 
-/// A mock `PingClient` that does nothing.
+/// A mock `PingClient` that records calls to its `ping` method.
 ///
 /// This is used in unit tests to isolate the `PingerSession` logic from the
-/// actual pinging implementation, which requires privileged access.
-#[derive(Default)]
-pub struct PingMockClient;
+/// actual pinging implementation and to verify that pings are being dispatched.
+#[derive(Default, Clone)]
+pub struct PingMockClient {
+    /// A shared, mutable vector that stores the sequence numbers of each ping call.
+    /// Tests can inspect this vector to assert that `ping` was called.
+    pub pings: Arc<Mutex<Vec<u16>>>,
+}
 
 impl PingMockClient {
     pub fn new() -> Self {
@@ -20,20 +25,17 @@ impl PingMockClient {
 
 #[async_trait]
 impl PingClient for PingMockClient {
-    /// This mock implementation does nothing.
+    /// This mock implementation records the sequence number of the ping call.
     ///
     /// The `permit` is passed in and immediately dropped, which simulates the
-    /// semaphore permit being released after a ping operation completes. This
-    /// is sufficient for testing the semaphore logic of `PingerSession`.
+    /// semaphore permit being released after a ping operation completes.
     async fn ping(
         &self,
-        _sequence_idx: u16,
+        sequence_idx: u16,
         _tx: mpsc::Sender<PingResult>,
         _permit: OwnedSemaphorePermit,
         _start_time: Instant,
     ) {
-        // In a test environment, we do nothing. The permit is dropped when
-        // this function returns, which is the desired behavior for testing
-        // the semaphore logic.
+        self.pings.lock().unwrap().push(sequence_idx);
     }
 }

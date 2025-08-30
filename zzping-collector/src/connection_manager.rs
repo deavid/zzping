@@ -243,4 +243,28 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_session_sends_ping_on_tick() -> Result<()> {
+        // 1. Setup
+        tokio::time::pause();
+        let (buffer, ping_client, cli, _) = common_test_setup();
+        let (mut session, _) =
+            PingerSession::new(buffer, Arc::clone(&ping_client), Arc::clone(&cli))?;
+
+        // 2. Execution: Advance time and call tick.
+        tokio::time::advance(Duration::from_secs(1)).await;
+        session.tick().await?;
+
+        // 3. Verification
+        // Check that the mock client was called once.
+        let pings = ping_client.pings.lock().unwrap();
+        assert_eq!(pings.len(), 1, "Ping client should have been called once");
+        assert_eq!(pings[0], 0, "The first ping should have sequence index 0");
+
+        // Check that the session's sequence index was incremented.
+        assert_eq!(session.sequence_idx, 1);
+
+        Ok(())
+    }
 }
