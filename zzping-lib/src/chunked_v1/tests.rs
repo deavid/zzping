@@ -647,8 +647,8 @@ fn test_model_with_all_packets_lost() {
 
 #[test]
 fn test_basic_compression_roundtrip() {
-    use chrono::{TimeZone, Utc};
     use crate::protocol::RawDataRecord;
+    use chrono::{TimeZone, Utc};
     use std::time::Duration;
 
     let base_time = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
@@ -684,8 +684,8 @@ fn test_basic_compression_roundtrip() {
 
 #[test]
 fn test_simple_variable_rate() {
-    use chrono::{TimeZone, Utc};
     use crate::protocol::RawDataRecord;
+    use chrono::{TimeZone, Utc};
     use std::time::Duration;
 
     let base_time = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
@@ -712,8 +712,8 @@ fn test_simple_variable_rate() {
 
 #[test]
 fn test_multi_chunk_variable_rate() {
-    use chrono::{TimeZone, Utc};
     use crate::protocol::RawDataRecord;
+    use chrono::{TimeZone, Utc};
     use std::time::Duration;
 
     let base_time = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
@@ -841,9 +841,8 @@ fn test_dummy_symbol_frequency_analysis() {
 
 #[test]
 fn test_constant_rate_compression_efficiency() {
-    use chrono::{TimeZone, Utc};
     use crate::protocol::RawDataRecord;
-    use std::time::Duration;
+    use chrono::{TimeZone, Utc};
 
     // Create test data: 100 pings per second for 60 seconds (6000 pings in one minute)
     let base_time = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
@@ -919,9 +918,8 @@ fn test_constant_rate_compression_efficiency() {
 
 #[test]
 fn test_variable_rate_compression_efficiency() {
-    use chrono::{TimeZone, Utc};
     use crate::protocol::RawDataRecord;
-    use std::time::Duration;
+    use chrono::{TimeZone, Utc};
 
     // Create test data: ~100 pings per second with deliberate timing variation
     let base_time = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();

@@ -8,6 +8,7 @@ use super::format::{
 use super::quantization::{Quantizer, PACKET_LOST_SYMBOL, DUMMY_SYMBOL};
 use crate::protocol::RawDataRecord;
 use anyhow::{anyhow, Result};
+use byteorder::{BigEndian, WriteBytesExt};
 use constriction::stream::{model::DefaultNonContiguousCategoricalEncoderModel, stack::DefaultAnsCoder};
 use std::time::Duration;
 
@@ -290,7 +291,19 @@ pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
                     } else {
                         Vec::new()
                     };
-                    (timing_encoded_data, timing_symbols.len() as u32, Some(send_time_stats))
+
+                    let mut data = Vec::new();
+                    data.write_u32::<BigEndian>(timing_symbols_vec.len() as u32)?;
+                    for &symbol in &timing_symbols_vec {
+                        data.write_u16::<BigEndian>(symbol)?;
+                    }
+                    for &prob in &timing_probabilities {
+                        data.write_u32::<BigEndian>(prob)?;
+                    }
+                    data.write_u32::<BigEndian>(timing_encoded_data.len() as u32)?;
+                    data.extend_from_slice(&timing_encoded_data);
+
+                    (data, timing_symbols.len() as u32, Some(send_time_stats))
                 }
             };
 

@@ -174,10 +174,10 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
 
             if send_time_stream_end > chunk_end {
                 return Err(anyhow!(
-                    "Send time stream extends beyond chunk boundary: {} > {} (chunk {} boundary)",
+                    "Send time stream for chunk {} extends beyond chunk boundary: {} > {}",
+                    chunk_index,
                     send_time_stream_end,
-                    chunk_end,
-                    chunk_index
+                    chunk_end
                 ));
             }
 
