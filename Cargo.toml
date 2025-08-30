@@ -42,7 +42,7 @@ serde = { version = "1.0", features = ["derive"] }
 surge-ping = "0.8"
 tempfile = "3.21"
 thiserror = "2.0"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["full", "test-util"] }
 
 # Dependencies for specific crates that haven't been centralized yet
 rerun = "0.24"
