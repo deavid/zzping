@@ -23,25 +23,7 @@ pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
 
     // 2. Process the command
     let records = match command {
-        QueryCommand::GetLastMinute => match find_latest_zzp1_file(crate::DATA_DIR)? {
-            Some(path) => {
-                info!("Found latest file: {path:?}");
-                // 3. Read and decompress the data
-                let compressed_data = fs::read(&path)?;
-                let decompressed_records: Vec<RawDataRecord> =
-                    zzping_lib::chunked_v1::decompress_chunked_v1(&compressed_data)?;
-                info!(
-                    "Decompressed {} records from {:?}",
-                    decompressed_records.len(),
-                    path
-                );
-                decompressed_records
-            }
-            None => {
-                info!("No .zzp1 files found, sending empty response.");
-                Vec::new()
-            }
-        },
+        QueryCommand::GetLastMinute => get_last_minute_records(crate::DATA_DIR)?,
     };
 
     // 4. Serialize and send the response using the centralized helper
@@ -53,6 +35,28 @@ pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Finds the most recent data file, decompresses it, and returns the records.
+pub fn get_last_minute_records(data_dir: &str) -> Result<Vec<RawDataRecord>> {
+    match find_latest_zzp1_file(data_dir)? {
+        Some(path) => {
+            info!("Found latest file: {path:?}");
+            let compressed_data = fs::read(&path)?;
+            let decompressed_records: Vec<RawDataRecord> =
+                zzping_lib::chunked_v1::decompress_chunked_v1(&compressed_data)?;
+            info!(
+                "Decompressed {} records from {:?}",
+                decompressed_records.len(),
+                path
+            );
+            Ok(decompressed_records)
+        }
+        None => {
+            info!("No .zzp1 files found, returning empty vec.");
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// Scans a directory for `.zzp1` files and returns the path to the most recently modified one.
@@ -115,5 +119,44 @@ mod tests {
         let p = temp_dir.path();
         let latest = find_latest_zzp1_file(p.to_str().unwrap()).unwrap();
         assert!(latest.is_none());
+    }
+
+    #[test]
+    fn test_get_last_minute_records() -> Result<()> {
+        // 1. Setup: Create a temp dir and some sample data
+        let temp_dir = tempdir()?;
+        let data_dir = temp_dir.path().to_str().unwrap();
+        let records = vec![
+            RawDataRecord {
+                sent_nanos: 1,
+                rtt_nanos: 10,
+            },
+            RawDataRecord {
+                sent_nanos: 2,
+                rtt_nanos: u64::MAX,
+            },
+        ];
+
+        // 2. Create a dummy .zzp1 file with compressed data
+        let compressed_data = zzping_lib::chunked_v1::compress_chunked_v1(&records)?;
+        let file_path = temp_dir.path().join("test.zzp1");
+        fs::write(file_path, compressed_data)?;
+
+        // 3. Execution: Call the function under test
+        let result_records = get_last_minute_records(data_dir)?;
+
+        // 4. Verification: Assert the returned records match the original
+        assert_eq!(result_records, records);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_last_minute_records_empty_dir() -> Result<()> {
+        let temp_dir = tempdir()?;
+        let data_dir = temp_dir.path().to_str().unwrap();
+        let result_records = get_last_minute_records(data_dir)?;
+        assert!(result_records.is_empty());
+        Ok(())
     }
 }

@@ -37,11 +37,12 @@ impl Quantizer {
     /// The conversion is lossy. Very large durations will be clamped to the maximum
     /// representable symbol.
     pub fn duration_to_symbol(&self, d: Duration) -> u16 {
+        const SCALING_FACTOR: f64 = 1000.0;
         let time_in_ms = d.as_secs_f64() * 1000.0;
         if time_in_ms <= 0.0 {
             return 0;
         }
-        let encoded_value = (time_in_ms / 100.0 + 1.0).ln() / self.ln_1_001;
+        let encoded_value = (time_in_ms * SCALING_FACTOR + 1.0).ln() / self.ln_1_001;
         (encoded_value.round() as u16).clamp(0, LAST_SAFE_SYMBOL)
     }
 
@@ -54,8 +55,8 @@ impl Quantizer {
             // Represent packet loss as a very large duration.
             return Duration::from_secs(u64::MAX);
         }
-        let time_in_ms = (self.ln_1_001 * symbol as f64).exp() - 1.0;
-        let time_in_ms = time_in_ms * 100.0;
+        const SCALING_FACTOR: f64 = 1000.0;
+        let time_in_ms = ((self.ln_1_001 * symbol as f64).exp() - 1.0) / SCALING_FACTOR;
         Duration::from_secs_f64(time_in_ms / 1000.0)
     }
 }

@@ -73,3 +73,38 @@ async fn write_records_to_disk(records: &[RawDataRecord], data_dir: &str) -> Res
 
     Ok(filename)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn test_write_records_to_disk() -> Result<()> {
+        // 1. Setup
+        let temp_dir = tempdir()?;
+        let data_dir = temp_dir.path().to_str().unwrap();
+        let records = vec![
+            RawDataRecord {
+                sent_nanos: 1,
+                rtt_nanos: 10,
+            },
+            RawDataRecord {
+                sent_nanos: 2,
+                rtt_nanos: u64::MAX,
+            },
+        ];
+
+        // 2. Execution: Call the function to write the file
+        let filename = write_records_to_disk(&records, data_dir).await?;
+
+        // 3. Verification: Read the file back and decompress it
+        let compressed_data = fs::read(filename)?;
+        let decompressed_records = zzping_lib::chunked_v1::decompress_chunked_v1(&compressed_data)?;
+
+        assert_eq!(decompressed_records, records);
+
+        Ok(())
+    }
+}
