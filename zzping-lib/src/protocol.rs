@@ -25,14 +25,14 @@ pub struct RawDataRecord {
     pub rtt_nanos: u64,
 }
 
-/// Writes a length-prefixed, JSON-serialized `RawDataRecord` to an async writer.
+/// Writes a length-prefixed, bincode-serialized `RawDataRecord` to an async writer.
 ///
 /// This function implements the sending side of the simple zzping network protocol.
 /// The protocol is designed to be easy to implement in various clients and servers.
 ///
 /// # Protocol Format
-/// - 4 bytes: `u32` length of the following JSON payload, encoded in big-endian format.
-/// - N bytes: The `RawDataRecord` struct, serialized as a JSON string.
+/// - 4 bytes: `u32` length of the following bincode payload, encoded in big-endian format.
+/// - N bytes: The `RawDataRecord` struct, serialized using bincode.
 ///
 /// # Arguments
 /// * `stream` - An async writer, typically a `TcpStream`.
@@ -41,13 +41,13 @@ pub async fn write_record<W: AsyncWriteExt + Unpin>(
     stream: &mut W,
     record: &RawDataRecord,
 ) -> Result<()> {
-    let json_data = serde_json::to_vec(record)?;
-    stream.write_u32(json_data.len() as u32).await?;
-    stream.write_all(&json_data).await?;
+    let data = bincode::serialize(record)?;
+    stream.write_u32(data.len() as u32).await?;
+    stream.write_all(&data).await?;
     Ok(())
 }
 
-/// Reads a length-prefixed, JSON-serialized `RawDataRecord` from an async reader.
+/// Reads a length-prefixed, bincode-serialized `RawDataRecord` from an async reader.
 ///
 /// This function implements the receiving side of the simple zzping network protocol.
 /// It handles reading the length prefix first, then reading the exact number of bytes
@@ -71,8 +71,44 @@ pub async fn read_record<R: AsyncReadExt + Unpin>(stream: &mut R) -> Result<Opti
 
     let mut buffer = vec![0; len as usize];
     stream.read_exact(&mut buffer).await?;
-    let record: RawDataRecord = serde_json::from_slice(&buffer)?;
+    let record: RawDataRecord = bincode::deserialize(&buffer)?;
     Ok(Some(record))
+}
+
+/// Writes a batch of `RawDataRecord`s to an async writer using the same
+/// length-prefixed bincode format.
+///
+/// This is used by the database to send query results to the GUI.
+pub async fn write_records_batch<W: AsyncWriteExt + Unpin>(
+    stream: &mut W,
+    records: &[RawDataRecord],
+) -> Result<()> {
+    let data = bincode::serialize(records)?;
+    stream.write_u32(data.len() as u32).await?;
+    stream.write_all(&data).await?;
+    Ok(())
+}
+
+/// Reads a batch of `RawDataRecord`s from an async reader.
+///
+/// This is used by the GUI to receive query results from the database.
+pub async fn read_records_batch<R: AsyncReadExt + Unpin>(
+    stream: &mut R,
+) -> Result<Option<Vec<RawDataRecord>>> {
+    let len = match stream.read_u32().await {
+        Ok(len) => len,
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+
+    if len == 0 {
+        return Ok(Some(Vec::new())); // An empty batch is valid
+    }
+
+    let mut buffer = vec![0; len as usize];
+    stream.read_exact(&mut buffer).await?;
+    let records: Vec<RawDataRecord> = bincode::deserialize(&buffer)?;
+    Ok(Some(records))
 }
 
 #[cfg(test)]
@@ -104,5 +140,34 @@ mod tests {
         let mut empty: &[u8] = &[];
         let result = read_record(&mut empty).await.unwrap();
         assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_batch_protocol_roundtrip() {
+        let records = vec![
+            RawDataRecord {
+                sent_nanos: 1,
+                rtt_nanos: 10,
+            },
+            RawDataRecord {
+                sent_nanos: 2,
+                rtt_nanos: 20,
+            },
+            RawDataRecord {
+                sent_nanos: 3,
+                rtt_nanos: u64::MAX,
+            },
+        ];
+
+        // 1. Write the records to a buffer
+        let mut buffer = Vec::new();
+        write_records_batch(&mut buffer, &records).await.unwrap();
+
+        // 2. Read the records back from the buffer
+        let mut cursor = Cursor::new(buffer);
+        let received_records = read_records_batch(&mut cursor).await.unwrap().unwrap();
+
+        // 3. Assert they are the same
+        assert_eq!(records, received_records);
     }
 }

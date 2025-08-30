@@ -4,9 +4,9 @@ use anyhow::Result;
 use crossbeam_channel::Sender;
 use log::{info, warn};
 use std::time::Duration;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use zzping_lib::protocol::RawDataRecord;
+use zzping_lib::protocol::{read_records_batch, RawDataRecord};
 
 const QUERY_ADDR: &str = "127.0.0.1:7879";
 const GET_LAST_MINUTE_CMD: &[u8] = b"GET_LAST_MINUTE";
@@ -39,8 +39,8 @@ pub async fn fetch_data_loop(tx: Sender<Vec<RawDataRecord>>) {
 /// Attempts to perform a single fetch-and-send operation.
 ///
 /// This function connects to the database, sends the `GET_LAST_MINUTE` command,
-/// reads the length-prefixed JSON response, deserializes it, and sends the
-/// resulting `Vec<RawDataRecord>` over the channel to the UI thread.
+/// and uses the centralized `read_records_batch` helper to read the response.
+/// It then sends the resulting `Vec<RawDataRecord>` over the channel to the UI thread.
 async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
     let mut stream = TcpStream::connect(QUERY_ADDR).await?;
     info!("Connected to query port at {QUERY_ADDR}");
@@ -48,22 +48,15 @@ async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
     stream.write_all(GET_LAST_MINUTE_CMD).await?;
     info!("Sent GET_LAST_MINUTE command.");
 
-    let len = stream.read_u32().await?;
-    if len == 0 {
-        info!("Received empty response from database.");
+    if let Some(records) = read_records_batch(&mut stream).await? {
+        info!("Received {} records from database.", records.len());
+        tx.send(records)
+            .map_err(|e| anyhow::anyhow!("UI channel closed: {}", e))?;
+    } else {
+        info!("Stream closed by database, sending empty vec.");
         tx.send(Vec::new())
             .map_err(|e| anyhow::anyhow!("UI channel closed: {}", e))?;
-        return Ok(());
     }
-
-    let mut buffer = vec![0; len as usize];
-    stream.read_exact(&mut buffer).await?;
-    info!("Received {len} bytes from database.");
-
-    let records: Vec<RawDataRecord> = serde_json::from_slice(&buffer)?;
-
-    tx.send(records)
-        .map_err(|e| anyhow::anyhow!("UI channel closed: {}", e))?;
 
     Ok(())
 }

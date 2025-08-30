@@ -4,22 +4,21 @@ use anyhow::Result;
 use log::info;
 use std::fs;
 use std::path::PathBuf;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
-use zzping_lib::protocol::RawDataRecord;
+use zzping_lib::protocol::{write_records_batch, RawDataRecord};
 
 /// Manages a single TCP connection from a `zzping-gui` instance.
 ///
 /// For the MVP, this function handles a single, hardcoded request: `b"GET_LAST_MINUTE"`.
 /// Upon receiving this request, it finds the most recently created `.zzp1` data file,
-/// decompresses it, and sends the entire contents back to the client as a
-/// length-prefixed JSON array.
+/// decompresses it, and sends the entire contents back to the client using the
+/// centralized `write_records_batch` protocol helper.
 ///
 /// # Protocol
 /// - Client sends: `b"GET_LAST_MINUTE"`
 /// - Server responds:
-///   - 4 bytes: `u32` length of the JSON payload, big-endian.
-///   - N bytes: A JSON array of `RawDataRecord` structs.
+///   - A length-prefixed, bincode-serialized `Vec<RawDataRecord>`.
 pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
     info!("Handling query connection.");
 
@@ -33,31 +32,28 @@ pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
     }
 
     // 2. Find the most recent .zzp1 file
-    let latest_file_path = match find_latest_zzp1_file(crate::DATA_DIR)? {
-        Some(path) => path,
+    let records = match find_latest_zzp1_file(crate::DATA_DIR)? {
+        Some(path) => {
+            info!("Found latest file: {path:?}");
+            // 3. Read and decompress the data
+            let compressed_data = fs::read(&path)?;
+            let decompressed_records: Vec<RawDataRecord> =
+                zzping_lib::chunked_v1::decompress_chunked_v1(&compressed_data)?;
+            info!(
+                "Decompressed {} records from {:?}",
+                decompressed_records.len(),
+                path
+            );
+            decompressed_records
+        }
         None => {
             info!("No .zzp1 files found, sending empty response.");
-            stream.write_u32(0).await?;
-            return Ok(());
+            Vec::new()
         }
     };
-    info!("Found latest file: {latest_file_path:?}");
 
-    // 3. Read and decompress the data
-    let compressed_data = fs::read(&latest_file_path)?;
-    let records: Vec<RawDataRecord> =
-        zzping_lib::chunked_v1::decompress_chunked_v1(&compressed_data)?;
-    info!(
-        "Decompressed {} records from {:?}",
-        records.len(),
-        latest_file_path
-    );
-
-    // 4. Serialize and send the response
-    let json_response = serde_json::to_vec(&records)?;
-    stream.write_u32(json_response.len() as u32).await?;
-    stream.write_all(&json_response).await?;
-    stream.flush().await?;
+    // 4. Serialize and send the response using the centralized helper
+    write_records_batch(&mut stream, &records).await?;
 
     info!(
         "Successfully sent {} records to query client.",
