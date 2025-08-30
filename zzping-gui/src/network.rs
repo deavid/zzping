@@ -4,7 +4,7 @@ use log::{info, warn};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use zzping_common::RawDataRecord;
+use zzping_lib::protocol::RawDataRecord;
 
 const QUERY_ADDR: &str = "127.0.0.1:7879";
 const GET_LAST_MINUTE_CMD: &[u8] = b"GET_LAST_MINUTE";

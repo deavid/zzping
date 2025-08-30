@@ -5,7 +5,7 @@ use std::fs;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
-use zzping_common::RawDataRecord;
+use zzping_lib::protocol::RawDataRecord;
 
 pub async fn storage_task(mut rx: mpsc::Receiver<RawDataRecord>) {
     info!("Storage task started.");
@@ -46,7 +46,7 @@ async fn write_records_to_disk(records: &[RawDataRecord], data_dir: &str) -> Res
     let filename = format!("{}/{}.zzp1", data_dir, now.format("%Y%m%d-%H%M%S"));
 
     // Compress the data
-    let compressed_data = crate::storage::chunked_v1::compress_chunked_v1(records)?;
+    let compressed_data = zzping_lib::chunked_v1::compress_chunked_v1(records)?;
 
     // Write to the file
     fs::write(&filename, compressed_data)?;

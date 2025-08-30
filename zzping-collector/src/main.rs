@@ -64,7 +64,7 @@ mod tests {
     use bytes::BufMut;
     use byteorder::{BigEndian, ReadBytesExt};
     use std::io::{Cursor, Read};
-    use zzping_common::RawDataRecord;
+    use zzping_lib::protocol::RawDataRecord;
 
     #[test]
     fn test_record_serialization_and_deserialization() {

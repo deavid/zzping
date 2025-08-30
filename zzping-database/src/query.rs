@@ -3,7 +3,7 @@ use log::info;
 use std::fs;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
-use zzping_common::RawDataRecord;
+use zzping_lib::protocol::RawDataRecord;
 
 pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
     info!("Handling query connection.");
@@ -34,7 +34,7 @@ pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
     let compressed_data = fs::read(&latest_file_path)?;
 
     // 4. Decompress the data
-    let records: Vec<RawDataRecord> = crate::storage::chunked_v1::decompress_chunked_v1(&compressed_data)?;
+    let records: Vec<RawDataRecord> = zzping_lib::chunked_v1::decompress_chunked_v1(&compressed_data)?;
     info!("Decompressed {} records from {:?}", records.len(), latest_file_path);
 
     // 5. Serialize the Vec<RawDataRecord> to JSON

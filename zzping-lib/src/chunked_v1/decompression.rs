@@ -1,0 +1,329 @@
+use super::format::{
+    calculate_chunk_header_crc32, calculate_file_header_crc32, ChunkHeader, FileHeader,
+    IndexEntry, FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE,
+};
+use super::quantization::{Quantizer, PACKET_LOST_SYMBOL};
+use crate::protocol::RawDataRecord;
+use anyhow::{anyhow, Result};
+use byteorder::{BigEndian, ReadBytesExt};
+use constriction::stream::{
+    model::{DefaultNonContiguousCategoricalDecoderModel},
+    stack::DefaultAnsCoder, Decode,
+};
+use std::io::{Cursor, Read};
+use super::compression::build_model;
+
+fn build_model_for_decode(
+    stats: &super::format::AggregateEntry,
+    symbol_count: usize,
+) -> Result<DefaultNonContiguousCategoricalDecoderModel<u16>> {
+    let (symbols_with_freq, probabilities_f64) = build_model(stats, symbol_count)?;
+    DefaultNonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast(
+        symbols_with_freq,
+        &probabilities_f64,
+        None,
+    )
+    .map_err(|_| anyhow!("Failed to create categorical model"))
+}
+
+// TODO: Add comprehensive corruption resistance tests for this decompression function:
+// - Truncated files at every possible offset
+// - Invalid magic numbers, corrupted headers
+// - Malformed chunk data, corrupted indices
+// - Never panic policy: always return graceful errors
+// - Test cross-platform compatibility (endianness)
+// - Memory pressure scenarios with large files
+pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
+    if data.len() < HEADER_SIZE {
+        return Err(anyhow!("Data is smaller than header size"));
+    }
+
+    let mut cursor = Cursor::new(&data[..HEADER_SIZE]);
+    let file_header = FileHeader::read(&mut cursor)?;
+
+    if file_header.magic != FILE_MAGIC {
+        return Err(anyhow!("Invalid magic number"));
+    }
+    if file_header.format_version != FORMAT_VERSION {
+        return Err(anyhow!(
+            "Unsupported format version: {}",
+            file_header.format_version
+        ));
+    }
+
+    // Phase 2: File header CRC32 validation
+    let computed_crc32 = calculate_file_header_crc32(&file_header);
+    if computed_crc32 != file_header.header_crc32 {
+        return Err(anyhow!(
+            "File header CRC32 mismatch: expected 0x{:08x}, computed 0x{:08x}",
+            file_header.header_crc32,
+            computed_crc32
+        ));
+    }
+
+    let mut aggregate_table = Vec::with_capacity(file_header.aggregate_entry_count as usize);
+    for _ in 0..file_header.aggregate_entry_count {
+        aggregate_table.push(super::format::AggregateEntry::read(&mut cursor)?);
+    }
+
+    let mut index_table = Vec::with_capacity(file_header.index_entry_count as usize);
+    for _ in 0..file_header.index_entry_count {
+        index_table.push(IndexEntry::read(&mut cursor)?);
+    }
+
+    let quantizer = Quantizer::new();
+    let mut all_records = Vec::new();
+
+    for (chunk_index, index_entry) in index_table.iter().enumerate() {
+        let chunk_offset = index_entry.chunk_offset_bytes as usize;
+
+        // Calculate chunk end boundary (next chunk start or file end)
+        let chunk_end = if chunk_index + 1 < index_table.len() {
+            index_table[chunk_index + 1].chunk_offset_bytes as usize
+        } else {
+            data.len()
+        };
+
+        // Validate chunk offset is within bounds
+        if chunk_offset >= data.len() {
+            return Err(anyhow!(
+                "Chunk offset {} is beyond file size {}",
+                chunk_offset,
+                data.len()
+            ));
+        }
+
+        // Phase 4: Validate asterisk delimiter at chunk start
+        if chunk_offset == 0 || data[chunk_offset - 1] != b'*' {
+            return Err(anyhow!(
+                "Missing start asterisk delimiter for chunk {} at offset {}",
+                chunk_index,
+                chunk_offset
+            ));
+        }
+
+        let mut chunk_cursor = Cursor::new(&data[chunk_offset..]);
+        let chunk_header = ChunkHeader::read(&mut chunk_cursor)?;
+
+        // Phase 2: Chunk header CRC32 validation
+        let computed_chunk_crc32 = calculate_chunk_header_crc32(&chunk_header);
+        if computed_chunk_crc32 != chunk_header.chunk_crc32 {
+            return Err(anyhow!(
+                "Chunk {} header CRC32 mismatch: expected 0x{:08x}, computed 0x{:08x}",
+                chunk_index,
+                chunk_header.chunk_crc32,
+                computed_chunk_crc32
+            ));
+        }
+
+        let header_len = chunk_cursor.position() as usize;
+
+        let rtt_stream_start = chunk_offset + header_len;
+        let rtt_stream_end = rtt_stream_start + chunk_header.rtt_stream_len_bytes as usize;
+
+        // Validate RTT stream bounds against chunk boundary (Phase 1 validation)
+        if rtt_stream_end > chunk_end {
+            return Err(anyhow!(
+                "RTT stream extends beyond chunk boundary: {} > {} (chunk {} boundary)",
+                rtt_stream_end,
+                chunk_end,
+                chunk_index
+            ));
+        }
+
+        let rtt_data_u8 = &data[rtt_stream_start..rtt_stream_end];
+
+        let rtt_symbols = if chunk_header.rtt_stream_len_bytes > 0 {
+            let rtt_data_u32: Vec<u32> = rtt_data_u8
+                .chunks_exact(4)
+                .map(|b| u32::from_be_bytes(b.try_into().unwrap()))
+                .collect();
+
+            let rtt_model = build_model_for_decode(
+                &chunk_header.rtt_stats,
+                chunk_header.rtt_symbol_count as usize,
+            )?;
+            let mut decoder = DefaultAnsCoder::from_compressed(rtt_data_u32)
+                .map_err(|_| anyhow!("Invalid compressed data for RTT stream"))?;
+            let symbols = decoder
+                .decode_iid_symbols(chunk_header.rtt_symbol_count as usize, &rtt_model)
+                .collect::<Result<Vec<_>, _>>()?;
+
+            // Phase 3: Data integrity validation - verify symbol count matches header
+            if symbols.len() != chunk_header.rtt_symbol_count as usize {
+                return Err(anyhow!(
+                    "RTT symbol count mismatch in chunk {}: expected {}, decoded {}",
+                    chunk_index,
+                    chunk_header.rtt_symbol_count,
+                    symbols.len()
+                ));
+            }
+
+            symbols
+        } else {
+            vec![chunk_header.rtt_stats.p00_symbol; chunk_header.rtt_symbol_count as usize]
+        };
+
+        // Parse send times based on chunk format
+        // Calculate start time from minute boundary + offset
+        let chunk_start_time =
+            chunk_header.minute_boundary_unix_ns + chunk_header.first_ping_offset_ns;
+        let mut current_sent_nanos = chunk_start_time;
+        let mut send_time_data: Option<Vec<u16>> = None;
+
+        if chunk_header.flags.contains(super::format::ChunkFlags::IS_VARIABLE_RATE) {
+            // Parse new quantized variable rate data
+            let send_time_stream_start = rtt_stream_end;
+            let send_time_stream_end =
+                send_time_stream_start + chunk_header.send_time_stream_len_bytes as usize;
+
+            // Validate send time stream bounds against chunk boundary (Phase 1 validation)
+            if send_time_stream_end > chunk_end {
+                return Err(anyhow!(
+                    "Send time stream extends beyond chunk boundary: {} > {} (chunk {} boundary)",
+                    send_time_stream_end,
+                    chunk_end,
+                    chunk_index
+                ));
+            }
+
+            let mut time_cursor = Cursor::new(&data[send_time_stream_start..send_time_stream_end]);
+
+            // Read timing model
+
+            let timing_symbol_count = time_cursor.read_u32::<BigEndian>()? as usize;
+            let mut timing_symbols_vec = Vec::with_capacity(timing_symbol_count);
+            for _ in 0..timing_symbol_count {
+                timing_symbols_vec.push(time_cursor.read_u16::<BigEndian>()?);
+            }
+
+            let mut timing_frequencies = Vec::with_capacity(timing_symbol_count);
+            for _ in 0..timing_symbol_count {
+                timing_frequencies.push(time_cursor.read_u32::<BigEndian>()?);
+            }
+
+            // Convert frequencies to probabilities
+            let total_freq: u32 = timing_frequencies.iter().sum();
+            let timing_probabilities: Vec<f64> = timing_frequencies
+                .iter()
+                .map(|&f| f as f64 / total_freq as f64)
+                .collect();
+
+            // Read compressed timing data
+            let timing_data_len = time_cursor.read_u32::<BigEndian>()? as usize;
+            let mut timing_data_bytes = vec![0u8; timing_data_len];
+            time_cursor.read_exact(&mut timing_data_bytes)?;
+
+            // Convert bytes back to u32 words
+            let timing_data_u32: Vec<u32> = timing_data_bytes
+                .chunks_exact(4)
+                .map(|chunk| u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect();
+
+            // Decode timing symbols
+            let timing_model = DefaultNonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast(timing_symbols_vec, &timing_probabilities, None)
+                .map_err(|_| anyhow!("Failed to create timing decoder model"))?;
+            let mut timing_decoder = DefaultAnsCoder::from_compressed(timing_data_u32)
+                .map_err(|_| anyhow!("Failed to create timing decoder"))?;
+
+            let timing_symbols: Vec<u16> = timing_decoder
+                .decode_iid_symbols(chunk_header.send_time_symbol_count as usize, &timing_model)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| anyhow!("Failed to decode timing symbols"))?;
+
+            send_time_data = Some(timing_symbols);
+        }
+
+        // Track position in timing symbols array for variable rate decompression
+        let mut timing_symbol_position = 0usize;
+
+        for (i, &rtt_symbol) in rtt_symbols.iter().enumerate() {
+            let rtt_nanos = if rtt_symbol == PACKET_LOST_SYMBOL {
+                u64::MAX
+            } else {
+                quantizer.symbol_to_duration(rtt_symbol).as_nanos() as u64
+            };
+
+            if i > 0 {
+                if let Some(ref timing_symbols) = send_time_data {
+                    // New quantized variable rate: decode timing symbols
+                    let mut total_interval = 0u64;
+
+                    const QUANTUM_NS: u64 = 100_000; // 0.1ms quantum
+                    const JUMP_FORWARD_SYMBOL: u16 = 65535; // Jump forward 6.5535s
+                    const MAX_SYMBOL_NS: u64 = 6_553_500_000; // 6.5535s
+
+                    // Process timing symbols until we get the complete interval
+                    while timing_symbol_position < timing_symbols.len() {
+                        let timing_symbol = timing_symbols[timing_symbol_position];
+                        timing_symbol_position += 1;
+
+                        if timing_symbol == JUMP_FORWARD_SYMBOL {
+                            total_interval += MAX_SYMBOL_NS;
+                            // Continue to next symbol - this was a jump token
+                        } else {
+                            // This is the final interval symbol
+                            total_interval += timing_symbol as u64 * QUANTUM_NS;
+                            break;
+                        }
+                    }
+
+                    current_sent_nanos += total_interval;
+                } else {
+                    // Constant rate: use base interval from header
+                    current_sent_nanos += chunk_header.base_interval_ns;
+                }
+            }
+
+            all_records.push(RawDataRecord {
+                sent_nanos: current_sent_nanos,
+                rtt_nanos,
+            });
+        }
+
+        // Phase 4: Validate chunk data CRC32 and end asterisk delimiter
+        let chunk_data_end = rtt_stream_start
+            + chunk_header.rtt_stream_len_bytes as usize
+            + chunk_header.send_time_stream_len_bytes as usize;
+        let expected_crc32_start = chunk_data_end;
+        let expected_end_asterisk = expected_crc32_start + 4; // After 4-byte CRC32
+
+        if expected_end_asterisk >= chunk_end {
+            return Err(anyhow!(
+                "Chunk {} data extends beyond chunk boundary: {} >= {}",
+                chunk_index,
+                expected_end_asterisk,
+                chunk_end
+            ));
+        }
+
+        // Validate chunk data CRC32
+        let chunk_data = &data[chunk_offset..chunk_data_end];
+        let computed_chunk_crc32 = crc32fast::hash(chunk_data);
+        let stored_crc32 = u32::from_be_bytes(
+            data[expected_crc32_start..expected_crc32_start + 4]
+                .try_into()
+                .unwrap(),
+        );
+
+        if computed_chunk_crc32 != stored_crc32 {
+            return Err(anyhow!(
+                "Chunk {} data CRC32 mismatch: expected 0x{:08x}, computed 0x{:08x}",
+                chunk_index,
+                stored_crc32,
+                computed_chunk_crc32
+            ));
+        }
+
+        // Validate end asterisk delimiter
+        if data[expected_end_asterisk] != b'*' {
+            return Err(anyhow!(
+                "Missing end asterisk delimiter for chunk {} at offset {}",
+                chunk_index,
+                expected_end_asterisk
+            ));
+        }
+    }
+
+    Ok(all_records)
+}

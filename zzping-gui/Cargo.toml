@@ -8,7 +8,7 @@ repository.workspace = true
 description = "An egui-based GUI for viewing live and historical zzping data"
 
 [dependencies]
-zzping-common = { path = "../zzping-common" }
+zzping-lib = { path = "../zzping-lib" }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
 crossbeam-channel.workspace = true
 log.workspace = true

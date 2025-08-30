@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Collector service for zzping"
 
 [dependencies]
-zzping-common = { path = "../zzping-common" }
+zzping-lib = { path = "../zzping-lib" }
 anyhow.workspace = true
 bytes = "1"
 chrono = { workspace = true, features = ["serde"] }

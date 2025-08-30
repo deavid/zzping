@@ -2,7 +2,7 @@ use anyhow::Result;
 use chrono::Duration;
 use crossbeam_channel::{unbounded, Receiver};
 use eframe::egui;
-use zzping_common::RawDataRecord;
+use zzping_lib::protocol::RawDataRecord;
 
 mod data;
 mod network;

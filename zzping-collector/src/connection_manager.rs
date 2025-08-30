@@ -9,7 +9,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Semaphore};
 use tokio::time::Instant;
-use zzping_common::RawDataRecord;
+use zzping_lib::protocol::RawDataRecord;
 
 pub async fn handle_connection(mut stream: TcpStream, cli: Arc<crate::Cli>) -> Result<()> {
     let pinger_config = Config::default();
@@ -46,13 +46,8 @@ pub async fn handle_connection(mut stream: TcpStream, cli: Arc<crate::Cli>) -> R
                     rtt_nanos,
                 };
 
-                let json_data = serde_json::to_vec(&record)?;
-                let mut packet = Vec::with_capacity(4 + json_data.len());
-                packet.put_u32(json_data.len() as u32);
-                packet.extend_from_slice(&json_data);
-
-                if let Err(e) = stream.write_all(&packet).await {
-                    error!("Failed to write to stream: {e}. Disconnecting.");
+                if let Err(e) = zzping_lib::protocol::write_record(&mut stream, &record).await {
+                    error!("Failed to write record to stream: {e}. Disconnecting.");
                     return Err(e.into());
                 }
             }

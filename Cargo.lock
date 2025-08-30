@@ -4589,7 +4589,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "zzping-common",
+ "zzping-lib",
 ]
 
 [[package]]
@@ -4607,4 +4607,29 @@ dependencies = [
  "serde_json",
  "tokio",
  "zzping-common",
+]
+
+[[package]]
+name = "zzping-lib"
+version = "0.2.2-beta2"
+dependencies = [
+ "anyhow",
+ "bitflags 2.9.3",
+ "byteorder",
+ "bytes",
+ "chrono",
+ "clap",
+ "constriction",
+ "crc32fast",
+ "crossbeam-channel",
+ "eframe",
+ "egui",
+ "env_logger",
+ "log",
+ "rand",
+ "serde",
+ "serde_json",
+ "surge-ping",
+ "tempfile",
+ "tokio",
 ]

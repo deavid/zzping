@@ -2,11 +2,10 @@ use anyhow::Result;
 use log::{error, info};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use zzping_common::RawDataRecord;
+use zzping_lib::protocol::RawDataRecord;
 
 mod ingestion;
 mod query;
-mod storage;
 mod storage_engine;
 
 const INGESTION_ADDR: &str = "127.0.0.1:7878";
@@ -36,7 +35,7 @@ async fn main() -> Result<()> {
                 info!("Accepted ingestion connection from {addr}");
                 let tx_clone = tx.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = ingestion::handle_ingestion_connection(stream, tx_clone).await {
+                    if let Err(e) = ingestion::handle_ingestion_connection(stream, addr, tx_clone).await {
                         error!("Error handling ingestion connection from {addr}: {e}");
                     }
                 });
