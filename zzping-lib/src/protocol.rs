@@ -1,8 +1,24 @@
 //! Defines the network protocol and data structures for communication between zzping services.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+/// A command sent from the GUI to the database.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[repr(u16)]
+pub enum QueryCommand {
+    GetLastMinute = 0,
+}
+
+impl QueryCommand {
+    pub fn from_u16(value: u16) -> Option<Self> {
+        match value {
+            0 => Some(QueryCommand::GetLastMinute),
+            _ => None,
+        }
+    }
+}
 
 /// The fundamental data structure for a single ping measurement.
 ///
@@ -111,6 +127,29 @@ pub async fn read_records_batch<R: AsyncReadExt + Unpin>(
     Ok(Some(records))
 }
 
+/// Writes a `QueryCommand` to an async writer.
+pub async fn write_command<W: AsyncWriteExt + Unpin>(
+    stream: &mut W,
+    command: &QueryCommand,
+) -> Result<()> {
+    stream.write_u16(*command as u16).await?;
+    Ok(())
+}
+
+/// Reads a `QueryCommand` from an async reader with a 5-second timeout.
+pub async fn read_command<R: AsyncReadExt + Unpin>(stream: &mut R) -> Result<QueryCommand> {
+    let read_future = stream.read_u16();
+    let timeout_duration = std::time::Duration::from_secs(5);
+
+    match tokio::time::timeout(timeout_duration, read_future).await {
+        Ok(Ok(command_val)) => {
+            QueryCommand::from_u16(command_val).ok_or_else(|| anyhow!("Invalid command received"))
+        }
+        Ok(Err(e)) => Err(e.into()), // I/O error
+        Err(_) => Err(anyhow!("Timed out reading command from stream")), // Timeout error
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,5 +208,21 @@ mod tests {
 
         // 3. Assert they are the same
         assert_eq!(records, received_records);
+    }
+
+    #[tokio::test]
+    async fn test_command_protocol_roundtrip() {
+        let command = QueryCommand::GetLastMinute;
+
+        // 1. Write the command to a buffer
+        let mut buffer = Vec::new();
+        write_command(&mut buffer, &command).await.unwrap();
+
+        // 2. Read the command back from the buffer
+        let mut cursor = Cursor::new(buffer);
+        let received_command = read_command(&mut cursor).await.unwrap();
+
+        // 3. Assert they are the same
+        assert_eq!(command, received_command);
     }
 }

@@ -4,52 +4,44 @@ use anyhow::Result;
 use log::info;
 use std::fs;
 use std::path::PathBuf;
-use tokio::io::AsyncReadExt;
 use tokio::net::TcpStream;
-use zzping_lib::protocol::{write_records_batch, RawDataRecord};
+use zzping_lib::protocol::{read_command, write_records_batch, QueryCommand, RawDataRecord};
 
 /// Manages a single TCP connection from a `zzping-gui` instance.
 ///
-/// For the MVP, this function handles a single, hardcoded request: `b"GET_LAST_MINUTE"`.
-/// Upon receiving this request, it finds the most recently created `.zzp1` data file,
-/// decompresses it, and sends the entire contents back to the client using the
-/// centralized `write_records_batch` protocol helper.
+/// This function reads a `QueryCommand` from the client and handles it.
 ///
 /// # Protocol
-/// - Client sends: `b"GET_LAST_MINUTE"`
-/// - Server responds:
-///   - A length-prefixed, bincode-serialized `Vec<RawDataRecord>`.
+/// - Client sends: A `u16` representing a `QueryCommand`.
+/// - Server responds: A length-prefixed, bincode-serialized `Vec<RawDataRecord>`.
 pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
     info!("Handling query connection.");
 
-    // 1. Read the request
-    let mut request_buf = [0; 16]; // "GET_LAST_MINUTE" is 15 bytes
-    let n = stream.read(&mut request_buf).await?;
-    let request = &request_buf[..n];
+    // 1. Read the command from the client
+    let command = read_command(&mut stream).await?;
+    info!("Received command: {:?}", command);
 
-    if request != b"GET_LAST_MINUTE" {
-        return Err(anyhow::anyhow!("Invalid query request: {:?}", request));
-    }
-
-    // 2. Find the most recent .zzp1 file
-    let records = match find_latest_zzp1_file(crate::DATA_DIR)? {
-        Some(path) => {
-            info!("Found latest file: {path:?}");
-            // 3. Read and decompress the data
-            let compressed_data = fs::read(&path)?;
-            let decompressed_records: Vec<RawDataRecord> =
-                zzping_lib::chunked_v1::decompress_chunked_v1(&compressed_data)?;
-            info!(
-                "Decompressed {} records from {:?}",
-                decompressed_records.len(),
-                path
-            );
-            decompressed_records
-        }
-        None => {
-            info!("No .zzp1 files found, sending empty response.");
-            Vec::new()
-        }
+    // 2. Process the command
+    let records = match command {
+        QueryCommand::GetLastMinute => match find_latest_zzp1_file(crate::DATA_DIR)? {
+            Some(path) => {
+                info!("Found latest file: {path:?}");
+                // 3. Read and decompress the data
+                let compressed_data = fs::read(&path)?;
+                let decompressed_records: Vec<RawDataRecord> =
+                    zzping_lib::chunked_v1::decompress_chunked_v1(&compressed_data)?;
+                info!(
+                    "Decompressed {} records from {:?}",
+                    decompressed_records.len(),
+                    path
+                );
+                decompressed_records
+            }
+            None => {
+                info!("No .zzp1 files found, sending empty response.");
+                Vec::new()
+            }
+        },
     };
 
     // 4. Serialize and send the response using the centralized helper

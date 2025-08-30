@@ -4,12 +4,10 @@ use anyhow::Result;
 use crossbeam_channel::Sender;
 use log::{info, warn};
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
-use zzping_lib::protocol::{read_records_batch, RawDataRecord};
+use zzping_lib::protocol::{read_records_batch, write_command, QueryCommand, RawDataRecord};
 
 const QUERY_ADDR: &str = "127.0.0.1:7879";
-const GET_LAST_MINUTE_CMD: &[u8] = b"GET_LAST_MINUTE";
 
 /// The main loop for the network background task.
 ///
@@ -45,8 +43,8 @@ async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
     let mut stream = TcpStream::connect(QUERY_ADDR).await?;
     info!("Connected to query port at {QUERY_ADDR}");
 
-    stream.write_all(GET_LAST_MINUTE_CMD).await?;
-    info!("Sent GET_LAST_MINUTE command.");
+    write_command(&mut stream, &QueryCommand::GetLastMinute).await?;
+    info!("Sent GetLastMinute command.");
 
     if let Some(records) = read_records_batch(&mut stream).await? {
         info!("Received {} records from database.", records.len());
