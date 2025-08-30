@@ -1,5 +1,5 @@
 use anyhow::Result;
-use chrono::{DateTime, Duration};
+use chrono::Duration;
 use crossbeam_channel::{unbounded, Receiver};
 use eframe::egui;
 use zzping_common::RawDataRecord;
@@ -7,6 +7,7 @@ use zzping_common::RawDataRecord;
 mod data;
 mod network;
 mod plot;
+mod data_processing;
 
 struct ZzpingViewApp {
     points: Vec<data::DataPoint>,
@@ -26,26 +27,8 @@ impl ZzpingViewApp {
     }
 
     fn update_data(&mut self) {
-        if let Ok(mut new_records) = self.data_rx.try_recv() {
-            if !new_records.is_empty() {
-                // Sort records by timestamp, as the database doesn't guarantee order
-                new_records.sort_by_key(|r| r.sent_nanos);
-
-                self.points = new_records
-                    .into_iter()
-                    .map(|rec| data::DataPoint {
-                        time: DateTime::from_timestamp_nanos(rec.sent_nanos as i64),
-                        rtt: if rec.rtt_nanos == u64::MAX {
-                            None
-                        } else {
-                            Some(Duration::nanoseconds(rec.rtt_nanos as i64))
-                        },
-                    })
-                    .collect();
-            } else {
-                // If we receive an empty vec, clear our points
-                self.points.clear();
-            }
+        if let Ok(new_records) = self.data_rx.try_recv() {
+            self.points = data_processing::records_to_points(new_records);
         }
     }
 }

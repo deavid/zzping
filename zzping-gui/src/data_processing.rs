@@ -10,7 +10,7 @@ pub fn records_to_points(records: Vec<RawDataRecord>) -> Vec<DataPoint> {
     let mut sorted_records = records;
     sorted_records.sort_by_key(|r| r.sent_nanos);
 
-    let mut points: Vec<DataPoint> = sorted_records
+    let points: Vec<DataPoint> = sorted_records
         .into_iter()
         .map(|rec| DataPoint {
             time: DateTime::from_timestamp_nanos(rec.sent_nanos as i64),
