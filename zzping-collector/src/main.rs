@@ -11,6 +11,7 @@
 //! 4. Once connected, it hands off the stream to the `connection_manager` to handle
 //!    the pinging and data transmission for the life of the connection.
 
+use crate::ping_surge_client::PingSurgeClient;
 use anyhow::Result;
 use clap::Parser;
 use log::{error, info};
@@ -20,7 +21,11 @@ use std::time::Duration;
 use tokio::net::TcpStream;
 
 mod connection_manager;
-mod pinger;
+mod ping_client;
+mod ping_surge_client;
+
+#[cfg(test)]
+mod ping_mock_client;
 
 /// A high-frequency ICMP pinger that sends results to a zzping-database server.
 #[derive(Parser, Debug)]
@@ -63,6 +68,8 @@ async fn main() -> Result<()> {
     info!("Database address: {}", cli.database_addr);
     info!("Max in-flight: {}", cli.max_in_flight);
 
+    let ping_client = Arc::new(PingSurgeClient::new(cli.target)?);
+
     // The main loop of the collector is designed for resilience. It will continuously
     // try to connect to the database, and if the connection is ever lost, it will
     // simply re-enter this loop and try to connect again.
@@ -73,7 +80,10 @@ async fn main() -> Result<()> {
                 info!("Successfully connected to database.");
                 // Once connected, hand off to the connection manager, which will run
                 // until the connection is lost.
-                if let Err(e) = connection_manager::handle_connection(stream, cli.clone()).await {
+                if let Err(e) =
+                    connection_manager::handle_connection(stream, Arc::clone(&ping_client), cli.clone())
+                        .await
+                {
                     error!("Error during connection handling: {e}. Reconnecting...");
                 }
             }

@@ -4551,6 +4551,7 @@ name = "zzping-collector"
 version = "0.2.2-beta2"
 dependencies = [
  "anyhow",
+ "async-trait",
  "byteorder",
  "bytes",
  "chrono",
