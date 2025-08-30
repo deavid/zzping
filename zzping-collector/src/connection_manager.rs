@@ -71,7 +71,7 @@ where
 
                 if let Err(e) = write_record(&mut stream, &record).await {
                     error!("Failed to write record to stream: {e}. Disconnecting.");
-                    return Err(e.into());
+                    return Err(e);
                 }
             }
             else => {

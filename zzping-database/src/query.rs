@@ -33,7 +33,7 @@ pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
     }
 
     // 2. Find the most recent .zzp1 file
-    let latest_file_path = match find_latest_zzp1_file("data")? {
+    let latest_file_path = match find_latest_zzp1_file(crate::DATA_DIR)? {
         Some(path) => path,
         None => {
             info!("No .zzp1 files found, sending empty response.");
@@ -85,4 +85,47 @@ fn find_latest_zzp1_file(dir: &str) -> Result<Option<PathBuf>> {
     });
 
     Ok(latest)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::thread::sleep;
+    use std::time::Duration;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_find_latest_zzp1_file() {
+        // 1. Setup a temporary directory
+        let temp_dir = tempdir().unwrap();
+        let p = temp_dir.path();
+
+        // 2. Create some dummy files with different timestamps
+        let f1_path = p.join("f1.zzp1");
+        fs::write(&f1_path, "f1").unwrap();
+        sleep(Duration::from_millis(10)); // Ensure modification times are distinct
+
+        let f2_path = p.join("f2.zzp1");
+        fs::write(&f2_path, "f2").unwrap();
+        sleep(Duration::from_millis(10));
+
+        let f3_path = p.join("f3.txt"); // Not a .zzp1 file
+        fs::write(&f3_path, "f3").unwrap();
+        sleep(Duration::from_millis(10));
+
+        let f4_path = p.join("f4.zzp1");
+        fs::write(&f4_path, "f4").unwrap();
+
+        // 3. Call the function and assert it finds the latest .zzp1 file
+        let latest = find_latest_zzp1_file(p.to_str().unwrap()).unwrap();
+        assert_eq!(latest, Some(f4_path));
+    }
+
+    #[test]
+    fn test_find_latest_in_empty_dir() {
+        let temp_dir = tempdir().unwrap();
+        let p = temp_dir.path();
+        let latest = find_latest_zzp1_file(p.to_str().unwrap()).unwrap();
+        assert!(latest.is_none());
+    }
 }

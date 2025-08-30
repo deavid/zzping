@@ -3,7 +3,6 @@
 use anyhow::Result;
 use log::{debug, error, info};
 use std::net::SocketAddr;
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use zzping_lib::protocol::{read_record, RawDataRecord};
 
@@ -21,11 +20,14 @@ use zzping_lib::protocol::{read_record, RawDataRecord};
 /// * `stream` - The TCP stream connected to the collector.
 /// * `addr` - The socket address of the connected collector, for logging purposes.
 /// * `tx` - The sender part of the MPSC channel to the storage task.
-pub async fn handle_ingestion_connection(
-    mut stream: TcpStream,
+pub async fn handle_ingestion_connection<R>(
+    mut stream: R,
     addr: SocketAddr,
     tx: mpsc::Sender<RawDataRecord>,
-) -> Result<()> {
+) -> Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin + Send,
+{
     info!("Handling ingestion connection from {addr}");
     loop {
         let record = match read_record(&mut stream).await? {
@@ -46,4 +48,37 @@ pub async fn handle_ingestion_connection(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+    use tokio::sync::mpsc;
+
+    #[tokio::test]
+    async fn test_handle_ingestion_connection() {
+        // 1. Create a mock record and serialize it with the protocol format
+        let record = RawDataRecord {
+            sent_nanos: 1,
+            rtt_nanos: 2,
+        };
+        let mut buffer = Vec::new();
+        zzping_lib::protocol::write_record(&mut buffer, &record)
+            .await
+            .unwrap();
+        let mut cursor = Cursor::new(buffer);
+
+        // 2. Set up an MPSC channel to receive the record
+        let (tx, mut rx) = mpsc::channel(1);
+
+        // 3. Call the handler with the mock stream and channel
+        let addr = "127.0.0.1:12345".parse().unwrap();
+        let result = handle_ingestion_connection(&mut cursor, addr, tx).await;
+        assert!(result.is_ok());
+
+        // 4. Assert that the record was received on the channel
+        let received = rx.recv().await.unwrap();
+        assert_eq!(record, received);
+    }
 }

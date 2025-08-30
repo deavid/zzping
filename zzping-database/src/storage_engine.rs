@@ -45,7 +45,7 @@ pub async fn storage_task(mut rx: mpsc::Receiver<RawDataRecord>) {
                 // Atomically swap the buffer with a new empty one.
                 let records_to_write = std::mem::take(&mut buffer);
 
-                match write_records_to_disk(&records_to_write, "data").await {
+                match write_records_to_disk(&records_to_write, crate::DATA_DIR).await {
                     Ok(path) => info!("Successfully wrote {} records to {}", records_to_write.len(), path),
                     Err(e) => error!("Failed to write records to disk: {e}"),
                 }

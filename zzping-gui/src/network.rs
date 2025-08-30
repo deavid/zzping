@@ -29,7 +29,7 @@ pub async fn fetch_data_loop(tx: Sender<Vec<RawDataRecord>>) {
                 tokio::time::sleep(Duration::from_secs(1)).await;
             }
             Err(e) => {
-                warn!("Failed to fetch data: {}. Retrying in 5 seconds.", e);
+                warn!("Failed to fetch data: {e}. Retrying in 5 seconds.");
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
         }
@@ -43,7 +43,7 @@ pub async fn fetch_data_loop(tx: Sender<Vec<RawDataRecord>>) {
 /// resulting `Vec<RawDataRecord>` over the channel to the UI thread.
 async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
     let mut stream = TcpStream::connect(QUERY_ADDR).await?;
-    info!("Connected to query port at {}", QUERY_ADDR);
+    info!("Connected to query port at {QUERY_ADDR}");
 
     stream.write_all(GET_LAST_MINUTE_CMD).await?;
     info!("Sent GET_LAST_MINUTE command.");
@@ -58,7 +58,7 @@ async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
 
     let mut buffer = vec![0; len as usize];
     stream.read_exact(&mut buffer).await?;
-    info!("Received {} bytes from database.", len);
+    info!("Received {len} bytes from database.");
 
     let records: Vec<RawDataRecord> = serde_json::from_slice(&buffer)?;
 

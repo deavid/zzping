@@ -22,6 +22,7 @@ mod storage_engine;
 
 const INGESTION_ADDR: &str = "127.0.0.1:7878";
 const QUERY_ADDR: &str = "127.0.0.1:7879";
+pub const DATA_DIR: &str = "data";
 
 /// The main function for the database service.
 ///
