@@ -8,15 +8,13 @@ repository.workspace = true
 description = "An egui-based GUI for viewing live and historical zzping data"
 
 [dependencies]
+# NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
+# ...   and instead use "cratename.workspace = true" to refer to it.
 zzping-lib = { path = "../zzping-lib" }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
 crossbeam-channel.workspace = true
 log.workspace = true
-serde_json = "1.0"
-
-# NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
-# ...   and instead use "cratename.workspace = true" to refer to it.
-
+serde_json.workspace = true
 anyhow.workspace = true
 byteorder.workspace = true
 chrono.workspace = true

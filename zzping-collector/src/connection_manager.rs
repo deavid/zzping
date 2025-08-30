@@ -1,17 +1,40 @@
+//! Manages the state for a single, active connection to the `zzping-database`.
+
 use crate::pinger::ping_task;
 use anyhow::Result;
-use bytes::BufMut;
 use log::{debug, error};
 use std::sync::Arc;
 use std::time::Duration;
 use surge_ping::{Client, Config, PingIdentifier};
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Semaphore};
 use tokio::time::Instant;
-use zzping_lib::protocol::RawDataRecord;
+use zzping_lib::protocol::{write_record, RawDataRecord};
 
-pub async fn handle_connection(mut stream: TcpStream, cli: Arc<crate::Cli>) -> Result<()> {
+/// Manages the lifecycle of a single connection to the database.
+///
+/// This function contains the main loop for a connected session. It is responsible for:
+/// 1. Setting up the `surge-ping` client.
+/// 2. Spawning `ping_task`s at the rate specified by the CLI arguments.
+/// 3. Receiving `PingResult`s from the ping tasks.
+/// 4. Converting results into `RawDataRecord`s.
+/// 5. Serializing records and sending them over the TCP stream to the database.
+///
+/// If any error occurs while writing to the TCP stream, this function will return,
+/// causing the main loop in `main.rs` to attempt a reconnection.
+///
+/// # Arguments
+/// * `stream` - The active TCP stream to the `zzping-database`.
+/// * `cli` - The parsed command-line arguments.
+pub async fn handle_connection<W>(mut stream: W, cli: Arc<crate::Cli>) -> Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin + Send,
+{
+    // Not unit tested: This function is the main integration point for the collector's
+    // logic. A unit test would require extensive mocking of the `surge-ping` client
+    // and the `TcpStream`. The core protocol logic is tested in `zzping-lib`, and
+    // the individual components are kept simple. A full integration test is the
+    // most effective way to validate this function's behavior.
+
     let pinger_config = Config::default();
     let client = Client::new(&pinger_config)?;
     let pinger_ident = PingIdentifier(rand::random());
@@ -46,13 +69,13 @@ pub async fn handle_connection(mut stream: TcpStream, cli: Arc<crate::Cli>) -> R
                     rtt_nanos,
                 };
 
-                if let Err(e) = zzping_lib::protocol::write_record(&mut stream, &record).await {
+                if let Err(e) = write_record(&mut stream, &record).await {
                     error!("Failed to write record to stream: {e}. Disconnecting.");
                     return Err(e.into());
                 }
             }
             else => {
-                // Channel closed, which means something went wrong.
+                // Channel closed, which means something went wrong (e.g., all sender tasks panicked).
                 break;
             }
         }

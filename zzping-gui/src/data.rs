@@ -1,10 +1,17 @@
+//! Defines the core data structures used for plotting in the GUI.
+
 use chrono::{DateTime, Duration, Utc};
 
-/// A single ping data point with proper type safety for RTT values.
+/// A single, processed data point ready for visualization.
+///
+/// This struct is the primary input for the plot widget. It uses strongly-typed
+/// `chrono` values for time and RTT to ensure correctness.
 #[derive(Debug, Clone, Copy)]
 pub struct DataPoint {
-    /// The timestamp when this ping was sent
+    /// The absolute timestamp when this ping was sent.
     pub time: DateTime<Utc>,
-    /// Round-trip time, or None if the packet was lost
+    /// The round-trip time for this ping.
+    ///
+    /// This is `None` if the packet was lost.
     pub rtt: Option<Duration>,
 }

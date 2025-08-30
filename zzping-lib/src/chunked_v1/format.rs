@@ -1,28 +1,36 @@
-use anyhow::{Result, anyhow};
+//! Defines the raw data structures and constants for the `chunked_v1` file format.
+//!
+//! This module contains the low-level building blocks of the file format, such as
+//! file headers, chunk headers, and index entries. The structures are designed for
+//! direct serialization to and from disk. The primary design goal is compactness
+//! and efficiency for append-only writing.
+
+use anyhow::{anyhow, Result};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};
 
-// --- Validation Functions (Phase 2) ---
+// --- Validation Functions ---
 
-/// Calculate CRC32 for file header excluding the CRC32 field itself
+/// Calculates the CRC32 checksum for the file header.
+///
+/// The checksum is calculated over all fields of the `FileHeader` except for the
+/// `header_crc32` field itself. This allows for verification of header integrity.
 pub(super) fn calculate_file_header_crc32(header: &FileHeader) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
-
-    // Hash all fields except header_crc32
     hasher.update(&header.magic.to_be_bytes());
     hasher.update(&header.format_version.to_be_bytes());
     hasher.update(&header.start_time_unix_ns.to_be_bytes());
     hasher.update(&header.aggregate_entry_count.to_be_bytes());
     hasher.update(&header.index_entry_count.to_be_bytes());
-
     hasher.finalize()
 }
 
-/// Calculate CRC32 for chunk header excluding the CRC32 field itself
+/// Calculates the CRC32 checksum for a chunk header.
+///
+/// The checksum includes all fields of the `ChunkHeader` except for `chunk_crc32`.
+/// This is used to ensure that chunk metadata has not been corrupted.
 pub(super) fn calculate_chunk_header_crc32(header: &ChunkHeader) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
-
-    // Hash all fields except chunk_crc32
     hasher.update(&header.minute_boundary_unix_ns.to_be_bytes());
     hasher.update(&header.first_ping_offset_ns.to_be_bytes());
     hasher.update(&header.rtt_symbol_count.to_be_bytes());
@@ -32,100 +40,92 @@ pub(super) fn calculate_chunk_header_crc32(header: &ChunkHeader) -> u32 {
     hasher.update(&[header.flags.bits()]);
     hasher.update(&header.base_interval_ns.to_be_bytes());
 
-    // Hash rtt_stats
     let mut stats_buf = Vec::new();
     header.rtt_stats.write(&mut stats_buf).unwrap();
     hasher.update(&stats_buf);
 
-    // Hash send_time_stats if present
     if let Some(ref stats) = header.send_time_stats {
         let mut stats_buf = Vec::new();
         stats.write(&mut stats_buf).unwrap();
         hasher.update(&stats_buf);
     }
-
     hasher.finalize()
 }
 
+// --- File Format Constants and Structs ---
 
-/// # IMPORTANT: Avoiding Hardcoded Size Bugs
-///
-/// This module was previously affected by hardcoded size values in tests that became
-/// incorrect when CRC32 fields were added. The FileHeader size changed from 26 to 30 bytes,
-/// but tests were hardcoded to use 26, causing them to read from wrong offsets.
-///
-/// **SOLUTION**: All struct sizes are now calculated using `serialized_size()` methods
-/// and verified at compile-time with const assertions. Tests use calculated offsets
-/// via `file_header.index_entries_offset()` instead of hardcoded values.
-///
-/// **PREVENTION**:
-/// - Use `FileHeader::serialized_size()` instead of hardcoding sizes
-/// - Use `file_header.index_entries_offset()` for calculated offsets
-/// - Compile-time assertions prevent size miscalculations
-/// - Runtime tests verify calculations match actual serialization
+/// The magic number used to identify a `chunked_v1` file ("zzPCV1  ").
 pub const FILE_MAGIC: u64 = 0x5A5A504356312020;
+/// The version number of the `chunked_v1` format.
 pub const FORMAT_VERSION: u16 = 1;
+/// The fixed size of the header section in bytes (64 KiB).
+/// This space is reserved for the `FileHeader` and its associated tables.
 pub const HEADER_SIZE: usize = 65536;
 
-// Compile-time verification that our header size calculations are sane
+// Compile-time verification that our header size calculations are sane.
 const _: () = {
-    // Ensure FileHeader fits within reasonable bounds (should be around 30 bytes)
-    assert!(FileHeader::serialized_size() >= 26); // Minimum expected size
-    assert!(FileHeader::serialized_size() <= 100); // Maximum reasonable size
-
-    // Ensure AggregateEntry size is reasonable (should be around 26 bytes)
+    assert!(FileHeader::serialized_size() >= 26);
+    assert!(FileHeader::serialized_size() <= 100);
     assert!(AggregateEntry::serialized_size() >= 20);
     assert!(AggregateEntry::serialized_size() <= 50);
-
-    // Ensure IndexEntry is exactly 8 bytes as expected
     assert!(IndexEntry::serialized_size() == 8);
 };
 
-// FORMAT DESIGN LIMITATION: This format is designed for 24-hour data periods.
-// The 64KiB header can accommodate approximately 1440 chunks (one per minute for 24 hours).
-// Attempting to compress data spanning multiple days will fail due to header overflow.
-// Each index entry requires 8 bytes, so max chunks ≈ (65536 - overhead) / 8 ≈ 8000 theoretical,
-// but in practice ~1440 chunks (24 hours) is the intended design limit.
-pub const MAX_RECOMMENDED_CHUNKS: usize = 1440; // 24 hours * 60 minutes
+/// The recommended maximum number of chunks in a single file.
+///
+/// This format is designed for 24-hour data collection periods.
+/// The 64KiB header can accommodate approximately 1440 chunks (one per minute for 24 hours).
+/// Attempting to compress data spanning multiple days may fail due to header overflow.
+pub const MAX_RECOMMENDED_CHUNKS: usize = 1440;
 
+/// The main header for a `.zzp1` file.
+///
+/// This struct is the first thing read from the file and contains metadata about
+/// the entire file's contents, including versioning and pointers to data tables.
 pub struct FileHeader {
+    /// Must be `FILE_MAGIC`.
     pub magic: u64,
+    /// Must be `FORMAT_VERSION`.
     pub format_version: u16,
+    /// The absolute start time of the first record in the file, as a UNIX timestamp in nanoseconds.
     pub start_time_unix_ns: u64,
+    /// The number of `AggregateEntry` records in the header.
     pub aggregate_entry_count: u32,
+    /// The number of `IndexEntry` records in the header.
     pub index_entry_count: u32,
-    pub header_crc32: u32, // Phase 2: CRC32 of entire file header (excluding this field)
+    /// A CRC32 checksum of the preceding fields in this struct.
+    pub header_crc32: u32,
 }
 
 impl FileHeader {
-    /// Calculate the exact size of a FileHeader when serialized
+    /// Calculates the exact size of a `FileHeader` when serialized.
     pub const fn serialized_size() -> usize {
-        8 + 2 + 8 + 4 + 4 + 4 // magic + format_version + start_time + aggregate_count + index_count + crc32
+        8 + 2 + 8 + 4 + 4 + 4
     }
 
-    /// Calculate the offset where aggregate entries start in the header
+    /// Calculates the offset where aggregate entries start in the header.
     pub const fn aggregate_entries_offset() -> usize {
         Self::serialized_size()
     }
 
-    /// Calculate the offset where index entries start in the header
+    /// Calculates the offset where index entries start in the header.
     pub fn index_entries_offset(&self) -> usize {
         Self::aggregate_entries_offset()
             + (self.aggregate_entry_count as usize * AggregateEntry::serialized_size())
     }
 
-    /// Calculate the total used header space for this file
+    /// Calculates the total used header space for this file.
     pub fn total_header_used(&self) -> usize {
         self.index_entries_offset()
             + (self.index_entry_count as usize * IndexEntry::serialized_size())
     }
 
-    /// Validate that the header will fit within the allocated header space
+    /// Validates that the header will fit within the allocated `HEADER_SIZE`.
     pub fn validate_header_fits(&self) -> Result<()> {
         let used_space = self.total_header_used();
         if used_space > HEADER_SIZE {
             return Err(anyhow!(
-                "Header space exceeded: {} bytes used, {} bytes available. Reduce aggregate/index entries.",
+                "Header space exceeded: {} bytes used, {} bytes available.",
                 used_space,
                 HEADER_SIZE
             ));
@@ -133,6 +133,7 @@ impl FileHeader {
         Ok(())
     }
 
+    /// Writes the header to a writer in big-endian format.
     pub fn write(&self, mut w: impl Write) -> std::io::Result<()> {
         w.write_u64::<BigEndian>(self.magic)?;
         w.write_u16::<BigEndian>(self.format_version)?;
@@ -143,48 +144,58 @@ impl FileHeader {
         Ok(())
     }
 
+    /// Reads a header from a reader in big-endian format.
     pub fn read(mut r: impl Read) -> std::io::Result<Self> {
-        let magic = r.read_u64::<BigEndian>()?;
-        let format_version = r.read_u16::<BigEndian>()?;
-        let start_time_unix_ns = r.read_u64::<BigEndian>()?;
-        let aggregate_entry_count = r.read_u32::<BigEndian>()?;
-        let index_entry_count = r.read_u32::<BigEndian>()?;
-        let header_crc32 = r.read_u32::<BigEndian>()?;
         Ok(Self {
-            magic,
-            format_version,
-            start_time_unix_ns,
-            aggregate_entry_count,
-            index_entry_count,
-            header_crc32,
+            magic: r.read_u64::<BigEndian>()?,
+            format_version: r.read_u16::<BigEndian>()?,
+            start_time_unix_ns: r.read_u64::<BigEndian>()?,
+            aggregate_entry_count: r.read_u32::<BigEndian>()?,
+            index_entry_count: r.read_u32::<BigEndian>()?,
+            header_crc32: r.read_u32::<BigEndian>()?,
         })
     }
 }
 
+/// A pre-calculated summary of one minute of data.
+///
+/// These entries are stored in the file header to provide a fast overview of the
+/// data without needing to decompress the chunks.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AggregateEntry {
-    // Percentile symbols for RTT distribution (u16 provides full quantizer symbol range)
+    /// p00 (minimum) RTT as a quantized symbol.
     pub p00_symbol: u16,
+    /// p10 RTT as a quantized symbol.
     pub p10_symbol: u16,
+    /// p20 RTT as a quantized symbol.
     pub p20_symbol: u16,
+    /// p30 RTT as a quantized symbol.
     pub p30_symbol: u16,
+    /// p40 RTT as a quantized symbol.
     pub p40_symbol: u16,
+    /// p50 (median) RTT as a quantized symbol.
     pub p50_symbol: u16,
+    /// p60 RTT as a quantized symbol.
     pub p60_symbol: u16,
+    /// p70 RTT as a quantized symbol.
     pub p70_symbol: u16,
+    /// p80 RTT as a quantized symbol.
     pub p80_symbol: u16,
+    /// p90 RTT as a quantized symbol.
     pub p90_symbol: u16,
+    /// p100 (maximum) RTT as a quantized symbol.
     pub p100_symbol: u16,
-    // Exact count of lost packets for precise frequency estimation in compression model
-    pub lost_packet_count: u32, // Only relevant for RTT stats.
+    /// The exact count of lost packets in this minute.
+    pub lost_packet_count: u32,
 }
 
 impl AggregateEntry {
-    /// Calculate the exact size of an AggregateEntry when serialized
+    /// Calculates the exact size of an `AggregateEntry` when serialized.
     pub const fn serialized_size() -> usize {
-        11 * 2 + 4 // 11 u16 percentile symbols + 1 u32 lost_packet_count
+        11 * 2 + 4
     }
 
+    /// Writes the entry to a writer in big-endian format.
     pub fn write(&self, mut w: impl Write) -> std::io::Result<()> {
         w.write_u16::<BigEndian>(self.p00_symbol)?;
         w.write_u16::<BigEndian>(self.p10_symbol)?;
@@ -201,6 +212,7 @@ impl AggregateEntry {
         Ok(())
     }
 
+    /// Reads an entry from a reader in big-endian format.
     pub fn read(mut r: impl Read) -> std::io::Result<Self> {
         Ok(Self {
             p00_symbol: r.read_u16::<BigEndian>()?,
@@ -219,22 +231,29 @@ impl AggregateEntry {
     }
 }
 
+/// An entry in the file's index table.
+///
+/// The index table provides fast random access to any one-minute chunk of data
+/// in the file without needing to scan from the beginning.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct IndexEntry {
+    /// The byte offset from the beginning of the file where the chunk's data begins.
     pub chunk_offset_bytes: u64,
 }
 
 impl IndexEntry {
-    /// Calculate the exact size of an IndexEntry when serialized
+    /// Calculates the exact size of an `IndexEntry` when serialized.
     pub const fn serialized_size() -> usize {
-        8 // chunk_offset_bytes: u64
+        8
     }
 
+    /// Writes the entry to a writer in big-endian format.
     pub fn write(&self, mut w: impl Write) -> std::io::Result<()> {
         w.write_u64::<BigEndian>(self.chunk_offset_bytes)?;
         Ok(())
     }
 
+    /// Reads an entry from a reader in big-endian format.
     pub fn read(mut r: impl Read) -> std::io::Result<Self> {
         Ok(Self {
             chunk_offset_bytes: r.read_u64::<BigEndian>()?,
@@ -243,28 +262,45 @@ impl IndexEntry {
 }
 
 bitflags::bitflags! {
+    /// Flags used in the `ChunkHeader` to indicate the properties of the chunk's data.
     #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
     pub struct ChunkFlags: u8 {
+        /// If set, indicates that the ping send times were not constant and are
+        /// encoded separately in the chunk payload.
         const IS_VARIABLE_RATE = 0b00000001;
+        /// Reserved for future use.
         const RAW_DELTAS = 0b00000010;
     }
 }
 
+/// The header for a single one-minute chunk of compressed data.
 pub struct ChunkHeader {
-    pub minute_boundary_unix_ns: u64, // Unix timestamp rounded to minute boundary
-    pub first_ping_offset_ns: u64, // Nanoseconds from minute boundary to first ping (0-59999999999)
+    /// The UNIX timestamp for the start of the minute this chunk represents, in nanoseconds.
+    pub minute_boundary_unix_ns: u64,
+    /// The offset of the first ping in this chunk, relative to the `minute_boundary_unix_ns`.
+    pub first_ping_offset_ns: u64,
+    /// The total number of RTT symbols in the RTT data stream.
     pub rtt_symbol_count: u32,
+    /// The total number of symbols in the send-time data stream (0 for constant rate).
     pub send_time_symbol_count: u32,
+    /// The length of the compressed RTT data stream in bytes.
     pub rtt_stream_len_bytes: u32,
+    /// The length of the compressed send-time data stream in bytes.
     pub send_time_stream_len_bytes: u32,
+    /// Flags describing the chunk's data. See `ChunkFlags`.
     pub flags: ChunkFlags,
-    pub base_interval_ns: u64, // Base interval in nanoseconds (exact integer)
+    /// For constant-rate chunks, the base interval between pings in nanoseconds.
+    pub base_interval_ns: u64,
+    /// An aggregate summary of the RTT data for this chunk.
     pub rtt_stats: AggregateEntry,
+    /// An optional aggregate summary for send-time deltas, if they are variable.
     pub send_time_stats: Option<AggregateEntry>,
-    pub chunk_crc32: u32, // Phase 2: CRC32 of chunk header (excluding this field)
+    /// A CRC32 checksum of the preceding fields in this struct.
+    pub chunk_crc32: u32,
 }
 
 impl ChunkHeader {
+    /// Writes the header to a writer in big-endian format.
     pub fn write(&self, mut w: impl Write) -> Result<(), std::io::Error> {
         w.write_u64::<BigEndian>(self.minute_boundary_unix_ns)?;
         w.write_u64::<BigEndian>(self.first_ping_offset_ns)?;
@@ -282,6 +318,7 @@ impl ChunkHeader {
         Ok(())
     }
 
+    /// Reads a header from a reader in big-endian format.
     pub fn read(mut r: impl Read) -> Result<Self, std::io::Error> {
         let minute_boundary_unix_ns = r.read_u64::<BigEndian>()?;
         let first_ping_offset_ns = r.read_u64::<BigEndian>()?;
@@ -293,9 +330,7 @@ impl ChunkHeader {
         let base_interval_ns = r.read_u64::<BigEndian>()?;
         let rtt_stats = AggregateEntry::read(&mut r)?;
 
-        let send_time_stats = if flags.contains(ChunkFlags::IS_VARIABLE_RATE)
-            && !flags.contains(ChunkFlags::RAW_DELTAS)
-        {
+        let send_time_stats = if flags.contains(ChunkFlags::IS_VARIABLE_RATE) {
             Some(AggregateEntry::read(&mut r)?)
         } else {
             None

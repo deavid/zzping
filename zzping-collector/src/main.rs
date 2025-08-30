@@ -1,3 +1,16 @@
+//! The main entry point for the `zzping-collector` service.
+//!
+//! This service is responsible for performing high-frequency ICMP pings against
+//! a specified target and sending the results to a `zzping-database` instance
+//! for storage and analysis.
+//!
+//! # Main Logic
+//! 1. Parses command-line arguments to get the target IP, ping rate, and database address.
+//! 2. Enters an infinite loop to maintain a persistent connection to the database.
+//! 3. Inside the loop, it attempts to connect. If it fails, it waits 5 seconds and retries.
+//! 4. Once connected, it hands off the stream to the `connection_manager` to handle
+//!    the pinging and data transmission for the life of the connection.
+
 use anyhow::Result;
 use clap::Parser;
 use log::{error, info};
@@ -13,23 +26,31 @@ mod pinger;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
-    /// The IP address to ping
+    /// The IP address to ping.
     #[arg(long)]
-    target: IpAddr,
+    pub target: IpAddr,
 
-    /// The number of pings to send per second
+    /// The number of pings to send per second.
     #[arg(long)]
-    rate: u64,
+    pub rate: u64,
 
-    /// The address of the zzping-database server
+    /// The address of the zzping-database server.
     #[arg(long, default_value = "127.0.0.1:7878")]
-    database_addr: String,
+    pub database_addr: String,
 
-    /// The maximum number of pings in flight
-    #[arg(long, default_value = "1000")]
-    max_in_flight: usize,
+    /// The maximum number of pings in flight at any given time.
+    ///
+    /// This acts as a backpressure mechanism. If the network is slow or pings are
+    /// timing out, this limit prevents the collector from flooding the network with
+    /// an ever-increasing number of outstanding packets. A low number is recommended
+    /// to avoid causing a denial-of-service-like event on the target host.
+    #[arg(long, default_value = "3")]
+    pub max_in_flight: usize,
 }
 
+/// The main function for the collector service.
+///
+/// Initializes logging, parses CLI arguments, and enters the main connection loop.
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::builder()
@@ -42,11 +63,16 @@ async fn main() -> Result<()> {
     info!("Database address: {}", cli.database_addr);
     info!("Max in-flight: {}", cli.max_in_flight);
 
+    // The main loop of the collector is designed for resilience. It will continuously
+    // try to connect to the database, and if the connection is ever lost, it will
+    // simply re-enter this loop and try to connect again.
     loop {
         info!("Attempting to connect to database at {}", cli.database_addr);
         match TcpStream::connect(&cli.database_addr).await {
             Ok(stream) => {
                 info!("Successfully connected to database.");
+                // Once connected, hand off to the connection manager, which will run
+                // until the connection is lost.
                 if let Err(e) = connection_manager::handle_connection(stream, cli.clone()).await {
                     error!("Error during connection handling: {e}. Reconnecting...");
                 }
@@ -68,6 +94,10 @@ mod tests {
 
     #[test]
     fn test_record_serialization_and_deserialization() {
+        // This test verifies that our understanding of the protocol is correct.
+        // It creates a record, serializes it, prefixes it with its length,
+        // and then reads it back to ensure the data is unchanged.
+
         // 1. Create a sample record
         let record = RawDataRecord {
             sent_nanos: 123456789,

@@ -1,3 +1,21 @@
+//! The main entry point for the `zzping-gui` application.
+//!
+//! This application provides a real-time, interactive visualization of ping data
+//! received from a `zzping-database` instance.
+//!
+//! # Architecture
+//! The application is built using `egui` and `eframe`. It runs a `tokio` runtime
+//! in a separate thread to handle all network communication asynchronously, ensuring
+//! the UI remains responsive.
+//!
+//! - **`main` function**: Sets up the `tokio` runtime and the `eframe` native application.
+//! - **Network Thread**: A background thread is spawned to run the `network::fetch_data_loop`,
+//!   which continuously polls the database for the latest data.
+//! - **`ZzpingViewApp`**: The main `eframe::App` struct. It holds the UI state and the
+//!   receiving end of a channel for network data.
+//! - **`update` method**: On each frame, it checks the channel for new data and, if
+//!   any is present, updates its internal state, causing the plot to be redrawn.
+
 use anyhow::Result;
 use chrono::Duration;
 use crossbeam_channel::{unbounded, Receiver};
@@ -5,18 +23,28 @@ use eframe::egui;
 use zzping_lib::protocol::RawDataRecord;
 
 mod data;
+mod data_processing;
 mod network;
 mod plot;
-mod data_processing;
 
+/// The main application state for the zzping GUI.
 struct ZzpingViewApp {
+    /// The collection of data points currently being displayed on the plot.
     points: Vec<data::DataPoint>,
+    /// The horizontal pan offset of the plot, in microseconds.
     pan_micros: i64,
+    /// The current zoom level of the plot.
     zoom: f32,
+    /// The receiving end of the channel for incoming data from the network thread.
     data_rx: Receiver<Vec<RawDataRecord>>,
 }
 
 impl ZzpingViewApp {
+    /// Creates a new instance of the `ZzpingViewApp`.
+    ///
+    /// # Arguments
+    /// * `data_rx` - The receiver for the channel that the network thread will use
+    ///   to send data to the GUI.
     fn new(data_rx: Receiver<Vec<RawDataRecord>>) -> Self {
         Self {
             points: Vec::new(),
@@ -26,6 +54,11 @@ impl ZzpingViewApp {
         }
     }
 
+    /// Checks for and processes new data from the network thread.
+    ///
+    /// This method is called on each UI frame. It performs a non-blocking check
+    /// on the MPSC channel for any new data. If a new vector of records has arrived,
+    /// it replaces the current `points` with the processed data.
     fn update_data(&mut self) {
         if let Ok(new_records) = self.data_rx.try_recv() {
             self.points = data_processing::records_to_points(new_records);
@@ -34,8 +67,15 @@ impl ZzpingViewApp {
 }
 
 impl eframe::App for ZzpingViewApp {
+    /// The main update method for the egui application.
+    ///
+    /// This is called on every frame and is responsible for drawing the entire UI.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // First, check for any new data from the network.
         self.update_data();
+        // Explicitly request a repaint. This is important because the network data
+        // arrives asynchronously. Without this, egui might not redraw the plot
+        // immediately when new data comes in.
         ctx.request_repaint();
 
         egui::TopBottomPanel::bottom("controls").show(ctx, |ui| {
@@ -103,15 +143,25 @@ impl eframe::App for ZzpingViewApp {
     }
 }
 
+/// The entry point of the application.
 fn main() -> Result<()> {
+    // Set up a tokio runtime for our network task.
+    // We use `eframe` which has its own main loop, so we need to spawn a separate
+    // thread to run the tokio runtime for our networking logic.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
 
+    // The `_guard` is important to ensure that the `tokio` runtime is active
+    // when we spawn the network task.
     let _guard = rt.enter();
 
+    // We use a `crossbeam_channel` because it's a multi-producer, multi-consumer
+    // channel that is thread-safe without requiring an async runtime on the receiving end.
+    // This makes it ideal for sending data from a `tokio` thread to the `egui` UI thread.
     let (tx, rx) = unbounded();
 
+    // Spawn the network task in a separate OS thread.
     std::thread::spawn(move || {
         rt.block_on(network::fetch_data_loop(tx));
     });
@@ -123,6 +173,7 @@ fn main() -> Result<()> {
         ..Default::default()
     };
 
+    // This call will block the main thread and run the `eframe` event loop.
     eframe::run_native(
         "zzping-gui",
         options,

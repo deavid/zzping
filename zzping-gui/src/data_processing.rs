@@ -1,7 +1,18 @@
+//! Handles the conversion of network data into plottable data points.
+
 use crate::data::DataPoint;
 use chrono::{DateTime, Duration};
-use zzping_common::RawDataRecord;
+use zzping_lib::protocol::RawDataRecord;
 
+/// Converts a vector of `RawDataRecord`s from the network into a vector of `DataPoint`s for plotting.
+///
+/// This function is responsible for:
+/// 1. Sorting the records by their send timestamp, as the database does not guarantee order.
+/// 2. Converting the `u64` nanosecond timestamps into strongly-typed `chrono::DateTime<Utc>` objects.
+/// 3. Converting the `u64` RTT values into `chrono::Duration`, handling the `u64::MAX` sentinel for lost packets.
+///
+/// The plot widget expects absolute timestamps and calculates the relative view itself, so this
+/// function does not perform any time normalization.
 pub fn records_to_points(records: Vec<RawDataRecord>) -> Vec<DataPoint> {
     if records.is_empty() {
         return Vec::new();
@@ -22,8 +33,6 @@ pub fn records_to_points(records: Vec<RawDataRecord>) -> Vec<DataPoint> {
         })
         .collect();
 
-    // The plot widget expects absolute timestamps and calculates the relative view itself.
-    // No need to normalize time here.
     points
 }
 
@@ -52,7 +61,7 @@ mod tests {
 
         assert_eq!(points.len(), 3);
 
-        // Check that they are sorted and time is relative
+        // Check that they are sorted and time is absolute
         assert_eq!(points[0].time, DateTime::from_timestamp_nanos(1_000_000_000));
         assert_eq!(points[1].time, DateTime::from_timestamp_nanos(2_000_000_000));
         assert_eq!(points[2].time, DateTime::from_timestamp_nanos(3_000_000_000));
