@@ -2,8 +2,7 @@
 
 use super::format::{
     calculate_chunk_header_crc32, calculate_file_header_crc32, AggregateEntry, ChunkHeader,
-    ChunkFlags, FileHeader, IndexEntry, FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE,
-    MAX_RECOMMENDED_CHUNKS,
+    ChunkFlags, FileHeader, FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE,
 };
 use super::quantization::{Quantizer, PACKET_LOST_SYMBOL, DUMMY_SYMBOL};
 use crate::protocol::RawDataRecord;
@@ -355,91 +354,4 @@ pub fn create_chunk_body(chunk_records: &[RawDataRecord]) -> Result<Vec<u8>> {
     final_chunk_data.extend_from_slice(asterisk_delimiter);
 
     Ok(final_chunk_data)
-}
-
-/// Compresses a slice of `RawDataRecord`s into a `Vec<u8>` using the `chunked_v1` format.
-///
-/// # Design
-/// The function first groups records by the minute they were sent in. Each minute of
-/// data becomes a "chunk" in the final file. It analyzes the send times to decide
-/// on a compression strategy (constant-rate or variable-rate) and then uses an
-/// Asymmetric Numeral Systems (ANS) compressor to encode the RTT and timing data.
-///
-/// # Limitations
-/// This format is designed for up to 24 hours of data. Providing more than this
-/// will result in an error, as the file header has a fixed size. For multi-day
-/// datasets, split the data by day and compress each day into a separate file.
-#[deprecated(
-    since = "0.3.0",
-    note = "This function creates a file in-memory and is not suitable for append-only storage. Use `create_chunked_v1_header` and `create_chunk_body` instead."
-)]
-pub fn compress_chunked_v1(records: &[RawDataRecord]) -> Result<Vec<u8>> {
-    if records.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let mut chunks: std::collections::BTreeMap<u64, Vec<RawDataRecord>> =
-        std::collections::BTreeMap::new();
-    for record in records {
-        chunks
-            .entry(record.sent_nanos / 60_000_000_000)
-            .or_default()
-            .push(*record);
-    }
-
-    if chunks.len() > MAX_RECOMMENDED_CHUNKS {
-        return Err(anyhow!(
-            "Format limitation: {} chunks requested, but format designed for max {} (24 hours).",
-            chunks.len(),
-            MAX_RECOMMENDED_CHUNKS
-        ));
-    }
-
-    // This part is now inefficient and mostly for compatibility/testing.
-    // In a real scenario, the header is written once, and chunks are appended.
-    let mut final_data = create_chunked_v1_header()?;
-    let mut aggregate_entries = Vec::new();
-    let mut index_entries = Vec::new();
-    let mut payload_len = 0;
-
-    for chunk_records in chunks.values() {
-        let chunk_body = create_chunk_body(chunk_records)?;
-
-        // We need to extract the stats from the chunk header for the file header.
-        // This is inefficient but necessary for the deprecated function's logic.
-        let mut cursor = std::io::Cursor::new(&chunk_body);
-        cursor.set_position(1); // Skip delimiter
-        let chunk_header = ChunkHeader::read(&mut cursor)?;
-        aggregate_entries.push(chunk_header.rtt_stats);
-        // The offset points to the start of the chunk header, which is after the '*' delimiter.
-        index_entries.push(IndexEntry {
-            chunk_offset_bytes: (HEADER_SIZE + payload_len + 1) as u64,
-        });
-
-        final_data.extend_from_slice(&chunk_body);
-        payload_len += chunk_body.len();
-    }
-
-    // Now, we must rewrite the header with the collected stats and indexes.
-    let mut file_header = FileHeader {
-        magic: FILE_MAGIC,
-        format_version: FORMAT_VERSION,
-        start_time_unix_ns: records.first().map_or(0, |r| r.sent_nanos),
-        aggregate_entry_count: aggregate_entries.len() as u32,
-        index_entry_count: index_entries.len() as u32,
-        header_crc32: 0,
-    };
-    file_header.header_crc32 = calculate_file_header_crc32(&file_header);
-    file_header.validate_header_fits()?;
-
-    let mut cursor = std::io::Cursor::new(&mut final_data[..HEADER_SIZE]);
-    file_header.write(&mut cursor)?;
-    for entry in &aggregate_entries {
-        entry.write(&mut cursor)?;
-    }
-    for entry in &index_entries {
-        entry.write(&mut cursor)?;
-    }
-
-    Ok(final_data)
 }

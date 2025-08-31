@@ -83,16 +83,16 @@ async fn write_records_to_disk(records: &[RawDataRecord], data_dir: &str) -> Res
 
     // Create the file with an empty header if it doesn't exist.
     if !filepath.exists() {
-        info!("Creating new daily file: {}", filename);
+        info!("Creating new daily file: {filename}");
         let header = zzping_lib::chunked_v1::create_chunked_v1_header()?;
-        fs::write(&filepath, header)?;
+        fs::write(filepath, header)?;
     }
 
     // Compress the records into a new chunk body.
     let chunk_body = zzping_lib::chunked_v1::create_chunk_body(records)?;
 
     // Open the file in append mode and write the chunk.
-    let mut file = OpenOptions::new().append(true).open(&filepath)?;
+    let mut file = OpenOptions::new().append(true).open(filepath)?;
     file.write_all(&chunk_body)?;
 
     info!(
@@ -126,11 +126,11 @@ mod tests {
 
         let records_chunk_1 = vec![
             RawDataRecord {
-                sent_nanos: 1 * ONE_MINUTE_NS + 100,
+                sent_nanos: ONE_MINUTE_NS + 100,
                 rtt_nanos: 10,
             },
             RawDataRecord {
-                sent_nanos: 1 * ONE_MINUTE_NS + 200,
+                sent_nanos: ONE_MINUTE_NS + 200,
                 rtt_nanos: u64::MAX,
             },
         ];

@@ -1,4 +1,5 @@
 use super::*;
+use crate::protocol::RawDataRecord;
 
 // Compile-time verification that our size calculations are correct
 #[test]
@@ -645,6 +646,59 @@ fn test_model_with_all_packets_lost() {
     );
 }
 
+/// Helper function for tests to manually construct a valid, finalized file from records.
+fn create_finalized_file_for_test(records: &[RawDataRecord]) -> Vec<u8> {
+    let mut final_data = compression::create_chunked_v1_header().unwrap();
+    let mut chunks: std::collections::BTreeMap<u64, Vec<RawDataRecord>> =
+        std::collections::BTreeMap::new();
+    for record in records {
+        chunks
+            .entry(record.sent_nanos / 60_000_000_000)
+            .or_default()
+            .push(*record);
+    }
+
+    let mut aggregate_entries = Vec::new();
+    let mut index_entries = Vec::new();
+    let mut payload_len = 0;
+
+    for chunk_records in chunks.values() {
+        let chunk_body = compression::create_chunk_body(chunk_records).unwrap();
+
+        let mut cursor = std::io::Cursor::new(&chunk_body);
+        cursor.set_position(1); // Skip delimiter
+        let chunk_header = format::ChunkHeader::read(&mut cursor).unwrap();
+        aggregate_entries.push(chunk_header.rtt_stats);
+        index_entries.push(format::IndexEntry {
+            chunk_offset_bytes: (format::HEADER_SIZE + payload_len + 1) as u64,
+        });
+
+        final_data.extend_from_slice(&chunk_body);
+        payload_len += chunk_body.len();
+    }
+
+    let mut file_header = format::FileHeader {
+        magic: format::FILE_MAGIC,
+        format_version: format::FORMAT_VERSION,
+        start_time_unix_ns: records.first().map_or(0, |r| r.sent_nanos),
+        aggregate_entry_count: aggregate_entries.len() as u32,
+        index_entry_count: index_entries.len() as u32,
+        header_crc32: 0,
+    };
+    file_header.header_crc32 = format::calculate_file_header_crc32(&file_header);
+
+    let mut cursor = std::io::Cursor::new(&mut final_data[..format::HEADER_SIZE]);
+    file_header.write(&mut cursor).unwrap();
+    for entry in &aggregate_entries {
+        entry.write(&mut cursor).unwrap();
+    }
+    for entry in &index_entries {
+        entry.write(&mut cursor).unwrap();
+    }
+
+    final_data
+}
+
 #[test]
 fn test_basic_compression_roundtrip() {
     use crate::protocol::RawDataRecord;
@@ -659,7 +713,7 @@ fn test_basic_compression_roundtrip() {
         rtt_nanos: Duration::from_millis(20).as_nanos() as u64,
     }];
 
-    let compressed = compression::compress_chunked_v1(&records).unwrap();
+    let compressed = create_finalized_file_for_test(&records);
     let decompressed = decompression::decompress_chunked_v1(&compressed).unwrap();
 
     assert_eq!(records.len(), decompressed.len());
@@ -674,11 +728,7 @@ fn test_basic_compression_roundtrip() {
     let tolerance = original_rtt / 100;
     assert!(
         diff <= tolerance,
-        "RTT quantization error too large: original={}, decompressed={}, diff={}, tolerance={}",
-        original_rtt,
-        decompressed_rtt,
-        diff,
-        tolerance
+        "RTT quantization error too large: original={original_rtt}, decompressed={decompressed_rtt}, diff={diff}, tolerance={tolerance}",
     );
 }
 
@@ -702,7 +752,7 @@ fn test_simple_variable_rate() {
         },
     ];
 
-    let compressed = compression::compress_chunked_v1(&records).unwrap();
+    let compressed = create_finalized_file_for_test(&records);
     let decompressed = decompression::decompress_chunked_v1(&compressed).unwrap();
 
     assert_eq!(records.len(), decompressed.len());
@@ -735,15 +785,14 @@ fn test_multi_chunk_variable_rate() {
         }
     }
 
-    let compressed = compression::compress_chunked_v1(&records).unwrap();
+    let compressed = create_finalized_file_for_test(&records);
     let decompressed = decompression::decompress_chunked_v1(&compressed).unwrap();
 
     assert_eq!(records.len(), decompressed.len());
     for (i, (original, decompressed)) in records.iter().zip(decompressed.iter()).enumerate() {
         assert_eq!(
             original.sent_nanos, decompressed.sent_nanos,
-            "Mismatch at record {}",
-            i
+            "Mismatch at record {i}"
         );
     }
 }
@@ -862,7 +911,7 @@ fn test_constant_rate_compression_efficiency() {
     }
 
     // Compress the data
-    let compressed = compression::compress_chunked_v1(&records).unwrap();
+    let compressed = create_finalized_file_for_test(&records);
 
     // For a fair comparison, we should exclude the fixed header size from our calculation
     // since it would be amortized over more chunks in a real-world scenario
@@ -961,7 +1010,7 @@ fn test_variable_rate_compression_efficiency() {
     }
 
     // Compress the data
-    let compressed = compression::compress_chunked_v1(&records).unwrap();
+    let compressed = create_finalized_file_for_test(&records);
 
     // For a fair comparison, we should exclude the fixed header size from our calculation
     // since it would be amortized over more chunks in a real-world scenario

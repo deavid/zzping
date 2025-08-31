@@ -19,7 +19,7 @@ pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
 
     // 1. Read the command from the client
     let command = read_command(&mut stream).await?;
-    info!("Received command: {:?}", command);
+    info!("Received command: {command:?}");
 
     // 2. Process the command
     let records = match command {
@@ -121,6 +121,11 @@ mod tests {
         assert!(latest.is_none());
     }
 
+    use zzping_lib::chunked_v1::{
+        calculate_file_header_crc32, create_chunked_v1_header, ChunkHeader, FileHeader,
+        IndexEntry, FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE,
+    };
+
     #[test]
     fn test_get_last_minute_records() -> Result<()> {
         // 1. Setup: Create a temp dir and some sample data
@@ -137,10 +142,37 @@ mod tests {
             },
         ];
 
-        // 2. Create a dummy .zzp1 file with compressed data
-        let compressed_data = zzping_lib::chunked_v1::compress_chunked_v1(&records)?;
+        // 2. Create a dummy .zzp1 file using the new append-style API
+        let mut final_data = create_chunked_v1_header()?;
+        let chunk_body = zzping_lib::chunked_v1::create_chunk_body(&records)?;
+
+        // Manually "finalize" the header for testing
+        let mut cursor = std::io::Cursor::new(&chunk_body);
+        cursor.set_position(1); // Skip delimiter
+        let chunk_header = ChunkHeader::read(&mut cursor)?;
+
+        let mut file_header = FileHeader {
+            magic: FILE_MAGIC,
+            format_version: FORMAT_VERSION,
+            start_time_unix_ns: records.first().map_or(0, |r| r.sent_nanos),
+            aggregate_entry_count: 1,
+            index_entry_count: 1,
+            header_crc32: 0,
+        };
+        file_header.header_crc32 = calculate_file_header_crc32(&file_header);
+        let index_entry = IndexEntry {
+            chunk_offset_bytes: HEADER_SIZE as u64 + 1,
+        };
+
+        let mut header_cursor = std::io::Cursor::new(&mut final_data[..HEADER_SIZE]);
+        file_header.write(&mut header_cursor)?;
+        chunk_header.rtt_stats.write(&mut header_cursor)?;
+        index_entry.write(&mut header_cursor)?;
+
+        final_data.extend_from_slice(&chunk_body);
+
         let file_path = temp_dir.path().join("test.zzp1");
-        fs::write(file_path, compressed_data)?;
+        fs::write(file_path, final_data)?;
 
         // 3. Execution: Call the function under test
         let result_records = get_last_minute_records(data_dir)?;
