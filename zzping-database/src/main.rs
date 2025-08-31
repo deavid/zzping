@@ -98,12 +98,13 @@ fn run_startup_finalization(data_dir: &str) -> Result<()> {
         if path.extension().is_some_and(|ext| ext == "zzp1")
             && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
             && let Ok(file_date) = NaiveDate::parse_from_str(stem, "%Y%m%d")
-            && file_date < today {
-                // This file is from a previous day, attempt to finalize it.
-                if let Err(e) = finalization::finalize_file(&path) {
-                    error!("Failed to finalize file {:?}: {}", path, e);
-                }
+            && file_date < today
+        {
+            // This file is from a previous day, attempt to finalize it.
+            if let Err(e) = finalization::finalize_file(&path) {
+                error!("Failed to finalize file {:?}: {}", path, e);
             }
+        }
     }
 
     info!("Startup finalization check complete.");

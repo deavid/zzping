@@ -120,8 +120,8 @@ mod tests {
     use anyhow::Result;
     use tempfile::tempdir;
     use zzping_lib::chunked_v1::{
-        calculate_file_header_crc32, decompress_chunked_v1, ChunkHeader, FileHeader, IndexEntry,
-        FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE,
+        ChunkHeader, FILE_MAGIC, FORMAT_VERSION, FileHeader, HEADER_SIZE, IndexEntry,
+        calculate_file_header_crc32, decompress_chunked_v1,
     };
 
     #[tokio::test]
