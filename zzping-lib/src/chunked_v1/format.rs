@@ -15,7 +15,7 @@ use std::io::{Read, Write};
 ///
 /// The checksum is calculated over all fields of the `FileHeader` except for the
 /// `header_crc32` field itself. This allows for verification of header integrity.
-pub(super) fn calculate_file_header_crc32(header: &FileHeader) -> u32 {
+pub fn calculate_file_header_crc32(header: &FileHeader) -> u32 {
     let mut hasher = crc32fast::Hasher::new();
     hasher.update(&header.magic.to_be_bytes());
     hasher.update(&header.format_version.to_be_bytes());

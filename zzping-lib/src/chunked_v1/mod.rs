@@ -12,10 +12,12 @@ mod quantization;
 #[cfg(test)]
 mod tests;
 
-pub use compression::compress_chunked_v1;
+pub use compression::{
+    compress_chunked_v1, create_chunk_body, create_chunked_v1_header,
+};
 pub use decompression::decompress_chunked_v1;
 pub use format::{
-    AggregateEntry, ChunkFlags, ChunkHeader, FileHeader, IndexEntry, FILE_MAGIC, FORMAT_VERSION,
-    HEADER_SIZE, MAX_RECOMMENDED_CHUNKS,
+    calculate_file_header_crc32, AggregateEntry, ChunkFlags, ChunkHeader, FileHeader, IndexEntry,
+    FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE, MAX_RECOMMENDED_CHUNKS,
 };
 pub use quantization::Quantizer;
