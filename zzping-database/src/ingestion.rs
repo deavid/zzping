@@ -1,10 +1,11 @@
 //! Handles the ingestion of `RawDataRecord`s from collector clients.
 
+use crate::IngestionItem;
 use anyhow::Result;
 use log::{debug, error, info};
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
-use zzping_lib::protocol::{read_handshake, read_record, RawDataRecord};
+use zzping_lib::protocol::{read_handshake, read_record};
 
 /// Manages a single TCP connection from a `zzping-collector` instance.
 ///
@@ -23,7 +24,7 @@ use zzping_lib::protocol::{read_handshake, read_record, RawDataRecord};
 pub async fn handle_ingestion_connection<R>(
     mut stream: R,
     addr: SocketAddr,
-    tx: mpsc::Sender<RawDataRecord>,
+    tx: mpsc::Sender<IngestionItem>,
 ) -> Result<()>
 where
     R: tokio::io::AsyncRead + Unpin + Send,
@@ -41,9 +42,6 @@ where
         "Received handshake from {} for target {}",
         handshake.source_hostname, handshake.target
     );
-    // TODO: Associate the handshake data with the records from this connection.
-    // This will likely involve creating a session object that includes the source
-    // and target, and passing that to the storage engine along with the records.
 
     loop {
         let record = match read_record(&mut stream).await? {
@@ -56,9 +54,15 @@ where
 
         debug!("Received record: {record:?}");
 
-        // Send the record to the storage task. If the channel is closed, it means
+        let item = IngestionItem {
+            source_hostname: handshake.source_hostname.clone(),
+            target: handshake.target,
+            record,
+        };
+
+        // Send the item to the storage task. If the channel is closed, it means
         // the storage task has panicked or shut down, so we can't continue.
-        if let Err(e) = tx.send(record).await {
+        if let Err(e) = tx.send(item).await {
             error!("Failed to send record to storage task: {e}");
             break;
         }
@@ -71,7 +75,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
     use tokio::sync::mpsc;
-    use zzping_lib::protocol::{write_handshake, ClientHandshake};
+use zzping_lib::protocol::{write_handshake, ClientHandshake, RawDataRecord};
 
     #[tokio::test]
     async fn test_handle_ingestion_connection() {
@@ -91,7 +95,7 @@ mod tests {
             .unwrap();
         let mut cursor = Cursor::new(buffer);
 
-        // 2. Set up an MPSC channel to receive the record
+        // 2. Set up an MPSC channel to receive the item
         let (tx, mut rx) = mpsc::channel(1);
 
         // 3. Call the handler with the mock stream and channel
@@ -99,8 +103,10 @@ mod tests {
         let result = handle_ingestion_connection(&mut cursor, addr, tx).await;
         assert!(result.is_ok());
 
-        // 4. Assert that the record was received on the channel
+        // 4. Assert that the item was received on the channel
         let received = rx.recv().await.unwrap();
-        assert_eq!(record, received);
+        assert_eq!(received.source_hostname, handshake.source_hostname);
+        assert_eq!(received.target, handshake.target);
+        assert_eq!(received.record, record);
     }
 }

@@ -22,7 +22,7 @@ use zzping_lib::protocol::{write_record, ClientHandshake, RawDataRecord, write_h
 /// - Calling the injected `PingClient` to send pings.
 /// - Receiving `PingResult`s from an MPSC channel.
 /// - Serializing the results into `RawDataRecord`s and writing them to the database stream.
-struct PingerSession<W, P>
+struct PingerSession<W, P: ?Sized>
 where
     W: AsyncWrite + Unpin + Send,
     P: PingClient,
@@ -47,7 +47,7 @@ where
     rate_ns: Arc<AtomicU64>,
 }
 
-impl<W, P> PingerSession<W, P>
+impl<W, P: ?Sized> PingerSession<W, P>
 where
     W: AsyncWrite + Unpin + Send,
     P: PingClient,
@@ -158,7 +158,7 @@ where
 /// * `db_stream` - An async writer, typically the TCP stream to the `zzping-database`.
 /// * `ping_client` - The shared ping client implementation.
 /// * `cli` - The parsed command-line arguments.
-pub async fn handle_connection<W, P>(
+pub async fn handle_connection<W, P: ?Sized>(
     mut db_stream: W,
     ping_client: Arc<P>,
     cli: Arc<crate::Cli>,
@@ -192,6 +192,40 @@ mod tests {
     use super::*;
     use crate::{Cli, ping_mock_client::PingMockClient};
     use zzping_lib::protocol::read_record;
+    use std::io;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::AsyncWrite;
+
+    // A mock writer that can be configured to fail after a certain number of bytes.
+    struct MockWriter {
+        buffer: Vec<u8>,
+        fail_after: Option<usize>,
+    }
+
+    impl AsyncWrite for MockWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            if let Some(fail_after) = self.fail_after {
+                if self.buffer.len() >= fail_after {
+                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "Simulated error")));
+                }
+            }
+            self.buffer.extend_from_slice(buf);
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
 
     fn common_test_setup() -> (
         Vec<u8>,
