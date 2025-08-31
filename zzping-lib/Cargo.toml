@@ -30,3 +30,10 @@ egui = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 rand = { workspace = true, optional = true }
 env_logger = { workspace = true, optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+name = "chunked_v1_benches"
+harness = false
