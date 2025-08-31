@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWrite;
 use tokio::sync::{Semaphore, mpsc};
-use zzping_lib::protocol::{RawDataRecord, write_record};
+use zzping_lib::protocol::{write_record, ClientHandshake, RawDataRecord, write_handshake};
 
 /// Manages the state and event loop for a single, ongoing pinging session.
 ///
@@ -158,10 +158,8 @@ where
 /// * `db_stream` - An async writer, typically the TCP stream to the `zzping-database`.
 /// * `ping_client` - The shared ping client implementation.
 /// * `cli` - The parsed command-line arguments.
-///
-/// TODO: Update to handle multiple PingSurgeClient instances (one per target from cli.targets)
 pub async fn handle_connection<W, P>(
-    db_stream: W,
+    mut db_stream: W,
     ping_client: Arc<P>,
     cli: Arc<crate::Cli>,
 ) -> Result<()>
@@ -169,6 +167,13 @@ where
     W: AsyncWrite + Unpin + Send,
     P: PingClient,
 {
+    let handshake = ClientHandshake {
+        source_hostname: cli.source_hostname.clone(),
+        target: ping_client.target(),
+    };
+
+    write_handshake(&mut db_stream, &handshake).await?;
+
     let (mut session, _) = PingerSession::new(db_stream, ping_client, cli)?;
 
     loop {

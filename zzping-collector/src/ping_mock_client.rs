@@ -3,6 +3,8 @@
 use crate::ping_client::{PingClient, PingResult};
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
+use std::net::IpAddr;
+use std::str::FromStr;
 use std::time::Instant;
 use tokio::sync::{mpsc, OwnedSemaphorePermit};
 
@@ -25,6 +27,12 @@ impl PingMockClient {
 
 #[async_trait]
 impl PingClient for PingMockClient {
+    fn target(&self) -> IpAddr {
+        // The mock client doesn't have a real target, so we return a dummy one.
+        // This is sufficient for the tests that use this mock.
+        IpAddr::from_str("127.0.0.1").unwrap()
+    }
+
     /// This mock implementation records the sequence number of the ping call.
     ///
     /// The `permit` is passed in and immediately dropped, which simulates the

@@ -20,6 +20,16 @@ impl QueryCommand {
     }
 }
 
+/// A message sent by the collector to the database upon establishing a connection.
+///
+/// This handshake allows the collector to identify itself and the target it will be
+/// pinging for the duration of the connection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClientHandshake {
+    pub source_hostname: String,
+    pub target: std::net::IpAddr,
+}
+
 /// The fundamental data structure for a single ping measurement.
 ///
 /// This is the canonical format for data transfer between the collector and the database.
@@ -150,6 +160,37 @@ pub async fn read_command<R: AsyncReadExt + Unpin>(stream: &mut R) -> Result<Que
     }
 }
 
+/// Writes a `ClientHandshake` to an async writer.
+pub async fn write_handshake<W: AsyncWriteExt + Unpin>(
+    stream: &mut W,
+    handshake: &ClientHandshake,
+) -> Result<()> {
+    let data = bincode::serialize(handshake)?;
+    stream.write_u32(data.len() as u32).await?;
+    stream.write_all(&data).await?;
+    Ok(())
+}
+
+/// Reads a `ClientHandshake` from an async reader.
+pub async fn read_handshake<R: AsyncReadExt + Unpin>(
+    stream: &mut R,
+) -> Result<Option<ClientHandshake>> {
+    let len = match stream.read_u32().await {
+        Ok(len) => len,
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+
+    if len == 0 {
+        return Ok(None);
+    }
+
+    let mut buffer = vec![0; len as usize];
+    stream.read_exact(&mut buffer).await?;
+    let handshake: ClientHandshake = bincode::deserialize(&buffer)?;
+    Ok(Some(handshake))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +265,24 @@ mod tests {
 
         // 3. Assert they are the same
         assert_eq!(command, received_command);
+    }
+
+    #[tokio::test]
+    async fn test_handshake_protocol_roundtrip() {
+        let handshake = ClientHandshake {
+            source_hostname: "test-host".to_string(),
+            target: "1.1.1.1".parse().unwrap(),
+        };
+
+        // 1. Write the handshake to a buffer
+        let mut buffer = Vec::new();
+        write_handshake(&mut buffer, &handshake).await.unwrap();
+
+        // 2. Read the handshake back from the buffer
+        let mut cursor = Cursor::new(buffer);
+        let received_handshake = read_handshake(&mut cursor).await.unwrap().unwrap();
+
+        // 3. Assert they are the same
+        assert_eq!(handshake, received_handshake);
     }
 }

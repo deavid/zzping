@@ -17,8 +17,13 @@ pub struct PingResult {
 ///
 /// This abstraction allows for swapping the underlying ping implementation,
 /// which is especially useful for testing.
+use std::net::IpAddr;
+
 #[async_trait]
 pub trait PingClient: Send + Sync {
+    /// The IP address of the target this client is pinging.
+    fn target(&self) -> IpAddr;
+
     /// Sends a single ping.
     ///
     /// This method is responsible for taking all the necessary information,

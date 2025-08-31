@@ -4,7 +4,7 @@ use anyhow::Result;
 use log::{debug, error, info};
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
-use zzping_lib::protocol::{read_record, RawDataRecord};
+use zzping_lib::protocol::{read_handshake, read_record, RawDataRecord};
 
 /// Manages a single TCP connection from a `zzping-collector` instance.
 ///
@@ -29,6 +29,22 @@ where
     R: tokio::io::AsyncRead + Unpin + Send,
 {
     info!("Handling ingestion connection from {addr}");
+
+    let handshake = match read_handshake(&mut stream).await? {
+        Some(handshake) => handshake,
+        None => {
+            info!("Ingestion connection from {addr} closed before handshake.");
+            return Ok(());
+        }
+    };
+    info!(
+        "Received handshake from {} for target {}",
+        handshake.source_hostname, handshake.target
+    );
+    // TODO: Associate the handshake data with the records from this connection.
+    // This will likely involve creating a session object that includes the source
+    // and target, and passing that to the storage engine along with the records.
+
     loop {
         let record = match read_record(&mut stream).await? {
             Some(record) => record,
@@ -55,15 +71,21 @@ mod tests {
     use super::*;
     use std::io::Cursor;
     use tokio::sync::mpsc;
+    use zzping_lib::protocol::{write_handshake, ClientHandshake};
 
     #[tokio::test]
     async fn test_handle_ingestion_connection() {
-        // 1. Create a mock record and serialize it with the protocol format
+        // 1. Create a mock handshake and record and serialize them into a buffer.
+        let handshake = ClientHandshake {
+            source_hostname: "test-host".to_string(),
+            target: "1.1.1.1".parse().unwrap(),
+        };
         let record = RawDataRecord {
             sent_nanos: 1,
             rtt_nanos: 2,
         };
         let mut buffer = Vec::new();
+        write_handshake(&mut buffer, &handshake).await.unwrap();
         zzping_lib::protocol::write_record(&mut buffer, &record)
             .await
             .unwrap();
