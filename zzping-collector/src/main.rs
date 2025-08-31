@@ -57,6 +57,53 @@ pub struct Cli {
     pub max_in_flight: usize,
 }
 
+/// The core logic for pinging a single target and reporting to the database.
+///
+/// This function is spawned in its own asynchronous task for each target.
+/// It creates a `PingSurgeClient` and then enters an infinite loop to
+/// maintain a connection to the database. If the connection is lost, it
+/// will automatically try to reconnect after a 5-second delay.
+async fn ping_target_loop(cli: Arc<Cli>, target: IpAddr) -> Result<()> {
+    info!("Pinging target: {}", target);
+    let ping_client = Arc::new(PingSurgeClient::new(target)?);
+
+    // The main loop of the collector is designed for resilience. It will continuously
+    // try to connect to the database, and if the connection is ever lost, it will
+    // simply re-enter this loop and try to connect again.
+    loop {
+        info!(
+            "[{}] Attempting to connect to database at {}",
+            target, cli.database_addr
+        );
+        match TcpStream::connect(&cli.database_addr).await {
+            Ok(stream) => {
+                info!("[{}] Successfully connected to database.", target);
+                // Once connected, hand off to the connection manager, which will run
+                // until the connection is lost.
+                if let Err(e) = connection_manager::handle_connection(
+                    stream,
+                    Arc::clone(&ping_client),
+                    cli.clone(),
+                )
+                .await
+                {
+                    error!(
+                        "[{}] Error during connection handling: {e}. Reconnecting...",
+                        target
+                    );
+                }
+            }
+            Err(e) => {
+                error!(
+                    "[{}] Failed to connect to database: {e}. Retrying in 5 seconds.",
+                    target
+                );
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        }
+    }
+}
+
 /// The main function for the collector service.
 ///
 /// Initializes logging, parses CLI arguments, and enters the main connection loop.
@@ -81,46 +128,7 @@ async fn main() -> Result<()> {
 
     for target in cli.targets.clone() {
         let cli = Arc::clone(&cli);
-        let handle = tokio::spawn(async move {
-            info!("Pinging target: {}", target);
-            let ping_client = Arc::new(PingSurgeClient::new(target)?);
-
-            // The main loop of the collector is designed for resilience. It will continuously
-            // try to connect to the database, and if the connection is ever lost, it will
-            // simply re-enter this loop and try to connect again.
-            loop {
-                info!(
-                    "[{}] Attempting to connect to database at {}",
-                    target, cli.database_addr
-                );
-                match TcpStream::connect(&cli.database_addr).await {
-                    Ok(stream) => {
-                        info!("[{}] Successfully connected to database.", target);
-                        // Once connected, hand off to the connection manager, which will run
-                        // until the connection is lost.
-                        if let Err(e) = connection_manager::handle_connection(
-                            stream,
-                            Arc::clone(&ping_client),
-                            cli.clone(),
-                        )
-                        .await
-                        {
-                            error!(
-                                "[{}] Error during connection handling: {e}. Reconnecting...",
-                                target
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        error!(
-                            "[{}] Failed to connect to database: {e}. Retrying in 5 seconds.",
-                            target
-                        );
-                        tokio::time::sleep(Duration::from_secs(5)).await;
-                    }
-                }
-            }
-        });
+        let handle = tokio::spawn(ping_target_loop(cli, target));
         handles.push(handle);
     }
 
