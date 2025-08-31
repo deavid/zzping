@@ -31,9 +31,13 @@ mod ping_mock_client;
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
-    /// The IP address to ping.
+    /// The IP addresses to ping. Multiple targets can be specified.
     #[arg(long)]
-    pub target: IpAddr,
+    pub targets: Vec<IpAddr>,
+
+    /// The hostname of this collector instance.
+    #[arg(long)]
+    pub source_hostname: String,
 
     /// The number of pings to send per second.
     #[arg(long)]
@@ -63,12 +67,20 @@ async fn main() -> Result<()> {
         .init();
     let cli = Arc::new(Cli::parse());
     info!("Starting zzping-collector");
-    info!("Target: {}", cli.target);
+    info!("Source hostname: {}", cli.source_hostname);
+    info!("Targets: {:?}", cli.targets);
+    // TODO: Implement logic to handle multiple targets
+    // For now, we only ping the first target
+    if cli.targets.is_empty() {
+        panic!("At least one target must be specified");
+    }
+    let primary_target = cli.targets[0];
+    info!("Primary target: {}", primary_target);
     info!("Rate: {} pps", cli.rate);
     info!("Database address: {}", cli.database_addr);
     info!("Max in-flight: {}", cli.max_in_flight);
 
-    let ping_client = Arc::new(PingSurgeClient::new(cli.target)?);
+    let ping_client = Arc::new(PingSurgeClient::new(primary_target)?);
 
     // The main loop of the collector is designed for resilience. It will continuously
     // try to connect to the database, and if the connection is ever lost, it will
@@ -80,9 +92,12 @@ async fn main() -> Result<()> {
                 info!("Successfully connected to database.");
                 // Once connected, hand off to the connection manager, which will run
                 // until the connection is lost.
-                if let Err(e) =
-                    connection_manager::handle_connection(stream, Arc::clone(&ping_client), cli.clone())
-                        .await
+                if let Err(e) = connection_manager::handle_connection(
+                    stream,
+                    Arc::clone(&ping_client),
+                    cli.clone(),
+                )
+                .await
                 {
                     error!("Error during connection handling: {e}. Reconnecting...");
                 }

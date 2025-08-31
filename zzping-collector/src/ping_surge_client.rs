@@ -16,6 +16,7 @@ pub struct PingSurgeClient {
     /// The unique identifier for this pinger instance.
     pinger_ident: PingIdentifier,
     /// The IP address to ping.
+    /// TODO: Support multiple targets instead of just one
     target: IpAddr,
 }
 

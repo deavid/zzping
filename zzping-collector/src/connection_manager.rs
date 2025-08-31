@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWrite;
-use tokio::sync::{mpsc, Semaphore};
-use zzping_lib::protocol::{write_record, RawDataRecord};
+use tokio::sync::{Semaphore, mpsc};
+use zzping_lib::protocol::{RawDataRecord, write_record};
 
 /// Manages the state and event loop for a single, ongoing pinging session.
 ///
@@ -158,6 +158,8 @@ where
 /// * `db_stream` - An async writer, typically the TCP stream to the `zzping-database`.
 /// * `ping_client` - The shared ping client implementation.
 /// * `cli` - The parsed command-line arguments.
+///
+/// TODO: Update to handle multiple targets from cli.targets
 pub async fn handle_connection<W, P>(
     db_stream: W,
     ping_client: Arc<P>,
@@ -183,15 +185,20 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ping_mock_client::PingMockClient, Cli};
+    use crate::{Cli, ping_mock_client::PingMockClient};
     use zzping_lib::protocol::read_record;
 
-    fn common_test_setup(
-    ) -> (Vec<u8>, Arc<PingMockClient>, Arc<Cli>, mpsc::Sender<PingResult>) {
+    fn common_test_setup() -> (
+        Vec<u8>,
+        Arc<PingMockClient>,
+        Arc<Cli>,
+        mpsc::Sender<PingResult>,
+    ) {
         let buffer = Vec::new();
         let ping_client = Arc::new(PingMockClient::new());
         let cli = Arc::new(Cli {
-            target: "127.0.0.1".parse().unwrap(),
+            targets: vec!["127.0.0.1".parse().unwrap()],
+            source_hostname: "test-host".to_string(),
             rate: 10,
             max_in_flight: 4,
             database_addr: "127.0.0.1:7878".to_string(),
@@ -206,8 +213,7 @@ mod tests {
     async fn test_session_writes_record_on_response() -> Result<()> {
         // 1. Setup
         let (mut buffer, ping_client, cli, _) = common_test_setup();
-        let (mut session, tx_to_session) =
-            PingerSession::new(&mut buffer, ping_client, cli)?;
+        let (mut session, tx_to_session) = PingerSession::new(&mut buffer, ping_client, cli)?;
 
         // 2. Action: Manually send a PingResult to the session's internal channel.
         let test_rtt = Duration::from_millis(50);
