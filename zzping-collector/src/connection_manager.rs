@@ -159,7 +159,7 @@ where
 /// * `ping_client` - The shared ping client implementation.
 /// * `cli` - The parsed command-line arguments.
 ///
-/// TODO: Update to handle multiple targets from cli.targets
+/// TODO: Update to handle multiple PingSurgeClient instances (one per target from cli.targets)
 pub async fn handle_connection<W, P>(
     db_stream: W,
     ping_client: Arc<P>,

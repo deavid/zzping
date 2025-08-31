@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
     info!("Starting zzping-collector");
     info!("Source hostname: {}", cli.source_hostname);
     info!("Targets: {:?}", cli.targets);
-    // TODO: Implement logic to handle multiple targets
+    // TODO: Create multiple PingSurgeClient instances, one per target
     // For now, we only ping the first target
     if cli.targets.is_empty() {
         panic!("At least one target must be specified");
