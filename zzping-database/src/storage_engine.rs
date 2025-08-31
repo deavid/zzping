@@ -3,11 +3,13 @@
 //! This module contains the background task that receives ping data and handles
 //! the process of buffering, compressing, and writing it to disk.
 
-use crate::finalization;
+use crate::{finalization, ingestion_item::IngestionItem};
 use anyhow::Result;
 use chrono::Utc;
 use log::{error, info};
+use std::collections::HashMap;
 use std::fs;
+use std::net::IpAddr;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
@@ -25,36 +27,38 @@ use zzping_lib::protocol::RawDataRecord;
 ///
 /// # Arguments
 /// * `rx` - The receiving end of the MPSC channel from the ingestion tasks.
-pub async fn storage_task(mut rx: mpsc::Receiver<RawDataRecord>) {
+pub async fn storage_task(mut rx: mpsc::Receiver<IngestionItem>) {
     info!("Storage task started.");
-    let mut buffer = Vec::new();
+    let mut buffer: HashMap<(String, IpAddr), Vec<RawDataRecord>> = HashMap::new();
     let mut ticker = interval(Duration::from_secs(60));
     let mut current_day = Utc::now().date_naive();
 
     loop {
         tokio::select! {
-            Some(record) = rx.recv() => {
-                buffer.push(record);
+            Some(item) = rx.recv() => {
+                buffer.entry((item.source_hostname, item.target)).or_default().push(item.record);
             }
             _ = ticker.tick() => {
                 if !buffer.is_empty() {
-                    info!("60s timer triggered, writing {} records to disk.", buffer.len());
+                    info!("60s timer triggered, writing records to disk for {} sources.", buffer.len());
                     let records_to_write = std::mem::take(&mut buffer);
-                    match write_records_to_disk(&records_to_write, crate::DATA_DIR).await {
-                        Ok(path) => info!("Successfully wrote {} records to {}", records_to_write.len(), path),
-                        Err(e) => error!("Failed to write records to disk: {e}"),
+                    for ((source, target), records) in records_to_write {
+                        match write_records_to_disk(&source, target, &records, crate::DATA_DIR).await {
+                            Ok(path) => info!("Successfully wrote {} records to {}", records.len(), path),
+                            Err(e) => error!("Failed to write records for {source}-{target}: {e}"),
+                        }
                     }
                 }
 
                 // Check for day change to trigger finalization
                 let now_day = Utc::now().date_naive();
                 if now_day != current_day {
-                    info!("Day changed from {} to {}. Finalizing previous day's file.", current_day, now_day);
+                    info!("Day changed from {current_day} to {now_day}. Finalizing previous day's file.");
                     let previous_day_str = current_day.format("%Y%m%d").to_string();
-                    let file_path = Path::new(crate::DATA_DIR).join(format!("{}.zzp1", previous_day_str));
+                    let file_path = Path::new(crate::DATA_DIR).join(format!("{previous_day_str}.zzp1"));
                     if file_path.exists()
                         && let Err(e) = finalization::finalize_file(&file_path) {
-                            error!("Failed to finalize file for day {}: {}", previous_day_str, e);
+                            error!("Failed to finalize file for day {previous_day_str}: {e}");
                         }
                     current_day = now_day;
                 }
@@ -74,9 +78,13 @@ use std::path::Path;
 /// it creates it and writes a blank `chunked_v1` header. It then appends the compressed
 /// records as a new chunk.
 ///
-/// TODO: This does not yet handle splitting data by src/dst pairs as the architecture suggests.
 /// TODO: This does not yet implement the header finalization step (rewriting stats/indexes).
-async fn write_records_to_disk(records: &[RawDataRecord], data_dir: &str) -> Result<String> {
+async fn write_records_to_disk(
+    source: &str,
+    target: IpAddr,
+    records: &[RawDataRecord],
+    data_dir: &str,
+) -> Result<String> {
     if records.is_empty() {
         return Err(anyhow::anyhow!("No records to write."));
     }
@@ -84,10 +92,15 @@ async fn write_records_to_disk(records: &[RawDataRecord], data_dir: &str) -> Res
     // Ensure the data directory exists.
     fs::create_dir_all(data_dir)?;
 
-    // Generate a filename based on the current date.
-    // NOTE: This does not yet account for src/dst pairs.
+    // Generate a filename based on the source, target, and current date.
     let now = Utc::now();
-    let filename = format!("{}/{}.zzp1", data_dir, now.format("%Y%m%d"));
+    let filename = format!(
+        "{}/{}-{}-{}.zzp1",
+        data_dir,
+        source,
+        target,
+        now.format("%Y%m%d")
+    );
     let filepath = Path::new(&filename);
 
     // Create the file with an empty header if it doesn't exist.
@@ -156,9 +169,11 @@ mod tests {
 
         // 2. Execution
         // Write the first chunk
-        let filename = write_records_to_disk(&records_chunk_1, data_dir).await?;
+        let source = "test-host";
+        let target = "1.1.1.1".parse()?;
+        let filename = write_records_to_disk(source, target, &records_chunk_1, data_dir).await?;
         // Append the second chunk
-        write_records_to_disk(&records_chunk_2, data_dir).await?;
+        write_records_to_disk(source, target, &records_chunk_2, data_dir).await?;
 
         // 3. Verification
         let mut final_data = fs::read(&filename)?;

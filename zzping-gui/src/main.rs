@@ -18,7 +18,7 @@
 
 use anyhow::Result;
 use chrono::Duration;
-use crossbeam_channel::{unbounded, Receiver};
+use crossbeam_channel::{Receiver, unbounded};
 use eframe::egui;
 use zzping_lib::protocol::RawDataRecord;
 

@@ -1,14 +1,16 @@
 //! Contains the logic for compressing `RawDataRecord`s into the `chunked_v1` format.
 
 use super::format::{
-    calculate_chunk_header_crc32, calculate_file_header_crc32, AggregateEntry, ChunkHeader,
-    ChunkFlags, FileHeader, FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE,
+    AggregateEntry, ChunkFlags, ChunkHeader, FILE_MAGIC, FORMAT_VERSION, FileHeader, HEADER_SIZE,
+    calculate_chunk_header_crc32, calculate_file_header_crc32,
 };
-use super::quantization::{Quantizer, PACKET_LOST_SYMBOL, DUMMY_SYMBOL};
+use super::quantization::{DUMMY_SYMBOL, PACKET_LOST_SYMBOL, Quantizer};
 use crate::protocol::RawDataRecord;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use byteorder::{BigEndian, WriteBytesExt};
-use constriction::stream::{model::DefaultNonContiguousCategoricalEncoderModel, stack::DefaultAnsCoder};
+use constriction::stream::{
+    model::DefaultNonContiguousCategoricalEncoderModel, stack::DefaultAnsCoder,
+};
 use std::time::Duration;
 
 /// Calculates statistical aggregates for a slice of `Duration`s.
@@ -167,15 +169,26 @@ fn analyze_send_times(records: &[RawDataRecord]) -> SendTimeStrategy {
 /// slow for large chunks), this function approximates the distribution using the
 /// pre-calculated percentiles from the `AggregateEntry`. This is a key performance
 /// optimization.
-pub(super) fn build_model(stats: &AggregateEntry, chunk_symbol_count: usize) -> Result<(Vec<u16>, Vec<f64>)> {
+pub(super) fn build_model(
+    stats: &AggregateEntry,
+    chunk_symbol_count: usize,
+) -> Result<(Vec<u16>, Vec<f64>)> {
     let mut frequencies = vec![0u32; u16::MAX as usize + 1];
     let valid_symbols_count = chunk_symbol_count - stats.lost_packet_count as usize;
 
     if valid_symbols_count > 0 {
         let percentile_points = [
-            stats.p00_symbol, stats.p10_symbol, stats.p20_symbol, stats.p30_symbol,
-            stats.p40_symbol, stats.p50_symbol, stats.p60_symbol, stats.p70_symbol,
-            stats.p80_symbol, stats.p90_symbol, stats.p100_symbol,
+            stats.p00_symbol,
+            stats.p10_symbol,
+            stats.p20_symbol,
+            stats.p30_symbol,
+            stats.p40_symbol,
+            stats.p50_symbol,
+            stats.p60_symbol,
+            stats.p70_symbol,
+            stats.p80_symbol,
+            stats.p90_symbol,
+            stats.p100_symbol,
         ];
 
         let bucket_count = valid_symbols_count / 10;
@@ -185,7 +198,11 @@ pub(super) fn build_model(stats: &AggregateEntry, chunk_symbol_count: usize) -> 
             let symbol_range_size = (end_symbol - start_symbol) + 1;
             let freq = (bucket_count as f64 / symbol_range_size as f64).ceil() as u32;
             let freq = freq.max(1);
-            for freq_s in frequencies.iter_mut().take(end_symbol + 1).skip(start_symbol) {
+            for freq_s in frequencies
+                .iter_mut()
+                .take(end_symbol + 1)
+                .skip(start_symbol)
+            {
                 *freq_s = freq;
             }
         }
@@ -202,7 +219,10 @@ pub(super) fn build_model(stats: &AggregateEntry, chunk_symbol_count: usize) -> 
         .unzip();
 
     let total_freq: u32 = probabilities.iter().sum();
-    let probabilities_f64: Vec<f64> = probabilities.iter().map(|&f| f as f64 / total_freq as f64).collect();
+    let probabilities_f64: Vec<f64> = probabilities
+        .iter()
+        .map(|&f| f as f64 / total_freq as f64)
+        .collect();
 
     Ok((symbols_with_freq, probabilities_f64))
 }
@@ -267,7 +287,11 @@ pub fn create_chunk_body(chunk_records: &[RawDataRecord]) -> Result<Vec<u8>> {
     let (send_time_encoded_data, send_time_symbol_count, send_time_stats) =
         match &send_time_strategy {
             SendTimeStrategy::ConstantRate { .. } => (Vec::new(), 0, None),
-            SendTimeStrategy::QuantizedVariable { timing_symbols, intervals, .. } => {
+            SendTimeStrategy::QuantizedVariable {
+                timing_symbols,
+                intervals,
+                ..
+            } => {
                 flags |= ChunkFlags::IS_VARIABLE_RATE;
                 let send_time_stats = calculate_interval_stats(intervals);
                 let mut timing_frequencies = vec![0u32; u16::MAX as usize + 1];
@@ -275,14 +299,26 @@ pub fn create_chunk_body(chunk_records: &[RawDataRecord]) -> Result<Vec<u8>> {
                     timing_frequencies[symbol as usize] += 1;
                 }
                 let (timing_symbols_vec, timing_probabilities): (Vec<_>, Vec<_>) =
-                    timing_frequencies.iter().enumerate().filter(|&(_, f)| *f > 0).map(|(s, f)| (s as u16, *f)).unzip();
+                    timing_frequencies
+                        .iter()
+                        .enumerate()
+                        .filter(|&(_, f)| *f > 0)
+                        .map(|(s, f)| (s as u16, *f))
+                        .unzip();
                 let total_freq: u32 = timing_probabilities.iter().sum();
-                let timing_probabilities_f64: Vec<f64> = timing_probabilities.iter().map(|&f| f as f64 / total_freq as f64).collect();
+                let timing_probabilities_f64: Vec<f64> = timing_probabilities
+                    .iter()
+                    .map(|&f| f as f64 / total_freq as f64)
+                    .collect();
                 let timing_encoded_data = if !timing_symbols_vec.is_empty() {
                     let timing_model = DefaultNonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_fast(timing_symbols_vec.clone(), &timing_probabilities_f64, None).map_err(|_| anyhow!("Failed to create timing model"))?;
                     let mut timing_encoder = DefaultAnsCoder::new();
                     timing_encoder.encode_iid_symbols_reverse(timing_symbols, &timing_model)?;
-                    timing_encoder.into_compressed()?.iter().flat_map(|w| w.to_be_bytes()).collect()
+                    timing_encoder
+                        .into_compressed()?
+                        .iter()
+                        .flat_map(|w| w.to_be_bytes())
+                        .collect()
                 } else {
                     Vec::new()
                 };
@@ -307,7 +343,11 @@ pub fn create_chunk_body(chunk_records: &[RawDataRecord]) -> Result<Vec<u8>> {
         let rtt_model = DefaultNonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_fast(rtt_s, &rtt_p, None).map_err(|_| anyhow!("Failed to create categorical model"))?;
         let mut rtt_encoder = DefaultAnsCoder::new();
         rtt_encoder.encode_iid_symbols_reverse(&rtt_symbols, &rtt_model)?;
-        rtt_encoder.into_compressed()?.iter().flat_map(|w| w.to_be_bytes()).collect()
+        rtt_encoder
+            .into_compressed()?
+            .iter()
+            .flat_map(|w| w.to_be_bytes())
+            .collect()
     } else {
         Vec::new()
     };
@@ -318,7 +358,9 @@ pub fn create_chunk_body(chunk_records: &[RawDataRecord]) -> Result<Vec<u8>> {
 
     let base_interval_ns = match &send_time_strategy {
         SendTimeStrategy::ConstantRate { base_interval_ns } => *base_interval_ns,
-        SendTimeStrategy::QuantizedVariable { base_interval_ns, .. } => *base_interval_ns,
+        SendTimeStrategy::QuantizedVariable {
+            base_interval_ns, ..
+        } => *base_interval_ns,
     };
 
     let mut chunk_header = ChunkHeader {

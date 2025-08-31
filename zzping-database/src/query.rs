@@ -5,7 +5,7 @@ use log::info;
 use std::fs;
 use std::path::PathBuf;
 use tokio::net::TcpStream;
-use zzping_lib::protocol::{read_command, write_records_batch, QueryCommand, RawDataRecord};
+use zzping_lib::protocol::{QueryCommand, RawDataRecord, read_command, write_records_batch};
 
 /// Manages a single TCP connection from a `zzping-gui` instance.
 ///
@@ -122,8 +122,8 @@ mod tests {
     }
 
     use zzping_lib::chunked_v1::{
-        calculate_file_header_crc32, create_chunked_v1_header, ChunkHeader, FileHeader,
-        IndexEntry, FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE,
+        ChunkHeader, FILE_MAGIC, FORMAT_VERSION, FileHeader, HEADER_SIZE, IndexEntry,
+        calculate_file_header_crc32, create_chunked_v1_header,
     };
 
     #[test]

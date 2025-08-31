@@ -1,18 +1,18 @@
 //! Contains the logic for decompressing the `chunked_v1` format into `RawDataRecord`s.
 
+use super::compression::build_model;
 use super::format::{
-    calculate_chunk_header_crc32, calculate_file_header_crc32, ChunkFlags, ChunkHeader,
-    FileHeader, IndexEntry, FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE,
+    ChunkFlags, ChunkHeader, FILE_MAGIC, FORMAT_VERSION, FileHeader, HEADER_SIZE, IndexEntry,
+    calculate_chunk_header_crc32, calculate_file_header_crc32,
 };
-use super::quantization::{Quantizer, PACKET_LOST_SYMBOL};
+use super::quantization::{PACKET_LOST_SYMBOL, Quantizer};
 use crate::protocol::RawDataRecord;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use byteorder::{BigEndian, ReadBytesExt};
 use constriction::stream::{
-    model::DefaultNonContiguousCategoricalDecoderModel, stack::DefaultAnsCoder, Decode,
+    Decode, model::DefaultNonContiguousCategoricalDecoderModel, stack::DefaultAnsCoder,
 };
 use std::io::{Cursor, Read};
-use super::compression::build_model;
 
 /// Builds a probability model for the ANS decompressor from aggregate statistics.
 /// This function mirrors the logic in `compression.rs` to reconstruct the exact
@@ -150,7 +150,9 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
             )?;
             let mut decoder = DefaultAnsCoder::from_compressed(rtt_data_u32)
                 .map_err(|_| anyhow!("Invalid compressed data for RTT stream"))?;
-            let symbols = decoder.decode_iid_symbols(chunk_header.rtt_symbol_count as usize, &rtt_model).collect::<Result<Vec<_>, _>>()?;
+            let symbols = decoder
+                .decode_iid_symbols(chunk_header.rtt_symbol_count as usize, &rtt_model)
+                .collect::<Result<Vec<_>, _>>()?;
             if symbols.len() != chunk_header.rtt_symbol_count as usize {
                 return Err(anyhow!(
                     "RTT symbol count mismatch in chunk {}: expected {}, decoded {}",
@@ -164,13 +166,15 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
             vec![chunk_header.rtt_stats.p00_symbol; chunk_header.rtt_symbol_count as usize]
         };
 
-        let chunk_start_time = chunk_header.minute_boundary_unix_ns + chunk_header.first_ping_offset_ns;
+        let chunk_start_time =
+            chunk_header.minute_boundary_unix_ns + chunk_header.first_ping_offset_ns;
         let mut current_sent_nanos = chunk_start_time;
         let mut send_time_data: Option<Vec<u16>> = None;
 
         if chunk_header.flags.contains(ChunkFlags::IS_VARIABLE_RATE) {
             let send_time_stream_start = rtt_stream_end;
-            let send_time_stream_end = send_time_stream_start + chunk_header.send_time_stream_len_bytes as usize;
+            let send_time_stream_end =
+                send_time_stream_start + chunk_header.send_time_stream_len_bytes as usize;
 
             if send_time_stream_end > chunk_end {
                 return Err(anyhow!(
@@ -192,14 +196,24 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
                 timing_frequencies.push(time_cursor.read_u32::<BigEndian>()?);
             }
             let total_freq: u32 = timing_frequencies.iter().sum();
-            let timing_probabilities: Vec<f64> = timing_frequencies.iter().map(|&f| f as f64 / total_freq as f64).collect();
+            let timing_probabilities: Vec<f64> = timing_frequencies
+                .iter()
+                .map(|&f| f as f64 / total_freq as f64)
+                .collect();
             let timing_data_len = time_cursor.read_u32::<BigEndian>()? as usize;
             let mut timing_data_bytes = vec![0u8; timing_data_len];
             time_cursor.read_exact(&mut timing_data_bytes)?;
-            let timing_data_u32: Vec<u32> = timing_data_bytes.chunks_exact(4).map(|chunk| u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])).collect();
+            let timing_data_u32: Vec<u32> = timing_data_bytes
+                .chunks_exact(4)
+                .map(|chunk| u32::from_be_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .collect();
             let timing_model = DefaultNonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast(timing_symbols_vec, &timing_probabilities, None).map_err(|_| anyhow!("Failed to create timing decoder model"))?;
-            let mut timing_decoder = DefaultAnsCoder::from_compressed(timing_data_u32).map_err(|_| anyhow!("Failed to create timing decoder"))?;
-            let timing_symbols: Vec<u16> = timing_decoder.decode_iid_symbols(chunk_header.send_time_symbol_count as usize, &timing_model).collect::<Result<Vec<_>, _>>().map_err(|_| anyhow!("Failed to decode timing symbols"))?;
+            let mut timing_decoder = DefaultAnsCoder::from_compressed(timing_data_u32)
+                .map_err(|_| anyhow!("Failed to create timing decoder"))?;
+            let timing_symbols: Vec<u16> = timing_decoder
+                .decode_iid_symbols(chunk_header.send_time_symbol_count as usize, &timing_model)
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| anyhow!("Failed to decode timing symbols"))?;
             send_time_data = Some(timing_symbols);
         }
 
@@ -239,7 +253,9 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
             });
         }
 
-        let chunk_data_end = rtt_stream_start + chunk_header.rtt_stream_len_bytes as usize + chunk_header.send_time_stream_len_bytes as usize;
+        let chunk_data_end = rtt_stream_start
+            + chunk_header.rtt_stream_len_bytes as usize
+            + chunk_header.send_time_stream_len_bytes as usize;
         let expected_crc32_start = chunk_data_end;
         let expected_end_asterisk = expected_crc32_start + 4;
 
@@ -254,7 +270,11 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
 
         let chunk_data = &data[chunk_offset..chunk_data_end];
         let computed_chunk_crc32 = crc32fast::hash(chunk_data);
-        let stored_crc32 = u32::from_be_bytes(data[expected_crc32_start..expected_crc32_start + 4].try_into().unwrap());
+        let stored_crc32 = u32::from_be_bytes(
+            data[expected_crc32_start..expected_crc32_start + 4]
+                .try_into()
+                .unwrap(),
+        );
         if computed_chunk_crc32 != stored_crc32 {
             return Err(anyhow!(
                 "Chunk {} data CRC32 mismatch: expected 0x{:08x}, computed 0x{:08x}",

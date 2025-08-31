@@ -194,8 +194,7 @@ fn test_chunked_header_serialized_size_analysis() {
         8 + 8 + 4 + 4 + 4 + 4 + 1 + 8 + format::AggregateEntry::serialized_size() + 4;
     assert_eq!(
         minimal_size, expected_minimal_size,
-        "Minimal ChunkHeader size: expected {}, got {}",
-        expected_minimal_size, minimal_size
+        "Minimal ChunkHeader size: expected {expected_minimal_size}, got {minimal_size}"
     );
 
     // Test maximum size ChunkHeader (with send_time_stats)
@@ -247,13 +246,12 @@ fn test_chunked_header_serialized_size_analysis() {
     let expected_maximal_size = expected_minimal_size + format::AggregateEntry::serialized_size();
     assert_eq!(
         maximal_size, expected_maximal_size,
-        "Maximal ChunkHeader size: expected {}, got {}",
-        expected_maximal_size, maximal_size
+        "Maximal ChunkHeader size: expected {expected_maximal_size}, got {maximal_size}"
     );
 
     println!("ChunkHeader sizes verified:");
-    println!("  Minimal (no send_time_stats): {} bytes", minimal_size);
-    println!("  Maximal (with send_time_stats): {} bytes", maximal_size);
+    println!("  Minimal (no send_time_stats): {minimal_size} bytes");
+    println!("  Maximal (with send_time_stats): {maximal_size} bytes");
     println!(
         "  Difference: {} bytes (one AggregateEntry)",
         maximal_size - minimal_size
@@ -309,7 +307,10 @@ fn test_header_layout_calculations() {
     assert_eq!(end_indices, file_header.total_header_used());
 
     println!("Header layout verification:");
-    println!("  FileHeader: {} bytes", format::FileHeader::serialized_size());
+    println!(
+        "  FileHeader: {} bytes",
+        format::FileHeader::serialized_size()
+    );
     println!(
         "  {} AggregateEntries: {} bytes",
         file_header.aggregate_entry_count,
@@ -447,7 +448,7 @@ fn test_size_calculation_edge_cases() {
 
     let realistic_used = realistic_header.total_header_used();
     println!("Realistic 24-hour configuration:");
-    println!("  Header used: {} bytes", realistic_used);
+    println!("  Header used: {realistic_used} bytes");
     println!("  Available: {} bytes", format::HEADER_SIZE);
     println!(
         "  Utilization: {:.1}%",
@@ -459,8 +460,8 @@ fn test_size_calculation_edge_cases() {
     realistic_header.validate_header_fits().unwrap();
 
     // Test near-maximum configuration (stress test)
-    let max_aggregates =
-        (format::HEADER_SIZE - format::FileHeader::serialized_size()) / format::AggregateEntry::serialized_size();
+    let max_aggregates = (format::HEADER_SIZE - format::FileHeader::serialized_size())
+        / format::AggregateEntry::serialized_size();
     let stress_header = format::FileHeader {
         magic: format::FILE_MAGIC,
         format_version: format::FORMAT_VERSION,
@@ -472,8 +473,8 @@ fn test_size_calculation_edge_cases() {
 
     let stress_used = stress_header.total_header_used();
     println!("Maximum aggregates configuration:");
-    println!("  Max possible aggregates: {}", max_aggregates);
-    println!("  Header used: {} bytes", stress_used);
+    println!("  Max possible aggregates: {max_aggregates}");
+    println!("  Header used: {stress_used} bytes");
     println!("  Remaining: {} bytes", format::HEADER_SIZE - stress_used);
 
     // Should still fit
@@ -568,11 +569,12 @@ fn test_model_with_exactly_one_packet_lost() {
         let (symbols, probabilities) = result.unwrap();
 
         // Verify packet loss symbol is included with correct frequency
-        let lost_symbol_pos = symbols.iter().position(|&s| s == quantization::PACKET_LOST_SYMBOL);
+        let lost_symbol_pos = symbols
+            .iter()
+            .position(|&s| s == quantization::PACKET_LOST_SYMBOL);
         assert!(
             lost_symbol_pos.is_some(),
-            "Packet loss symbol missing with {} total packets",
-            total_packets
+            "Packet loss symbol missing with {total_packets} total packets"
         );
 
         let lost_prob = probabilities[lost_symbol_pos.unwrap()];
@@ -581,18 +583,14 @@ fn test_model_with_exactly_one_packet_lost() {
         // The exact probability depends on how frequencies are distributed, but it should be > 0
         assert!(
             lost_prob > 0.0,
-            "Packet loss probability should be > 0 with {} total packets, got {}",
-            total_packets,
-            lost_prob
+            "Packet loss probability should be > 0 with {total_packets} total packets, got {lost_prob}"
         );
 
         // Verify all probabilities sum to 1.0 (within floating point tolerance)
         let total_prob: f64 = probabilities.iter().sum();
         assert!(
             (total_prob - 1.0).abs() < 1e-10,
-            "Probabilities should sum to 1.0, got {} with {} total packets",
-            total_prob,
-            total_packets
+            "Probabilities should sum to 1.0, got {total_prob} with {total_packets} total packets"
         );
     }
 }
@@ -631,7 +629,9 @@ fn test_model_with_all_packets_lost() {
     );
 
     // Packet loss symbol should be present
-    let lost_symbol_pos = symbols.iter().position(|&s| s == quantization::PACKET_LOST_SYMBOL);
+    let lost_symbol_pos = symbols
+        .iter()
+        .position(|&s| s == quantization::PACKET_LOST_SYMBOL);
     assert!(
         lost_symbol_pos.is_some(),
         "Packet loss symbol missing with 100% loss"
@@ -641,8 +641,7 @@ fn test_model_with_all_packets_lost() {
     let lost_prob = probabilities[lost_symbol_pos.unwrap()];
     assert!(
         lost_prob > 0.5,
-        "With 100% packet loss, loss probability should be high, got {}",
-        lost_prob
+        "With 100% packet loss, loss probability should be high, got {lost_prob}"
     );
 }
 
@@ -929,21 +928,19 @@ fn test_constant_rate_compression_efficiency() {
         compressed.len()
     );
     println!(
-        "  Compressed size (without header): {} bytes",
-        compressed_size_without_header
+        "  Compressed size (without header): {compressed_size_without_header} bytes"
     );
     println!(
         "  Compression ratio (without header): {:.2}:1",
         (records.len() * std::mem::size_of::<RawDataRecord>()) as f64
             / compressed_size_without_header as f64
     );
-    println!("  Bits per ping (without header): {:.2}", bits_per_ping);
+    println!("  Bits per ping (without header): {bits_per_ping:.2}");
 
     // With constant rate, we should achieve less than 8 bits per ping (excluding fixed header)
     assert!(
         bits_per_ping < 8.0,
-        "Constant rate compression should use <8 bits per ping, but used {:.2}",
-        bits_per_ping
+        "Constant rate compression should use <8 bits per ping, but used {bits_per_ping:.2}"
     );
 
     // Verify we can decompress correctly
@@ -959,8 +956,7 @@ fn test_constant_rate_compression_efficiency() {
         assert_eq!(
             records[i].sent_nanos / PING_INTERVAL_NS,
             decompressed[i].sent_nanos / PING_INTERVAL_NS,
-            "Ping interval not preserved at index {}",
-            i
+            "Ping interval not preserved at index {i}"
         );
     }
 }
@@ -1029,22 +1025,20 @@ fn test_variable_rate_compression_efficiency() {
         compressed.len()
     );
     println!(
-        "  Compressed size (without header): {} bytes",
-        compressed_size_without_header
+        "  Compressed size (without header): {compressed_size_without_header} bytes"
     );
     println!(
         "  Compression ratio (without header): {:.2}:1",
         (records.len() * std::mem::size_of::<RawDataRecord>()) as f64
             / compressed_size_without_header as f64
     );
-    println!("  Bits per ping (without header): {:.2}", bits_per_ping);
+    println!("  Bits per ping (without header): {bits_per_ping:.2}");
 
     // With variable rate (storing timing deltas), we expect reasonable compression
     // Current implementation uses ~32 bits per ping, so let's set a realistic target
     assert!(
         bits_per_ping < 40.0,
-        "Variable rate compression should use <40 bits per ping, but used {:.2}",
-        bits_per_ping
+        "Variable rate compression should use <40 bits per ping, but used {bits_per_ping:.2}"
     );
 
     // Verify we can decompress correctly
@@ -1062,9 +1056,7 @@ fn test_variable_rate_compression_efficiency() {
         let time_diff = records[i].sent_nanos.abs_diff(decompressed[i].sent_nanos);
         assert!(
             time_diff <= tolerance_ns,
-            "Timing not preserved within tolerance at index {}: diff={} ns",
-            i,
-            time_diff
+            "Timing not preserved within tolerance at index {i}: diff={time_diff} ns"
         );
     }
 }

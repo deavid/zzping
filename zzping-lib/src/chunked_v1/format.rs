@@ -5,7 +5,7 @@
 //! direct serialization to and from disk. The primary design goal is compactness
 //! and efficiency for append-only writing.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Read, Write};
 

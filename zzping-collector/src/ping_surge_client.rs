@@ -38,6 +38,10 @@ impl PingSurgeClient {
 
 #[async_trait]
 impl PingClient for PingSurgeClient {
+    fn target(&self) -> IpAddr {
+        self.target
+    }
+
     async fn ping(
         &self,
         sequence_idx: u16,

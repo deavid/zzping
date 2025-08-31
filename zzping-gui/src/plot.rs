@@ -7,7 +7,7 @@
 
 use crate::data::DataPoint;
 use chrono::{DateTime, Duration, Utc};
-use egui::{emath::RectTransform, Painter, Pos2, Rect, Response, Sense, Stroke, Ui, Widget};
+use egui::{Painter, Pos2, Rect, Response, Sense, Stroke, Ui, Widget, emath::RectTransform};
 
 /// The maximum RTT to display on the plot's Y-axis, in milliseconds.
 ///
@@ -60,9 +60,9 @@ impl<'a> Widget for PlotWidget<'a> {
 
         // 1. Calculate data ranges
         let (full_time_range, max_rtt_ms) = self.get_data_ranges();
-        let view_duration_nanos =
-            (full_time_range.num_nanoseconds().unwrap_or(0) as f64 / self.zoom as f64)
-                .max(1_000_000_000.0);
+        let view_duration_nanos = (full_time_range.num_nanoseconds().unwrap_or(0) as f64
+            / self.zoom as f64)
+            .max(1_000_000_000.0);
         let view_duration = Duration::nanoseconds(view_duration_nanos as i64);
         let view_start_time = self.points[0].time + Duration::microseconds(self.pan_micros);
         let view_end_time = view_start_time + view_duration;
@@ -172,7 +172,9 @@ impl<'a> PlotWidget<'a> {
 
         while screen_x <= rect.max.x {
             let t_start_relative = from_screen.transform_pos(Pos2::new(screen_x, 0.0)).x as i64;
-            let t_end_relative = from_screen.transform_pos(Pos2::new(screen_x + step_size, 0.0)).x as i64;
+            let t_end_relative = from_screen
+                .transform_pos(Pos2::new(screen_x + step_size, 0.0))
+                .x as i64;
 
             let t_start = view_start_time + Duration::milliseconds(t_start_relative);
             let t_end = view_start_time + Duration::milliseconds(t_end_relative);
@@ -199,17 +201,32 @@ impl<'a> PlotWidget<'a> {
                 }
 
                 if success_count > 0 {
-                    let y_high = to_screen.transform_pos(Pos2::new(0.0, slice_min_rtt_ms as f32)).y;
-                    let y_low = to_screen.transform_pos(Pos2::new(0.0, slice_max_rtt_ms as f32)).y;
-                    painter.line_segment([Pos2::new(screen_x, y_high), Pos2::new(screen_x, y_low)], stroke);
+                    let y_high = to_screen
+                        .transform_pos(Pos2::new(0.0, slice_min_rtt_ms as f32))
+                        .y;
+                    let y_low = to_screen
+                        .transform_pos(Pos2::new(0.0, slice_max_rtt_ms as f32))
+                        .y;
+                    painter.line_segment(
+                        [Pos2::new(screen_x, y_high), Pos2::new(screen_x, y_low)],
+                        stroke,
+                    );
                 }
 
                 if lost_count > 0 {
                     let y_bottom = to_screen.transform_pos(Pos2::new(0.0, 0.0)).y;
-                    let loss_intensity = (lost_count as f32 / (success_count + lost_count) as f32).min(1.0);
+                    let loss_intensity =
+                        (lost_count as f32 / (success_count + lost_count) as f32).min(1.0);
                     let alpha = (255.0 * loss_intensity) as u8;
-                    let loss_color_alpha = egui::Color32::from_rgba_unmultiplied(255, 100, 100, alpha);
-                    painter.line_segment([Pos2::new(screen_x, y_bottom), Pos2::new(screen_x, y_bottom - 4.0)], Stroke::new(1.0, loss_color_alpha));
+                    let loss_color_alpha =
+                        egui::Color32::from_rgba_unmultiplied(255, 100, 100, alpha);
+                    painter.line_segment(
+                        [
+                            Pos2::new(screen_x, y_bottom),
+                            Pos2::new(screen_x, y_bottom - 4.0),
+                        ],
+                        Stroke::new(1.0, loss_color_alpha),
+                    );
                 }
             }
             screen_x += step_size;
@@ -236,13 +253,22 @@ impl<'a> PlotWidget<'a> {
             let rtt_ms = (max_rtt_ms * i as f32) / num_y_ticks as f32;
             let y_pos = to_screen.transform_pos(Pos2::new(0.0, rtt_ms)).y;
             if y_pos >= rect.min.y && y_pos <= rect.max.y {
-                painter.line_segment([Pos2::new(rect.min.x, y_pos), Pos2::new(rect.max.x, y_pos)], Stroke::new(1.0, grid_color));
+                painter.line_segment(
+                    [Pos2::new(rect.min.x, y_pos), Pos2::new(rect.max.x, y_pos)],
+                    Stroke::new(1.0, grid_color),
+                );
                 let label = if rtt_ms >= 1000.0 {
                     format!("{:.1}s", rtt_ms / 1000.0)
                 } else {
                     format!("{rtt_ms:.1}ms")
                 };
-                painter.text(Pos2::new(rect.min.x + 5.0, y_pos - 8.0), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(font_size), text_color);
+                painter.text(
+                    Pos2::new(rect.min.x + 5.0, y_pos - 8.0),
+                    egui::Align2::LEFT_CENTER,
+                    label,
+                    egui::FontId::proportional(font_size),
+                    text_color,
+                );
             }
         }
 
@@ -251,12 +277,17 @@ impl<'a> PlotWidget<'a> {
         let num_x_ticks = 6;
         for i in 0..=num_x_ticks {
             let time_progress = i as f32 / num_x_ticks as f32;
-            let time_millis = view_start_time.timestamp_millis() as f32 + (view_duration_millis * time_progress);
+            let time_millis =
+                view_start_time.timestamp_millis() as f32 + (view_duration_millis * time_progress);
             let x_pos = to_screen.transform_pos(Pos2::new(time_millis, 0.0)).x;
 
             if x_pos >= rect.min.x && x_pos <= rect.max.x {
-                painter.line_segment([Pos2::new(x_pos, rect.min.y), Pos2::new(x_pos, rect.max.y)], Stroke::new(1.0, grid_color));
-                let actual_time = view_start_time + Duration::milliseconds((view_duration_millis * time_progress) as i64);
+                painter.line_segment(
+                    [Pos2::new(x_pos, rect.min.y), Pos2::new(x_pos, rect.max.y)],
+                    Stroke::new(1.0, grid_color),
+                );
+                let actual_time = view_start_time
+                    + Duration::milliseconds((view_duration_millis * time_progress) as i64);
                 let time_label = if view_duration_millis > 3_600_000.0 {
                     actual_time.format("%H:%M").to_string()
                 } else if view_duration_millis > 60_000.0 {
@@ -266,7 +297,13 @@ impl<'a> PlotWidget<'a> {
                     let millis = actual_time.timestamp_millis() % 1000;
                     format!("{secs}.{millis:03}s")
                 };
-                painter.text(Pos2::new(x_pos, rect.max.y - 15.0), egui::Align2::CENTER_CENTER, time_label, egui::FontId::proportional(font_size), text_color);
+                painter.text(
+                    Pos2::new(x_pos, rect.max.y - 15.0),
+                    egui::Align2::CENTER_CENTER,
+                    time_label,
+                    egui::FontId::proportional(font_size),
+                    text_color,
+                );
             }
         }
 

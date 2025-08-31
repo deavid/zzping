@@ -1,6 +1,6 @@
 //! Manages the state for a single, active connection to the `zzping-database`.
 
-use crate::ping_client::{PingClient, PingResult};
+use crate::{cli::Cli, ping_client::PingClient, ping_client::PingResult};
 use anyhow::Result;
 use log::{debug, error};
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWrite;
 use tokio::sync::{Semaphore, mpsc};
-use zzping_lib::protocol::{RawDataRecord, write_record};
+use zzping_lib::protocol::{ClientHandshake, RawDataRecord, write_handshake, write_record};
 
 /// Manages the state and event loop for a single, ongoing pinging session.
 ///
@@ -22,7 +22,7 @@ use zzping_lib::protocol::{RawDataRecord, write_record};
 /// - Calling the injected `PingClient` to send pings.
 /// - Receiving `PingResult`s from an MPSC channel.
 /// - Serializing the results into `RawDataRecord`s and writing them to the database stream.
-struct PingerSession<W, P>
+struct PingerSession<W, P: ?Sized>
 where
     W: AsyncWrite + Unpin + Send,
     P: PingClient,
@@ -47,7 +47,7 @@ where
     rate_ns: Arc<AtomicU64>,
 }
 
-impl<W, P> PingerSession<W, P>
+impl<W, P: ?Sized> PingerSession<W, P>
 where
     W: AsyncWrite + Unpin + Send,
     P: PingClient,
@@ -59,7 +59,7 @@ where
     pub fn new(
         db_stream: W,
         ping_client: Arc<P>,
-        cli: Arc<crate::Cli>,
+        cli: Arc<Cli>,
     ) -> Result<(Self, mpsc::Sender<PingResult>)> {
         let ping_semaphore = Arc::new(Semaphore::new(cli.max_in_flight));
         let (tx, rx) = mpsc::channel(1024);
@@ -158,17 +158,22 @@ where
 /// * `db_stream` - An async writer, typically the TCP stream to the `zzping-database`.
 /// * `ping_client` - The shared ping client implementation.
 /// * `cli` - The parsed command-line arguments.
-///
-/// TODO: Update to handle multiple PingSurgeClient instances (one per target from cli.targets)
 pub async fn handle_connection<W, P>(
-    db_stream: W,
+    mut db_stream: W,
     ping_client: Arc<P>,
-    cli: Arc<crate::Cli>,
+    cli: Arc<Cli>,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin + Send,
-    P: PingClient,
+    P: PingClient + ?Sized,
 {
+    let handshake = ClientHandshake {
+        source_hostname: cli.source_hostname.clone(),
+        target: ping_client.target(),
+    };
+
+    write_handshake(&mut db_stream, &handshake).await?;
+
     let (mut session, _) = PingerSession::new(db_stream, ping_client, cli)?;
 
     loop {
@@ -185,8 +190,42 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Cli, ping_mock_client::PingMockClient};
+    use crate::{cli::Cli, ping_mock_client::PingMockClient};
+    use std::io;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::AsyncWrite;
     use zzping_lib::protocol::read_record;
+
+    // A mock writer that can be configured to fail after a certain number of bytes.
+    struct MockWriter {
+        buffer: Vec<u8>,
+        fail_after: Option<usize>,
+    }
+
+    impl AsyncWrite for MockWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            if let Some(fail_after) = self.fail_after {
+                if self.buffer.len() >= fail_after {
+                    return Poll::Ready(Err(io::Error::other("Simulated error")));
+                }
+            }
+            self.buffer.extend_from_slice(buf);
+            Poll::Ready(Ok(buf.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
 
     fn common_test_setup() -> (
         Vec<u8>,

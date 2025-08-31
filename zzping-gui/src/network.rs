@@ -5,7 +5,7 @@ use crossbeam_channel::Sender;
 use log::{info, warn};
 use std::time::Duration;
 use tokio::net::TcpStream;
-use zzping_lib::protocol::{read_records_batch, write_command, QueryCommand, RawDataRecord};
+use zzping_lib::protocol::{QueryCommand, RawDataRecord, read_records_batch, write_command};
 
 const QUERY_ADDR: &str = "127.0.0.1:7879";
 

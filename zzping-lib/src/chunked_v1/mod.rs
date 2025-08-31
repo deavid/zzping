@@ -15,7 +15,7 @@ mod tests;
 pub use compression::{create_chunk_body, create_chunked_v1_header};
 pub use decompression::decompress_chunked_v1;
 pub use format::{
-    calculate_file_header_crc32, AggregateEntry, ChunkFlags, ChunkHeader, FileHeader, IndexEntry,
-    FILE_MAGIC, FORMAT_VERSION, HEADER_SIZE, MAX_RECOMMENDED_CHUNKS,
+    AggregateEntry, ChunkFlags, ChunkHeader, FILE_MAGIC, FORMAT_VERSION, FileHeader, HEADER_SIZE,
+    IndexEntry, MAX_RECOMMENDED_CHUNKS, calculate_file_header_crc32,
 };
 pub use quantization::Quantizer;
