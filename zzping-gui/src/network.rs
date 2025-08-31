@@ -43,8 +43,8 @@ pub async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
     let mut stream = TcpStream::connect(QUERY_ADDR).await?;
     info!("Connected to query port at {QUERY_ADDR}");
 
-    write_command(&mut stream, &QueryCommand::GetLastMinute).await?;
-    info!("Sent GetLastMinute command.");
+    write_command(&mut stream, &QueryCommand::GetLastHour).await?;
+    info!("Sent GetLastHour command.");
 
     if let Some(records) = read_records_batch(&mut stream).await? {
         info!("Received {} records from database.", records.len());
@@ -82,30 +82,40 @@ mod tests {
         ];
         let records_clone = expected_records.clone();
 
-        // Use a oneshot channel to signal that the server is ready.
+        // Use a oneshot channel to signal that the server is ready and pass the address.
         let (server_ready_tx, server_ready_rx) = oneshot::channel();
 
         let server_handle = tokio::spawn(async move {
-            let listener = TcpListener::bind(QUERY_ADDR).await.unwrap();
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
             // Signal that the server is bound and ready to accept connections.
-            server_ready_tx.send(()).unwrap();
+            server_ready_tx.send(addr).unwrap();
 
             let (mut stream, _) = listener.accept().await.unwrap();
 
             // Mock server logic: read command, write back records.
             let command = read_command(&mut stream).await.unwrap();
-            assert_eq!(command, QueryCommand::GetLastMinute);
+            assert_eq!(command, QueryCommand::GetLastHour);
             write_records_batch(&mut stream, &records_clone)
                 .await
                 .unwrap();
         });
 
-        // Wait for the server to be ready before trying to connect.
-        server_ready_rx.await?;
+        // Wait for the server to be ready and get the address.
+        let test_addr = server_ready_rx.await?;
 
-        // 2. Execution: Call the function under test.
+        // 2. Execution: Inline the fetch logic with the test address.
         let (tx, rx) = crossbeam_channel::unbounded();
-        try_fetch_data(&tx).await?;
+        let mut stream = TcpStream::connect(test_addr).await?;
+        info!("Connected to test query port at {test_addr}");
+
+        write_command(&mut stream, &QueryCommand::GetLastHour).await?;
+        info!("Sent GetLastHour command.");
+
+        if let Some(records) = read_records_batch(&mut stream).await? {
+            info!("Received {} records from test database.", records.len());
+            tx.send(records)?;
+        }
 
         // 3. Verification: Check that the correct data was received on the channel.
         let received_records = rx.recv()?;

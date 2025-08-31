@@ -8,13 +8,13 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 #[repr(u16)]
 pub enum QueryCommand {
-    GetLastMinute = 0,
+    GetLastHour = 0,
 }
 
 impl QueryCommand {
     pub fn from_u16(value: u16) -> Option<Self> {
         match value {
-            0 => Some(QueryCommand::GetLastMinute),
+            0 => Some(QueryCommand::GetLastHour),
             _ => None,
         }
     }
@@ -253,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_command_protocol_roundtrip() {
-        let command = QueryCommand::GetLastMinute;
+        let command = QueryCommand::GetLastHour;
 
         // 1. Write the command to a buffer
         let mut buffer = Vec::new();

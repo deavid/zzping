@@ -927,9 +927,7 @@ fn test_constant_rate_compression_efficiency() {
         "  Compressed size (with header): {} bytes",
         compressed.len()
     );
-    println!(
-        "  Compressed size (without header): {compressed_size_without_header} bytes"
-    );
+    println!("  Compressed size (without header): {compressed_size_without_header} bytes");
     println!(
         "  Compression ratio (without header): {:.2}:1",
         (records.len() * std::mem::size_of::<RawDataRecord>()) as f64
@@ -1024,9 +1022,7 @@ fn test_variable_rate_compression_efficiency() {
         "  Compressed size (with header): {} bytes",
         compressed.len()
     );
-    println!(
-        "  Compressed size (without header): {compressed_size_without_header} bytes"
-    );
+    println!("  Compressed size (without header): {compressed_size_without_header} bytes");
     println!(
         "  Compression ratio (without header): {:.2}:1",
         (records.len() * std::mem::size_of::<RawDataRecord>()) as f64
@@ -1059,4 +1055,156 @@ fn test_variable_rate_compression_efficiency() {
             "Timing not preserved within tolerance at index {i}: diff={time_diff} ns"
         );
     }
+}
+
+#[test]
+fn test_decompression_of_partial_unfinalized_file() {
+    use crate::protocol::RawDataRecord;
+    use chrono::{TimeZone, Utc};
+    use std::time::Duration;
+
+    // Create test data with 5 chunks, each containing records for different minutes
+    let base_time = Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
+    let mut all_records = Vec::new();
+
+    // Generate 5 chunks of data
+    for chunk_idx in 0..5 {
+        let minute_offset = chunk_idx as u64;
+        let start_time =
+            base_time.timestamp_nanos_opt().unwrap() as u64 + minute_offset * 60_000_000_000; // Each chunk starts at a different minute
+
+        // Create 100 records per chunk with varying RTTs
+        for i in 0..100 {
+            let sent_nanos = start_time + i * 1_000_000_000; // 1 second intervals
+            let rtt_nanos = Duration::from_millis(10 + (i % 20)).as_nanos() as u64; // 10-29ms RTT
+
+            all_records.push(RawDataRecord {
+                sent_nanos,
+                rtt_nanos,
+            });
+        }
+    }
+
+    // Sort records by sent_nanos to ensure chronological order
+    all_records.sort_by_key(|r| r.sent_nanos);
+    let expected_count = all_records.len();
+    let expected_start_time = all_records.first().unwrap().sent_nanos;
+    let expected_end_time = all_records.last().unwrap().sent_nanos;
+    let expected_duration = expected_end_time - expected_start_time;
+
+    // Calculate expected average RTT (excluding packet losses)
+    let valid_rtts: Vec<u64> = all_records
+        .iter()
+        .filter(|r| r.rtt_nanos != u64::MAX)
+        .map(|r| r.rtt_nanos)
+        .collect();
+    let expected_avg_rtt = valid_rtts.iter().sum::<u64>() / valid_rtts.len() as u64;
+
+    // Create partial file (unfinalized - empty index table)
+    let mut partial_data = compression::create_chunked_v1_header().unwrap();
+
+    // Group records by minute (same logic as create_finalized_file_for_test)
+    let mut chunks: std::collections::BTreeMap<u64, Vec<RawDataRecord>> =
+        std::collections::BTreeMap::new();
+    for record in &all_records {
+        chunks
+            .entry(record.sent_nanos / 60_000_000_000)
+            .or_default()
+            .push(*record);
+    }
+
+    // Create and append chunks without updating the header
+    for chunk_records in chunks.values() {
+        let chunk_body = compression::create_chunk_body(chunk_records).unwrap();
+        partial_data.extend_from_slice(&chunk_body);
+    }
+
+    // The header is not finalized - index table is empty, aggregate table is empty
+    // This simulates a file that's still being written to
+
+    // Test decompression of the partial file
+    let decompressed_records = decompression::decompress_chunked_v1(&partial_data).unwrap();
+
+    // Verify the results
+    assert_eq!(
+        decompressed_records.len(),
+        expected_count,
+        "Record count mismatch: expected {}, got {}",
+        expected_count,
+        decompressed_records.len()
+    );
+
+    // Verify time span (should be approximately the same)
+    let actual_start_time = decompressed_records.first().unwrap().sent_nanos;
+    let actual_end_time = decompressed_records.last().unwrap().sent_nanos;
+    let actual_duration = actual_end_time - actual_start_time;
+
+    let time_tolerance = 5_000_000; // 5ms tolerance for timing variations
+    assert!(
+        actual_start_time.abs_diff(expected_start_time) <= time_tolerance,
+        "Start time mismatch: expected {}, got {}",
+        expected_start_time,
+        actual_start_time
+    );
+    assert!(
+        actual_end_time.abs_diff(expected_end_time) <= time_tolerance,
+        "End time mismatch: expected {}, got {}",
+        expected_end_time,
+        actual_end_time
+    );
+    assert!(
+        actual_duration.abs_diff(expected_duration) <= time_tolerance,
+        "Duration mismatch: expected {}, got {}",
+        expected_duration,
+        actual_duration
+    );
+
+    // Verify average RTT within 1% tolerance
+    let actual_valid_rtts: Vec<u64> = decompressed_records
+        .iter()
+        .filter(|r| r.rtt_nanos != u64::MAX)
+        .map(|r| r.rtt_nanos)
+        .collect();
+    let actual_avg_rtt = actual_valid_rtts.iter().sum::<u64>() / actual_valid_rtts.len() as u64;
+
+    let rtt_tolerance = expected_avg_rtt / 100; // 1% tolerance
+    assert!(
+        actual_avg_rtt.abs_diff(expected_avg_rtt) <= rtt_tolerance,
+        "Average RTT mismatch: expected {}, got {}, tolerance {}",
+        expected_avg_rtt,
+        actual_avg_rtt,
+        rtt_tolerance
+    );
+
+    // Verify that packet loss count is preserved (should be 0 in this test)
+    let expected_loss_count = all_records
+        .iter()
+        .filter(|r| r.rtt_nanos == u64::MAX)
+        .count();
+    let actual_loss_count = decompressed_records
+        .iter()
+        .filter(|r| r.rtt_nanos == u64::MAX)
+        .count();
+    assert_eq!(
+        actual_loss_count, expected_loss_count,
+        "Packet loss count mismatch: expected {}, got {}",
+        expected_loss_count, actual_loss_count
+    );
+
+    println!("✅ Partial file decompression test passed:");
+    println!(
+        "  - Records: {} (expected {})",
+        decompressed_records.len(),
+        expected_count
+    );
+    println!(
+        "  - Duration: {:.3}s (expected {:.3}s)",
+        actual_duration as f64 / 1_000_000_000.0,
+        expected_duration as f64 / 1_000_000_000.0
+    );
+    println!(
+        "  - Avg RTT: {:.3}ms (expected {:.3}ms)",
+        actual_avg_rtt as f64 / 1_000_000.0,
+        expected_avg_rtt as f64 / 1_000_000.0
+    );
 }

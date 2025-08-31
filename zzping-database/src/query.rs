@@ -23,7 +23,7 @@ pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
 
     // 2. Process the command
     let records = match command {
-        QueryCommand::GetLastMinute => get_last_minute_records(crate::DATA_DIR)?,
+        QueryCommand::GetLastHour => get_last_hour_records(crate::DATA_DIR)?,
     };
 
     // 4. Serialize and send the response using the centralized helper
@@ -38,18 +38,30 @@ pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
 }
 
 /// Finds the most recent data file, decompresses it, and returns the records.
-pub fn get_last_minute_records(data_dir: &str) -> Result<Vec<RawDataRecord>> {
+pub fn get_last_hour_records(data_dir: &str) -> Result<Vec<RawDataRecord>> {
     match find_latest_zzp1_file(data_dir)? {
         Some(path) => {
             info!("Found latest file: {path:?}");
             let compressed_data = fs::read(&path)?;
-            let decompressed_records: Vec<RawDataRecord> =
+            let mut decompressed_records: Vec<RawDataRecord> =
                 zzping_lib::chunked_v1::decompress_chunked_v1(&compressed_data)?;
             info!(
                 "Decompressed {} records from {:?}",
                 decompressed_records.len(),
                 path
             );
+
+            // Filter to only the last hour's records
+            if let Some(max_sent) = decompressed_records.iter().map(|r| r.sent_nanos).max() {
+                let one_hour_nanos = 60 * 60 * 1_000_000_000; // 1 hour in nanoseconds
+                let cutoff = max_sent.saturating_sub(one_hour_nanos);
+                decompressed_records.retain(|r| r.sent_nanos >= cutoff);
+                info!(
+                    "Filtered to {} records from the last hour",
+                    decompressed_records.len()
+                );
+            }
+
             Ok(decompressed_records)
         }
         None => {
@@ -127,7 +139,7 @@ mod tests {
     };
 
     #[test]
-    fn test_get_last_minute_records() -> Result<()> {
+    fn test_get_last_hour_records() -> Result<()> {
         // 1. Setup: Create a temp dir and some sample data
         let temp_dir = tempdir()?;
         let data_dir = temp_dir.path().to_str().unwrap();
@@ -175,7 +187,7 @@ mod tests {
         fs::write(file_path, final_data)?;
 
         // 3. Execution: Call the function under test
-        let result_records = get_last_minute_records(data_dir)?;
+        let result_records = get_last_hour_records(data_dir)?;
 
         // 4. Verification: Assert the returned records match the original
         assert_eq!(result_records, records);
@@ -184,10 +196,10 @@ mod tests {
     }
 
     #[test]
-    fn test_get_last_minute_records_empty_dir() -> Result<()> {
+    fn test_get_last_hour_records_empty_dir() -> Result<()> {
         let temp_dir = tempdir()?;
         let data_dir = temp_dir.path().to_str().unwrap();
-        let result_records = get_last_minute_records(data_dir)?;
+        let result_records = get_last_hour_records(data_dir)?;
         assert!(result_records.is_empty());
         Ok(())
     }

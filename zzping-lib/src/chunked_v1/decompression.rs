@@ -30,6 +30,41 @@ fn build_model_for_decode(
     .map_err(|_| anyhow!("Failed to create categorical model"))
 }
 
+/// Scans the data for chunk delimiters when the index table is empty.
+/// Returns a vector of chunk offsets (positions where chunks start).
+fn scan_for_chunks(data: &[u8], start_offset: usize) -> Result<Vec<usize>> {
+    let mut offsets = Vec::new();
+    let mut pos = start_offset;
+
+    while pos + 1 < data.len() {
+        // Look for '*' delimiter
+        if data[pos] == b'*' {
+            let chunk_start = pos + 1;
+            // Try to read the chunk header
+            let mut cursor = Cursor::new(&data[chunk_start..]);
+            if let Ok(chunk_header) = ChunkHeader::read(&mut cursor) {
+                // Validate the chunk header CRC
+                let computed_crc = calculate_chunk_header_crc32(&chunk_header);
+                if computed_crc == chunk_header.chunk_crc32 {
+                    offsets.push(chunk_start);
+                    // Skip to after this chunk (header + streams + CRC + end delimiter)
+                    let header_size = cursor.position() as usize;
+                    pos = chunk_start
+                        + header_size
+                        + chunk_header.rtt_stream_len_bytes as usize
+                        + chunk_header.send_time_stream_len_bytes as usize
+                        + 4
+                        + 1; // CRC32 + end '*'
+                    continue;
+                }
+            }
+        }
+        pos += 1;
+    }
+
+    Ok(offsets)
+}
+
 /// Decompresses a slice of bytes in the `chunked_v1` format into a `Vec<RawDataRecord>`.
 ///
 /// # Process
@@ -86,11 +121,19 @@ pub fn decompress_chunked_v1(data: &[u8]) -> Result<Vec<RawDataRecord>> {
     let quantizer = Quantizer::new();
     let mut all_records = Vec::new();
 
-    for (chunk_index, index_entry) in index_table.iter().enumerate() {
-        let chunk_offset = index_entry.chunk_offset_bytes as usize;
+    // If index table is empty (file not finalized), scan for chunks
+    let chunk_offsets = if index_table.is_empty() {
+        scan_for_chunks(data, HEADER_SIZE)?
+    } else {
+        index_table
+            .iter()
+            .map(|entry| entry.chunk_offset_bytes as usize)
+            .collect()
+    };
 
-        let chunk_end = if chunk_index + 1 < index_table.len() {
-            index_table[chunk_index + 1].chunk_offset_bytes as usize
+    for (chunk_index, &chunk_offset) in chunk_offsets.iter().enumerate() {
+        let chunk_end = if chunk_index + 1 < chunk_offsets.len() {
+            chunk_offsets[chunk_index + 1]
         } else {
             data.len()
         };
