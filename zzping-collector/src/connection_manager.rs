@@ -198,6 +198,7 @@ mod tests {
     use zzping_lib::protocol::read_record;
 
     // A mock writer that can be configured to fail after a certain number of bytes.
+    #[allow(dead_code)]
     struct MockWriter {
         buffer: Vec<u8>,
         fail_after: Option<usize>,
@@ -209,10 +210,10 @@ mod tests {
             _cx: &mut Context<'_>,
             buf: &[u8],
         ) -> Poll<io::Result<usize>> {
-            if let Some(fail_after) = self.fail_after {
-                if self.buffer.len() >= fail_after {
-                    return Poll::Ready(Err(io::Error::other("Simulated error")));
-                }
+            if let Some(fail_after) = self.fail_after
+                && self.buffer.len() >= fail_after
+            {
+                return Poll::Ready(Err(io::Error::other("Simulated error")));
             }
             self.buffer.extend_from_slice(buf);
             Poll::Ready(Ok(buf.len()))

@@ -79,18 +79,17 @@ fn run_startup_finalization(data_dir: &str) -> Result<()> {
     for entry in fs::read_dir(data_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "zzp1") {
-            if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                let parts: Vec<&str> = stem.split('-').collect();
-                if let Some(date_str) = parts.last() {
-                    if let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y%m%d") {
-                        if file_date < today {
-                            // This file is from a previous day, attempt to finalize it.
-                            if let Err(e) = finalization::finalize_file(&path) {
-                                error!("Failed to finalize file {path:?}: {e}");
-                            }
-                        }
-                    }
+        if path.extension().is_some_and(|ext| ext == "zzp1")
+            && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+        {
+            let parts: Vec<&str> = stem.split('-').collect();
+            if let Some(date_str) = parts.last()
+                && let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y%m%d")
+                && file_date < today
+            {
+                // This file is from a previous day, attempt to finalize it.
+                if let Err(e) = finalization::finalize_file(&path) {
+                    error!("Failed to finalize file {path:?}: {e}");
                 }
             }
         }
