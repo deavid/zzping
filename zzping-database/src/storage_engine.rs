@@ -3,7 +3,7 @@
 //! This module contains the background task that receives ping data and handles
 //! the process of buffering, compressing, and writing it to disk.
 
-use crate::{finalization, IngestionItem};
+use crate::{finalization, ingestion_item::IngestionItem};
 use anyhow::Result;
 use chrono::Utc;
 use log::{error, info};
@@ -53,12 +53,12 @@ pub async fn storage_task(mut rx: mpsc::Receiver<IngestionItem>) {
                 // Check for day change to trigger finalization
                 let now_day = Utc::now().date_naive();
                 if now_day != current_day {
-                    info!("Day changed from {} to {}. Finalizing previous day's file.", current_day, now_day);
+                    info!("Day changed from {current_day} to {now_day}. Finalizing previous day's file.");
                     let previous_day_str = current_day.format("%Y%m%d").to_string();
-                    let file_path = Path::new(crate::DATA_DIR).join(format!("{}.zzp1", previous_day_str));
+                    let file_path = Path::new(crate::DATA_DIR).join(format!("{previous_day_str}.zzp1"));
                     if file_path.exists()
                         && let Err(e) = finalization::finalize_file(&file_path) {
-                            error!("Failed to finalize file for day {}: {}", previous_day_str, e);
+                            error!("Failed to finalize file for day {previous_day_str}: {e}");
                         }
                     current_day = now_day;
                 }
@@ -171,8 +171,7 @@ mod tests {
         // Write the first chunk
         let source = "test-host";
         let target = "1.1.1.1".parse()?;
-        let filename =
-            write_records_to_disk(source, target, &records_chunk_1, data_dir).await?;
+        let filename = write_records_to_disk(source, target, &records_chunk_1, data_dir).await?;
         // Append the second chunk
         write_records_to_disk(source, target, &records_chunk_2, data_dir).await?;
 

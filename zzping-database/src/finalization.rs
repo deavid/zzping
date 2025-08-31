@@ -1,13 +1,13 @@
 //! Handles the finalization of `chunked_v1` files.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use log::{info, warn};
 use std::fs;
 use std::io::Cursor;
 use std::path::Path;
 use zzping_lib::chunked_v1::{
-    calculate_file_header_crc32, ChunkHeader, FileHeader, IndexEntry, FILE_MAGIC, FORMAT_VERSION,
-    HEADER_SIZE,
+    ChunkHeader, FILE_MAGIC, FORMAT_VERSION, FileHeader, HEADER_SIZE, IndexEntry,
+    calculate_file_header_crc32,
 };
 
 /// Reads a `.zzp1` file, parses all its chunks, and rewrites the header
@@ -16,7 +16,7 @@ use zzping_lib::chunked_v1::{
 /// This function is the core of the finalization process. It ensures that a
 /// file created via an append-only strategy is made whole and queryable.
 pub fn finalize_file(path: &Path) -> Result<()> {
-    info!("Finalizing file: {:?}", path);
+    info!("Finalizing file: {path:?}");
 
     let mut data = fs::read(path)?;
 
@@ -36,10 +36,7 @@ pub fn finalize_file(path: &Path) -> Result<()> {
     };
 
     if header.index_entry_count > 0 || header.aggregate_entry_count > 0 {
-        warn!(
-            "File {:?} appears to be already finalized. Skipping.",
-            path
-        );
+        warn!("File {path:?} appears to be already finalized. Skipping.");
         return Ok(());
     }
 
@@ -77,7 +74,7 @@ pub fn finalize_file(path: &Path) -> Result<()> {
     }
 
     if aggregate_entries.is_empty() {
-        info!("File {:?} has no chunks to finalize. Skipping.", path);
+        info!("File {path:?} has no chunks to finalize. Skipping.");
         return Ok(());
     }
 

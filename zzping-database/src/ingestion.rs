@@ -1,6 +1,6 @@
 //! Handles the ingestion of `RawDataRecord`s from collector clients.
 
-use crate::IngestionItem;
+use crate::ingestion_item::IngestionItem;
 use anyhow::Result;
 use log::{debug, error, info};
 use std::net::SocketAddr;
@@ -75,7 +75,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
     use tokio::sync::mpsc;
-use zzping_lib::protocol::{write_handshake, ClientHandshake, RawDataRecord};
+    use zzping_lib::protocol::{ClientHandshake, RawDataRecord, write_handshake};
 
     #[tokio::test]
     async fn test_handle_ingestion_connection() {

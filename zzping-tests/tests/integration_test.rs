@@ -5,11 +5,12 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use zzping_collector::{
+    cli::Cli,
     ping_client::{PingClient, PingResult},
     ping_mock_client::PingMockClient,
-    ping_target_loop, Cli,
+    runner::ping_target_loop,
 };
-use zzping_database::{ingestion::handle_ingestion_connection, IngestionItem};
+use zzping_database::{ingestion::handle_ingestion_connection, ingestion_item::IngestionItem};
 
 #[tokio::test]
 async fn test_collector_database_communication() -> Result<()> {
@@ -27,7 +28,7 @@ async fn test_collector_database_communication() -> Result<()> {
     // 2. Setup: Create a TCP listener on a random port to act as the database server.
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let db_addr = listener.local_addr()?;
-    println!("Test database listening on {}", db_addr);
+    println!("Test database listening on {db_addr}");
 
     // 3. Setup: Create a channel to receive records on the database side.
     let (tx, mut rx) = mpsc::channel::<IngestionItem>(32);
@@ -59,10 +60,7 @@ async fn test_collector_database_communication() -> Result<()> {
 
     // 7. Verification: Check that the received item has the expected data.
     assert_eq!(received_item.source_hostname, "test-collector");
-    assert_eq!(
-        received_item.target,
-        "127.0.0.1".parse::<IpAddr>().unwrap()
-    );
+    assert_eq!(received_item.target, "127.0.0.1".parse::<IpAddr>().unwrap());
     assert_eq!(received_item.record.sent_nanos, expected_sent_nanos);
     assert_eq!(
         received_item.record.rtt_nanos,

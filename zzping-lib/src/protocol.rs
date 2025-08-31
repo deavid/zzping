@@ -1,6 +1,6 @@
 //! Defines the network protocol and data structures for communication between zzping services.
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

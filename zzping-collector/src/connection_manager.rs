@@ -1,6 +1,6 @@
 //! Manages the state for a single, active connection to the `zzping-database`.
 
-use crate::ping_client::{PingClient, PingResult};
+use crate::{cli::Cli, ping_client::PingClient, ping_client::PingResult};
 use anyhow::Result;
 use log::{debug, error};
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWrite;
 use tokio::sync::{Semaphore, mpsc};
-use zzping_lib::protocol::{write_record, ClientHandshake, RawDataRecord, write_handshake};
+use zzping_lib::protocol::{ClientHandshake, RawDataRecord, write_handshake, write_record};
 
 /// Manages the state and event loop for a single, ongoing pinging session.
 ///
@@ -59,7 +59,7 @@ where
     pub fn new(
         db_stream: W,
         ping_client: Arc<P>,
-        cli: Arc<crate::Cli>,
+        cli: Arc<Cli>,
     ) -> Result<(Self, mpsc::Sender<PingResult>)> {
         let ping_semaphore = Arc::new(Semaphore::new(cli.max_in_flight));
         let (tx, rx) = mpsc::channel(1024);
@@ -158,14 +158,14 @@ where
 /// * `db_stream` - An async writer, typically the TCP stream to the `zzping-database`.
 /// * `ping_client` - The shared ping client implementation.
 /// * `cli` - The parsed command-line arguments.
-pub async fn handle_connection<W, P: ?Sized>(
+pub async fn handle_connection<W, P>(
     mut db_stream: W,
     ping_client: Arc<P>,
-    cli: Arc<crate::Cli>,
+    cli: Arc<Cli>,
 ) -> Result<()>
 where
     W: AsyncWrite + Unpin + Send,
-    P: PingClient,
+    P: PingClient + ?Sized,
 {
     let handshake = ClientHandshake {
         source_hostname: cli.source_hostname.clone(),
@@ -190,12 +190,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Cli, ping_mock_client::PingMockClient};
-    use zzping_lib::protocol::read_record;
+    use crate::{cli::Cli, ping_mock_client::PingMockClient};
     use std::io;
     use std::pin::Pin;
     use std::task::{Context, Poll};
     use tokio::io::AsyncWrite;
+    use zzping_lib::protocol::read_record;
 
     // A mock writer that can be configured to fail after a certain number of bytes.
     struct MockWriter {
@@ -211,7 +211,7 @@ mod tests {
         ) -> Poll<io::Result<usize>> {
             if let Some(fail_after) = self.fail_after {
                 if self.buffer.len() >= fail_after {
-                    return Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, "Simulated error")));
+                    return Poll::Ready(Err(io::Error::other("Simulated error")));
                 }
             }
             self.buffer.extend_from_slice(buf);

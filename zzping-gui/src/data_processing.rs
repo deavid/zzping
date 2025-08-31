@@ -62,9 +62,18 @@ mod tests {
         assert_eq!(points.len(), 3);
 
         // Check that they are sorted and time is absolute
-        assert_eq!(points[0].time, DateTime::from_timestamp_nanos(1_000_000_000));
-        assert_eq!(points[1].time, DateTime::from_timestamp_nanos(2_000_000_000));
-        assert_eq!(points[2].time, DateTime::from_timestamp_nanos(3_000_000_000));
+        assert_eq!(
+            points[0].time,
+            DateTime::from_timestamp_nanos(1_000_000_000)
+        );
+        assert_eq!(
+            points[1].time,
+            DateTime::from_timestamp_nanos(2_000_000_000)
+        );
+        assert_eq!(
+            points[2].time,
+            DateTime::from_timestamp_nanos(3_000_000_000)
+        );
 
         // Check RTT conversion
         assert_eq!(points[0].rtt, Some(Duration::nanoseconds(10_000_000)));
