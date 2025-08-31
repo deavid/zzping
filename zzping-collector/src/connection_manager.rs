@@ -4,10 +4,10 @@ use crate::ping_client::{PingClient, PingResult};
 use anyhow::Result;
 use log::{debug, error};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::io::AsyncWrite;
 use tokio::sync::{mpsc, Semaphore};
-use tokio::time::Interval;
 use zzping_lib::protocol::{write_record, RawDataRecord};
 
 /// Manages the state and event loop for a single, ongoing pinging session.
@@ -39,10 +39,12 @@ where
     rx: mpsc::Receiver<PingResult>,
     /// The sequence number for the next ping. Incremented for each ping sent.
     sequence_idx: u16,
-    /// The timer that determines how often pings are sent.
-    interval: Interval,
     /// The monotonic timestamp of when this session was created. Used to calculate `sent_nanos`.
     start_time_monotonic: Instant,
+    /// The last tick time for scheduling.
+    last_tick: Instant,
+    /// The interval between pings in nanoseconds.
+    rate_ns: Arc<AtomicU64>,
 }
 
 impl<W, P> PingerSession<W, P>
@@ -61,9 +63,10 @@ where
     ) -> Result<(Self, mpsc::Sender<PingResult>)> {
         let ping_semaphore = Arc::new(Semaphore::new(cli.max_in_flight));
         let (tx, rx) = mpsc::channel(1024);
-        let interval_duration = Duration::from_nanos(1_000_000_000 / cli.rate);
-        let interval = tokio::time::interval(interval_duration);
+        let initial_interval_ns = 1_000_000_000 / cli.rate;
+        let rate_ns = Arc::new(AtomicU64::new(initial_interval_ns));
         let start_time_monotonic = Instant::now();
+        let last_tick = start_time_monotonic;
 
         let session = Self {
             db_stream,
@@ -72,8 +75,9 @@ where
             tx: tx.clone(),
             rx,
             sequence_idx: 0,
-            interval,
             start_time_monotonic,
+            last_tick,
+            rate_ns,
         };
 
         Ok((session, tx))
@@ -88,8 +92,24 @@ where
     /// It returns `Ok(())` to indicate the session should continue, or an `Err`
     /// if a fatal error occurs (e.g., the connection to the database is lost).
     pub async fn tick(&mut self) -> Result<()> {
+        let interval_nanos = self.rate_ns.load(Ordering::SeqCst);
+        let next_tick = self.last_tick + Duration::from_nanos(interval_nanos);
+        // Wake up 10ms early to allow time for pinger creation and task spawning
+        // This provides a robust buffer that works across different systems
+        let wake_up_time = next_tick - Duration::from_millis(10);
+
+        let now = Instant::now();
+        let sleep_duration = if wake_up_time > now {
+            wake_up_time - now
+        } else {
+            Duration::from_nanos(0)
+        };
+
         tokio::select! {
-            _ = self.interval.tick() => {
+            _ = tokio::time::sleep(sleep_duration) => {
+                self.last_tick = next_tick;
+
+                // Try to acquire a permit for ping concurrency control
                 if let Ok(permit) = self.ping_semaphore.clone().try_acquire_owned() {
                     // A permit is available, so we can send a ping.
                     self.ping_client.ping(
@@ -97,6 +117,7 @@ where
                         self.tx.clone(),
                         permit,
                         self.start_time_monotonic,
+                        next_tick,
                     ).await;
                     self.sequence_idx = self.sequence_idx.wrapping_add(1);
                 } else {

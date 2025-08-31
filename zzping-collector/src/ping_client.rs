@@ -2,7 +2,7 @@
 
 use async_trait::async_trait;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, OwnedSemaphorePermit};
+use tokio::sync::{OwnedSemaphorePermit, mpsc};
 
 /// The result of a single ping operation.
 #[derive(Debug, Clone)]
@@ -30,5 +30,6 @@ pub trait PingClient: Send + Sync {
         tx: mpsc::Sender<PingResult>,
         permit: OwnedSemaphorePermit,
         start_time: Instant,
+        target_time: Instant,
     );
 }

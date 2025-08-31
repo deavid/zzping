@@ -35,6 +35,7 @@ impl PingClient for PingMockClient {
         _tx: mpsc::Sender<PingResult>,
         _permit: OwnedSemaphorePermit,
         _start_time: Instant,
+        _target_time: Instant,
     ) {
         self.pings.lock().unwrap().push(sequence_idx);
     }
