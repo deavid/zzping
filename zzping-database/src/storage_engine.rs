@@ -52,11 +52,10 @@ pub async fn storage_task(mut rx: mpsc::Receiver<RawDataRecord>) {
                     info!("Day changed from {} to {}. Finalizing previous day's file.", current_day, now_day);
                     let previous_day_str = current_day.format("%Y%m%d").to_string();
                     let file_path = Path::new(crate::DATA_DIR).join(format!("{}.zzp1", previous_day_str));
-                    if file_path.exists() {
-                        if let Err(e) = finalization::finalize_file(&file_path) {
+                    if file_path.exists()
+                        && let Err(e) = finalization::finalize_file(&file_path) {
                             error!("Failed to finalize file for day {}: {}", previous_day_str, e);
                         }
-                    }
                     current_day = now_day;
                 }
             }
