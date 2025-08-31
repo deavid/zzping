@@ -11,4 +11,4 @@ pub mod runner;
 pub mod storage_engine;
 
 pub const INGESTION_ADDR: &str = "127.0.0.1:7878";
-pub const DATA_DIR: &str = "zzping-database/data";
+pub const DATA_DIR: &str = "data";

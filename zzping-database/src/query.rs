@@ -39,6 +39,7 @@ pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
 
 /// Finds the most recent data file, decompresses it, and returns the records.
 pub fn get_last_hour_records(data_dir: &str) -> Result<Vec<RawDataRecord>> {
+    info!("get_last_hour_records(data_dir: {:?})", data_dir);
     match find_latest_zzp1_file(data_dir)? {
         Some(path) => {
             info!("Found latest file: {path:?}");
