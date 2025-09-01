@@ -7,8 +7,8 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 use zzping_proto::zzping::{
-    ingestion_client::IngestionClient, ingest_request::Payload as IngestRequestPayload,
     AckResponse, HandshakeRequest, IngestRequest, RawDataRecord,
+    ingest_request::Payload as IngestRequestPayload, ingestion_client::IngestionClient,
 };
 
 async fn timeout<F>(
@@ -91,13 +91,11 @@ pub async fn run_target_manager(
                     {
                         if let Some(zzping_proto::zzping::ingest_response::Payload::Ack(ack)) =
                             response.payload
-                        {
-                            if timeout(Duration::from_secs(1), ack_tx.send(ack))
+                            && timeout(Duration::from_secs(1), ack_tx.send(ack))
                                 .await
                                 .is_err()
-                            {
-                                break;
-                            }
+                        {
+                            break;
                         }
                     }
                     info!("Response stream closed.");
