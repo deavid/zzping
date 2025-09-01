@@ -2,7 +2,7 @@ use crate::{
     cli::Cli, ping_client::PingClient, ping_surge_client::PingSurgeClient,
     target_manager::run_target_manager,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use log::info;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,16 +31,27 @@ pub async fn run() -> Result<()> {
         panic!("At least one target must be specified");
     }
 
-    let ca_cert = tokio::fs::read("ca.pem").await?;
+    let ca_cert = tokio::fs::read("ca.pem")
+        .await
+        .context("Unable to read ca_cert as ./ca.pem")?;
     let ca = Certificate::from_pem(ca_cert);
-    let tls_config = ClientTlsConfig::new()
-        .domain_name("localhost")
-        .ca_certificate(ca);
+
+    // Extract host from database_addr, assuming format https://host:port
+    let host = cli
+        .database_addr
+        .strip_prefix("https://")
+        .unwrap()
+        .split(':')
+        .next()
+        .unwrap();
+
+    let tls_config = ClientTlsConfig::new().domain_name(host).ca_certificate(ca);
 
     let channel = Channel::from_shared(cli.database_addr.clone())?
         .tls_config(tls_config)?
         .connect()
-        .await?;
+        .await
+        .context("Unable to connect to Database gRPC")?;
     info!("Connected to gRPC server at {}", cli.database_addr);
 
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
