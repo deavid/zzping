@@ -38,6 +38,7 @@ async fn test_target_manager_happy_path() {
         "1.2.3.4".parse::<IpAddr>().unwrap(),
         "my-secret-token".to_string(),
         ping_rx,
+        Duration::from_secs(5),
     ));
 
     println!("Simulating ping source...");
@@ -80,6 +81,7 @@ async fn test_target_manager_reconnects_on_disconnect() {
         "1.2.3.4".parse::<IpAddr>().unwrap(),
         "my-secret-token".to_string(),
         ping_rx,
+        Duration::from_millis(20),
     ));
 
     println!("Sending a few pings");
@@ -96,9 +98,11 @@ async fn test_target_manager_reconnects_on_disconnect() {
     server_handle.abort();
 
     // Give some time for the manager to detect the disconnection and try to reconnect
-    tokio::time::sleep(Duration::from_secs(6)).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
 
-    println!("Spawning new server on the same address is not possible, the OS will not release the port immediately.");
+    println!(
+        "Spawning new server on the same address is not possible, the OS will not release the port immediately."
+    );
     println!("Instead, we rely on the target manager's infinite loop to try to reconnect.");
     println!("We will just send more pings and see if the manager is still alive.");
 

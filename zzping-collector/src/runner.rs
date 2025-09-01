@@ -1,13 +1,11 @@
 use crate::{
-    cli::Cli,
-    ping_client::PingClient,
-    ping_surge_client::PingSurgeClient,
+    cli::Cli, ping_client::PingClient, ping_surge_client::PingSurgeClient,
     target_manager::run_target_manager,
 };
 use anyhow::Result;
 use log::info;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use zzping_proto::zzping::ingestion_client::IngestionClient;
@@ -87,6 +85,7 @@ pub async fn run() -> Result<()> {
             target,
             cli.auth_token.clone(),
             ping_rx,
+            Duration::from_secs(5),
         ));
         handles.push(manager_handle);
     }

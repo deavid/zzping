@@ -27,6 +27,7 @@ pub async fn run_target_manager(
     target_ip: std::net::IpAddr,
     auth_token: String,
     mut ping_results_rx: mpsc::Receiver<PingResult>,
+    retry_delay: Duration,
 ) {
     let mut buffer: VecDeque<RawDataRecord> = VecDeque::new();
 
@@ -56,7 +57,7 @@ pub async fn run_target_manager(
         .is_err()
         {
             error!("Failed to send handshake, channel is full or closed.");
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(retry_delay).await;
             continue;
         }
 
@@ -135,12 +136,12 @@ pub async fn run_target_manager(
                 }
             }
             Ok(Err(e)) => {
-                error!("Failed to establish gRPC stream: {e}. Retrying in 5 seconds.");
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                error!("Failed to establish gRPC stream: {e}. Retrying in {retry_delay:?}.");
+                tokio::time::sleep(retry_delay).await;
             }
             Err(_) => {
-                error!("gRPC stream timed out. Retrying in 5 seconds.");
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                error!("gRPC stream timed out. Retrying in {retry_delay:?}.");
+                tokio::time::sleep(retry_delay).await;
             }
         }
     }
