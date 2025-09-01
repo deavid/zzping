@@ -73,17 +73,18 @@ pub async fn run() -> Result<()> {
                 ));
                 loop {
                     interval.tick().await;
-                    let permit = semaphore.clone().try_acquire_owned().unwrap();
-                    ping_client
-                        .ping(
-                            sequence_idx,
-                            ping_tx.clone(),
-                            permit,
-                            start_time,
-                            Instant::now(),
-                        )
-                        .await;
-                    sequence_idx = sequence_idx.wrapping_add(1);
+                    if let Ok(permit) = semaphore.clone().try_acquire_owned() {
+                        ping_client
+                            .ping(
+                                sequence_idx,
+                                ping_tx.clone(),
+                                permit,
+                                start_time,
+                                Instant::now(),
+                            )
+                            .await;
+                        sequence_idx = sequence_idx.wrapping_add(1);
+                    }
                 }
             })
         };
