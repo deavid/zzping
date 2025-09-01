@@ -34,3 +34,4 @@ test-utils = []
 
 [dev-dependencies]
 tempfile.workspace = true
+zzping-database = { path = ".", features = ["test-utils"] }

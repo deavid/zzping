@@ -36,6 +36,7 @@ async fn test_target_manager_happy_path() {
         client,
         "test-host".to_string(),
         "1.2.3.4".parse::<IpAddr>().unwrap(),
+        "my-secret-token".to_string(),
         ping_rx,
     ));
 
@@ -77,6 +78,7 @@ async fn test_target_manager_reconnects_on_disconnect() {
         client,
         "test-host".to_string(),
         "1.2.3.4".parse::<IpAddr>().unwrap(),
+        "my-secret-token".to_string(),
         ping_rx,
     ));
 

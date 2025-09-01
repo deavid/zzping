@@ -14,6 +14,25 @@ use zzping_proto::zzping::{
     ingest_response::Payload as IngestResponsePayload, ingestion_server::Ingestion,
 };
 
+#[allow(clippy::result_large_err)]
+pub fn check_auth(req: Request<()>) -> Result<Request<()>, Status> {
+    let token = req
+        .metadata()
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|str| str.strip_prefix("Bearer "));
+
+    if let Some(token) = token {
+        if token == "my-secret-token" {
+            Ok(req)
+        } else {
+            Err(Status::unauthenticated("Invalid token"))
+        }
+    } else {
+        Err(Status::unauthenticated("Missing auth token"))
+    }
+}
+
 #[derive(Debug)]
 struct StreamState {
     last_sent_nanos: u64,
@@ -225,10 +244,30 @@ pub async fn spawn_test_server() -> (std::net::SocketAddr, JoinHandle<()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::{timeout, spawn_test_server};
     use tokio_stream::StreamExt;
     use zzping_proto::zzping::{
         HandshakeRequest, RawDataRecord, ingestion_client::IngestionClient,
     };
+
+    #[test]
+    fn test_check_auth() {
+        let mut good_req = Request::new(());
+        good_req
+            .metadata_mut()
+            .insert("authorization", "Bearer my-secret-token".parse().unwrap());
+
+        let mut bad_req_invalid = Request::new(());
+        bad_req_invalid
+            .metadata_mut()
+            .insert("authorization", "Bearer invalid-token".parse().unwrap());
+
+        let bad_req_missing = Request::new(());
+
+        assert!(check_auth(good_req).is_ok());
+        assert!(check_auth(bad_req_invalid).is_err());
+        assert!(check_auth(bad_req_missing).is_err());
+    }
 
     #[tokio::test]
     async fn test_query_data_returns_empty_response() {

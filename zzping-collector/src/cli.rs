@@ -18,8 +18,12 @@ pub struct Cli {
     pub rate: u64,
 
     /// The address of the zzping-database server.
-    #[arg(long, default_value = "127.0.0.1:7878")]
+    #[arg(long, default_value = "https://127.0.0.1:7878")]
     pub database_addr: String,
+
+    /// The authentication token to use when connecting to the database.
+    #[arg(long, default_value = "my-secret-token")]
+    pub auth_token: String,
 
     /// The maximum number of pings in flight at any given time.
     ///

@@ -4,10 +4,11 @@ use anyhow::Result;
 use crossbeam_channel::Sender;
 use log::{info, warn};
 use std::time::Duration;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use zzping_lib::protocol::RawDataRecord;
 use zzping_proto::zzping::{ingestion_client::IngestionClient, QueryRequest};
 
-const QUERY_ADDR: &str = "http://127.0.0.1:7878";
+const QUERY_ADDR: &str = "https://127.0.0.1:7878";
 
 /// The main loop for the network background task.
 ///
@@ -40,10 +41,24 @@ pub async fn fetch_data_loop(tx: Sender<Vec<RawDataRecord>>) {
 /// and uses the centralized `read_records_batch` helper to read the response.
 /// It then sends the resulting `Vec<RawDataRecord>` over the channel to the UI thread.
 pub async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
-    let mut client = IngestionClient::connect(QUERY_ADDR).await?;
+    let ca_cert = tokio::fs::read("ca.pem").await?;
+    let ca = Certificate::from_pem(ca_cert);
+    let tls_config = ClientTlsConfig::new()
+        .domain_name("localhost")
+        .ca_certificate(ca);
+
+    let channel = Channel::from_static(QUERY_ADDR)
+        .tls_config(tls_config)?
+        .connect()
+        .await?;
+    let mut client = IngestionClient::new(channel);
     info!("Connected to query port at {QUERY_ADDR}");
 
-    let request = tonic::Request::new(QueryRequest {});
+    let token = "my-secret-token";
+    let mut request = tonic::Request::new(QueryRequest {});
+    request
+        .metadata_mut()
+        .insert("authorization", format!("Bearer {token}").parse()?);
     let response = client.query_data(request).await?;
     info!(
         "Received {} records from database.",

@@ -9,6 +9,7 @@ use log::info;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::task::JoinHandle;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use zzping_proto::zzping::ingestion_client::IngestionClient;
 
 /// The main function for the collector service.
@@ -32,7 +33,14 @@ pub async fn run() -> Result<()> {
         panic!("At least one target must be specified");
     }
 
-    let channel = tonic::transport::Channel::from_shared(format!("http://{}", cli.database_addr))?
+    let ca_cert = tokio::fs::read("ca.pem").await?;
+    let ca = Certificate::from_pem(ca_cert);
+    let tls_config = ClientTlsConfig::new()
+        .domain_name("localhost")
+        .ca_certificate(ca);
+
+    let channel = Channel::from_shared(cli.database_addr.clone())?
+        .tls_config(tls_config)?
         .connect()
         .await?;
     info!("Connected to gRPC server at {}", cli.database_addr);
@@ -77,6 +85,7 @@ pub async fn run() -> Result<()> {
             client,
             cli.source_hostname.clone(),
             target,
+            cli.auth_token.clone(),
             ping_rx,
         ));
         handles.push(manager_handle);

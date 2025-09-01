@@ -25,6 +25,7 @@ pub async fn run_target_manager(
     mut client: IngestionClient<tonic::transport::Channel>,
     source_hostname: String,
     target_ip: std::net::IpAddr,
+    auth_token: String,
     mut ping_results_rx: mpsc::Receiver<PingResult>,
 ) {
     let mut buffer: VecDeque<RawDataRecord> = VecDeque::new();
@@ -32,6 +33,13 @@ pub async fn run_target_manager(
     loop {
         info!("Attempting to connect to gRPC server...");
         let (request_tx, request_rx) = mpsc::channel(100);
+
+        let request_stream = ReceiverStream::new(request_rx);
+        let mut request = tonic::Request::new(request_stream);
+        request.metadata_mut().insert(
+            "authorization",
+            format!("Bearer {auth_token}").parse().unwrap(),
+        );
 
         // Send handshake first to avoid deadlock
         let handshake = HandshakeRequest {
@@ -52,9 +60,7 @@ pub async fn run_target_manager(
             continue;
         }
 
-        let request_stream = ReceiverStream::new(request_rx);
-
-        match timeout(Duration::from_secs(1), client.ingest_stream(request_stream)).await {
+        match timeout(Duration::from_secs(1), client.ingest_stream(request)).await {
             Ok(Ok(response)) => {
                 let mut response_stream = response.into_inner();
                 info!("gRPC stream established.");

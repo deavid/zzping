@@ -1,10 +1,12 @@
 use crate::{
-    grpc_server::IngestionServiceImpl, ingestion_item::IngestionItem, storage_engine, DATA_DIR,
-    INGESTION_ADDR,
+    grpc_server::{check_auth, IngestionServiceImpl},
+    ingestion_item::IngestionItem,
+    storage_engine, DATA_DIR, INGESTION_ADDR,
 };
 use anyhow::Result;
 use log::{error, info};
 use tokio::sync::mpsc;
+use tonic::transport::{Identity, Server, ServerTlsConfig};
 use zzping_proto::zzping::ingestion_server::IngestionServer;
 
 /// The main function for the database service.
@@ -32,8 +34,16 @@ pub async fn run() -> Result<()> {
     let ingestion_service = IngestionServiceImpl::new(tx);
     let server = IngestionServer::new(ingestion_service);
 
-    info!("gRPC server listening on {addr}");
-    tonic::transport::Server::builder()
+    // These paths should be configurable in a real production environment.
+    let cert = tokio::fs::read("server.pem").await?;
+    let key = tokio::fs::read("server.key").await?;
+    let identity = Identity::from_pem(cert, key);
+    let tls_config = ServerTlsConfig::new().identity(identity);
+
+    info!("gRPC server with TLS listening on {addr}");
+    Server::builder()
+        .tls_config(tls_config)?
+        .layer(tonic::service::interceptor(check_auth))
         .add_service(server)
         .serve(addr)
         .await?;
