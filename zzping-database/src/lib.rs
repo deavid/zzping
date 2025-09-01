@@ -16,3 +16,5 @@ pub const DATA_DIR: &str = "data";
 
 #[cfg(feature = "test-utils")]
 pub use grpc_server::{spawn_test_server, timeout};
+#[cfg(feature = "test-utils")]
+pub use tokio::task::JoinHandle;

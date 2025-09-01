@@ -158,6 +158,8 @@ impl Ingestion for IngestionServiceImpl {
 use std::future::IntoFuture;
 #[cfg(feature = "test-utils")]
 use std::time::Duration;
+#[cfg(feature = "test-utils")]
+use tokio::task::JoinHandle;
 
 #[cfg(feature = "test-utils")]
 pub async fn timeout<F>(future: F) -> <F as IntoFuture>::Output
@@ -170,14 +172,14 @@ where
 }
 
 #[cfg(feature = "test-utils")]
-pub async fn spawn_test_server() -> std::net::SocketAddr {
+pub async fn spawn_test_server() -> (std::net::SocketAddr, JoinHandle<()>) {
     let listener = timeout(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
     let service = IngestionServiceImpl::default();
 
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         tonic::transport::Server::builder()
             .add_service(zzping_proto::zzping::ingestion_server::IngestionServer::new(service))
             .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
@@ -185,7 +187,7 @@ pub async fn spawn_test_server() -> std::net::SocketAddr {
             .unwrap();
     });
 
-    addr
+    (addr, handle)
 }
 
 #[cfg(test)]
@@ -208,7 +210,7 @@ mod tests {
     async fn test_ingest_stream_flow() {
         let _ = env_logger::builder().is_test(true).try_init();
         println!("Starting test_ingest_stream_flow");
-        let server_addr = timeout(spawn_test_server()).await;
+        let (server_addr, _server_handle) = timeout(spawn_test_server()).await;
         println!("Server spawned at {server_addr}");
         let mut client = timeout(IngestionClient::connect(format!("http://{server_addr}")))
             .await

@@ -1,17 +1,34 @@
+use std::future::IntoFuture;
 use std::net::IpAddr;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use zzping_collector::ping_client::PingResult;
 use zzping_collector::target_manager::run_target_manager;
-use zzping_database::spawn_test_server;
+use zzping_database::{spawn_test_server, timeout as db_timeout};
 use zzping_proto::zzping::ingestion_client::IngestionClient;
+
+async fn timeout<F>(future: F) -> <F as IntoFuture>::Output
+where
+    F: IntoFuture,
+{
+    // In tests, we use a short timeout to fail fast.
+    tokio::time::timeout(Duration::from_secs(5), future)
+        .await
+        .expect("Test timed out")
+}
 
 #[tokio::test]
 async fn test_target_manager_happy_path() {
-    let server_addr = spawn_test_server().await;
-    let client = IngestionClient::connect(format!("http://{}", server_addr))
+    let _ = env_logger::builder().is_test(true).try_init();
+    println!("Starting test_target_manager_happy_path");
+
+    let (server_addr, _server_handle) = db_timeout(spawn_test_server()).await;
+    println!("Server spawned at {server_addr}");
+
+    let client = timeout(IngestionClient::connect(format!("http://{server_addr}")))
         .await
         .unwrap();
+    println!("Client connected");
 
     let (ping_tx, ping_rx) = mpsc::channel(100);
 
@@ -22,23 +39,85 @@ async fn test_target_manager_happy_path() {
         ping_rx,
     ));
 
-    // Simulate the ping source
+    println!("Simulating ping source...");
     for i in 0..250 {
-        ping_tx
-            .send(PingResult {
-                sent_nanos: i + 1,
-                rtt: Some(Duration::from_millis(100)),
-            })
-            .await
-            .unwrap();
+        timeout(ping_tx.send(PingResult {
+            sent_nanos: i + 1,
+            rtt: Some(Duration::from_millis(100)),
+        }))
+        .await
+        .unwrap();
     }
 
-    // Close the ping channel, which should cause the target manager to terminate gracefully.
+    println!("Closing ping channel");
     drop(ping_tx);
 
-    // The test will pass if the manager runs to completion without panicking.
-    // We can make this more robust by adding a timeout.
-    let result = tokio::time::timeout(Duration::from_secs(5), manager_handle).await;
-    assert!(result.is_ok(), "Target manager timed out");
-    assert!(result.unwrap().is_ok(), "Target manager panicked");
+    println!("Awaiting manager handle");
+    let result = timeout(manager_handle).await;
+    assert!(result.is_ok(), "Target manager panicked");
+    println!("Test finished");
+}
+
+#[tokio::test]
+async fn test_target_manager_reconnects_on_disconnect() {
+    let _ = env_logger::builder().is_test(true).try_init();
+    println!("Starting test_target_manager_reconnects_on_disconnect");
+
+    let (server_addr, server_handle) = db_timeout(spawn_test_server()).await;
+    println!("Server spawned at {server_addr}");
+
+    let client = timeout(IngestionClient::connect(format!("http://{server_addr}")))
+        .await
+        .unwrap();
+    println!("Client connected");
+
+    let (ping_tx, ping_rx) = mpsc::channel(100);
+
+    let manager_handle = tokio::spawn(run_target_manager(
+        client,
+        "test-host".to_string(),
+        "1.2.3.4".parse::<IpAddr>().unwrap(),
+        ping_rx,
+    ));
+
+    println!("Sending a few pings");
+    for i in 0..10 {
+        timeout(ping_tx.send(PingResult {
+            sent_nanos: i + 1,
+            rtt: Some(Duration::from_millis(100)),
+        }))
+        .await
+        .unwrap();
+    }
+
+    println!("Aborting server");
+    server_handle.abort();
+
+    // Give some time for the manager to detect the disconnection and try to reconnect
+    tokio::time::sleep(Duration::from_secs(6)).await;
+
+    println!("Spawning new server on the same address is not possible, the OS will not release the port immediately.");
+    println!("Instead, we rely on the target manager's infinite loop to try to reconnect.");
+    println!("We will just send more pings and see if the manager is still alive.");
+
+    for i in 10..20 {
+        if timeout(ping_tx.send(PingResult {
+            sent_nanos: i + 1,
+            rtt: Some(Duration::from_millis(100)),
+        }))
+        .await
+        .is_err()
+        {
+            println!("Ping channel closed, which is expected as the manager might have panicked.");
+            break;
+        }
+    }
+
+    println!("Closing ping channel");
+    drop(ping_tx);
+
+    println!("Awaiting manager handle");
+    let result = timeout(manager_handle).await;
+    assert!(result.is_ok(), "Target manager panicked");
+    println!("Test finished");
 }
