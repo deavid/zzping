@@ -1,30 +1,24 @@
 use crate::{
-    DATA_DIR, INGESTION_ADDR, finalization, ingestion, ingestion_item::IngestionItem, query,
+    DATA_DIR, INGESTION_ADDR,
+    grpc_server::{IngestionServiceImpl, check_auth},
+    ingestion_item::IngestionItem,
     storage_engine,
 };
 use anyhow::Result;
 use log::{error, info};
-use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-
-const QUERY_ADDR: &str = "127.0.0.1:7879";
+use tonic::transport::{Identity, Server, ServerTlsConfig};
+use zzping_proto::zzping::ingestion_server::IngestionServer;
 
 /// The main function for the database service.
 ///
-/// Sets up logging, binds the TCP listeners, creates a channel for data ingestion,
-/// and enters an infinite loop to accept and handle new connections.
+/// Sets up logging, creates a channel for data ingestion, and starts the gRPC server.
 pub async fn run() -> Result<()> {
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .try_init()
         .ok();
     info!("starting zzping-database server");
-
-    let ingestion_listener = TcpListener::bind(INGESTION_ADDR).await?;
-    info!("Listening for ingestion on {INGESTION_ADDR}");
-
-    let query_listener = TcpListener::bind(QUERY_ADDR).await?;
-    info!("Listening for queries on {QUERY_ADDR}");
 
     // This channel is the central pipeline for all incoming data from collectors.
     let (tx, rx) = mpsc::channel::<IngestionItem>(1024);
@@ -37,38 +31,30 @@ pub async fn run() -> Result<()> {
         error!("Startup finalization failed: {e}");
     }
 
-    // The main loop concurrently accepts both ingestion and query connections.
-    loop {
-        tokio::select! {
-            Ok((stream, addr)) = ingestion_listener.accept() => {
-                info!("Accepted ingestion connection from {addr}");
-                let tx_clone = tx.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = ingestion::handle_ingestion_connection(stream, addr, tx_clone).await {
-                        error!("Error handling ingestion connection from {addr}: {e}");
-                    }
-                });
-            }
-            Ok((stream, addr)) = query_listener.accept() => {
-                info!("Accepted query connection from {addr}");
-                tokio::spawn(async move {
-                    if let Err(e) = query::handle_query_connection(stream).await {
-                        error!("Error handling query connection from {addr}: {e}");
-                    }
-                });
-            }
-            else => {
-                error!("Error accepting connection");
-                break;
-            }
-        }
-    }
+    let addr = INGESTION_ADDR.parse()?;
+    let ingestion_service = IngestionServiceImpl::new(tx, DATA_DIR.to_string());
+    let server = IngestionServer::new(ingestion_service);
+
+    // These paths should be configurable in a real production environment.
+    let cert = tokio::fs::read("server.pem").await?;
+    let key = tokio::fs::read("server.key").await?;
+    let identity = Identity::from_pem(cert, key);
+    let tls_config = ServerTlsConfig::new().identity(identity);
+
+    info!("gRPC server with TLS listening on {addr}");
+    Server::builder()
+        .tls_config(tls_config)?
+        .layer(tonic::service::interceptor(check_auth))
+        .add_service(server)
+        .serve(addr)
+        .await?;
 
     Ok(())
 }
 
 /// Scans the data directory for `.zzp1` files from previous days and finalizes them.
 fn run_startup_finalization(data_dir: &str) -> Result<()> {
+    use crate::finalization;
     use chrono::{Local, NaiveDate};
     use std::fs;
 
@@ -81,16 +67,13 @@ fn run_startup_finalization(data_dir: &str) -> Result<()> {
         let path = entry.path();
         if path.extension().is_some_and(|ext| ext == "zzp1")
             && let Some(stem) = path.file_stem().and_then(|s| s.to_str())
+            && let Some(date_str) = stem.rsplit('-').next()
+            && let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y%m%d")
+            && file_date < today
         {
-            let parts: Vec<&str> = stem.split('-').collect();
-            if let Some(date_str) = parts.last()
-                && let Ok(file_date) = NaiveDate::parse_from_str(date_str, "%Y%m%d")
-                && file_date < today
-            {
-                // This file is from a previous day, attempt to finalize it.
-                if let Err(e) = finalization::finalize_file(&path) {
-                    error!("Failed to finalize file {path:?}: {e}");
-                }
+            // This file is from a previous day, attempt to finalize it.
+            if let Err(e) = finalization::finalize_file(&path) {
+                error!("Failed to finalize file {path:?}: {e}");
             }
         }
     }

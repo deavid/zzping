@@ -10,9 +10,14 @@ description = "Database service for zzping"
 [dependencies]
 # NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
 # ...   and instead use "cratename.workspace = true" to refer to it.
-zzping-lib = { path = "../zzping-lib" }
+zzping-lib = { workspace = true }
+zzping-proto = { workspace = true }
 anyhow.workspace = true
 bitflags.workspace = true
+dashmap = { workspace = true }
+futures-core = { workspace = true }
+tokio-stream = { workspace = true }
+tonic = { workspace = true }
 byteorder.workspace = true
 bytes.workspace = true
 chrono = { workspace = true, features = ["serde"] }
@@ -24,5 +29,9 @@ serde.workspace = true
 serde_json.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-util", "sync", "time"] }
 
+[features]
+test-utils = []
+
 [dev-dependencies]
 tempfile.workspace = true
+zzping-database = { path = ".", features = ["test-utils"] }

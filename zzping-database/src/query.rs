@@ -4,38 +4,7 @@ use anyhow::Result;
 use log::info;
 use std::fs;
 use std::path::PathBuf;
-use tokio::net::TcpStream;
-use zzping_lib::protocol::{QueryCommand, RawDataRecord, read_command, write_records_batch};
-
-/// Manages a single TCP connection from a `zzping-gui` instance.
-///
-/// This function reads a `QueryCommand` from the client and handles it.
-///
-/// # Protocol
-/// - Client sends: A `u16` representing a `QueryCommand`.
-/// - Server responds: A length-prefixed, bincode-serialized `Vec<RawDataRecord>`.
-pub async fn handle_query_connection(mut stream: TcpStream) -> Result<()> {
-    info!("Handling query connection.");
-
-    // 1. Read the command from the client
-    let command = read_command(&mut stream).await?;
-    info!("Received command: {command:?}");
-
-    // 2. Process the command
-    let records = match command {
-        QueryCommand::GetLastHour => get_last_hour_records(crate::DATA_DIR)?,
-    };
-
-    // 4. Serialize and send the response using the centralized helper
-    write_records_batch(&mut stream, &records).await?;
-
-    info!(
-        "Successfully sent {} records to query client.",
-        records.len()
-    );
-
-    Ok(())
-}
+use zzping_lib::protocol::RawDataRecord;
 
 /// Finds the most recent data file, decompresses it, and returns the records.
 pub fn get_last_hour_records(data_dir: &str) -> Result<Vec<RawDataRecord>> {

@@ -68,3 +68,31 @@ impl PingClient for PingMockClient {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::Semaphore;
+
+    #[tokio::test]
+    async fn test_ping_mock_client_records_ping_and_sends_result() {
+        let client = PingMockClient::new();
+        let (tx, mut rx) = mpsc::channel(1);
+        let semaphore = Arc::new(Semaphore::new(1));
+        let permit = semaphore.try_acquire_owned().unwrap();
+
+        client
+            .ping(123, tx, permit, Instant::now(), Instant::now())
+            .await;
+
+        // Check that the ping was recorded
+        {
+            let pings = client.pings.lock().unwrap();
+            assert_eq!(*pings, vec![123]);
+        }
+
+        // Check that the result was sent
+        let result = rx.recv().await.unwrap();
+        assert_eq!(result.sent_nanos, 12345);
+    }
+}

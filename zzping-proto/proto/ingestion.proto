@@ -1,0 +1,75 @@
+// File: zzping-proto/proto/ingestion.proto
+
+syntax = "proto3";
+
+package zzping; // The Rust code will be generated inside a `zzping` module.
+
+// The main service that the zzping-database will expose.
+service Ingestion {
+  // A long-lived, bi-directional stream for a collector to send data for a
+  // single ping target. The collector continuously sends data, and the server
+  // can send back acknowledgments or configuration updates.
+  rpc IngestStream(stream IngestRequest) returns (stream IngestResponse);
+
+  // A simple RPC for the GUI to fetch historical data.
+  rpc QueryData(QueryRequest) returns (QueryResponse);
+}
+
+// ============== IngestStream RPC Messages ==============
+
+// Sent from Collector -> Database
+message IngestRequest {
+  // The first message on the stream from a client MUST be a handshake.
+  // Subsequent messages MUST be records.
+  oneof payload {
+    HandshakeRequest handshake = 1;
+    RawDataRecord record = 2;
+  }
+}
+
+// Sent from Database -> Collector
+message IngestResponse {
+  oneof payload {
+    // The first message back from the server MUST be a welcome message.
+    WelcomeResponse welcome = 1;
+    // The server periodically sends acks for data it has successfully processed.
+    AckResponse ack = 2;
+  }
+}
+
+message HandshakeRequest {
+  string source_hostname = 1;
+  string target_ip = 2; // e.g., "1.1.1.1" or "2001:db8::1"
+}
+
+message RawDataRecord {
+  uint64 sent_nanos = 1;
+  uint64 rtt_nanos = 2;
+}
+
+message WelcomeResponse {
+  // Tells the collector the last timestamp the DB has for this stream.
+  // The collector can use this to either discard old buffer data or
+  // start re-sending from this point. 0 means "start from the beginning".
+  uint64 last_known_sent_nanos = 1;
+}
+
+message AckResponse {
+  // Tells the collector that all data up to and including this timestamp
+  // has been safely received (and perhaps even committed to disk).
+  uint64 last_acked_sent_nanos = 1;
+}
+
+
+// ============== QueryData RPC Messages ==============
+
+// Sent from GUI -> Database
+message QueryRequest {
+    // For now, this is empty. We can add time ranges, targets, etc., later.
+    // It corresponds to the old `GetLastHour` command.
+}
+
+// Sent from Database -> GUI
+message QueryResponse {
+    repeated RawDataRecord records = 1;
+}

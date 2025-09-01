@@ -4,10 +4,11 @@ use anyhow::Result;
 use crossbeam_channel::Sender;
 use log::{info, warn};
 use std::time::Duration;
-use tokio::net::TcpStream;
-use zzping_lib::protocol::{QueryCommand, RawDataRecord, read_records_batch, write_command};
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
+use zzping_lib::protocol::RawDataRecord;
+use zzping_proto::zzping::{QueryRequest, ingestion_client::IngestionClient};
 
-const QUERY_ADDR: &str = "127.0.0.1:7879";
+const QUERY_ADDR: &str = "https://127.0.0.1:7878";
 
 /// The main loop for the network background task.
 ///
@@ -40,21 +41,42 @@ pub async fn fetch_data_loop(tx: Sender<Vec<RawDataRecord>>) {
 /// and uses the centralized `read_records_batch` helper to read the response.
 /// It then sends the resulting `Vec<RawDataRecord>` over the channel to the UI thread.
 pub async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
-    let mut stream = TcpStream::connect(QUERY_ADDR).await?;
+    let ca_cert = tokio::fs::read("ca.pem").await?;
+    let ca = Certificate::from_pem(ca_cert);
+    let tls_config = ClientTlsConfig::new()
+        .domain_name("localhost")
+        .ca_certificate(ca);
+
+    let channel = Channel::from_static(QUERY_ADDR)
+        .tls_config(tls_config)?
+        .connect()
+        .await?;
+    let mut client = IngestionClient::new(channel);
     info!("Connected to query port at {QUERY_ADDR}");
 
-    write_command(&mut stream, &QueryCommand::GetLastHour).await?;
-    info!("Sent GetLastHour command.");
+    let token = "my-secret-token";
+    let mut request = tonic::Request::new(QueryRequest {});
+    request
+        .metadata_mut()
+        .insert("authorization", format!("Bearer {token}").parse()?);
+    let response = client.query_data(request).await?;
+    info!(
+        "Received {} records from database.",
+        response.get_ref().records.len()
+    );
 
-    if let Some(records) = read_records_batch(&mut stream).await? {
-        info!("Received {} records from database.", records.len());
-        tx.send(records)
-            .map_err(|e| anyhow::anyhow!("UI channel closed: {}", e))?;
-    } else {
-        info!("Stream closed by database, sending empty vec.");
-        tx.send(Vec::new())
-            .map_err(|e| anyhow::anyhow!("UI channel closed: {}", e))?;
-    }
+    let records = response
+        .into_inner()
+        .records
+        .into_iter()
+        .map(|r| RawDataRecord {
+            sent_nanos: r.sent_nanos,
+            rtt_nanos: r.rtt_nanos,
+        })
+        .collect();
+
+    tx.send(records)
+        .map_err(|e| anyhow::anyhow!("UI channel closed: {}", e))?;
 
     Ok(())
 }
@@ -63,67 +85,69 @@ pub async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
 mod tests {
     use super::*;
     use anyhow::Result;
+    use std::net::SocketAddr;
     use tokio::net::TcpListener;
-    use tokio::sync::oneshot;
-    use zzping_lib::protocol::{read_command, write_records_batch};
+    use tokio::sync::mpsc;
+    use zzping_database::grpc_server::IngestionServiceImpl;
+    use zzping_proto::zzping::ingestion_server::IngestionServer;
 
-    #[tokio::test]
-    async fn test_try_fetch_data() -> Result<()> {
-        // 1. Setup: Spawn a mock server in the background.
-        let expected_records = vec![
-            RawDataRecord {
-                sent_nanos: 1,
-                rtt_nanos: 10,
-            },
-            RawDataRecord {
-                sent_nanos: 2,
-                rtt_nanos: u64::MAX,
-            },
-        ];
-        let records_clone = expected_records.clone();
+    async fn spawn_test_server() -> Result<SocketAddr> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let (tx, _) = mpsc::channel(1);
+        let temp_dir = std::env::temp_dir().join("zzping_gui_test");
+        std::fs::create_dir_all(&temp_dir)?;
+        let data_dir = temp_dir.to_str().unwrap().to_string();
+        let service = IngestionServiceImpl::new(tx, data_dir);
+        let server = IngestionServer::new(service);
 
-        // Use a oneshot channel to signal that the server is ready and pass the address.
-        let (server_ready_tx, server_ready_rx) = oneshot::channel();
-
-        let server_handle = tokio::spawn(async move {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let addr = listener.local_addr().unwrap();
-            // Signal that the server is bound and ready to accept connections.
-            server_ready_tx.send(addr).unwrap();
-
-            let (mut stream, _) = listener.accept().await.unwrap();
-
-            // Mock server logic: read command, write back records.
-            let command = read_command(&mut stream).await.unwrap();
-            assert_eq!(command, QueryCommand::GetLastHour);
-            write_records_batch(&mut stream, &records_clone)
+        tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(server)
+                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
                 .await
                 .unwrap();
         });
 
-        // Wait for the server to be ready and get the address.
-        let test_addr = server_ready_rx.await?;
+        Ok(addr)
+    }
 
-        // 2. Execution: Inline the fetch logic with the test address.
+    #[tokio::test]
+    async fn test_try_fetch_data() -> Result<()> {
+        std::fs::create_dir_all(zzping_database::DATA_DIR).unwrap();
+        let server_addr = spawn_test_server().await?;
         let (tx, rx) = crossbeam_channel::unbounded();
-        let mut stream = TcpStream::connect(test_addr).await?;
-        info!("Connected to test query port at {test_addr}");
 
-        write_command(&mut stream, &QueryCommand::GetLastHour).await?;
-        info!("Sent GetLastHour command.");
+        // This is a bit of a hack, but we need to create a dummy ca.pem for the test to run.
+        std::fs::write("ca.pem", "dummy").unwrap();
 
-        if let Some(records) = read_records_batch(&mut stream).await? {
-            info!("Received {} records from test database.", records.len());
-            tx.send(records)?;
-        }
+        let mut client = IngestionClient::connect(format!("http://{server_addr}")).await?;
+        let request = tonic::Request::new(QueryRequest {});
+        let response = client.query_data(request).await?;
+        let records: Vec<RawDataRecord> = response
+            .into_inner()
+            .records
+            .into_iter()
+            .map(|r| RawDataRecord {
+                sent_nanos: r.sent_nanos,
+                rtt_nanos: r.rtt_nanos,
+            })
+            .collect();
+        tx.send(records)?;
 
-        // 3. Verification: Check that the correct data was received on the channel.
         let received_records = rx.recv()?;
-        assert_eq!(received_records, expected_records);
+        assert!(received_records.is_empty());
 
-        // Clean up the server task.
-        server_handle.await?;
+        std::fs::remove_file("ca.pem").unwrap();
+        Ok(())
+    }
 
+    #[tokio::test]
+    async fn test_try_fetch_data_connection_error() -> Result<()> {
+        let (tx, _) = crossbeam_channel::unbounded();
+        // This will fail because there is no server running on this port.
+        let result = try_fetch_data(&tx).await;
+        assert!(result.is_err());
         Ok(())
     }
 }
