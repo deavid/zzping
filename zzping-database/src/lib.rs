@@ -4,6 +4,7 @@
 //! in `main.rs` is a lightweight wrapper around the `run` function from this library.
 
 pub mod finalization;
+pub mod grpc_server;
 pub mod ingestion;
 pub mod ingestion_item;
 pub mod query;

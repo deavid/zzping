@@ -20,7 +20,10 @@ zzping-proto = { path = "zzping-proto" }
 
 # External dependencies
 anyhow = "1.0"
+dashmap = "5.5.3"
+futures-core = "0.3"
 prost = "0.12"
+tokio-stream = { version = "0.1", features = ["net"] }
 tonic = "0.11"
 tonic-build = "0.11"
 async-std = { version = "1.13", features = ["unstable"] }
