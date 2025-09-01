@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["zzping-gui", "zzping-database", "zzping-collector", "zzping-lib", "zzping-tests"]
+members = ["zzping-gui", "zzping-database", "zzping-collector", "zzping-lib", "zzping-tests", "zzping-proto"]
 
 [workspace.package]
 version = "0.2.2-beta2"
@@ -16,9 +16,13 @@ description = "Tools to monitor home network latency and packet loss"
 
 # Internal dependencies
 zzping-lib = { path = "zzping-lib" }
+zzping-proto = { path = "zzping-proto" }
 
 # External dependencies
 anyhow = "1.0"
+prost = "0.12"
+tonic = "0.11"
+tonic-build = "0.11"
 async-std = { version = "1.13", features = ["unstable"] }
 async-trait = "0.1"
 bincode = "1.3"

@@ -10,7 +10,8 @@ description = "Collector service for zzping"
 [dependencies]
 # NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
 # ...   and instead use "cratename.workspace = true" to refer to it.
-zzping-lib = { path = "../zzping-lib" }
+zzping-lib = { workspace = true }
+zzping-proto = { workspace = true }
 anyhow.workspace = true
 async-trait.workspace = true
 bytes.workspace = true

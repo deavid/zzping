@@ -10,7 +10,8 @@ description = "An egui-based GUI for viewing live and historical zzping data"
 [dependencies]
 # NOTE: All crates must define their dependencies in the workspace Cargo.toml for centralization
 # ...   and instead use "cratename.workspace = true" to refer to it.
-zzping-lib = { path = "../zzping-lib" }
+zzping-lib = { workspace = true }
+zzping-proto = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
 crossbeam-channel.workspace = true
 log.workspace = true
