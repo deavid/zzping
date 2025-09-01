@@ -7,10 +7,9 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 use zzping_proto::zzping::{
-    ingestion_server::Ingestion,
-    ingest_request::Payload as IngestRequestPayload,
-    ingest_response::Payload as IngestResponsePayload,
     AckResponse, IngestRequest, IngestResponse, QueryRequest, QueryResponse, WelcomeResponse,
+    ingest_request::Payload as IngestRequestPayload,
+    ingest_response::Payload as IngestResponsePayload, ingestion_server::Ingestion,
 };
 
 // This will hold the state for each active ingestion stream.
@@ -51,18 +50,10 @@ impl Ingestion for IngestionServiceImpl {
             }
         };
 
-        let stream_key = format!(
-            "{}-{}",
-            handshake.source_hostname, handshake.target_ip
-        );
+        let stream_key = format!("{}-{}", handshake.source_hostname, handshake.target_ip);
         info!("New stream from {}", stream_key);
 
-        streams.insert(
-            stream_key.clone(),
-            StreamState {
-                last_sent_nanos: 0,
-            },
-        );
+        streams.insert(stream_key.clone(), StreamState { last_sent_nanos: 0 });
 
         let (tx, rx) = mpsc::channel(100);
 
@@ -122,11 +113,14 @@ impl Ingestion for IngestionServiceImpl {
                                 }
                             }
                             Some(IngestRequestPayload::Handshake(_)) => {
-                                warn!("Client sent a handshake message mid-stream. This is not allowed.");
-                                let _ = tx.send(Err(Status::invalid_argument(
-                                    "Handshake message not allowed mid-stream",
-                                )))
-                                .await;
+                                warn!(
+                                    "Client sent a handshake message mid-stream. This is not allowed."
+                                );
+                                let _ = tx
+                                    .send(Err(Status::invalid_argument(
+                                        "Handshake message not allowed mid-stream",
+                                    )))
+                                    .await;
                                 break;
                             }
                             None => {
@@ -167,28 +161,44 @@ impl Ingestion for IngestionServiceImpl {
 mod tests {
     use super::*;
     use std::time::Duration;
-    use tokio::time::timeout;
     use tokio_stream::StreamExt;
-    use zzping_proto::zzping::{ingestion_client::IngestionClient, HandshakeRequest, RawDataRecord};
+    use zzping_proto::zzping::{
+        HandshakeRequest, RawDataRecord, ingestion_client::IngestionClient,
+    };
+
+    // IMPORTANT NOTE: We must use println! instead of info! for logging in unit tests - otherwise the information does not appear in --nocapture.
+
+    // We should use "timeout" every time we use .await to avoid the tests hanging.
+
+    async fn timeout<F>(future: F) -> <F as IntoFuture>::Output
+    where
+        F: IntoFuture,
+    {
+        // WE MUST USE A SMALL DURATION: 100ms is more than enough. If it looks like it's too short, we're doing something wrong on the tests.
+        // The tests need to be quick and snappy. Do not increase this duration value, fix tests instead.
+        tokio::time::timeout(Duration::from_millis(100), future)
+            .await
+            .expect("Timeout happened!")
+    }
 
     #[tokio::test]
     async fn test_query_data_returns_empty_response() {
         let service = IngestionServiceImpl::default();
         let request = Request::new(QueryRequest {});
-        let response = service.query_data(request).await.unwrap();
+        let response = timeout(service.query_data(request)).await.unwrap();
         assert!(response.into_inner().records.is_empty());
     }
 
     async fn spawn_test_server() -> std::net::SocketAddr {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = timeout(tokio::net::TcpListener::bind("127.0.0.1:0"))
+            .await
+            .unwrap();
         let addr = listener.local_addr().unwrap();
         let service = IngestionServiceImpl::default();
 
         tokio::spawn(async move {
             tonic::transport::Server::builder()
-                .add_service(zzping_proto::zzping::ingestion_server::IngestionServer::new(
-                    service,
-                ))
+                .add_service(zzping_proto::zzping::ingestion_server::IngestionServer::new(service))
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
                 .await
                 .unwrap();
@@ -200,39 +210,36 @@ mod tests {
     #[tokio::test]
     async fn test_ingest_stream_flow() {
         let _ = env_logger::builder().is_test(true).try_init();
-        info!("Starting test_ingest_stream_flow");
-        let server_addr = spawn_test_server().await;
-        info!("Server spawned at {}", server_addr);
-        let mut client = IngestionClient::connect(format!("http://{}", server_addr))
+        println!("Starting test_ingest_stream_flow");
+        let server_addr = timeout(spawn_test_server()).await;
+        println!("Server spawned at {}", server_addr);
+        let mut client = timeout(IngestionClient::connect(format!("http://{}", server_addr)))
             .await
             .unwrap();
-        info!("Client connected");
+        println!("Client connected");
 
         let (tx, rx) = mpsc::channel(10);
-        let response_stream = client.ingest_stream(ReceiverStream::new(rx)).await.unwrap();
-        let mut response_stream = response_stream.into_inner();
-        info!("Got response stream");
 
-        // 1. Send Handshake
-        info!("Sending handshake");
+        // Send handshake first to avoid deadlock
         let handshake = HandshakeRequest {
             source_hostname: "test-host".to_string(),
             target_ip: "1.2.3.4".to_string(),
         };
-        tx.send(IngestRequest {
+        timeout(tx.send(IngestRequest {
             payload: Some(IngestRequestPayload::Handshake(handshake)),
-        })
+        }))
         .await
         .unwrap();
-        info!("Handshake sent");
 
-        // 2. Await WelcomeResponse
-        info!("Awaiting welcome response");
-        let welcome_response = timeout(Duration::from_secs(1), response_stream.next())
+        let response_stream = timeout(client.ingest_stream(ReceiverStream::new(rx)))
             .await
-            .unwrap()
-            .unwrap()
             .unwrap();
+        let mut response_stream = response_stream.into_inner();
+        println!("Got response stream");
+
+        // Await WelcomeResponse
+        println!("Awaiting welcome response");
+        let welcome_response = timeout(response_stream.next()).await.unwrap().unwrap();
         info!("Welcome response received");
 
         match welcome_response.payload {
@@ -244,39 +251,51 @@ mod tests {
 
         // 3. Send records and await acks
         let records_to_send = 250;
-        info!("Spawning ack handle");
+        println!("Spawning ack handle");
         let ack_handle = tokio::spawn(async move {
             let mut acks_received = 0;
-            while let Some(Ok(response)) = response_stream.next().await {
-                if let Some(IngestResponsePayload::Ack(_)) = response.payload {
-                    info!("Ack received");
-                    acks_received += 1;
+            loop {
+                match timeout(response_stream.next()).await {
+                    Some(Ok(response)) => {
+                        if let Some(IngestResponsePayload::Ack(_)) = response.payload {
+                            println!("Ack received");
+                            acks_received += 1;
+                        }
+                    }
+                    Some(Err(e)) => {
+                        println!("Error in response stream: {:?}", e);
+                        break;
+                    }
+                    None => {
+                        println!("Response stream closed");
+                        break;
+                    }
                 }
             }
-            info!("Ack handle finished");
+            println!("Ack handle finished");
             acks_received
         });
 
-        info!("Sending {} records", records_to_send);
+        println!("Sending {} records", records_to_send);
         for i in 0..records_to_send {
             let record = RawDataRecord {
                 sent_nanos: i + 1,
                 rtt_nanos: 100,
             };
-            tx.send(IngestRequest {
+            timeout(tx.send(IngestRequest {
                 payload: Some(IngestRequestPayload::Record(record)),
-            })
+            }))
             .await
             .unwrap();
         }
 
         // Close the client stream
-        info!("Dropping client tx");
+        println!("Dropping client tx");
         drop(tx);
 
-        info!("Awaiting ack handle");
-        let acks_received = ack_handle.await.unwrap();
+        println!("Awaiting ack handle");
+        let acks_received = timeout(ack_handle).await.unwrap();
         assert_eq!(acks_received, 2); // For 100 and 200
-        info!("Test finished");
+        println!("Test finished");
     }
 }
