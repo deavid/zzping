@@ -118,6 +118,9 @@ mod tests {
         let server_addr = spawn_test_server().await?;
         let (tx, rx) = crossbeam_channel::unbounded();
 
+        // This is a bit of a hack, but we need to create a dummy ca.pem for the test to run.
+        std::fs::write("ca.pem", "dummy").unwrap();
+
         let mut client = IngestionClient::connect(format!("http://{server_addr}")).await?;
         let request = tonic::Request::new(QueryRequest {});
         let response = client.query_data(request).await?;
@@ -135,6 +138,16 @@ mod tests {
         let received_records = rx.recv()?;
         assert!(received_records.is_empty());
 
+        std::fs::remove_file("ca.pem").unwrap();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_try_fetch_data_connection_error() -> Result<()> {
+        let (tx, _) = crossbeam_channel::unbounded();
+        // This will fail because there is no server running on this port.
+        let result = try_fetch_data(&tx).await;
+        assert!(result.is_err());
         Ok(())
     }
 }
