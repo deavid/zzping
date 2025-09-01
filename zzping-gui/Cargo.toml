@@ -13,6 +13,7 @@ description = "An egui-based GUI for viewing live and historical zzping data"
 zzping-lib = { workspace = true }
 zzping-proto = { workspace = true }
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros"] }
+tonic = { workspace = true }
 crossbeam-channel.workspace = true
 log.workspace = true
 serde_json.workspace = true
@@ -22,3 +23,7 @@ chrono.workspace = true
 clap.workspace = true
 eframe.workspace = true
 egui.workspace = true
+
+[dev-dependencies]
+zzping-database = { workspace = true, features = ["test-utils"] }
+tokio-stream = { workspace = true }

@@ -5,7 +5,6 @@
 
 pub mod finalization;
 pub mod grpc_server;
-pub mod ingestion;
 pub mod ingestion_item;
 pub mod query;
 pub mod runner;

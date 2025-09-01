@@ -1,6 +1,8 @@
+use crate::ingestion_item::IngestionItem;
+use crate::query::get_last_hour_records;
 use dashmap::DashMap;
 use futures_core::Stream;
-use log::{info, warn};
+use log::{error, info, warn};
 use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -12,17 +14,24 @@ use zzping_proto::zzping::{
     ingest_response::Payload as IngestResponsePayload, ingestion_server::Ingestion,
 };
 
-// This will hold the state for each active ingestion stream.
-// The key could be a unique identifier for the stream (e.g., "hostname-target_ip").
 #[derive(Debug)]
 struct StreamState {
     last_sent_nanos: u64,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct IngestionServiceImpl {
-    // Use Arc for shared ownership across tonic's worker threads.
     streams: Arc<DashMap<String, StreamState>>,
+    storage_tx: mpsc::Sender<IngestionItem>,
+}
+
+impl IngestionServiceImpl {
+    pub fn new(storage_tx: mpsc::Sender<IngestionItem>) -> Self {
+        Self {
+            streams: Arc::new(DashMap::new()),
+            storage_tx,
+        }
+    }
 }
 
 type IngestStreamT = Pin<Box<dyn Stream<Item = Result<IngestResponse, Status>> + Send>>;
@@ -37,8 +46,8 @@ impl Ingestion for IngestionServiceImpl {
     ) -> Result<Response<Self::IngestStreamStream>, Status> {
         let mut stream = request.into_inner();
         let streams = self.streams.clone();
+        let storage_tx = self.storage_tx.clone();
 
-        // The first message MUST be a handshake.
         let handshake = match stream.message().await? {
             Some(IngestRequest {
                 payload: Some(IngestRequestPayload::Handshake(h)),
@@ -57,7 +66,6 @@ impl Ingestion for IngestionServiceImpl {
 
         let (tx, rx) = mpsc::channel(100);
 
-        // Send WelcomeResponse
         let welcome = WelcomeResponse {
             last_known_sent_nanos: 0,
         };
@@ -70,8 +78,6 @@ impl Ingestion for IngestionServiceImpl {
         {
             warn!("Client disconnected before welcome response could be sent");
             streams.remove(&stream_key);
-            // The stream is already closed, so we don't need to do anything else.
-            // Just return an empty stream.
             let stream = ReceiverStream::new(rx);
             return Ok(Response::new(Box::pin(stream) as Self::IngestStreamStream));
         }
@@ -91,6 +97,19 @@ impl Ingestion for IngestionServiceImpl {
 
                                 if let Some(mut state) = streams.get_mut(&stream_key) {
                                     state.last_sent_nanos = record.sent_nanos;
+                                }
+
+                                let item = IngestionItem {
+                                    source_hostname: handshake.source_hostname.clone(),
+                                    target: handshake.target_ip.parse().unwrap(),
+                                    record: zzping_lib::protocol::RawDataRecord {
+                                        sent_nanos: record.sent_nanos,
+                                        rtt_nanos: record.rtt_nanos,
+                                    },
+                                };
+                                if storage_tx.send(item).await.is_err() {
+                                    error!("Storage channel closed");
+                                    break;
                                 }
 
                                 if record_count % 100 == 0 {
@@ -127,7 +146,6 @@ impl Ingestion for IngestionServiceImpl {
                     }
                     Ok(None) => {
                         info!("Client stream {stream_key} closed");
-                        // Stream closed by client
                         break;
                     }
                     Err(e) => {
@@ -150,7 +168,16 @@ impl Ingestion for IngestionServiceImpl {
         &self,
         _request: Request<QueryRequest>,
     ) -> Result<Response<QueryResponse>, Status> {
-        Ok(Response::new(QueryResponse { records: vec![] }))
+        let records = get_last_hour_records(crate::DATA_DIR)
+            .map_err(|e| Status::internal(e.to_string()))?
+            .into_iter()
+            .map(|r| zzping_proto::zzping::RawDataRecord {
+                sent_nanos: r.sent_nanos,
+                rtt_nanos: r.rtt_nanos,
+            })
+            .collect();
+
+        Ok(Response::new(QueryResponse { records }))
     }
 }
 
@@ -177,7 +204,12 @@ pub async fn spawn_test_server() -> (std::net::SocketAddr, JoinHandle<()>) {
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
-    let service = IngestionServiceImpl::default();
+    let (tx, mut rx) = mpsc::channel(100); // Dummy channel for storage
+    let service = IngestionServiceImpl::new(tx);
+
+    tokio::spawn(async move {
+        while (rx.recv().await).is_some() {}
+    });
 
     let handle = tokio::spawn(async move {
         tonic::transport::Server::builder()
@@ -200,10 +232,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_data_returns_empty_response() {
-        let service = IngestionServiceImpl::default();
+        std::fs::create_dir_all(crate::DATA_DIR).unwrap();
+        let (tx, _) = mpsc::channel(1);
+        let service = IngestionServiceImpl::new(tx);
         let request = Request::new(QueryRequest {});
         let response = timeout(service.query_data(request)).await.unwrap();
         assert!(response.into_inner().records.is_empty());
+        std::fs::remove_dir_all(crate::DATA_DIR).unwrap();
     }
 
     #[tokio::test]
@@ -219,7 +254,6 @@ mod tests {
 
         let (tx, rx) = mpsc::channel(10);
 
-        // Send handshake first to avoid deadlock
         let handshake = HandshakeRequest {
             source_hostname: "test-host".to_string(),
             target_ip: "1.2.3.4".to_string(),
@@ -236,7 +270,6 @@ mod tests {
         let mut response_stream = response_stream.into_inner();
         println!("Got response stream");
 
-        // Await WelcomeResponse
         println!("Awaiting welcome response");
         let welcome_response = timeout(response_stream.next()).await.unwrap().unwrap();
         info!("Welcome response received");
@@ -248,7 +281,6 @@ mod tests {
             _ => panic!("Expected WelcomeResponse"),
         }
 
-        // 3. Send records and await acks
         let records_to_send = 250;
         println!("Spawning ack handle");
         let ack_handle = tokio::spawn(async move {
@@ -288,13 +320,12 @@ mod tests {
             .unwrap();
         }
 
-        // Close the client stream
         println!("Dropping client tx");
         drop(tx);
 
         println!("Awaiting ack handle");
         let acks_received = timeout(ack_handle).await.unwrap();
-        assert_eq!(acks_received, 2); // For 100 and 200
+        assert_eq!(acks_received, 2);
         println!("Test finished");
     }
 }

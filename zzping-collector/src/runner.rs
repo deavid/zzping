@@ -1,53 +1,15 @@
 use crate::{
-    cli::Cli, connection_manager, ping_client::PingClient, ping_surge_client::PingSurgeClient,
+    cli::Cli,
+    ping_client::PingClient,
+    ping_surge_client::PingSurgeClient,
+    target_manager::run_target_manager,
 };
 use anyhow::Result;
-use log::{error, info};
+use log::info;
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::{net::TcpStream, task::JoinHandle};
-
-/// The core logic for pinging a single target and reporting to the database.
-///
-/// This function is spawned in its own asynchronous task for each target.
-/// It is given a `PingClient` and then enters an infinite loop to maintain a
-/// connection to the database. If the connection is lost, it will automatically
-/// try to reconnect after a 5-second delay.
-pub async fn ping_target_loop(cli: Arc<Cli>, ping_client: Arc<dyn PingClient>) -> Result<()> {
-    let target = ping_client.target();
-    info!("Pinging target: {target}");
-
-    // The main loop of the collector is designed for resilience. It will continuously
-    // try to connect to the database, and if the connection is ever lost, it will
-    // simply re-enter this loop and try to connect again.
-    loop {
-        info!(
-            "[{}] Attempting to connect to database at {}",
-            target, cli.database_addr
-        );
-        match TcpStream::connect(&cli.database_addr).await {
-            Ok(stream) => {
-                info!("[{target}] Successfully connected to database.");
-                // Once connected, hand off to the connection manager, which will run
-                // until the connection is lost.
-                if let Err(e) =
-                    connection_manager::handle_connection(stream, ping_client.clone(), cli.clone())
-                        .await
-                {
-                    error!(
-                        "[{target}] Error during connection handling: {e}. Reconnecting..."
-                    );
-                }
-            }
-            Err(e) => {
-                error!(
-                    "[{target}] Failed to connect to database: {e}. Retrying in 5 seconds."
-                );
-                tokio::time::sleep(Duration::from_secs(5)).await;
-            }
-        }
-    }
-}
+use std::time::Instant;
+use tokio::task::JoinHandle;
+use zzping_proto::zzping::ingestion_client::IngestionClient;
 
 /// The main function for the collector service.
 ///
@@ -70,20 +32,58 @@ pub async fn run() -> Result<()> {
         panic!("At least one target must be specified");
     }
 
-    let mut handles: Vec<JoinHandle<Result<()>>> = Vec::new();
+    let channel = tonic::transport::Channel::from_shared(format!("http://{}", cli.database_addr))?
+        .connect()
+        .await?;
+    info!("Connected to gRPC server at {}", cli.database_addr);
+
+    let mut handles: Vec<JoinHandle<()>> = Vec::new();
 
     for target in cli.targets.clone() {
         let cli = Arc::clone(&cli);
         let ping_client: Arc<dyn PingClient> = Arc::new(PingSurgeClient::new(target)?);
-        let handle = tokio::spawn(ping_target_loop(cli, ping_client));
-        handles.push(handle);
+        let (ping_tx, ping_rx) = tokio::sync::mpsc::channel(100);
+
+        let pinger_handle = {
+            let ping_client = ping_client.clone();
+            let cli_clone = cli.clone();
+            tokio::spawn(async move {
+                let semaphore = Arc::new(tokio::sync::Semaphore::new(cli_clone.max_in_flight));
+                let start_time = Instant::now();
+                let mut sequence_idx: u16 = 0;
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs_f64(
+                    1.0 / cli_clone.rate as f64,
+                ));
+                loop {
+                    interval.tick().await;
+                    let permit = semaphore.clone().try_acquire_owned().unwrap();
+                    ping_client
+                        .ping(
+                            sequence_idx,
+                            ping_tx.clone(),
+                            permit,
+                            start_time,
+                            Instant::now(),
+                        )
+                        .await;
+                    sequence_idx = sequence_idx.wrapping_add(1);
+                }
+            })
+        };
+        handles.push(pinger_handle);
+
+        let client = IngestionClient::new(channel.clone());
+        let manager_handle = tokio::spawn(run_target_manager(
+            client,
+            cli.source_hostname.clone(),
+            target,
+            ping_rx,
+        ));
+        handles.push(manager_handle);
     }
 
-    // Wait for all tasks to complete. In practice, these tasks run indefinitely,
-    // so this await will likely never return. This is acceptable for a long-running
-    // service. If one of the tasks panics, it will be caught here.
     for handle in handles {
-        handle.await??;
+        handle.await?;
     }
 
     Ok(())
