@@ -42,13 +42,15 @@ struct StreamState {
 pub struct IngestionServiceImpl {
     streams: Arc<DashMap<String, StreamState>>,
     storage_tx: mpsc::Sender<IngestionItem>,
+    data_dir: String,
 }
 
 impl IngestionServiceImpl {
-    pub fn new(storage_tx: mpsc::Sender<IngestionItem>) -> Self {
+    pub fn new(storage_tx: mpsc::Sender<IngestionItem>, data_dir: String) -> Self {
         Self {
             streams: Arc::new(DashMap::new()),
             storage_tx,
+            data_dir,
         }
     }
 }
@@ -187,7 +189,7 @@ impl Ingestion for IngestionServiceImpl {
         &self,
         _request: Request<QueryRequest>,
     ) -> Result<Response<QueryResponse>, Status> {
-        let records = get_last_hour_records(crate::DATA_DIR)
+        let records = get_last_hour_records(&self.data_dir)
             .map_err(|e| Status::internal(e.to_string()))?
             .into_iter()
             .map(|r| zzping_proto::zzping::RawDataRecord {
@@ -224,11 +226,9 @@ pub async fn spawn_test_server() -> (std::net::SocketAddr, JoinHandle<()>) {
         .unwrap();
     let addr = listener.local_addr().unwrap();
     let (tx, mut rx) = mpsc::channel(100); // Dummy channel for storage
-    let service = IngestionServiceImpl::new(tx);
+    let service = IngestionServiceImpl::new(tx, crate::DATA_DIR.to_string());
 
-    tokio::spawn(async move {
-        while (rx.recv().await).is_some() {}
-    });
+    tokio::spawn(async move { while (rx.recv().await).is_some() {} });
 
     let handle = tokio::spawn(async move {
         tonic::transport::Server::builder()
@@ -244,7 +244,8 @@ pub async fn spawn_test_server() -> (std::net::SocketAddr, JoinHandle<()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::{timeout, spawn_test_server};
+    use super::{spawn_test_server, timeout};
+    use tempfile::tempdir;
     use tokio_stream::StreamExt;
     use zzping_proto::zzping::{
         HandshakeRequest, RawDataRecord, ingestion_client::IngestionClient,
@@ -271,13 +272,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_data_returns_empty_response() {
-        std::fs::create_dir_all(crate::DATA_DIR).unwrap();
+        let temp_dir = tempdir().unwrap();
+        let data_dir = temp_dir.path().to_str().unwrap().to_string();
         let (tx, _) = mpsc::channel(1);
-        let service = IngestionServiceImpl::new(tx);
+        let service = IngestionServiceImpl::new(tx, data_dir);
         let request = Request::new(QueryRequest {});
         let response = timeout(service.query_data(request)).await.unwrap();
         assert!(response.into_inner().records.is_empty());
-        std::fs::remove_dir_all(crate::DATA_DIR).unwrap();
     }
 
     #[tokio::test]

@@ -6,7 +6,7 @@ use log::{info, warn};
 use std::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use zzping_lib::protocol::RawDataRecord;
-use zzping_proto::zzping::{ingestion_client::IngestionClient, QueryRequest};
+use zzping_proto::zzping::{QueryRequest, ingestion_client::IngestionClient};
 
 const QUERY_ADDR: &str = "https://127.0.0.1:7878";
 
@@ -95,7 +95,10 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let (tx, _) = mpsc::channel(1);
-        let service = IngestionServiceImpl::new(tx);
+        let temp_dir = std::env::temp_dir().join("zzping_gui_test");
+        std::fs::create_dir_all(&temp_dir)?;
+        let data_dir = temp_dir.to_str().unwrap().to_string();
+        let service = IngestionServiceImpl::new(tx, data_dir);
         let server = IngestionServer::new(service);
 
         tokio::spawn(async move {
@@ -115,8 +118,7 @@ mod tests {
         let server_addr = spawn_test_server().await?;
         let (tx, rx) = crossbeam_channel::unbounded();
 
-        let mut client =
-            IngestionClient::connect(format!("http://{server_addr}")).await?;
+        let mut client = IngestionClient::connect(format!("http://{server_addr}")).await?;
         let request = tonic::Request::new(QueryRequest {});
         let response = client.query_data(request).await?;
         let records: Vec<RawDataRecord> = response

@@ -1,7 +1,8 @@
 use crate::{
-    grpc_server::{check_auth, IngestionServiceImpl},
+    DATA_DIR, INGESTION_ADDR,
+    grpc_server::{IngestionServiceImpl, check_auth},
     ingestion_item::IngestionItem,
-    storage_engine, DATA_DIR, INGESTION_ADDR,
+    storage_engine,
 };
 use anyhow::Result;
 use log::{error, info};
@@ -31,7 +32,7 @@ pub async fn run() -> Result<()> {
     }
 
     let addr = INGESTION_ADDR.parse()?;
-    let ingestion_service = IngestionServiceImpl::new(tx);
+    let ingestion_service = IngestionServiceImpl::new(tx, DATA_DIR.to_string());
     let server = IngestionServer::new(ingestion_service);
 
     // These paths should be configurable in a real production environment.
