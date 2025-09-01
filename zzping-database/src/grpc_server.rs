@@ -51,7 +51,7 @@ impl Ingestion for IngestionServiceImpl {
         };
 
         let stream_key = format!("{}-{}", handshake.source_hostname, handshake.target_ip);
-        info!("New stream from {}", stream_key);
+        info!("New stream from {stream_key}");
 
         streams.insert(stream_key.clone(), StreamState { last_sent_nanos: 0 });
 
@@ -77,17 +77,17 @@ impl Ingestion for IngestionServiceImpl {
         }
 
         tokio::spawn(async move {
-            info!("Spawned task for stream {}", stream_key);
+            info!("Spawned task for stream {stream_key}");
             let mut record_count = 0;
             loop {
-                info!("Looping in spawned task for stream {}", stream_key);
+                info!("Looping in spawned task for stream {stream_key}");
                 match stream.message().await {
                     Ok(Some(ingest_request)) => {
-                        info!("Received message from stream {}", stream_key);
+                        info!("Received message from stream {stream_key}");
                         match ingest_request.payload {
                             Some(IngestRequestPayload::Record(record)) => {
                                 record_count += 1;
-                                info!("Received record: {:?}", record);
+                                info!("Received record: {record:?}");
 
                                 if let Some(mut state) = streams.get_mut(&stream_key) {
                                     state.last_sent_nanos = record.sent_nanos;
@@ -104,10 +104,7 @@ impl Ingestion for IngestionServiceImpl {
                                         .await
                                         .is_err()
                                     {
-                                        warn!(
-                                            "Client {} disconnected, cannot send ack",
-                                            stream_key
-                                        );
+                                        warn!("Client {stream_key} disconnected, cannot send ack");
                                         break;
                                     }
                                 }
@@ -129,20 +126,20 @@ impl Ingestion for IngestionServiceImpl {
                         }
                     }
                     Ok(None) => {
-                        info!("Client stream {} closed", stream_key);
+                        info!("Client stream {stream_key} closed");
                         // Stream closed by client
                         break;
                     }
                     Err(e) => {
-                        warn!("Error reading from stream from {}: {}", stream_key, e);
+                        warn!("Error reading from stream from {stream_key}: {e}");
                         break;
                     }
                 }
             }
 
-            info!("Stream from {} disconnected, cleaning up", stream_key);
+            info!("Stream from {stream_key} disconnected, cleaning up");
             streams.remove(&stream_key);
-            info!("Finished spawned task for stream {}", stream_key);
+            info!("Finished spawned task for stream {stream_key}");
         });
 
         let stream = ReceiverStream::new(rx);
@@ -160,6 +157,7 @@ impl Ingestion for IngestionServiceImpl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::IntoFuture;
     use std::time::Duration;
     use tokio_stream::StreamExt;
     use zzping_proto::zzping::{
@@ -212,8 +210,8 @@ mod tests {
         let _ = env_logger::builder().is_test(true).try_init();
         println!("Starting test_ingest_stream_flow");
         let server_addr = timeout(spawn_test_server()).await;
-        println!("Server spawned at {}", server_addr);
-        let mut client = timeout(IngestionClient::connect(format!("http://{}", server_addr)))
+        println!("Server spawned at {server_addr}");
+        let mut client = timeout(IngestionClient::connect(format!("http://{server_addr}")))
             .await
             .unwrap();
         println!("Client connected");
@@ -263,7 +261,7 @@ mod tests {
                         }
                     }
                     Some(Err(e)) => {
-                        println!("Error in response stream: {:?}", e);
+                        println!("Error in response stream: {e:?}");
                         break;
                     }
                     None => {
@@ -276,7 +274,7 @@ mod tests {
             acks_received
         });
 
-        println!("Sending {} records", records_to_send);
+        println!("Sending {records_to_send} records");
         for i in 0..records_to_send {
             let record = RawDataRecord {
                 sent_nanos: i + 1,
