@@ -154,30 +154,47 @@ impl Ingestion for IngestionServiceImpl {
     }
 }
 
+#[cfg(feature = "test-utils")]
+use std::future::IntoFuture;
+#[cfg(feature = "test-utils")]
+use std::time::Duration;
+
+#[cfg(feature = "test-utils")]
+pub async fn timeout<F>(future: F) -> <F as IntoFuture>::Output
+where
+    F: IntoFuture,
+{
+    tokio::time::timeout(Duration::from_millis(100), future)
+        .await
+        .expect("Timeout happened!")
+}
+
+#[cfg(feature = "test-utils")]
+pub async fn spawn_test_server() -> std::net::SocketAddr {
+    let listener = timeout(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .await
+        .unwrap();
+    let addr = listener.local_addr().unwrap();
+    let service = IngestionServiceImpl::default();
+
+    tokio::spawn(async move {
+        tonic::transport::Server::builder()
+            .add_service(zzping_proto::zzping::ingestion_server::IngestionServer::new(service))
+            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+            .await
+            .unwrap();
+    });
+
+    addr
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::future::IntoFuture;
-    use std::time::Duration;
     use tokio_stream::StreamExt;
     use zzping_proto::zzping::{
         HandshakeRequest, RawDataRecord, ingestion_client::IngestionClient,
     };
-
-    // IMPORTANT NOTE: We must use println! instead of info! for logging in unit tests - otherwise the information does not appear in --nocapture.
-
-    // We should use "timeout" every time we use .await to avoid the tests hanging.
-
-    async fn timeout<F>(future: F) -> <F as IntoFuture>::Output
-    where
-        F: IntoFuture,
-    {
-        // WE MUST USE A SMALL DURATION: 100ms is more than enough. If it looks like it's too short, we're doing something wrong on the tests.
-        // The tests need to be quick and snappy. Do not increase this duration value, fix tests instead.
-        tokio::time::timeout(Duration::from_millis(100), future)
-            .await
-            .expect("Timeout happened!")
-    }
 
     #[tokio::test]
     async fn test_query_data_returns_empty_response() {
@@ -185,24 +202,6 @@ mod tests {
         let request = Request::new(QueryRequest {});
         let response = timeout(service.query_data(request)).await.unwrap();
         assert!(response.into_inner().records.is_empty());
-    }
-
-    async fn spawn_test_server() -> std::net::SocketAddr {
-        let listener = timeout(tokio::net::TcpListener::bind("127.0.0.1:0"))
-            .await
-            .unwrap();
-        let addr = listener.local_addr().unwrap();
-        let service = IngestionServiceImpl::default();
-
-        tokio::spawn(async move {
-            tonic::transport::Server::builder()
-                .add_service(zzping_proto::zzping::ingestion_server::IngestionServer::new(service))
-                .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
-                .await
-                .unwrap();
-        });
-
-        addr
     }
 
     #[tokio::test]

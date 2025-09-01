@@ -17,6 +17,7 @@ description = "Tools to monitor home network latency and packet loss"
 # Internal dependencies
 zzping-lib = { path = "zzping-lib" }
 zzping-proto = { path = "zzping-proto" }
+zzping-database = { path = "zzping-database" }
 
 # External dependencies
 anyhow = "1.0"

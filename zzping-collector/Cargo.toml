@@ -24,6 +24,9 @@ serde.workspace = true
 serde_json.workspace = true
 surge-ping.workspace = true
 tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-util", "sync", "time"] }
+tokio-stream = { workspace = true }
+tonic = { workspace = true }
 
 [dev-dependencies]
 byteorder.workspace = true
+zzping-database = { workspace = true, features = ["test-utils"] }

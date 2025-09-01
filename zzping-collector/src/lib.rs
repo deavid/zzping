@@ -9,3 +9,4 @@ pub mod ping_client;
 pub mod ping_mock_client;
 pub mod ping_surge_client;
 pub mod runner;
+pub mod target_manager;

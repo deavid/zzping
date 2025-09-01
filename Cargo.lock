@@ -11440,6 +11440,9 @@ dependencies = [
  "serde_json",
  "surge-ping",
  "tokio",
+ "tokio-stream",
+ "tonic 0.11.0",
+ "zzping-database",
  "zzping-lib",
  "zzping-proto",
 ]
