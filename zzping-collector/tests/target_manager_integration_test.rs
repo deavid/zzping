@@ -5,7 +5,6 @@ use tokio::sync::mpsc;
 use zzping_collector::ping_client::PingResult;
 use zzping_collector::target_manager::run_target_manager;
 use zzping_database::{spawn_test_server, timeout as db_timeout};
-use zzping_proto::zzping::ingestion_client::IngestionClient;
 
 async fn timeout<F>(future: F) -> <F as IntoFuture>::Output
 where
@@ -25,15 +24,11 @@ async fn test_target_manager_happy_path() {
     let (server_addr, _server_handle) = db_timeout(spawn_test_server()).await;
     println!("Server spawned at {server_addr}");
 
-    let client = timeout(IngestionClient::connect(format!("http://{server_addr}")))
-        .await
-        .unwrap();
-    println!("Client connected");
-
     let (ping_tx, ping_rx) = mpsc::channel(100);
 
     let manager_handle = tokio::spawn(run_target_manager(
-        client,
+        vec![], // empty ca_cert for http
+        format!("http://{server_addr}"),
         "test-host".to_string(),
         "1.2.3.4".parse::<IpAddr>().unwrap(),
         "my-secret-token".to_string(),
@@ -68,15 +63,11 @@ async fn test_target_manager_reconnects_on_disconnect() {
     let (server_addr, server_handle) = db_timeout(spawn_test_server()).await;
     println!("Server spawned at {server_addr}");
 
-    let client = timeout(IngestionClient::connect(format!("http://{server_addr}")))
-        .await
-        .unwrap();
-    println!("Client connected");
-
     let (ping_tx, ping_rx) = mpsc::channel(100);
 
     let manager_handle = tokio::spawn(run_target_manager(
-        client,
+        vec![], // empty ca_cert for http
+        format!("http://{server_addr}"),
         "test-host".to_string(),
         "1.2.3.4".parse::<IpAddr>().unwrap(),
         "my-secret-token".to_string(),
@@ -123,7 +114,10 @@ async fn test_target_manager_reconnects_on_disconnect() {
     drop(ping_tx);
 
     println!("Awaiting manager handle");
-    let result = timeout(manager_handle).await;
-    assert!(result.is_ok(), "Target manager panicked");
+    let res = tokio::time::timeout(Duration::from_secs(1), manager_handle).await;
+    assert!(
+        res.is_err(),
+        "Target manager should have run forever and not exited"
+    );
     println!("Test finished");
 }

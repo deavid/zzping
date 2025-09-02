@@ -6,7 +6,6 @@ use tonic::{Request, Response, Status, Streaming, transport::Server};
 use zzping_collector::target_manager::run_target_manager;
 use zzping_proto::zzping::{
     IngestRequest, IngestResponse, QueryRequest, QueryResponse,
-    ingestion_client::IngestionClient,
     ingestion_server::{Ingestion, IngestionServer},
 };
 
@@ -61,12 +60,10 @@ async fn test_target_manager_reconnects_on_stream_error() {
     let server_addr = spawn_mock_server(service).await;
 
     let (ping_tx, ping_rx) = mpsc::channel(100);
-    let client = IngestionClient::connect(format!("http://{server_addr}"))
-        .await
-        .unwrap();
 
     let manager_handle = tokio::spawn(run_target_manager(
-        client,
+        vec![], // empty ca_cert for http
+        format!("http://{server_addr}"),
         "test-host".to_string(),
         "1.2.3.4".parse::<IpAddr>().unwrap(),
         "my-secret-token".to_string(),

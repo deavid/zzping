@@ -7,8 +7,6 @@ use log::info;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinHandle;
-use tonic::transport::{Certificate, Channel, ClientTlsConfig};
-use zzping_proto::zzping::ingestion_client::IngestionClient;
 
 /// The main function for the collector service.
 ///
@@ -34,25 +32,6 @@ pub async fn run() -> Result<()> {
     let ca_cert = tokio::fs::read("ca.pem")
         .await
         .context("Unable to read ca_cert as ./ca.pem")?;
-    let ca = Certificate::from_pem(ca_cert);
-
-    // Extract host from database_addr, assuming format https://host:port
-    let host = cli
-        .database_addr
-        .strip_prefix("https://")
-        .unwrap()
-        .split(':')
-        .next()
-        .unwrap();
-
-    let tls_config = ClientTlsConfig::new().domain_name(host).ca_certificate(ca);
-
-    let channel = Channel::from_shared(cli.database_addr.clone())?
-        .tls_config(tls_config)?
-        .connect()
-        .await
-        .context("Unable to connect to Database gRPC")?;
-    info!("Connected to gRPC server at {}", cli.database_addr);
 
     let mut handles: Vec<JoinHandle<()>> = Vec::new();
 
@@ -90,9 +69,9 @@ pub async fn run() -> Result<()> {
         };
         handles.push(pinger_handle);
 
-        let client = IngestionClient::new(channel.clone());
         let manager_handle = tokio::spawn(run_target_manager(
-            client,
+            ca_cert.clone(),
+            cli.database_addr.clone(),
             cli.source_hostname.clone(),
             target,
             cli.auth_token.clone(),

@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use zzping_proto::zzping::{
     AckResponse, HandshakeRequest, IngestRequest, RawDataRecord,
     ingest_request::Payload as IngestRequestPayload, ingestion_client::IngestionClient,
@@ -22,7 +23,8 @@ where
 }
 
 pub async fn run_target_manager(
-    mut client: IngestionClient<tonic::transport::Channel>,
+    ca_cert: Vec<u8>,
+    database_addr: String,
     source_hostname: String,
     target_ip: std::net::IpAddr,
     auth_token: String,
@@ -33,6 +35,66 @@ pub async fn run_target_manager(
 
     loop {
         info!("Attempting to connect to gRPC server...");
+        let host = if database_addr.starts_with("https://") {
+            database_addr
+                .strip_prefix("https://")
+                .unwrap()
+                .split(':')
+                .next()
+                .unwrap()
+        } else if database_addr.starts_with("http://") {
+            database_addr
+                .strip_prefix("http://")
+                .unwrap()
+                .split(':')
+                .next()
+                .unwrap()
+        } else {
+            &database_addr
+        };
+        let ca = if database_addr.starts_with("https://") {
+            Some(Certificate::from_pem(ca_cert.clone()))
+        } else {
+            None
+        };
+        let tls_config = ca.as_ref().map(|ca| {
+            ClientTlsConfig::new()
+                .domain_name(host)
+                .ca_certificate(ca.clone())
+        });
+        let channel = match Channel::from_shared(database_addr.clone()) {
+            Ok(ch) => {
+                let ch = if let Some(tls) = tls_config {
+                    match ch.tls_config(tls) {
+                        Ok(ch) => ch,
+                        Err(e) => {
+                            error!("Failed to configure TLS: {e}. Retrying in {retry_delay:?}.");
+                            tokio::time::sleep(retry_delay).await;
+                            continue;
+                        }
+                    }
+                } else {
+                    ch
+                };
+                match ch.connect().await {
+                    Ok(ch) => ch,
+                    Err(e) => {
+                        error!(
+                            "Failed to connect to gRPC server: {e}. Retrying in {retry_delay:?}."
+                        );
+                        tokio::time::sleep(retry_delay).await;
+                        continue;
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to create channel: {e}. Retrying in {retry_delay:?}.");
+                tokio::time::sleep(retry_delay).await;
+                continue;
+            }
+        };
+        let mut client = IngestionClient::new(channel);
+
         let (request_tx, request_rx) = mpsc::channel(100);
 
         let request_stream = ReceiverStream::new(request_rx);
@@ -67,8 +129,10 @@ pub async fn run_target_manager(
                 info!("gRPC stream established.");
 
                 let (ack_tx, mut ack_rx) = mpsc::channel::<AckResponse>(100);
+                let (stream_closed_tx, mut stream_closed_rx) = mpsc::channel::<()>(1);
 
                 // Spawn a task to handle server responses
+                let stream_closed_tx_clone = stream_closed_tx.clone();
                 tokio::spawn(async move {
                     if let Ok(Some(Ok(response))) =
                         timeout(Duration::from_secs(1), response_stream.next()).await
@@ -85,21 +149,43 @@ pub async fn run_target_manager(
                             error!("First message from server was not a WelcomeResponse");
                             return;
                         }
+                    } else {
+                        error!("Failed to receive welcome message from server");
+                        let _ = stream_closed_tx_clone.send(()).await;
+                        return;
                     }
 
-                    while let Ok(Some(Ok(response))) =
-                        timeout(Duration::from_secs(5), response_stream.next()).await
-                    {
-                        if let Some(zzping_proto::zzping::ingest_response::Payload::Ack(ack)) =
-                            response.payload
-                            && timeout(Duration::from_secs(1), ack_tx.send(ack))
-                                .await
-                                .is_err()
-                        {
-                            break;
+                    // Continue processing responses until stream actually closes
+                    loop {
+                        match timeout(Duration::from_millis(500), response_stream.next()).await {
+                            Ok(Some(Ok(response))) => {
+                                if let Some(zzping_proto::zzping::ingest_response::Payload::Ack(
+                                    ack,
+                                )) = response.payload
+                                    && timeout(Duration::from_secs(1), ack_tx.send(ack))
+                                        .await
+                                        .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            Ok(Some(Err(e))) => {
+                                error!("gRPC stream error: {}", e);
+                                break;
+                            }
+                            Ok(None) => {
+                                info!("Response stream ended by server");
+                                break;
+                            }
+                            Err(_) => {
+                                // Timeout waiting for response - this is normal, continue listening
+                                continue;
+                            }
                         }
                     }
                     info!("Response stream closed.");
+                    // Signal the main loop that the stream closed
+                    let _ = stream_closed_tx_clone.send(()).await;
                 });
 
                 // Main streaming logic
@@ -128,6 +214,10 @@ pub async fn run_target_manager(
                         Some(ack) = ack_rx.recv() => {
                             info!("Received ack for sent_nanos: {}", ack.last_acked_sent_nanos);
                             buffer.retain(|r| r.sent_nanos > ack.last_acked_sent_nanos);
+                        }
+                        _ = stream_closed_rx.recv() => {
+                            error!("Response stream closed, reconnecting.");
+                            break;
                         }
                         else => {
                             break;
