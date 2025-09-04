@@ -65,6 +65,7 @@ serde_json = "1.0"
 
 # Dev dependencies
 criterion = { version = "0.7", features = ["html_reports"] }
+ntest = "0.9"
 
 
 [profile.dev]

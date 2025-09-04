@@ -9,12 +9,13 @@ pub mod grpc_server;
 pub mod ingestion_item;
 pub mod query;
 pub mod runner;
+pub mod scheduler;
 pub mod storage_engine;
 
 pub const INGESTION_ADDR: &str = "127.0.0.1:7878";
 pub const DATA_DIR: &str = "data";
 
 #[cfg(feature = "test-utils")]
-pub use grpc_server::{spawn_test_server, timeout};
+pub use grpc_server::spawn_test_server;
 #[cfg(feature = "test-utils")]
 pub use tokio::task::JoinHandle;

@@ -2,6 +2,7 @@ use crate::{
     cli::Cli,
     ping_client::{PingClient, PingResult},
     ping_surge_client::PingSurgeClient,
+    state_machine::{Action, State, StateMachine},
 };
 use anyhow::{Context, Result};
 use log::{error, info, warn};
@@ -14,22 +15,27 @@ use std::{
 use tokio::{sync::mpsc, task::JoinHandle};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use zzping_proto::zzping::{
-    ingestion_client::IngestionClient, send_batch_response, HeartbeatRequest, RawDataRecord,
-    SendBatchRequest,
+    ingestion_client::IngestionClient, send_batch_response, GetRecentDataRequest,
+    HeartbeatRequest, RawDataRecord, SendBatchRequest,
 };
 
-async fn manage_pinger_tasks(
+fn manage_pinger_tasks(
+    should_be_pinging: bool,
     new_targets: &[String],
     ping_rate_pps: u64,
     running_tasks: &mut HashMap<IpAddr, JoinHandle<()>>,
-    ping_results_tx: mpsc::Sender<PingResult>,
+    ping_results_tx: &mpsc::Sender<PingResult>,
     cli: &Cli,
 ) {
-    let new_targets_set: HashMap<_, _> = new_targets
-        .iter()
-        .filter_map(|s| s.parse::<IpAddr>().ok())
-        .map(|ip| (ip, ()))
-        .collect();
+    let new_targets_set: HashMap<_, _> = if should_be_pinging {
+        new_targets
+            .iter()
+            .filter_map(|s| s.parse::<IpAddr>().ok())
+            .map(|ip| (ip, ()))
+            .collect()
+    } else {
+        HashMap::new() // If not pinging, the target set is empty.
+    };
 
     // Stop tasks that are no longer in the target list
     running_tasks.retain(|target, handle| {
@@ -71,6 +77,10 @@ async fn pinger_loop(
     max_in_flight: usize,
     rate: u64,
 ) {
+    if rate == 0 {
+        warn!("Ping rate is 0, pinger loop will not run.");
+        return;
+    }
     let semaphore = Arc::new(tokio::sync::Semaphore::new(max_in_flight));
     let start_time = Instant::now();
     let mut sequence_idx: u16 = 0;
@@ -144,9 +154,7 @@ pub async fn batch_sender_loop(
                     },
                     Err(e) => {
                         error!("send_batch RPC failed: {e}. Data will be retried.");
-                        // The buffer is not cleared, so data will be retried on the next tick
-                        // after the outer loop reconnects the client.
-                        return; // Exit to trigger reconnection
+                        return;
                     }
                 }
             }
@@ -170,6 +178,7 @@ pub async fn run() -> Result<()> {
         .await
         .context("Unable to read ca_cert as ./ca.pem")?;
     let retry_delay = Duration::from_secs(5);
+    let pid = std::process::id() as u64;
 
     loop {
         info!("Attempting to connect to gRPC server...");
@@ -202,9 +211,11 @@ pub async fn run() -> Result<()> {
                 info!("gRPC client connected. Starting main loop.");
 
                 let (ping_results_tx, ping_results_rx) = mpsc::channel(1000);
-                let mut running_tasks = HashMap::new();
+                let mut running_tasks: HashMap<IpAddr, JoinHandle<()>> = HashMap::new();
+                let mut state_machine = StateMachine::new(cli.source_hostname.clone());
+
                 let batch_sender_handle = tokio::spawn(batch_sender_loop(
-                    IngestionClient::new(channel),
+                    IngestionClient::new(channel.clone()),
                     cli.source_hostname.clone(),
                     ping_results_rx,
                 ));
@@ -214,23 +225,44 @@ pub async fn run() -> Result<()> {
                     heartbeat_interval.tick().await;
                     let request = tonic::Request::new(HeartbeatRequest {
                         collector_uuid: cli.source_hostname.clone(),
+                        pid,
                     });
 
                     match client.heartbeat(request).await {
                         Ok(response) => {
                             let response = response.into_inner();
-                            info!(
-                                "Heartbeat successful. Received config: targets={:?}, rate={}pps",
-                                response.targets, response.ping_rate_pps
-                            );
+                            let action = state_machine.handle_heartbeat_response(&response);
+
+                            if let Some(Action::SeedBuffer) = action {
+                                info!("Seeding buffer by calling get_recent_data...");
+                                let request = tonic::Request::new(GetRecentDataRequest {
+                                    collector_uuid: cli.source_hostname.clone(),
+                                    lookback_seconds: 3600, // 1 hour
+                                });
+                                match client.get_recent_data(request).await {
+                                    Ok(data) => info!("Successfully seeded buffer with {} records.", data.into_inner().records.len()),
+                                    Err(e) => warn!("Failed to seed buffer: {e}"),
+                                }
+                            }
+
+                            if state_machine.current_state == State::Shutdown {
+                                info!("Received SHUTDOWN command. Exiting.");
+                                batch_sender_handle.abort();
+                                for (_, handle) in &running_tasks {
+                                    handle.abort();
+                                }
+                                return Ok(());
+                            }
+
+                            let should_be_pinging = state_machine.current_state == State::Pinging;
                             manage_pinger_tasks(
+                                should_be_pinging,
                                 &response.targets,
                                 response.ping_rate_pps,
                                 &mut running_tasks,
-                                ping_results_tx.clone(),
+                                &ping_results_tx,
                                 &cli,
-                            )
-                            .await;
+                            );
                         }
                         Err(e) => {
                             error!("Heartbeat failed: {e}. Reconnecting...");

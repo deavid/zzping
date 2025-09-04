@@ -10,16 +10,6 @@ use zzping_proto::zzping::{QueryRequest, ingestion_client::IngestionClient};
 
 const QUERY_ADDR: &str = "https://127.0.0.1:7878";
 
-/// The main loop for the network background task.
-///
-/// This function runs in a separate thread and is responsible for periodically
-/// fetching data from the `zzping-database`. It runs in an infinite loop,
-/// attempting to fetch data once per second. If a connection or fetch fails,
-/// it logs a warning and retries after a 5-second delay.
-///
-/// # Arguments
-/// * `tx` - The sender part of a `crossbeam-channel` used to send the fetched
-///   data back to the main UI thread.
 pub async fn fetch_data_loop(tx: Sender<Vec<RawDataRecord>>) {
     info!("Network task started.");
     loop {
@@ -35,11 +25,6 @@ pub async fn fetch_data_loop(tx: Sender<Vec<RawDataRecord>>) {
     }
 }
 
-/// Attempts to perform a single fetch-and-send operation.
-///
-/// This function connects to the database, sends the `GET_LAST_MINUTE` command,
-/// and uses the centralized `read_records_batch` helper to read the response.
-/// It then sends the resulting `Vec<RawDataRecord>` over the channel to the UI thread.
 pub async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
     let ca_cert = tokio::fs::read("ca.pem").await?;
     let ca = Certificate::from_pem(ca_cert);
@@ -86,12 +71,12 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use std::net::SocketAddr;
-    use tokio::net::TcpListener;
+    use tokio::{net::TcpListener, task::JoinHandle};
     use tokio::sync::mpsc;
     use zzping_database::grpc_server::IngestionServiceImpl;
     use zzping_proto::zzping::ingestion_server::IngestionServer;
 
-    async fn spawn_test_server() -> Result<SocketAddr> {
+    async fn spawn_test_server() -> Result<(SocketAddr, JoinHandle<()>)> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
         let (tx, _) = mpsc::channel(1);
@@ -103,7 +88,7 @@ mod tests {
         let service = IngestionServiceImpl::new(tx, data_dir);
         let server = IngestionServer::new(service);
 
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             tonic::transport::Server::builder()
                 .add_service(server)
                 .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
@@ -111,16 +96,15 @@ mod tests {
                 .unwrap();
         });
 
-        Ok(addr)
+        Ok((addr, handle))
     }
 
     #[tokio::test]
     async fn test_try_fetch_data() -> Result<()> {
         std::fs::create_dir_all(zzping_database::DATA_DIR).unwrap();
-        let server_addr = spawn_test_server().await?;
+        let (server_addr, server_handle) = spawn_test_server().await?;
         let (tx, rx) = crossbeam_channel::unbounded();
 
-        // This is a bit of a hack, but we need to create a dummy ca.pem for the test to run.
         std::fs::write("ca.pem", "dummy").unwrap();
 
         let mut client = IngestionClient::connect(format!("http://{server_addr}")).await?;
@@ -141,13 +125,13 @@ mod tests {
         assert!(received_records.is_empty());
 
         std::fs::remove_file("ca.pem").unwrap();
+        server_handle.abort(); // Clean up the server task.
         Ok(())
     }
 
     #[tokio::test]
     async fn test_try_fetch_data_connection_error() -> Result<()> {
         let (tx, _) = crossbeam_channel::unbounded();
-        // This will fail because there is no server running on this port.
         let result = try_fetch_data(&tx).await;
         assert!(result.is_err());
         Ok(())

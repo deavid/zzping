@@ -29,5 +29,6 @@ tonic = { workspace = true }
 
 [dev-dependencies]
 byteorder.workspace = true
+ntest.workspace = true
 tempfile.workspace = true
 zzping-database = { workspace = true, features = ["test-utils"] }

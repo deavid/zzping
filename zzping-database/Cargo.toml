@@ -34,5 +34,6 @@ tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-
 test-utils = []
 
 [dev-dependencies]
+ntest.workspace = true
 tempfile.workspace = true
 zzping-database = { path = ".", features = ["test-utils"] }

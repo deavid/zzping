@@ -19,13 +19,31 @@ service Ingestion {
   rpc QueryData(QueryRequest) returns (QueryResponse);
 }
 
+// --- Enums ---
+enum CollectorRole {
+  // The collector is the designated primary and should be actively pinging.
+  PRIMARY = 0;
+  // The collector is a hot-standby, ready to take over but should not be pinging.
+  STANDBY = 1;
+  // The collector is supervising a new primary during a handoff trial period. It should not ping.
+  SUPERVISING = 2;
+  // The collector has been successfully replaced and should shut down.
+  SHUTDOWN = 3;
+}
+
 // --- Message Definitions for Heartbeat ---
 message HeartbeatRequest {
   string collector_uuid = 1;
+  // The process ID of the collector instance.
+  uint64 pid = 2;
 }
 message HeartbeatResponse {
   repeated string targets = 1;
   uint64 ping_rate_pps = 2;
+  // The role assigned to the collector by the database scheduler.
+  CollectorRole role = 3;
+  // If a swap is scheduled, this is the UTC nanosecond timestamp for the swap to occur.
+  uint64 swap_at_nanos = 4;
 }
 
 // --- Message Definitions for SendBatch ---
