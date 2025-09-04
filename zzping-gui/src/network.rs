@@ -97,6 +97,8 @@ mod tests {
         let (tx, _) = mpsc::channel(1);
         let temp_dir = std::env::temp_dir().join("zzping_gui_test");
         std::fs::create_dir_all(&temp_dir)?;
+        let intent_path = temp_dir.join("intent.ron");
+        std::fs::write(intent_path, "(ping_rate_pps: 1, targets: [])")?;
         let data_dir = temp_dir.to_str().unwrap().to_string();
         let service = IngestionServiceImpl::new(tx, data_dir);
         let server = IngestionServer::new(service);

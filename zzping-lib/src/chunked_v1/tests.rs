@@ -1142,21 +1142,15 @@ fn test_decompression_of_partial_unfinalized_file() {
     let time_tolerance = 5_000_000; // 5ms tolerance for timing variations
     assert!(
         actual_start_time.abs_diff(expected_start_time) <= time_tolerance,
-        "Start time mismatch: expected {}, got {}",
-        expected_start_time,
-        actual_start_time
+        "Start time mismatch: expected {expected_start_time}, got {actual_start_time}"
     );
     assert!(
         actual_end_time.abs_diff(expected_end_time) <= time_tolerance,
-        "End time mismatch: expected {}, got {}",
-        expected_end_time,
-        actual_end_time
+        "End time mismatch: expected {expected_end_time}, got {actual_end_time}"
     );
     assert!(
         actual_duration.abs_diff(expected_duration) <= time_tolerance,
-        "Duration mismatch: expected {}, got {}",
-        expected_duration,
-        actual_duration
+        "Duration mismatch: expected {expected_duration}, got {actual_duration}"
     );
 
     // Verify average RTT within 1% tolerance
@@ -1170,10 +1164,7 @@ fn test_decompression_of_partial_unfinalized_file() {
     let rtt_tolerance = expected_avg_rtt / 100; // 1% tolerance
     assert!(
         actual_avg_rtt.abs_diff(expected_avg_rtt) <= rtt_tolerance,
-        "Average RTT mismatch: expected {}, got {}, tolerance {}",
-        expected_avg_rtt,
-        actual_avg_rtt,
-        rtt_tolerance
+        "Average RTT mismatch: expected {expected_avg_rtt}, got {actual_avg_rtt}, tolerance {rtt_tolerance}"
     );
 
     // Verify that packet loss count is preserved (should be 0 in this test)
@@ -1187,8 +1178,7 @@ fn test_decompression_of_partial_unfinalized_file() {
         .count();
     assert_eq!(
         actual_loss_count, expected_loss_count,
-        "Packet loss count mismatch: expected {}, got {}",
-        expected_loss_count, actual_loss_count
+        "Packet loss count mismatch: expected {expected_loss_count}, got {actual_loss_count}"
     );
 
     println!("✅ Partial file decompression test passed:");

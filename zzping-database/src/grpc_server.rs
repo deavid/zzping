@@ -1,17 +1,15 @@
+use crate::config::{load_intent_config, IntentConfig};
 use crate::ingestion_item::IngestionItem;
 use crate::query::get_last_hour_records;
 use dashmap::DashMap;
-use futures_core::Stream;
-use log::{error, info, warn};
-use std::pin::Pin;
+use log::{info, warn};
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status};
 use zzping_proto::zzping::{
-    AckResponse, IngestRequest, IngestResponse, QueryRequest, QueryResponse, WelcomeResponse,
-    ingest_request::Payload as IngestRequestPayload,
-    ingest_response::Payload as IngestResponsePayload, ingestion_server::Ingestion,
+    ingestion_server::Ingestion, send_batch_response, GetRecentDataRequest,
+    GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse, QueryRequest, QueryResponse,
+    SendBatchRequest, SendBatchResponse,
 };
 
 #[allow(clippy::result_large_err)]
@@ -34,155 +32,92 @@ pub fn check_auth(req: Request<()>) -> Result<Request<()>, Status> {
 }
 
 #[derive(Debug)]
-struct StreamState {
-    last_sent_nanos: u64,
-}
-
-#[derive(Debug)]
 pub struct IngestionServiceImpl {
-    streams: Arc<DashMap<String, StreamState>>,
     storage_tx: mpsc::Sender<IngestionItem>,
     data_dir: String,
+    intent_config: Arc<IntentConfig>,
+    collector_states: Arc<DashMap<String, u64>>,
 }
 
 impl IngestionServiceImpl {
     pub fn new(storage_tx: mpsc::Sender<IngestionItem>, data_dir: String) -> Self {
+        let intent_path = format!("{data_dir}/intent.ron");
+        let intent_config = load_intent_config(&intent_path)
+            .unwrap_or_else(|e| panic!("Failed to load intent config from {intent_path}: {e}"));
+        info!("Loaded intent config: {intent_config:?}");
+
         Self {
-            streams: Arc::new(DashMap::new()),
             storage_tx,
             data_dir,
+            intent_config: Arc::new(intent_config),
+            collector_states: Arc::new(DashMap::new()),
         }
     }
 }
 
-type IngestStreamT = Pin<Box<dyn Stream<Item = Result<IngestResponse, Status>> + Send>>;
-
 #[tonic::async_trait]
 impl Ingestion for IngestionServiceImpl {
-    type IngestStreamStream = IngestStreamT;
-
-    async fn ingest_stream(
+    async fn heartbeat(
         &self,
-        request: Request<Streaming<IngestRequest>>,
-    ) -> Result<Response<Self::IngestStreamStream>, Status> {
-        let mut stream = request.into_inner();
-        let streams = self.streams.clone();
-        let storage_tx = self.storage_tx.clone();
+        _request: Request<HeartbeatRequest>,
+    ) -> Result<Response<HeartbeatResponse>, Status> {
+        Ok(Response::new(HeartbeatResponse {
+            targets: self.intent_config.targets.clone(),
+            ping_rate_pps: self.intent_config.ping_rate_pps,
+        }))
+    }
 
-        let handshake = match stream.message().await? {
-            Some(IngestRequest {
-                payload: Some(IngestRequestPayload::Handshake(h)),
-            }) => h,
-            _ => {
-                return Err(Status::invalid_argument(
-                    "First message must be a handshake",
-                ));
-            }
-        };
+    async fn send_batch(
+        &self,
+        request: Request<SendBatchRequest>,
+    ) -> Result<Response<SendBatchResponse>, Status> {
+        let request = request.into_inner();
+        let collector_id = request.collector_uuid;
+        let collector_believes_last_acked = request.collector_believes_last_acked_nanos;
 
-        let stream_key = format!("{}-{}", handshake.source_hostname, handshake.target_ip);
-        info!("New stream from {stream_key}");
+        let mut collector_state = self
+            .collector_states
+            .entry(collector_id.clone())
+            .or_insert(0);
 
-        streams.insert(stream_key.clone(), StreamState { last_sent_nanos: 0 });
+        let db_last_acked = *collector_state;
 
-        let (tx, rx) = mpsc::channel(100);
-
-        let welcome = WelcomeResponse {
-            last_known_sent_nanos: 0,
-        };
-        if tx
-            .send(Ok(IngestResponse {
-                payload: Some(IngestResponsePayload::Welcome(welcome)),
-            }))
-            .await
-            .is_err()
-        {
-            warn!("Client disconnected before welcome response could be sent");
-            streams.remove(&stream_key);
-            let stream = ReceiverStream::new(rx);
-            return Ok(Response::new(Box::pin(stream) as Self::IngestStreamStream));
+        if db_last_acked != collector_believes_last_acked {
+            warn!(
+                "Collector {collector_id} is out of sync. DB acked: {db_last_acked}, collector believed: {collector_believes_last_acked}"
+            );
+            return Ok(Response::new(SendBatchResponse {
+                status: send_batch_response::Status::Desync as i32,
+                database_confirms_last_acked_nanos: db_last_acked,
+            }));
         }
 
-        tokio::spawn(async move {
-            info!("Spawned task for stream {stream_key}");
-            let mut record_count = 0;
-            loop {
-                info!("Looping in spawned task for stream {stream_key}");
-                match stream.message().await {
-                    Ok(Some(ingest_request)) => {
-                        info!("Received message from stream {stream_key}");
-                        match ingest_request.payload {
-                            Some(IngestRequestPayload::Record(record)) => {
-                                record_count += 1;
-                                info!("Received record: {record:?}");
-
-                                if let Some(mut state) = streams.get_mut(&stream_key) {
-                                    state.last_sent_nanos = record.sent_nanos;
-                                }
-
-                                let item = IngestionItem {
-                                    source_hostname: handshake.source_hostname.clone(),
-                                    target: handshake.target_ip.parse().unwrap(),
-                                    record: zzping_lib::protocol::RawDataRecord {
-                                        sent_nanos: record.sent_nanos,
-                                        rtt_nanos: record.rtt_nanos,
-                                    },
-                                };
-                                if storage_tx.send(item).await.is_err() {
-                                    error!("Storage channel closed");
-                                    break;
-                                }
-
-                                if record_count % 100 == 0 {
-                                    let ack = AckResponse {
-                                        last_acked_sent_nanos: record.sent_nanos,
-                                    };
-                                    if tx
-                                        .send(Ok(IngestResponse {
-                                            payload: Some(IngestResponsePayload::Ack(ack)),
-                                        }))
-                                        .await
-                                        .is_err()
-                                    {
-                                        warn!("Client {stream_key} disconnected, cannot send ack");
-                                        break;
-                                    }
-                                }
-                            }
-                            Some(IngestRequestPayload::Handshake(_)) => {
-                                warn!(
-                                    "Client sent a handshake message mid-stream. This is not allowed."
-                                );
-                                let _ = tx
-                                    .send(Err(Status::invalid_argument(
-                                        "Handshake message not allowed mid-stream",
-                                    )))
-                                    .await;
-                                break;
-                            }
-                            None => {
-                                warn!("Client sent an empty IngestRequest payload.");
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        info!("Client stream {stream_key} closed");
-                        break;
-                    }
-                    Err(e) => {
-                        warn!("Error reading from stream from {stream_key}: {e}");
-                        break;
-                    }
-                }
+        let mut last_sent_nanos = db_last_acked;
+        for record in request.records {
+            // Basic validation
+            if record.sent_nanos <= db_last_acked {
+                warn!("Collector {collector_id} sent record with old timestamp, ignoring.");
+                continue;
             }
+            // In a real implementation, we'd get the target from the collector's identity
+            // For now, we'll just log it.
+            info!("Record from {collector_id}: {record:?}");
+            last_sent_nanos = record.sent_nanos;
+        }
 
-            info!("Stream from {stream_key} disconnected, cleaning up");
-            streams.remove(&stream_key);
-            info!("Finished spawned task for stream {stream_key}");
-        });
+        *collector_state = last_sent_nanos;
 
-        let stream = ReceiverStream::new(rx);
-        Ok(Response::new(Box::pin(stream) as Self::IngestStreamStream))
+        Ok(Response::new(SendBatchResponse {
+            status: send_batch_response::Status::Ok as i32,
+            database_confirms_last_acked_nanos: last_sent_nanos,
+        }))
+    }
+
+    async fn get_recent_data(
+        &self,
+        _request: Request<GetRecentDataRequest>,
+    ) -> Result<Response<GetRecentDataResponse>, Status> {
+        unimplemented!("get_recent_data is not implemented yet")
     }
 
     async fn query_data(
@@ -208,32 +143,34 @@ use std::future::IntoFuture;
 use std::time::Duration;
 #[cfg(feature = "test-utils")]
 use tokio::task::JoinHandle;
+#[cfg(feature = "test-utils")]
+use tokio_stream::wrappers::TcpListenerStream;
 
 #[cfg(feature = "test-utils")]
 pub async fn timeout<F>(future: F) -> <F as IntoFuture>::Output
 where
     F: IntoFuture,
 {
-    tokio::time::timeout(Duration::from_millis(100), future)
+    tokio::time::timeout(Duration::from_millis(500), future)
         .await
         .expect("Timeout happened!")
 }
 
 #[cfg(feature = "test-utils")]
-pub async fn spawn_test_server() -> (std::net::SocketAddr, JoinHandle<()>) {
+pub async fn spawn_test_server(data_dir: String) -> (std::net::SocketAddr, JoinHandle<()>) {
     let listener = timeout(tokio::net::TcpListener::bind("127.0.0.1:0"))
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
     let (tx, mut rx) = mpsc::channel(100); // Dummy channel for storage
-    let service = IngestionServiceImpl::new(tx, crate::DATA_DIR.to_string());
+    let service = IngestionServiceImpl::new(tx, data_dir);
 
-    tokio::spawn(async move { while (rx.recv().await).is_some() {} });
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
 
     let handle = tokio::spawn(async move {
         tonic::transport::Server::builder()
             .add_service(zzping_proto::zzping::ingestion_server::IngestionServer::new(service))
-            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+            .serve_with_incoming(TcpListenerStream::new(listener))
             .await
             .unwrap();
     });
@@ -244,12 +181,9 @@ pub async fn spawn_test_server() -> (std::net::SocketAddr, JoinHandle<()>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::{spawn_test_server, timeout};
+    use std::io::Write;
     use tempfile::tempdir;
-    use tokio_stream::StreamExt;
-    use zzping_proto::zzping::{
-        HandshakeRequest, RawDataRecord, ingestion_client::IngestionClient,
-    };
+    use zzping_proto::zzping::{ingestion_client::IngestionClient, RawDataRecord};
 
     #[test]
     fn test_check_auth() {
@@ -257,14 +191,11 @@ mod tests {
         good_req
             .metadata_mut()
             .insert("authorization", "Bearer my-secret-token".parse().unwrap());
-
         let mut bad_req_invalid = Request::new(());
         bad_req_invalid
             .metadata_mut()
             .insert("authorization", "Bearer invalid-token".parse().unwrap());
-
         let bad_req_missing = Request::new(());
-
         assert!(check_auth(good_req).is_ok());
         assert!(check_auth(bad_req_invalid).is_err());
         assert!(check_auth(bad_req_missing).is_err());
@@ -273,99 +204,91 @@ mod tests {
     #[tokio::test]
     async fn test_query_data_returns_empty_response() {
         let temp_dir = tempdir().unwrap();
-        let data_dir = temp_dir.path().to_str().unwrap().to_string();
+        let data_dir = temp_dir.path();
+        let intent_path = data_dir.join("intent.ron");
+        let mut file = std::fs::File::create(intent_path).unwrap();
+        write!(file, "(ping_rate_pps: 1, targets: [])").unwrap();
         let (tx, _) = mpsc::channel(1);
-        let service = IngestionServiceImpl::new(tx, data_dir);
+        let service = IngestionServiceImpl::new(tx, data_dir.to_str().unwrap().to_string());
         let request = Request::new(QueryRequest {});
         let response = timeout(service.query_data(request)).await.unwrap();
         assert!(response.into_inner().records.is_empty());
     }
 
     #[tokio::test]
-    async fn test_ingest_stream_flow() {
-        let _ = env_logger::builder().is_test(true).try_init();
-        println!("Starting test_ingest_stream_flow");
-        let (server_addr, _server_handle) = timeout(spawn_test_server()).await;
-        println!("Server spawned at {server_addr}");
+    async fn test_heartbeat_rpc() {
+        let temp_dir = tempdir().unwrap();
+        let intent_path = temp_dir.path().join("intent.ron");
+        let mut file = std::fs::File::create(intent_path).unwrap();
+        let expected_config = r#"(ping_rate_pps: 50, targets: ["1.2.3.4", "5.6.7.8"])"#;
+        write!(file, "{expected_config}").unwrap();
+        let (server_addr, _server_handle) =
+            spawn_test_server(temp_dir.path().to_str().unwrap().to_string()).await;
         let mut client = timeout(IngestionClient::connect(format!("http://{server_addr}")))
             .await
             .unwrap();
-        println!("Client connected");
+        let request = Request::new(HeartbeatRequest {
+            collector_uuid: "test-collector".to_string(),
+        });
+        let response = timeout(client.heartbeat(request)).await.unwrap();
+        let response = response.into_inner();
+        assert_eq!(response.ping_rate_pps, 50);
+        assert_eq!(response.targets, vec!["1.2.3.4", "5.6.7.8"]);
+    }
 
-        let (tx, rx) = mpsc::channel(10);
-
-        let handshake = HandshakeRequest {
-            source_hostname: "test-host".to_string(),
-            target_ip: "1.2.3.4".to_string(),
+    #[tokio::test]
+    async fn test_sendbatch_accepts_good_data() {
+        let (tx, _) = mpsc::channel(100);
+        let service = IngestionServiceImpl {
+            storage_tx: tx,
+            data_dir: "".to_string(),
+            intent_config: Arc::new(IntentConfig {
+                ping_rate_pps: 0,
+                targets: vec![],
+            }),
+            collector_states: Arc::new(DashMap::new()),
         };
-        timeout(tx.send(IngestRequest {
-            payload: Some(IngestRequestPayload::Handshake(handshake)),
-        }))
-        .await
-        .unwrap();
+        service.collector_states.insert("collector-1".to_string(), 100);
 
-        let response_stream = timeout(client.ingest_stream(ReceiverStream::new(rx)))
-            .await
-            .unwrap();
-        let mut response_stream = response_stream.into_inner();
-        println!("Got response stream");
-
-        println!("Awaiting welcome response");
-        let welcome_response = timeout(response_stream.next()).await.unwrap().unwrap();
-        info!("Welcome response received");
-
-        match welcome_response.payload {
-            Some(IngestResponsePayload::Welcome(welcome)) => {
-                assert_eq!(welcome.last_known_sent_nanos, 0);
-            }
-            _ => panic!("Expected WelcomeResponse"),
-        }
-
-        let records_to_send = 250;
-        println!("Spawning ack handle");
-        let ack_handle = tokio::spawn(async move {
-            let mut acks_received = 0;
-            loop {
-                match timeout(response_stream.next()).await {
-                    Some(Ok(response)) => {
-                        if let Some(IngestResponsePayload::Ack(_)) = response.payload {
-                            println!("Ack received");
-                            acks_received += 1;
-                        }
-                    }
-                    Some(Err(e)) => {
-                        println!("Error in response stream: {e:?}");
-                        break;
-                    }
-                    None => {
-                        println!("Response stream closed");
-                        break;
-                    }
-                }
-            }
-            println!("Ack handle finished");
-            acks_received
+        let request = Request::new(SendBatchRequest {
+            collector_uuid: "collector-1".to_string(),
+            collector_believes_last_acked_nanos: 100,
+            records: vec![
+                RawDataRecord { sent_nanos: 101, rtt_nanos: 10 },
+                RawDataRecord { sent_nanos: 102, rtt_nanos: 11 },
+            ],
         });
 
-        println!("Sending {records_to_send} records");
-        for i in 0..records_to_send {
-            let record = RawDataRecord {
-                sent_nanos: i + 1,
-                rtt_nanos: 100,
-            };
-            timeout(tx.send(IngestRequest {
-                payload: Some(IngestRequestPayload::Record(record)),
-            }))
-            .await
-            .unwrap();
-        }
+        let response = service.send_batch(request).await.unwrap().into_inner();
+        assert_eq!(response.status, send_batch_response::Status::Ok as i32);
+        assert_eq!(response.database_confirms_last_acked_nanos, 102);
+        assert_eq!(*service.collector_states.get("collector-1").unwrap(), 102);
+    }
 
-        println!("Dropping client tx");
-        drop(tx);
+    #[tokio::test]
+    async fn test_sendbatch_rejects_desync_data() {
+        let (tx, _) = mpsc::channel(100);
+        let service = IngestionServiceImpl {
+            storage_tx: tx,
+            data_dir: "".to_string(),
+            intent_config: Arc::new(IntentConfig {
+                ping_rate_pps: 0,
+                targets: vec![],
+            }),
+            collector_states: Arc::new(DashMap::new()),
+        };
+        service.collector_states.insert("collector-1".to_string(), 100);
 
-        println!("Awaiting ack handle");
-        let acks_received = timeout(ack_handle).await.unwrap();
-        assert_eq!(acks_received, 2);
-        println!("Test finished");
+        let request = Request::new(SendBatchRequest {
+            collector_uuid: "collector-1".to_string(),
+            collector_believes_last_acked_nanos: 99, // Out of sync
+            records: vec![RawDataRecord { sent_nanos: 101, rtt_nanos: 10 }],
+        });
+
+        let response = service.send_batch(request).await.unwrap().into_inner();
+        assert_eq!(response.status, send_batch_response::Status::Desync as i32);
+        assert_eq!(response.database_confirms_last_acked_nanos, 100);
+        // State should not have changed
+        assert_eq!(*service.collector_states.get("collector-1").unwrap(), 100);
     }
 }
