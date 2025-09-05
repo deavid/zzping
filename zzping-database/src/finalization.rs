@@ -125,6 +125,7 @@ pub fn finalize_file(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
     use anyhow::Result;
+    use ntest::timeout;
     use std::fs;
     use tempfile::tempdir;
     use zzping_lib::{
@@ -133,6 +134,7 @@ mod tests {
     };
 
     #[test]
+    #[timeout(100)]
     fn test_finalize_file() -> Result<()> {
         // 1. Setup: Create an unfinalized file with two chunks.
         let temp_dir = tempdir()?;

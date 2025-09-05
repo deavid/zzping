@@ -11,7 +11,7 @@ pub mod zzping {
 pub use zzping::{
     ingestion_server::{Ingestion, IngestionServer},
     ingestion_client::IngestionClient,
-    // ... and re-export all the message structs like RawDataRecord, IngestRequest, etc.
-    HandshakeRequest, RawDataRecord, IngestRequest, WelcomeResponse, AckResponse, IngestResponse,
-    QueryRequest, QueryResponse,
+    // Re-export all the message structs for the new Unary RPCs
+    HeartbeatRequest, HeartbeatResponse, SendBatchRequest, SendBatchResponse,
+    GetRecentDataRequest, GetRecentDataResponse, RawDataRecord, QueryRequest, QueryResponse,
 };

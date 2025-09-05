@@ -1,0 +1,12 @@
+// zzping-database/intent.ron
+(
+  // The global ping rate for all collectors and targets.
+  ping_rate_pps: 30, // pps
+
+  // The global list of targets for all collectors to ping.
+  targets: [
+    "8.8.8.8",   // Google DNS
+    "1.1.1.1",   // Cloudflare DNS
+    "9.9.9.9",   // Quad9 DNS
+  ],
+)
