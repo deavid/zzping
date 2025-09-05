@@ -1,7 +1,7 @@
 // zzping-database/intent.ron
 (
   // The global ping rate for all collectors and targets.
-  ping_rate: 30, // pps
+  ping_rate_pps: 30, // pps
 
   // The global list of targets for all collectors to ping.
   targets: [

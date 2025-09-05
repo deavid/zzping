@@ -5422,12 +5422,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "zzping-cli"
+version = "0.2.2-beta2"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "env_logger",
+ "log",
+ "tokio",
+ "zzping-lib",
+]
+
+[[package]]
 name = "zzping-collector"
 version = "0.2.2-beta2"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "bincode",
  "byteorder",
  "bytes",
  "chrono",

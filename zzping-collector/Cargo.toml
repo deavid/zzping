@@ -15,6 +15,7 @@ zzping-proto = { workspace = true }
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
+bincode.workspace = true
 bytes.workspace = true
 chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }

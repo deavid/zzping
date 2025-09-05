@@ -6,8 +6,9 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose, Engine as _};
+use bincode;
 use log::{error, info, warn};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, VecDeque},
     net::IpAddr,
@@ -30,6 +31,15 @@ use zzping_proto::zzping::{
 struct AuthToken<'a> {
     sub: &'a str,
     roles: &'a [&'a str],
+}
+
+/// A struct for persisting the last known good configuration to disk.
+/// This allows the collector to restart with its previous configuration
+/// in case the database is unavailable.
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct CachedConfig {
+    targets: Vec<String>,
+    ping_rate_pps: u64,
 }
 
 /// Starts or stops pinger tasks based on the desired state from the database.
@@ -112,11 +122,16 @@ async fn pinger_loop(
     let semaphore = Arc::new(tokio::sync::Semaphore::new(max_in_flight));
     let start_time = Instant::now();
     let mut sequence_idx: u16 = 0;
-    let mut interval = tokio::time::interval(Duration::from_secs_f64(1.0 / rate as f64));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let interval_duration = Duration::from_secs_f64(1.0 / rate as f64);
+
+    let mut next_tick = Instant::now() + interval_duration;
 
     loop {
-        interval.tick().await;
+        // Use sleep_until for a more accurate rate, as it's not affected by
+        // the time taken by the async operations in the loop.
+        tokio::time::sleep_until(next_tick.into()).await;
+        next_tick += interval_duration;
+
         if let Ok(permit) = semaphore.clone().try_acquire_owned() {
             ping_client
                 .ping(
@@ -124,10 +139,15 @@ async fn pinger_loop(
                     ping_tx.clone(),
                     permit,
                     start_time,
-                    Instant::now(),
+                    Instant::now(), // The actual send time is now, not the tick time.
                 )
                 .await;
             sequence_idx = sequence_idx.wrapping_add(1);
+        } else {
+            // If we can't acquire a permit, it means we are at max_in_flight.
+            // We should skip this tick and try again at the next scheduled time.
+            // The `next_tick` update above handles this automatically.
+            warn!("Max in-flight pings reached. Skipping a ping to maintain rate.");
         }
     }
 }
@@ -148,6 +168,8 @@ pub async fn batch_sender_loop(
     token: String,
 ) {
     // The buffer now stores a separate queue for each target IP address.
+    const BUFFER_LIMIT: usize = 1_000_000;
+    // The buffer now stores a separate queue for each target IP address.
     let mut buffers: HashMap<IpAddr, VecDeque<RawDataRecord>> = HashMap::new();
     // The ACK state is also tracked per-target.
     let mut last_acked_nanos: HashMap<IpAddr, u64> = HashMap::new();
@@ -156,6 +178,15 @@ pub async fn batch_sender_loop(
     loop {
         tokio::select! {
             Some(ping_result) = ping_results_rx.recv() => {
+                let total_buffered: usize = buffers.values().map(|v| v.len()).sum();
+                if total_buffered >= BUFFER_LIMIT {
+                    // Find the largest buffer and drop the oldest record from it.
+                    if let Some((target, buffer)) = buffers.iter_mut().max_by_key(|(_, v)| v.len()) {
+                        warn!("Buffer limit reached. Dropping oldest record for target {target}");
+                        buffer.pop_front();
+                    }
+                }
+
                 let record = RawDataRecord {
                     sent_nanos: ping_result.sent_nanos,
                     rtt_nanos: ping_result.rtt.map_or(u64::MAX, |rtt| rtt.as_nanos() as u64),
@@ -235,6 +266,8 @@ pub async fn batch_sender_loop(
 /// 7.  Handles `Shutdown` commands to exit gracefully.
 pub async fn run() -> Result<()> {
     use clap::Parser;
+    use std::fs;
+    use std::path::Path;
     env_logger::builder()
         .filter_level(log::LevelFilter::Info)
         .try_init()
@@ -243,6 +276,34 @@ pub async fn run() -> Result<()> {
     info!("Starting zzping-collector v{}", env!("CARGO_PKG_VERSION"));
     info!("Source hostname: {}", cli.source_hostname);
     info!("Database address: {}", cli.database_addr);
+
+    // --- State Caching and Fail-Static Setup ---
+    let cache_dir = Path::new(".cache/zzping");
+    fs::create_dir_all(cache_dir)?;
+    let cache_file = cache_dir.join("last_config.bin");
+
+    let mut running_tasks: HashMap<IpAddr, JoinHandle<()>> = HashMap::new();
+    let mut state_machine = StateMachine::new(cli.source_hostname.clone());
+    let mut last_cached_config: Option<CachedConfig> = None;
+
+    let (mut ping_results_tx, ping_results_rx) = mpsc::channel(1000);
+
+    // Load cached config on startup and immediately start pinging.
+    if let Ok(bytes) = fs::read(&cache_file) {
+        if let Ok(config) = bincode::deserialize::<CachedConfig>(&bytes) {
+            info!("Loaded cached config: {:?}", config);
+            manage_pinger_tasks(
+                true,
+                &config.targets,
+                config.ping_rate_pps,
+                &mut running_tasks,
+                &ping_results_tx,
+                &cli,
+            );
+            last_cached_config = Some(config);
+        }
+    }
+    // --- End State Caching Setup ---
 
     let ca_cert = tokio::fs::read("ca.pem")
         .await
@@ -280,9 +341,10 @@ pub async fn run() -> Result<()> {
                 let mut client = IngestionClient::new(channel.clone());
                 info!("gRPC client connected. Starting main loop.");
 
-                let (ping_results_tx, ping_results_rx) = mpsc::channel(1000);
-                let mut running_tasks: HashMap<IpAddr, JoinHandle<()>> = HashMap::new();
-                let mut state_machine = StateMachine::new(cli.source_hostname.clone());
+                // Create a new receiver for the batch sender loop.
+                // The single producer (tx) is cloned for each pinger task.
+                let (new_tx, new_rx) = mpsc::channel(1000);
+                ping_results_tx = new_tx;
 
                 let token = {
                     let auth_token = AuthToken {
@@ -295,7 +357,7 @@ pub async fn run() -> Result<()> {
                 let batch_sender_handle = tokio::spawn(batch_sender_loop(
                     IngestionClient::new(channel.clone()),
                     cli.source_hostname.clone(),
-                    ping_results_rx,
+                    new_rx,
                     token.clone(),
                 ));
 
@@ -313,8 +375,23 @@ pub async fn run() -> Result<()> {
                             let response = response.into_inner();
                             let action = state_machine.handle_heartbeat_response(&response);
 
+                            // Cache the new config if it's different.
+                            let new_config = CachedConfig {
+                                targets: response.targets.clone(),
+                                ping_rate_pps: response.ping_rate_pps,
+                            };
+                            if Some(&new_config) != last_cached_config.as_ref() {
+                                info!("New configuration received. Caching to disk: {:?}", new_config);
+                                if let Ok(bytes) = bincode::serialize(&new_config) {
+                                    if let Err(e) = fs::write(&cache_file, bytes) {
+                                        warn!("Failed to write to cache file: {e}");
+                                    }
+                                }
+                                last_cached_config = Some(new_config);
+                            }
+
                             if let Some(Action::SeedBuffer) = action {
-                                info!("Seeding buffer by calling get_recent_data...");
+                                info!("Transitioning to PRIMARY. Requesting buffer seed...");
                                 let request = tonic::Request::new(GetRecentDataRequest {
                                     collector_uuid: cli.source_hostname.clone(),
                                     lookback_seconds: 3600, // 1 hour
@@ -346,10 +423,10 @@ pub async fn run() -> Result<()> {
                         }
                         Err(e) => {
                             error!("Heartbeat failed: {e}. Reconnecting...");
+                            // On heartbeat failure, we DO NOT stop the pingers.
+                            // They continue with the last known configuration.
+                            // We do need to abort the batch sender as its client is now invalid.
                             batch_sender_handle.abort();
-                            for (_, handle) in running_tasks {
-                                handle.abort();
-                            }
                             break;
                         }
                     }

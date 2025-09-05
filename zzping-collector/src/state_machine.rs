@@ -72,7 +72,7 @@ impl StateMachine {
 
         if self.current_state != new_state {
             info!(
-                "Collector state changing from {:?} to {:?}",
+                "State transition: {:?} -> {:?}",
                 self.current_state, new_state
             );
             let old_state = self.current_state.clone();

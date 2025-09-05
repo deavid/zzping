@@ -7,6 +7,7 @@
 //! and the graceful handoff from a `Primary` to a `Standby`.
 
 use dashmap::DashMap;
+use log::info;
 use std::time::{Duration, Instant};
 use zzping_proto::zzping::CollectorRole;
 
@@ -152,11 +153,19 @@ impl Scheduler {
                 if let Some(old_primary) =
                     instances.iter_mut().find(|i| i.role == CollectorRole::Primary)
                 {
+                    info!(
+                        "Verification success for uuid='{}'. Commanding shutdown for pid={}",
+                        uuid, old_primary.pid
+                    );
                     old_primary.role = CollectorRole::Shutdown;
                 }
                 if let Some(new_primary) =
                     instances.iter_mut().find(|i| i.pid == handoff.new_primary_pid)
                 {
+                    info!(
+                        "Promoting standby to primary for uuid='{}', pid={}",
+                        uuid, new_primary.pid
+                    );
                     new_primary.role = CollectorRole::Primary;
                 }
                 self.handoffs.remove(uuid);
@@ -169,6 +178,10 @@ impl Scheduler {
                 if let Some(candidate) =
                     instances.iter_mut().find(|i| i.role == CollectorRole::Standby)
                 {
+                info!(
+                    "No primary found for uuid='{}'. Promoting standby pid={} to primary.",
+                    uuid, candidate.pid
+                );
                     candidate.role = CollectorRole::Primary;
                 }
             }
@@ -178,6 +191,15 @@ impl Scheduler {
             && instances.iter().any(|i| i.role == CollectorRole::Primary)
                 && !self.handoffs.contains_key(uuid)
             {
+            let incumbent_pid = instances
+                .iter()
+                .find(|i| i.role == CollectorRole::Primary)
+                .map(|i| i.pid)
+                .unwrap_or(0);
+            info!(
+                "Handoff detected for uuid='{}': incumbent_pid={}, new_pid={}",
+                uuid, incumbent_pid, pid
+            );
                 let handoff = HandoffState {
                     new_primary_pid: pid,
                     swap_at: now + self.swap_delay,
