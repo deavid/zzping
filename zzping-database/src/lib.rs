@@ -3,6 +3,7 @@
 //! This crate contains the core logic for the database service. The main binary
 //! in `main.rs` is a lightweight wrapper around the `run` function from this library.
 
+pub mod auth;
 pub mod config;
 pub mod finalization;
 pub mod grpc_server;

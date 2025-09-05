@@ -5,7 +5,9 @@ use crate::{
     state_machine::{Action, State, StateMachine},
 };
 use anyhow::{Context, Result};
+use base64::{engine::general_purpose, Engine as _};
 use log::{error, info, warn};
+use serde::Serialize;
 use std::{
     collections::{HashMap, VecDeque},
     net::IpAddr,
@@ -18,6 +20,13 @@ use zzping_proto::zzping::{
     ingestion_client::IngestionClient, send_batch_response, GetRecentDataRequest,
     HeartbeatRequest, RawDataRecord, SendBatchRequest,
 };
+
+// A local, serializable version of the token structure.
+#[derive(Debug, Serialize)]
+struct AuthToken<'a> {
+    sub: &'a str,
+    roles: &'a [&'a str],
+}
 
 fn manage_pinger_tasks(
     should_be_pinging: bool,
@@ -108,6 +117,7 @@ pub async fn batch_sender_loop(
     mut client: IngestionClient<Channel>,
     collector_uuid: String,
     mut ping_results_rx: mpsc::Receiver<PingResult>,
+    token: String,
 ) {
     let mut buffer: VecDeque<RawDataRecord> = VecDeque::new();
     let mut last_acked_nanos = 0;
@@ -131,11 +141,12 @@ pub async fn batch_sender_loop(
                     }
 
                     let records_to_send: Vec<_> = buffer.iter().cloned().collect();
-                    let request = tonic::Request::new(SendBatchRequest {
+                    let mut request = tonic::Request::new(SendBatchRequest {
                         collector_uuid: collector_uuid.clone(),
                         records: records_to_send,
                         collector_believes_last_acked_nanos: last_acked_nanos,
                     });
+                    request.metadata_mut().insert("authorization", format!("Bearer {}", token).parse().unwrap());
 
                     match client.send_batch(request).await {
                         Ok(response) => {
@@ -220,19 +231,29 @@ pub async fn run() -> Result<()> {
                 let mut running_tasks: HashMap<IpAddr, JoinHandle<()>> = HashMap::new();
                 let mut state_machine = StateMachine::new(cli.source_hostname.clone());
 
+                let token = {
+                    let auth_token = AuthToken {
+                        sub: &cli.source_hostname,
+                        roles: &["collector"],
+                    };
+                    let json = serde_json::to_string(&auth_token).unwrap();
+                    general_purpose::STANDARD.encode(json)
+                };
                 let batch_sender_handle = tokio::spawn(batch_sender_loop(
                     IngestionClient::new(channel.clone()),
                     cli.source_hostname.clone(),
                     ping_results_rx,
+                    token.clone(),
                 ));
 
                 let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(1));
                 loop {
                     heartbeat_interval.tick().await;
-                    let request = tonic::Request::new(HeartbeatRequest {
+                    let mut request = tonic::Request::new(HeartbeatRequest {
                         collector_uuid: cli.source_hostname.clone(),
                         pid,
                     });
+                    request.metadata_mut().insert("authorization", format!("Bearer {}", token).parse().unwrap());
 
                     match client.heartbeat(request).await {
                         Ok(response) => {

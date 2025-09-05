@@ -1,10 +1,12 @@
+use ntest::timeout;
 use std::io::Write;
 use tempfile::tempdir;
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
-use ntest::timeout;
-use zzping_database::spawn_test_server;
-use zzping_proto::zzping::{ingestion_client::IngestionClient, HeartbeatRequest, HeartbeatResponse};
+use zzping_database::{auth::generate_test_token, spawn_test_server};
+use zzping_proto::zzping::{
+    ingestion_client::IngestionClient, HeartbeatRequest, HeartbeatResponse,
+};
 
 const TEST_TIMEOUT_DURATION: Duration = Duration::from_millis(500);
 
@@ -18,8 +20,12 @@ async fn test_collector_gets_config_via_heartbeat() {
     let expected_config = r#"(ping_rate_pps: 100, targets: [ "1.1.1.1", "8.8.8.8" ])"#;
     write!(file, "{expected_config}").unwrap();
 
-    let (server_addr, server_handle) =
-        timeout(TEST_TIMEOUT_DURATION, spawn_test_server(temp_dir.path().to_str().unwrap().to_string())).await.unwrap();
+    let (server_addr, server_handle) = timeout(
+        TEST_TIMEOUT_DURATION,
+        spawn_test_server(temp_dir.path().to_str().unwrap().to_string()),
+    )
+    .await
+    .unwrap();
 
     let (tx, mut rx) = mpsc::channel::<HeartbeatResponse>(1);
 
@@ -32,17 +38,24 @@ async fn test_collector_gets_config_via_heartbeat() {
         .unwrap()
         .unwrap();
 
-        let request = tonic::Request::new(HeartbeatRequest {
+        let token = generate_test_token("test-collector", &["collector"]);
+        let mut request = tonic::Request::new(HeartbeatRequest {
             collector_uuid: "test-collector".to_string(),
             pid: 1234,
         });
+        request
+            .metadata_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
 
         let response = timeout(TEST_TIMEOUT_DURATION, client.heartbeat(request))
             .await
             .unwrap()
             .unwrap();
 
-        timeout(TEST_TIMEOUT_DURATION, tx.send(response.into_inner())).await.unwrap().unwrap();
+        timeout(TEST_TIMEOUT_DURATION, tx.send(response.into_inner()))
+            .await
+            .unwrap()
+            .unwrap();
     });
 
     let received_config = timeout(Duration::from_secs(2), rx.recv())

@@ -6,7 +6,7 @@ use log::{info, warn};
 use std::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use zzping_lib::protocol::RawDataRecord;
-use zzping_proto::zzping::{QueryRequest, ingestion_client::IngestionClient};
+use zzping_proto::zzping::{ingestion_client::IngestionClient, QueryRequest};
 
 const QUERY_ADDR: &str = "https://127.0.0.1:7878";
 
@@ -39,7 +39,9 @@ pub async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
     let mut client = IngestionClient::new(channel);
     info!("Connected to query port at {QUERY_ADDR}");
 
-    let token = "my-secret-token";
+    // In a real application, this token would come from a login process.
+    // For this example, we'll use a hardcoded token with "reader" privileges.
+    let token = "eyJzdWIiOiJndWktdXNlciIsInJvbGVzIjpbInJlYWRlciJdfQ=="; // {"sub":"gui-user","roles":["reader"]}
     let mut request = tonic::Request::new(QueryRequest {});
     request
         .metadata_mut()
@@ -74,7 +76,10 @@ mod tests {
     use std::net::SocketAddr;
     use tokio::sync::mpsc;
     use tokio::{net::TcpListener, task::JoinHandle};
-    use zzping_database::grpc_server::IngestionServiceImpl;
+    use zzping_database::{
+        auth::generate_test_token, grpc_server::check_auth,
+        grpc_server::IngestionServiceImpl,
+    };
     use zzping_proto::zzping::ingestion_server::IngestionServer;
 
     async fn spawn_test_server() -> Result<(SocketAddr, JoinHandle<()>)> {
@@ -87,7 +92,7 @@ mod tests {
         std::fs::write(intent_path, "(ping_rate_pps: 1, targets: [])")?;
         let data_dir = temp_dir.to_str().unwrap().to_string();
         let service = IngestionServiceImpl::new(tx, data_dir);
-        let server = IngestionServer::new(service);
+        let server = IngestionServer::with_interceptor(service, check_auth);
 
         let handle = tokio::spawn(async move {
             tonic::transport::Server::builder()
@@ -103,14 +108,19 @@ mod tests {
     #[tokio::test]
     #[timeout(1000)]
     async fn test_try_fetch_data() -> Result<()> {
-        std::fs::create_dir_all(zzping_database::DATA_DIR).unwrap();
         let (server_addr, server_handle) = spawn_test_server().await?;
         let (tx, rx) = crossbeam_channel::unbounded();
 
-        std::fs::write("ca.pem", "dummy").unwrap();
-
+        // This test doesn't use TLS, so we can just connect directly.
+        // The `try_fetch_data` function is what handles TLS.
         let mut client = IngestionClient::connect(format!("http://{server_addr}")).await?;
-        let request = tonic::Request::new(QueryRequest {});
+
+        let token = generate_test_token("test-gui", &["reader"]);
+        let mut request = tonic::Request::new(QueryRequest {});
+        request
+            .metadata_mut()
+            .insert("authorization", format!("Bearer {token}").parse()?);
+
         let response = client.query_data(request).await?;
         let records: Vec<RawDataRecord> = response
             .into_inner()
@@ -126,7 +136,6 @@ mod tests {
         let received_records = rx.recv()?;
         assert!(received_records.is_empty());
 
-        std::fs::remove_file("ca.pem").unwrap();
         server_handle.abort(); // Clean up the server task.
         Ok(())
     }
@@ -134,9 +143,12 @@ mod tests {
     #[tokio::test]
     #[timeout(1000)]
     async fn test_try_fetch_data_connection_error() -> Result<()> {
+        // This test now needs to create a dummy ca.pem to avoid panicking.
+        std::fs::write("ca.pem", "dummy").unwrap();
         let (tx, _) = crossbeam_channel::unbounded();
         let result = try_fetch_data(&tx).await;
         assert!(result.is_err());
+        std::fs::remove_file("ca.pem").unwrap();
         Ok(())
     }
 }
