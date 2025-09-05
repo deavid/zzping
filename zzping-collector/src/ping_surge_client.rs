@@ -76,7 +76,7 @@ async fn ping_task(
     target: IpAddr,
     seq: u16,
     tx: mpsc::Sender<PingResult>,
-    _permit: OwnedSemaphorePermit,
+    permit: OwnedSemaphorePermit,
     start_time: Instant,
     target_time: Instant,
 ) {
@@ -110,4 +110,6 @@ async fn ping_task(
         // terminated. This task can now gracefully exit.
         debug!("Receiver dropped, ping task exiting.");
     }
+    // The permit needs to be dropped here, so we un-reserve it once we received the response from the ping.
+    drop(permit);
 }
