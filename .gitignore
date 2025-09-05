@@ -22,3 +22,4 @@ ca.key
 ca.srl
 server.key
 server.pem
+.cache/
