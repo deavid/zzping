@@ -30,6 +30,7 @@ pub enum Action {
     /// The collector has been promoted from `Standby` to `Pinging` and needs to
     /// seed its internal buffer with recent data from the database. This ensures
     /// a seamless data stream during a handoff.
+    /// FIXME: This sounds brittle. This might add time to switching into Pinging mode, which should be exact.
     SeedBuffer,
 }
 
@@ -39,7 +40,7 @@ pub struct StateMachine {
     /// The current operational state of the collector.
     pub current_state: State,
     /// The unique identifier for this collector, used for logging and identification.
-    pub collector_uuid: String,
+    pub collector_id: String,
 }
 
 impl StateMachine {
@@ -48,10 +49,10 @@ impl StateMachine {
     /// All collectors begin their lifecycle in the `Standby` state. They will
     /// only transition to `Pinging` after being explicitly promoted to `Primary`
     /// by the database scheduler.
-    pub fn new(collector_uuid: String) -> Self {
+    pub fn new(collector_id: String) -> Self {
         Self {
             current_state: State::Standby,
-            collector_uuid,
+            collector_id,
         }
     }
 
@@ -64,6 +65,7 @@ impl StateMachine {
     pub fn handle_heartbeat_response(&mut self, response: &HeartbeatResponse) -> Option<Action> {
         let new_role = CollectorRole::try_from(response.role).unwrap_or(CollectorRole::Standby);
 
+        // FIXME: CollectorRole and State above look too similar, probably we could just use CollectorRole.
         let new_state = match new_role {
             CollectorRole::Primary => State::Pinging,
             CollectorRole::Standby | CollectorRole::Supervising => State::Standby,
