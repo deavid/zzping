@@ -1,30 +1,66 @@
-//! Manages collector identities, roles, and handoff orchestration.
+//! Manages collector identities, roles, and the zero-downtime handoff process.
+//!
+//! The `Scheduler` is the brain of the high-availability system. Its primary
+//! responsibility is to ensure that for any given collector `uuid`, there is always
+//! one `Primary` instance and, if others are connected, one `Standby` instance
+//! ready to take over. It handles new collectors joining, old ones becoming stale,
+//! and the graceful handoff from a `Primary` to a `Standby`.
 
 use dashmap::DashMap;
 use std::time::{Duration, Instant};
 use zzping_proto::zzping::CollectorRole;
 
+/// The duration after which a collector is considered stale if it hasn't sent a
+/// heartbeat. This is used for production environments.
 const PROD_STALE_THRESHOLD: Duration = Duration::from_secs(5);
+
+/// The delay before a `Standby` instance is promoted to `Primary` during a
+/// graceful handoff. This gives the old `Primary` time to wind down.
 const PROD_SWAP_DELAY: Duration = Duration::from_secs(3);
 
+/// Represents a single connected instance of a collector.
 #[derive(Debug, Clone)]
 pub struct CollectorInstance {
+    /// The process ID of the collector instance. This, combined with the `uuid`,
+    /// uniquely identifies a running collector process.
     pub pid: u64,
+    /// The role currently assigned to this collector instance by the scheduler.
     pub role: CollectorRole,
+    /// The timestamp of the last heartbeat received from this instance. This is
+    /// used to detect stale collectors.
     pub last_seen: Instant,
 }
 
+/// Stores the state of a handoff currently in progress for a given `uuid`.
 #[derive(Debug, Clone)]
 struct HandoffState {
+    /// The process ID of the `Standby` collector that is being promoted.
     new_primary_pid: u64,
+    /// The timestamp at which the promotion will take effect.
     swap_at: Instant,
 }
 
+/// The central scheduler for managing collector roles and high availability.
+///
+/// This struct holds the state for all connected collectors, grouped by their
+/// `uuid`. It uses `DashMap` for thread-safe interior mutability, as it is
+/// accessed concurrently by multiple gRPC worker threads.
 #[derive(Debug)]
 pub struct Scheduler {
+    /// A map from a collector's `uuid` to a list of its running instances.
+    ///
+    /// For any given `uuid`, there can be multiple processes running (e.g., during
+    /// a deployment). The `Vec` stores all known instances, and the scheduler's
+    /// logic determines their roles.
     collectors: DashMap<String, Vec<CollectorInstance>>,
+    /// A map from a `uuid` to the state of a handoff in progress.
+    ///
+    /// The presence of an entry in this map signifies that a `Standby` is being
+    /// promoted to `Primary`.
     handoffs: DashMap<String, HandoffState>,
+    /// The duration after which a collector is considered stale.
     stale_threshold: Duration,
+    /// The delay for a graceful handoff.
     swap_delay: Duration,
 }
 
@@ -35,10 +71,15 @@ impl Default for Scheduler {
 }
 
 impl Scheduler {
+    /// Creates a new `Scheduler` with production-ready timing constants.
     pub fn new() -> Self {
         Self::new_with_durations(PROD_STALE_THRESHOLD, PROD_SWAP_DELAY)
     }
 
+    /// Creates a new `Scheduler` with custom timing durations for testing.
+    ///
+    /// This is crucial for writing fast and reliable unit tests, as it allows
+    /// for testing stale logic without long `sleep` calls.
     pub fn new_with_durations(stale_threshold: Duration, swap_delay: Duration) -> Self {
         Self {
             collectors: DashMap::new(),
@@ -48,6 +89,19 @@ impl Scheduler {
         }
     }
 
+    /// Processes a heartbeat from a collector and determines its role.
+    ///
+    /// This is the main entry point into the scheduler's logic. It is a complex,
+    /// multi-phase function that performs several actions:
+    /// 1. Prunes any instances that have not sent a heartbeat recently.
+    /// 2. Prunes any handoffs whose participants are no longer active.
+    /// 3. Updates the `last_seen` time for the calling instance or adds it if new.
+    /// 4. If a handoff is due, it performs the role swap (`Primary` -> `Shutdown`, `Standby` -> `Primary`).
+    /// 5. If no `Primary` exists, it promotes a `Standby`.
+    /// 6. If a new instance joins and a `Primary` already exists, it initiates a new handoff.
+    ///
+    /// It returns the calculated role for the calling instance and the time remaining
+    /// until a pending handoff occurs.
     pub fn process_heartbeat(&self, uuid: &str, pid: u64, now: Instant) -> (CollectorRole, u64) {
         // Use a clone-and-replace strategy to avoid holding a lock for the whole function.
         let mut instances = self

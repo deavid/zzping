@@ -21,13 +21,24 @@ use zzping_proto::zzping::{
     HeartbeatRequest, RawDataRecord, SendBatchRequest,
 };
 
-// A local, serializable version of the token structure.
+/// A local, serializable version of the `AuthToken` struct.
+///
+/// This is defined locally to avoid creating a circular dependency, as the collector
+/// needs to generate a token for itself, but the canonical `AuthToken` definition
+/// lives in `zzping-database` which is only a dev-dependency.
 #[derive(Debug, Serialize)]
 struct AuthToken<'a> {
     sub: &'a str,
     roles: &'a [&'a str],
 }
 
+/// Starts or stops pinger tasks based on the desired state from the database.
+///
+/// This function compares the list of currently running pinger tasks with the new
+/// list of targets received in a `HeartbeatResponse`. It ensures that:
+/// - A pinger task is running for every target in the new list.
+/// - Any pinger tasks for targets no longer in the list are stopped.
+/// - If the collector's state is not `Pinging`, all tasks are stopped.
 fn manage_pinger_tasks(
     should_be_pinging: bool,
     new_targets: &[String],
@@ -80,6 +91,14 @@ fn manage_pinger_tasks(
     }
 }
 
+/// An asynchronous loop that sends pings to a single target at a specified rate.
+///
+/// This function is spawned as a separate Tokio task for each target IP address.
+/// It uses a `Semaphore` to limit the number of concurrent, in-flight pings,
+/// preventing the system from being overwhelmed.
+///
+/// Each successful ping dispatch results in a `PingResult` being sent back to the
+/// main `runner` loop via the `ping_tx` channel.
 async fn pinger_loop(
     ping_client: Arc<dyn PingClient>,
     ping_tx: mpsc::Sender<PingResult>,
@@ -113,6 +132,15 @@ async fn pinger_loop(
     }
 }
 
+/// An asynchronous loop that collects ping results and sends them to the database in batches.
+///
+/// This function runs in a separate Tokio task. It receives `PingResult`s from
+/// all active `pinger_loop` tasks, buffers them, and sends them to the database
+/// every 1 second.
+///
+/// It also implements the client-side logic for the ACK/DESYNC protocol. If the
+/// database responds with `DESYNC`, this loop will rewind its buffer to the last
+/// known-good state and immediately retry sending the batch.
 pub async fn batch_sender_loop(
     mut client: IngestionClient<Channel>,
     collector_uuid: String,
@@ -179,7 +207,19 @@ pub async fn batch_sender_loop(
     }
 }
 
-/// The main function for the collector service.
+/// The main entry point and runtime loop for the `zzping-collector` service.
+///
+/// This function orchestrates the entire lifecycle of the collector:
+/// 1.  Parses command-line arguments.
+/// 2.  Establishes a gRPC connection to the database, with a retry loop.
+/// 3.  Spawns the `batch_sender_loop` as a background task.
+/// 4.  Enters the main heartbeat loop, where it periodically calls the `heartbeat`
+///     RPC on the database to get its configuration and role.
+/// 5.  Uses a `StateMachine` to manage its own operational state (`Pinging`,
+///     `Standby`, `Shutdown`).
+/// 6.  Based on the state, it uses `manage_pinger_tasks` to start or stop the
+///     individual pinger tasks for each target IP.
+/// 7.  Handles `Shutdown` commands to exit gracefully.
 pub async fn run() -> Result<()> {
     use clap::Parser;
     env_logger::builder()
