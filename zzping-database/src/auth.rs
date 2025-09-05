@@ -5,23 +5,7 @@
 //! struct that gets attached to each request after successful validation by the
 //! `check_auth` interceptor.
 
-use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-
-/// The structure of the JSON Web Token (JWT) used for authentication.
-///
-/// This token is expected to be Base64-encoded and sent by the client in the
-/// `Authorization` header. It contains the subject (user/client ID) and a list
-/// of roles that grant specific permissions.
-#[derive(Debug, Deserialize, Serialize)]
-pub struct AuthToken {
-    /// The subject of the token, typically a unique identifier for the client
-    /// (e.g., a collector's hostname or a GUI user's ID).
-    pub sub: String,
-    /// A list of roles assigned to the subject. These roles are used by RPC
-    /// handlers to make authorization decisions.
-    pub roles: Vec<String>,
-}
 
 /// A validated user identity, attached to a `tonic::Request`'s extensions.
 ///
@@ -65,6 +49,8 @@ impl UserIdentity {
 /// valid tokens for integration tests.
 #[cfg(feature = "test-utils")]
 pub fn generate_test_token(sub: &str, roles: &[&str]) -> String {
+    use zzping_lib::auth::AuthToken;
+
     let token = AuthToken {
         sub: sub.to_string(),
         roles: roles.iter().map(|s| s.to_string()).collect(),

@@ -1,5 +1,5 @@
 use crate::{
-    auth::{AuthToken, UserIdentity},
+    auth::UserIdentity,
     config::{IntentConfig, load_intent_config},
     ingestion_item::IngestionItem,
     query::get_last_hour_records,
@@ -11,6 +11,7 @@ use log::{error, info, warn};
 use std::{collections::HashSet, net::IpAddr, sync::Arc};
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
+use zzping_lib::auth::AuthToken;
 use zzping_proto::zzping::{
     GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse, QueryRequest,
     QueryResponse, SendBatchRequest, SendBatchResponse, ingestion_server::Ingestion,

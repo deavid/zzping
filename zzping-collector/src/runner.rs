@@ -17,21 +17,11 @@ use std::{
 };
 use tokio::{sync::mpsc, task::JoinHandle};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
+use zzping_lib::auth::AuthToken;
 use zzping_proto::zzping::{
     GetRecentDataRequest, HeartbeatRequest, RawDataRecord, SendBatchRequest,
     ingestion_client::IngestionClient, send_batch_response,
 };
-
-/// A local, serializable version of the `AuthToken` struct.
-///
-/// This is defined locally to avoid creating a circular dependency, as the collector
-/// needs to generate a token for itself, but the canonical `AuthToken` definition
-/// lives in `zzping-database` which is only a dev-dependency.
-#[derive(Debug, Serialize)]
-struct AuthToken<'a> {
-    sub: &'a str,
-    roles: &'a [&'a str],
-}
 
 /// A struct for persisting the last known good configuration to disk.
 /// This allows the collector to restart with its previous configuration
@@ -347,8 +337,8 @@ pub async fn run() -> Result<()> {
 
                 let token = {
                     let auth_token = AuthToken {
-                        sub: &cli.source_hostname,
-                        roles: &["collector"],
+                        sub: cli.source_hostname.clone(),
+                        roles: vec!["collector".to_string()],
                     };
                     let json = serde_json::to_string(&auth_token).unwrap();
                     general_purpose::STANDARD.encode(json)
