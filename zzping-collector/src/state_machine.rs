@@ -66,15 +66,18 @@ impl StateMachine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ntest::timeout;
     use zzping_proto::zzping::HeartbeatResponse;
 
     #[test]
+    #[timeout(100)]
     fn test_initial_state_is_standby() {
         let machine = StateMachine::new("test".to_string());
         assert_eq!(machine.current_state, State::Standby);
     }
 
     #[test]
+    #[timeout(100)]
     fn test_promotion_to_primary_returns_seed_action() {
         let mut machine = StateMachine::new("test".to_string());
         assert_eq!(machine.current_state, State::Standby);
@@ -88,6 +91,7 @@ mod tests {
     }
 
     #[test]
+    #[timeout(100)]
     fn test_demotion_to_standby_returns_no_action() {
         let mut machine = StateMachine::new("test".to_string());
         machine.current_state = State::Pinging;
@@ -101,6 +105,7 @@ mod tests {
     }
 
     #[test]
+    #[timeout(100)]
     fn test_shutdown_role_returns_no_action() {
         let mut machine = StateMachine::new("test".to_string());
         let response = HeartbeatResponse {
@@ -113,6 +118,7 @@ mod tests {
     }
 
     #[test]
+    #[timeout(100)]
     fn test_no_state_change_returns_no_action() {
         let mut machine = StateMachine::new("test".to_string());
         machine.current_state = State::Pinging;

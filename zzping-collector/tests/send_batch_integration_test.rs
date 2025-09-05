@@ -58,11 +58,11 @@ async fn spawn_mock_server(
             .await;
     });
 
-    format!("http://{}", addr)
+    format!("http://{addr}")
 }
 
 #[tokio::test]
-#[timeout(5000)]
+#[timeout(2000)]
 async fn test_collector_sends_batch_and_prunes_buffer() {
     let _ = env_logger::builder().is_test(true).try_init();
 
@@ -90,7 +90,7 @@ async fn test_collector_sends_batch_and_prunes_buffer() {
 }
 
 #[tokio::test]
-#[timeout(5000)]
+#[timeout(2000)]
 async fn test_collector_rewinds_buffer_on_desync() {
     let _ = env_logger::builder().is_test(true).try_init();
 

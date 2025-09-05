@@ -9,7 +9,7 @@ use zzping_proto::zzping::{ingestion_client::IngestionClient, HeartbeatRequest, 
 const TEST_TIMEOUT_DURATION: Duration = Duration::from_millis(500);
 
 #[tokio::test]
-#[timeout(2000)]
+#[timeout(1000)]
 async fn test_collector_gets_config_via_heartbeat() {
     let _ = env_logger::builder().is_test(true).try_init();
     let temp_dir = tempdir().unwrap();

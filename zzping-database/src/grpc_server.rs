@@ -188,12 +188,12 @@ mod tests {
     use super::*;
     use ntest::timeout;
     use std::io::Write;
-    use std::time::Duration;
+
     use tempfile::tempdir;
     use zzping_proto::zzping::{ingestion_client::IngestionClient, RawDataRecord};
 
     #[test]
-    #[timeout(200)]
+    #[timeout(100)]
     fn test_check_auth() {
         let mut good_req = Request::new(());
         good_req
@@ -210,7 +210,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(200)]
+    #[timeout(100)]
     async fn test_query_data_returns_empty_response() {
         let temp_dir = tempdir().unwrap();
         let data_dir = temp_dir.path();
@@ -250,7 +250,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(200)]
+    #[timeout(100)]
     async fn test_sendbatch_accepts_good_data() {
         let (tx, _) = mpsc::channel(100);
         let service = IngestionServiceImpl {
@@ -278,7 +278,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(200)]
+    #[timeout(100)]
     async fn test_sendbatch_rejects_desync_data() {
         let (tx, _) = mpsc::channel(100);
         let service = IngestionServiceImpl {

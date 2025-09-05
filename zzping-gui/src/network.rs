@@ -70,9 +70,10 @@ pub async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
 mod tests {
     use super::*;
     use anyhow::Result;
+    use ntest::timeout;
     use std::net::SocketAddr;
-    use tokio::{net::TcpListener, task::JoinHandle};
     use tokio::sync::mpsc;
+    use tokio::{net::TcpListener, task::JoinHandle};
     use zzping_database::grpc_server::IngestionServiceImpl;
     use zzping_proto::zzping::ingestion_server::IngestionServer;
 
@@ -100,6 +101,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[timeout(1000)]
     async fn test_try_fetch_data() -> Result<()> {
         std::fs::create_dir_all(zzping_database::DATA_DIR).unwrap();
         let (server_addr, server_handle) = spawn_test_server().await?;
@@ -130,6 +132,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[timeout(1000)]
     async fn test_try_fetch_data_connection_error() -> Result<()> {
         let (tx, _) = crossbeam_channel::unbounded();
         let result = try_fetch_data(&tx).await;

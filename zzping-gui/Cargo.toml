@@ -27,3 +27,4 @@ egui.workspace = true
 [dev-dependencies]
 zzping-database = { workspace = true, features = ["test-utils"] }
 tokio-stream = { workspace = true }
+ntest.workspace = true

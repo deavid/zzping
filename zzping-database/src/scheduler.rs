@@ -28,6 +28,12 @@ pub struct Scheduler {
     swap_delay: Duration,
 }
 
+impl Default for Scheduler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scheduler {
     pub fn new() -> Self {
         Self::new_with_durations(PROD_STALE_THRESHOLD, PROD_SWAP_DELAY)
@@ -104,19 +110,18 @@ impl Scheduler {
         }
 
         // Phase 3: Steady-state role assignment (if no handoff is in progress).
-        if !self.handoffs.contains_key(uuid) {
-            if !instances.iter().any(|i| i.role == CollectorRole::Primary) {
+        if !self.handoffs.contains_key(uuid)
+            && !instances.iter().any(|i| i.role == CollectorRole::Primary) {
                 if let Some(candidate) =
                     instances.iter_mut().find(|i| i.role == CollectorRole::Standby)
                 {
                     candidate.role = CollectorRole::Primary;
                 }
             }
-        }
 
         // Phase 4: Initiate a new handoff if required.
-        if is_new_instance && instances.len() > 1 {
-            if instances.iter().any(|i| i.role == CollectorRole::Primary)
+        if is_new_instance && instances.len() > 1
+            && instances.iter().any(|i| i.role == CollectorRole::Primary)
                 && !self.handoffs.contains_key(uuid)
             {
                 let handoff = HandoffState {
@@ -125,7 +130,6 @@ impl Scheduler {
                 };
                 self.handoffs.insert(uuid.to_string(), handoff);
             }
-        }
 
         // Phase 5: Calculate return values and write the final state back to the map.
         let role = instances.iter().find(|i| i.pid == pid).unwrap().role;
@@ -149,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(5000)]
+    #[timeout(100)]
     fn test_first_instance_is_primary() {
         let scheduler = test_scheduler();
         let now = Instant::now();
@@ -158,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(5000)]
+    #[timeout(100)]
     fn test_second_instance_is_standby_and_triggers_handoff() {
         let scheduler = test_scheduler();
         let now = Instant::now();
@@ -169,7 +173,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(5000)]
+    #[timeout(100)]
     fn test_graceful_handoff_flow() {
         let scheduler = test_scheduler();
         let t0 = Instant::now();
@@ -189,7 +193,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(5000)]
+    #[timeout(100)]
     fn test_standby_is_promoted_when_primary_goes_stale() {
         let scheduler = test_scheduler();
         let t0 = Instant::now();
@@ -206,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(5000)]
+    #[timeout(100)]
     fn test_stale_standby_is_pruned() {
         let scheduler = test_scheduler();
         let t0 = Instant::now();

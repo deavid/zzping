@@ -122,39 +122,45 @@ pub async fn batch_sender_loop(
                 });
             }
             _ = interval.tick() => {
-                if buffer.is_empty() {
-                    continue;
-                }
+                let mut needs_immediate_retry = true;
+                while needs_immediate_retry {
+                    needs_immediate_retry = false;
 
-                let records_to_send: Vec<_> = buffer.iter().cloned().collect();
-                let request = tonic::Request::new(SendBatchRequest {
-                    collector_uuid: collector_uuid.clone(),
-                    records: records_to_send,
-                    collector_believes_last_acked_nanos: last_acked_nanos,
-                });
+                    if buffer.is_empty() {
+                        break;
+                    }
 
-                match client.send_batch(request).await {
-                    Ok(response) => {
-                        let response = response.into_inner();
-                        match send_batch_response::Status::try_from(response.status) {
-                            Ok(send_batch_response::Status::Ok) => {
-                                info!("Batch sent successfully. New acked_nanos: {}", response.database_confirms_last_acked_nanos);
-                                last_acked_nanos = response.database_confirms_last_acked_nanos;
-                                buffer.retain(|r| r.sent_nanos > last_acked_nanos);
-                            },
-                            Ok(send_batch_response::Status::Desync) => {
-                                warn!("Received DESYNC from server. DB confirms acked_nanos: {}. Rewinding buffer.", response.database_confirms_last_acked_nanos);
-                                last_acked_nanos = response.database_confirms_last_acked_nanos;
-                                buffer.retain(|r| r.sent_nanos > last_acked_nanos);
+                    let records_to_send: Vec<_> = buffer.iter().cloned().collect();
+                    let request = tonic::Request::new(SendBatchRequest {
+                        collector_uuid: collector_uuid.clone(),
+                        records: records_to_send,
+                        collector_believes_last_acked_nanos: last_acked_nanos,
+                    });
+
+                    match client.send_batch(request).await {
+                        Ok(response) => {
+                            let response = response.into_inner();
+                            match send_batch_response::Status::try_from(response.status) {
+                                Ok(send_batch_response::Status::Ok) => {
+                                    info!("Batch sent successfully. New acked_nanos: {}", response.database_confirms_last_acked_nanos);
+                                    last_acked_nanos = response.database_confirms_last_acked_nanos;
+                                    buffer.retain(|r| r.sent_nanos > last_acked_nanos);
+                                },
+                                Ok(send_batch_response::Status::Desync) => {
+                                    warn!("Received DESYNC from server. DB confirms acked_nanos: {}. Rewinding buffer.", response.database_confirms_last_acked_nanos);
+                                    last_acked_nanos = response.database_confirms_last_acked_nanos;
+                                    buffer.retain(|r| r.sent_nanos > last_acked_nanos);
+                                    needs_immediate_retry = true;
+                                }
+                                Err(_) => {
+                                    error!("Unknown status in SendBatchResponse: {}", response.status);
+                                }
                             }
-                            Err(_) => {
-                                error!("Unknown status in SendBatchResponse: {}", response.status);
-                            }
+                        },
+                        Err(e) => {
+                            error!("send_batch RPC failed: {e}. Data will be retried.");
+                            break;
                         }
-                    },
-                    Err(e) => {
-                        error!("send_batch RPC failed: {e}. Data will be retried.");
-                        return;
                     }
                 }
             }
@@ -248,7 +254,7 @@ pub async fn run() -> Result<()> {
                             if state_machine.current_state == State::Shutdown {
                                 info!("Received SHUTDOWN command. Exiting.");
                                 batch_sender_handle.abort();
-                                for (_, handle) in &running_tasks {
+                                for handle in running_tasks.values() {
                                     handle.abort();
                                 }
                                 return Ok(());
