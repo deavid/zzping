@@ -60,10 +60,7 @@ fn inspect_file(path: &PathBuf) -> Result<()> {
 
     // --- Statistics ---
     let total_pings = records.len();
-    let lost_packets = records
-        .iter()
-        .filter(|r| r.rtt_nanos == u64::MAX)
-        .count();
+    let lost_packets = records.iter().filter(|r| r.rtt_nanos == u64::MAX).count();
     let successful_pings = total_pings - lost_packets;
     let packet_loss_pct = if total_pings > 0 {
         (lost_packets as f64 / total_pings as f64) * 100.0
@@ -89,7 +86,10 @@ fn inspect_file(path: &PathBuf) -> Result<()> {
     println!("\n--- Statistics ---");
     println!("Total Pings:      {}", total_pings);
     println!("Successful Pings: {}", successful_pings);
-    println!("Lost Packets:     {} ({:.2}%)", lost_packets, packet_loss_pct);
+    println!(
+        "Lost Packets:     {} ({:.2}%)",
+        lost_packets, packet_loss_pct
+    );
     println!("Min RTT:          {:.3} ms", min_rtt);
     println!("Median RTT:       {:.3} ms", median_rtt);
     println!("Max RTT:          {:.3} ms", max_rtt);
@@ -122,15 +122,14 @@ fn inspect_file(path: &PathBuf) -> Result<()> {
     println!("\n--- Duplicate Check ---");
     let mut duplicates = 0;
     for i in 1..records.len() {
-        if records[i].sent_nanos == records[i-1].sent_nanos {
+        if records[i].sent_nanos == records[i - 1].sent_nanos {
             duplicates += 1;
             println!("Duplicate timestamp found: {}", records[i].sent_nanos);
         }
     }
-     if duplicates == 0 {
+    if duplicates == 0 {
         println!("No duplicate timestamps found.");
     }
-
 
     Ok(())
 }

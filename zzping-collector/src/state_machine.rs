@@ -147,7 +147,7 @@ mod tests {
     fn test_no_state_change_returns_no_action() {
         let mut machine = StateMachine::new("test".to_string());
         machine.current_state = State::Pinging;
-         let response = HeartbeatResponse {
+        let response = HeartbeatResponse {
             role: CollectorRole::Primary as i32,
             ..Default::default()
         };

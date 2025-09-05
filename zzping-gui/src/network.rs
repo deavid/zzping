@@ -6,7 +6,7 @@ use log::{info, warn};
 use std::time::Duration;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use zzping_lib::protocol::RawDataRecord;
-use zzping_proto::zzping::{ingestion_client::IngestionClient, QueryRequest};
+use zzping_proto::zzping::{QueryRequest, ingestion_client::IngestionClient};
 
 const QUERY_ADDR: &str = "https://127.0.0.1:7878";
 
@@ -77,8 +77,7 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio::{net::TcpListener, task::JoinHandle};
     use zzping_database::{
-        auth::generate_test_token, grpc_server::check_auth,
-        grpc_server::IngestionServiceImpl,
+        auth::generate_test_token, grpc_server::IngestionServiceImpl, grpc_server::check_auth,
     };
     use zzping_proto::zzping::ingestion_server::IngestionServer;
 

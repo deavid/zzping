@@ -2,10 +2,10 @@ use ntest::timeout;
 use std::io::Write;
 use tempfile::tempdir;
 use tokio::sync::mpsc;
-use tokio::time::{timeout, Duration};
+use tokio::time::{Duration, timeout};
 use zzping_database::{auth::generate_test_token, spawn_test_server};
 use zzping_proto::zzping::{
-    ingestion_client::IngestionClient, HeartbeatRequest, HeartbeatResponse,
+    HeartbeatRequest, HeartbeatResponse, ingestion_client::IngestionClient,
 };
 
 const TEST_TIMEOUT_DURATION: Duration = Duration::from_millis(500);

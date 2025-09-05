@@ -1,20 +1,20 @@
 use crate::{
     auth::{AuthToken, UserIdentity},
-    config::{load_intent_config, IntentConfig},
+    config::{IntentConfig, load_intent_config},
     ingestion_item::IngestionItem,
     query::get_last_hour_records,
     scheduler::Scheduler,
 };
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use dashmap::DashMap;
 use log::{error, info, warn};
 use std::{collections::HashSet, net::IpAddr, sync::Arc};
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
 use zzping_proto::zzping::{
-    ingestion_server::Ingestion, send_batch_response, GetRecentDataRequest,
-    GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse, QueryRequest, QueryResponse,
-    SendBatchRequest, SendBatchResponse,
+    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse, QueryRequest,
+    QueryResponse, SendBatchRequest, SendBatchResponse, ingestion_server::Ingestion,
+    send_batch_response,
 };
 
 /// A `tonic` interceptor that validates role-based authentication tokens.
@@ -124,7 +124,9 @@ impl Ingestion for IngestionServiceImpl {
         request: Request<HeartbeatRequest>,
     ) -> Result<Response<HeartbeatResponse>, Status> {
         let identity = request.extensions().get::<UserIdentity>().ok_or_else(|| {
-            Status::internal("Missing user identity. This should have been handled by the auth interceptor.")
+            Status::internal(
+                "Missing user identity. This should have been handled by the auth interceptor.",
+            )
         })?;
 
         if !identity.has_role("collector") {
@@ -157,9 +159,15 @@ impl Ingestion for IngestionServiceImpl {
         &self,
         request: Request<SendBatchRequest>,
     ) -> Result<Response<SendBatchResponse>, Status> {
-        info!("[DEBUG 1/4] send_batch received with {} records for collector '{}'", request.get_ref().records.len(), request.get_ref().collector_uuid);
+        info!(
+            "[DEBUG 1/4] send_batch received with {} records for collector '{}'",
+            request.get_ref().records.len(),
+            request.get_ref().collector_uuid
+        );
         let identity = request.extensions().get::<UserIdentity>().ok_or_else(|| {
-            Status::internal("Missing user identity. This should have been handled by the auth interceptor.")
+            Status::internal(
+                "Missing user identity. This should have been handled by the auth interceptor.",
+            )
         })?;
 
         if !identity.has_role("collector") {
@@ -171,7 +179,9 @@ impl Ingestion for IngestionServiceImpl {
         let target_ip_str = request.target_ip;
         let collector_believes_last_acked = request.collector_believes_last_acked_nanos;
 
-        let target_ip: IpAddr = target_ip_str.parse().map_err(|_| Status::invalid_argument("Invalid target_ip format"))?;
+        let target_ip: IpAddr = target_ip_str
+            .parse()
+            .map_err(|_| Status::invalid_argument("Invalid target_ip format"))?;
 
         let state_key = (collector_id.clone(), target_ip_str.clone());
         let mut collector_state = self.collector_states.entry(state_key).or_insert(0);
@@ -191,7 +201,9 @@ impl Ingestion for IngestionServiceImpl {
         let mut last_sent_nanos = db_last_acked;
         for record in request.records {
             if record.sent_nanos <= db_last_acked {
-                warn!("Collector {collector_id} sent record for {target_ip_str} with old timestamp, ignoring.");
+                warn!(
+                    "Collector {collector_id} sent record for {target_ip_str} with old timestamp, ignoring."
+                );
                 continue;
             }
             last_sent_nanos = record.sent_nanos;
@@ -233,14 +245,19 @@ impl Ingestion for IngestionServiceImpl {
         request: Request<GetRecentDataRequest>,
     ) -> Result<Response<GetRecentDataResponse>, Status> {
         let identity = request.extensions().get::<UserIdentity>().ok_or_else(|| {
-            Status::internal("Missing user identity. This should have been handled by the auth interceptor.")
+            Status::internal(
+                "Missing user identity. This should have been handled by the auth interceptor.",
+            )
         })?;
 
         if !identity.has_role("collector") {
             return Err(Status::permission_denied("Missing 'collector' role."));
         }
 
-        info!("get_recent_data called by '{}', returning empty response for now.", identity.id);
+        info!(
+            "get_recent_data called by '{}', returning empty response for now.",
+            identity.id
+        );
         Ok(Response::new(GetRecentDataResponse { records: vec![] }))
     }
 
@@ -255,7 +272,9 @@ impl Ingestion for IngestionServiceImpl {
         request: Request<QueryRequest>,
     ) -> Result<Response<QueryResponse>, Status> {
         let identity = request.extensions().get::<UserIdentity>().ok_or_else(|| {
-            Status::internal("Missing user identity. This should have been handled by the auth interceptor.")
+            Status::internal(
+                "Missing user identity. This should have been handled by the auth interceptor.",
+            )
         })?;
 
         if !identity.has_role("reader") {
@@ -319,7 +338,7 @@ mod tests {
     use ntest::timeout;
     use std::io::Write;
     use tempfile::tempdir;
-    use zzping_proto::zzping::{ingestion_client::IngestionClient, RawDataRecord};
+    use zzping_proto::zzping::{RawDataRecord, ingestion_client::IngestionClient};
 
     #[test]
     #[timeout(100)]
@@ -327,13 +346,17 @@ mod tests {
         // Good token
         let token = generate_test_token("test-user", &["reader", "collector"]);
         let mut good_req = Request::new(());
-        good_req.metadata_mut().insert(
-            "authorization",
-            format!("Bearer {token}").parse().unwrap(),
-        );
+        good_req
+            .metadata_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
         let result = check_auth(good_req);
         assert!(result.is_ok());
-        let identity = result.unwrap().extensions().get::<UserIdentity>().unwrap().clone();
+        let identity = result
+            .unwrap()
+            .extensions()
+            .get::<UserIdentity>()
+            .unwrap()
+            .clone();
         assert_eq!(identity.id, "test-user");
         assert!(identity.has_role("reader"));
         assert!(identity.has_role("collector"));
@@ -362,21 +385,30 @@ mod tests {
         let (server_addr, server_handle) =
             spawn_test_server(temp_dir.path().to_str().unwrap().to_string()).await;
 
-        let mut client = IngestionClient::connect(format!("http://{server_addr}")).await.unwrap();
+        let mut client = IngestionClient::connect(format!("http://{server_addr}"))
+            .await
+            .unwrap();
 
         // Test with correct role
         let token = generate_test_token("test-reader", &["reader"]);
         let mut request = Request::new(QueryRequest {});
-        request.metadata_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
+        request
+            .metadata_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
         let response = client.query_data(request).await;
         assert!(response.is_ok());
 
         // Test with incorrect role
         let token = generate_test_token("test-collector", &["collector"]);
         let mut request = Request::new(QueryRequest {});
-        request.metadata_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
+        request
+            .metadata_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
         let response = client.query_data(request).await;
-        assert_eq!(response.err().unwrap().code(), tonic::Code::PermissionDenied);
+        assert_eq!(
+            response.err().unwrap().code(),
+            tonic::Code::PermissionDenied
+        );
 
         server_handle.abort();
     }
@@ -391,7 +423,9 @@ mod tests {
         let (server_addr, server_handle) =
             spawn_test_server(temp_dir.path().to_str().unwrap().to_string()).await;
 
-        let mut client = IngestionClient::connect(format!("http://{server_addr}")).await.unwrap();
+        let mut client = IngestionClient::connect(format!("http://{server_addr}"))
+            .await
+            .unwrap();
 
         // Test with correct role
         let token = generate_test_token("test-collector", &["collector"]);
@@ -399,7 +433,9 @@ mod tests {
             collector_uuid: "test-collector".to_string(),
             pid: 1234,
         });
-        request.metadata_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
+        request
+            .metadata_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
         let response = client.heartbeat(request).await;
         assert!(response.is_ok());
 
@@ -409,20 +445,29 @@ mod tests {
             collector_uuid: "test-collector".to_string(),
             pid: 1234,
         });
-        request.metadata_mut().insert("authorization", format!("Bearer {token}").parse().unwrap());
+        request
+            .metadata_mut()
+            .insert("authorization", format!("Bearer {token}").parse().unwrap());
         let response = client.heartbeat(request).await;
-        assert_eq!(response.err().unwrap().code(), tonic::Code::PermissionDenied);
+        assert_eq!(
+            response.err().unwrap().code(),
+            tonic::Code::PermissionDenied
+        );
 
         server_handle.abort();
     }
 
-    fn create_test_service_with_receiver() -> (IngestionServiceImpl, mpsc::Receiver<IngestionItem>) {
+    fn create_test_service_with_receiver() -> (IngestionServiceImpl, mpsc::Receiver<IngestionItem>)
+    {
         let (tx, rx) = mpsc::channel(100);
         (
             IngestionServiceImpl {
                 storage_tx: tx,
                 data_dir: "".to_string(),
-                intent_config: Arc::new(IntentConfig { ping_rate_pps: 0, targets: vec![] }),
+                intent_config: Arc::new(IntentConfig {
+                    ping_rate_pps: 0,
+                    targets: vec![],
+                }),
                 collector_states: Arc::new(DashMap::new()),
                 scheduler: Arc::new(Scheduler::new()),
             },
@@ -443,7 +488,7 @@ mod tests {
     #[tokio::test]
     #[timeout(100)]
     async fn test_sendbatch_accepts_good_data() {
-        let (mut service, mut item_rx) = create_test_service_with_receiver();
+        let (service, mut item_rx) = create_test_service_with_receiver();
         tokio::spawn(async move { while item_rx.recv().await.is_some() {} });
 
         let state_key = ("collector-1".to_string(), "1.1.1.1".to_string());
@@ -454,8 +499,14 @@ mod tests {
             target_ip: "1.1.1.1".to_string(),
             collector_believes_last_acked_nanos: 100,
             records: vec![
-                RawDataRecord { sent_nanos: 101, rtt_nanos: 10 },
-                RawDataRecord { sent_nanos: 102, rtt_nanos: 11 },
+                RawDataRecord {
+                    sent_nanos: 101,
+                    rtt_nanos: 10,
+                },
+                RawDataRecord {
+                    sent_nanos: 102,
+                    rtt_nanos: 11,
+                },
             ],
         };
         let request = create_authed_request(payload, "collector-1", &["collector"]);
@@ -469,7 +520,7 @@ mod tests {
     #[tokio::test]
     #[timeout(100)]
     async fn test_sendbatch_rejects_desync_data() {
-        let (mut service, mut item_rx) = create_test_service_with_receiver();
+        let (service, mut item_rx) = create_test_service_with_receiver();
         tokio::spawn(async move { while item_rx.recv().await.is_some() {} });
 
         let state_key = ("collector-1".to_string(), "1.1.1.1".to_string());
@@ -479,7 +530,10 @@ mod tests {
             collector_uuid: "collector-1".to_string(),
             target_ip: "1.1.1.1".to_string(),
             collector_believes_last_acked_nanos: 99,
-            records: vec![RawDataRecord { sent_nanos: 101, rtt_nanos: 10 }],
+            records: vec![RawDataRecord {
+                sent_nanos: 101,
+                rtt_nanos: 10,
+            }],
         };
         let request = create_authed_request(payload, "collector-1", &["collector"]);
 

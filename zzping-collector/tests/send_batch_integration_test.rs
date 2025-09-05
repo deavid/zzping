@@ -2,14 +2,15 @@ use ntest::timeout;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio::time::Duration;
-use tonic::{transport::Channel, Request, Response, Status};
+use tonic::{Request, Response, Status};
 use zzping_collector::runner::batch_sender_loop;
 use zzping_database::{auth::generate_test_token, grpc_server::check_auth};
 use zzping_proto::zzping::{
+    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse, QueryRequest,
+    QueryResponse, SendBatchRequest, SendBatchResponse,
     ingestion_client::IngestionClient,
     ingestion_server::{Ingestion, IngestionServer},
-    send_batch_response, GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest,
-    HeartbeatResponse, QueryRequest, QueryResponse, SendBatchRequest, SendBatchResponse,
+    send_batch_response,
 };
 
 #[derive(Clone)]
@@ -68,9 +69,7 @@ async fn spawn_mock_server(
     };
     let server = IngestionServer::with_interceptor(service, check_auth);
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     tokio::spawn(async move {

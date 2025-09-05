@@ -95,7 +95,10 @@ pub async fn storage_task(mut item_rx: mpsc::Receiver<IngestionItem>, data_dir: 
     let mut engine = StorageEngine::new(&data_dir);
 
     while let Some(item) = item_rx.recv().await {
-        info!("[DEBUG 3/4] storage_task received IngestionItem: {:?}", item);
+        info!(
+            "[DEBUG 3/4] storage_task received IngestionItem: {:?}",
+            item
+        );
         engine.handle_item(item).await;
     }
 
@@ -112,7 +115,12 @@ async fn write_records_to_disk(
     records: &[RawDataRecord],
     data_dir: &str,
 ) -> Result<String> {
-    info!("[DEBUG 4/4] write_records_to_disk called with {} records for {} - {}", records.len(), source, target);
+    info!(
+        "[DEBUG 4/4] write_records_to_disk called with {} records for {} - {}",
+        records.len(),
+        source,
+        target
+    );
     if records.is_empty() {
         return Err(anyhow::anyhow!("No records to write."));
     }

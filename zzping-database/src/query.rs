@@ -107,8 +107,8 @@ mod tests {
     }
 
     use zzping_lib::chunked_v1::{
-        calculate_file_header_crc32, create_chunked_v1_header, ChunkHeader, FILE_MAGIC,
-        FORMAT_VERSION, FileHeader, HEADER_SIZE, IndexEntry,
+        ChunkHeader, FILE_MAGIC, FORMAT_VERSION, FileHeader, HEADER_SIZE, IndexEntry,
+        calculate_file_header_crc32, create_chunked_v1_header,
     };
 
     #[test]

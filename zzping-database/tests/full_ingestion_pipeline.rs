@@ -3,8 +3,8 @@ use log::info;
 use ntest::timeout;
 use std::time::Duration;
 use tempfile::tempdir;
-use tokio::sync::{mpsc, oneshot};
-use zzping_proto::zzping::{ingestion_client::IngestionClient, RawDataRecord, SendBatchRequest};
+use tokio::sync::mpsc;
+use zzping_proto::zzping::{RawDataRecord, SendBatchRequest, ingestion_client::IngestionClient};
 
 const NANOS_PER_MINUTE: u64 = 60 * 1_000_000_000;
 
@@ -26,8 +26,14 @@ async fn test_full_ingestion_pipeline() -> Result<()> {
 
     // First batch: records for minute 1
     let records_minute_1 = vec![
-        RawDataRecord { sent_nanos: 1 * NANOS_PER_MINUTE + 100, rtt_nanos: 50 },
-        RawDataRecord { sent_nanos: 1 * NANOS_PER_MINUTE + 200, rtt_nanos: 60 },
+        RawDataRecord {
+            sent_nanos: NANOS_PER_MINUTE + 100,
+            rtt_nanos: 50,
+        },
+        RawDataRecord {
+            sent_nanos: NANOS_PER_MINUTE + 200,
+            rtt_nanos: 60,
+        },
     ];
     let mut request1 = tonic::Request::new(SendBatchRequest {
         collector_uuid: "test-collector".to_string(),
@@ -35,20 +41,25 @@ async fn test_full_ingestion_pipeline() -> Result<()> {
         records: records_minute_1.clone(),
         collector_believes_last_acked_nanos: 0,
     });
-    request1.metadata_mut().insert("authorization", format!("Bearer {token}").parse()?);
+    request1
+        .metadata_mut()
+        .insert("authorization", format!("Bearer {token}").parse()?);
     client.send_batch(request1).await?;
 
     // Second batch: a single record for minute 2. This should trigger the flush of minute 1.
-    let records_minute_2 = vec![
-        RawDataRecord { sent_nanos: 2 * NANOS_PER_MINUTE, rtt_nanos: 70 },
-    ];
+    let records_minute_2 = vec![RawDataRecord {
+        sent_nanos: 2 * NANOS_PER_MINUTE,
+        rtt_nanos: 70,
+    }];
     let mut request2 = tonic::Request::new(SendBatchRequest {
         collector_uuid: "test-collector".to_string(),
         target_ip: "1.1.1.1".to_string(),
         records: records_minute_2.clone(),
-        collector_believes_last_acked_nanos: 1 * NANOS_PER_MINUTE + 200,
+        collector_believes_last_acked_nanos: NANOS_PER_MINUTE + 200,
     });
-    request2.metadata_mut().insert("authorization", format!("Bearer {token}").parse()?);
+    request2
+        .metadata_mut()
+        .insert("authorization", format!("Bearer {token}").parse()?);
     client.send_batch(request2).await?;
 
     // Give the storage task a moment to write the file.
@@ -63,7 +74,11 @@ async fn test_full_ingestion_pipeline() -> Result<()> {
 
     let file_path = data_files.first().unwrap().path();
     let file_content = std::fs::read(&file_path)?;
-    info!("Read {} bytes from file {:?}", file_content.len(), file_path);
+    info!(
+        "Read {} bytes from file {:?}",
+        file_content.len(),
+        file_path
+    );
     let decompressed_records = zzping_lib::chunked_v1::decompress_chunked_v1(&file_content)?;
 
     // Convert the sent records to the lib type for comparison.
@@ -96,11 +111,12 @@ async fn spawn_full_server_for_test(
 
     let (item_tx, item_rx) = mpsc::channel(1024);
 
-    tokio::spawn(zzping_database::storage_engine::storage_task(item_rx, data_dir.clone()));
+    tokio::spawn(zzping_database::storage_engine::storage_task(
+        item_rx,
+        data_dir.clone(),
+    ));
 
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-        .await
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let service =
         zzping_database::grpc_server::IngestionServiceImpl::new(item_tx, data_dir.clone());

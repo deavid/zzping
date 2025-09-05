@@ -5,7 +5,7 @@ use crate::{
     state_machine::{Action, State, StateMachine},
 };
 use anyhow::{Context, Result};
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use bincode;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
@@ -18,8 +18,8 @@ use std::{
 use tokio::{sync::mpsc, task::JoinHandle};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use zzping_proto::zzping::{
-    ingestion_client::IngestionClient, send_batch_response, GetRecentDataRequest,
-    HeartbeatRequest, RawDataRecord, SendBatchRequest,
+    GetRecentDataRequest, HeartbeatRequest, RawDataRecord, SendBatchRequest,
+    ingestion_client::IngestionClient, send_batch_response,
 };
 
 /// A local, serializable version of the `AuthToken` struct.
@@ -82,14 +82,13 @@ fn manage_pinger_tasks(
     for target_ip in new_targets_set.keys() {
         if !running_tasks.contains_key(target_ip) {
             info!("Starting pinger for target {target_ip}");
-            let ping_client: Arc<dyn PingClient> =
-                match PingSurgeClient::new(*target_ip) {
-                    Ok(client) => Arc::new(client),
-                    Err(e) => {
-                        error!("Failed to create ping client for {target_ip}: {e}");
-                        continue;
-                    }
-                };
+            let ping_client: Arc<dyn PingClient> = match PingSurgeClient::new(*target_ip) {
+                Ok(client) => Arc::new(client),
+                Err(e) => {
+                    error!("Failed to create ping client for {target_ip}: {e}");
+                    continue;
+                }
+            };
             let pinger_handle = tokio::spawn(pinger_loop(
                 ping_client,
                 ping_results_tx.clone(),
@@ -286,22 +285,22 @@ pub async fn run() -> Result<()> {
     let mut state_machine = StateMachine::new(cli.source_hostname.clone());
     let mut last_cached_config: Option<CachedConfig> = None;
 
-    let (mut ping_results_tx, ping_results_rx) = mpsc::channel(1000);
+    let (mut ping_results_tx, _ping_results_rx) = mpsc::channel(1000);
 
     // Load cached config on startup and immediately start pinging.
-    if let Ok(bytes) = fs::read(&cache_file) {
-        if let Ok(config) = bincode::deserialize::<CachedConfig>(&bytes) {
-            info!("Loaded cached config: {:?}", config);
-            manage_pinger_tasks(
-                true,
-                &config.targets,
-                config.ping_rate_pps,
-                &mut running_tasks,
-                &ping_results_tx,
-                &cli,
-            );
-            last_cached_config = Some(config);
-        }
+    if let Ok(bytes) = fs::read(&cache_file)
+        && let Ok(config) = bincode::deserialize::<CachedConfig>(&bytes)
+    {
+        info!("Loaded cached config: {:?}", config);
+        manage_pinger_tasks(
+            true,
+            &config.targets,
+            config.ping_rate_pps,
+            &mut running_tasks,
+            &ping_results_tx,
+            &cli,
+        );
+        last_cached_config = Some(config);
     }
     // --- End State Caching Setup ---
 
@@ -368,7 +367,10 @@ pub async fn run() -> Result<()> {
                         collector_uuid: cli.source_hostname.clone(),
                         pid,
                     });
-                    request.metadata_mut().insert("authorization", format!("Bearer {}", token).parse().unwrap());
+                    request.metadata_mut().insert(
+                        "authorization",
+                        format!("Bearer {}", token).parse().unwrap(),
+                    );
 
                     match client.heartbeat(request).await {
                         Ok(response) => {
@@ -381,11 +383,14 @@ pub async fn run() -> Result<()> {
                                 ping_rate_pps: response.ping_rate_pps,
                             };
                             if Some(&new_config) != last_cached_config.as_ref() {
-                                info!("New configuration received. Caching to disk: {:?}", new_config);
-                                if let Ok(bytes) = bincode::serialize(&new_config) {
-                                    if let Err(e) = fs::write(&cache_file, bytes) {
-                                        warn!("Failed to write to cache file: {e}");
-                                    }
+                                info!(
+                                    "New configuration received. Caching to disk: {:?}",
+                                    new_config
+                                );
+                                if let Ok(bytes) = bincode::serialize(&new_config)
+                                    && let Err(e) = fs::write(&cache_file, bytes)
+                                {
+                                    warn!("Failed to write to cache file: {e}");
                                 }
                                 last_cached_config = Some(new_config);
                             }
@@ -397,7 +402,10 @@ pub async fn run() -> Result<()> {
                                     lookback_seconds: 3600, // 1 hour
                                 });
                                 match client.get_recent_data(request).await {
-                                    Ok(data) => info!("Successfully seeded buffer with {} records.", data.into_inner().records.len()),
+                                    Ok(data) => info!(
+                                        "Successfully seeded buffer with {} records.",
+                                        data.into_inner().records.len()
+                                    ),
                                     Err(e) => warn!("Failed to seed buffer: {e}"),
                                 }
                             }

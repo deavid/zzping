@@ -148,49 +148,52 @@ impl Scheduler {
         };
 
         // Phase 2: Check for and apply a completed handoff.
-        if let Some(handoff) = self.handoffs.get(uuid).map(|h| h.value().clone()) {
-            if now >= handoff.swap_at {
-                if let Some(old_primary) =
-                    instances.iter_mut().find(|i| i.role == CollectorRole::Primary)
-                {
-                    info!(
-                        "Verification success for uuid='{}'. Commanding shutdown for pid={}",
-                        uuid, old_primary.pid
-                    );
-                    old_primary.role = CollectorRole::Shutdown;
-                }
-                if let Some(new_primary) =
-                    instances.iter_mut().find(|i| i.pid == handoff.new_primary_pid)
-                {
-                    info!(
-                        "Promoting standby to primary for uuid='{}', pid={}",
-                        uuid, new_primary.pid
-                    );
-                    new_primary.role = CollectorRole::Primary;
-                }
-                self.handoffs.remove(uuid);
+        if let Some(handoff) = self.handoffs.get(uuid).map(|h| h.value().clone())
+            && now >= handoff.swap_at
+        {
+            if let Some(old_primary) = instances
+                .iter_mut()
+                .find(|i| i.role == CollectorRole::Primary)
+            {
+                info!(
+                    "Verification success for uuid='{}'. Commanding shutdown for pid={}",
+                    uuid, old_primary.pid
+                );
+                old_primary.role = CollectorRole::Shutdown;
             }
+            if let Some(new_primary) = instances
+                .iter_mut()
+                .find(|i| i.pid == handoff.new_primary_pid)
+            {
+                info!(
+                    "Promoting standby to primary for uuid='{}', pid={}",
+                    uuid, new_primary.pid
+                );
+                new_primary.role = CollectorRole::Primary;
+            }
+            self.handoffs.remove(uuid);
         }
 
         // Phase 3: Steady-state role assignment (if no handoff is in progress).
         if !self.handoffs.contains_key(uuid)
-            && !instances.iter().any(|i| i.role == CollectorRole::Primary) {
-                if let Some(candidate) =
-                    instances.iter_mut().find(|i| i.role == CollectorRole::Standby)
-                {
-                info!(
-                    "No primary found for uuid='{}'. Promoting standby pid={} to primary.",
-                    uuid, candidate.pid
-                );
-                    candidate.role = CollectorRole::Primary;
-                }
-            }
+            && !instances.iter().any(|i| i.role == CollectorRole::Primary)
+            && let Some(candidate) = instances
+                .iter_mut()
+                .find(|i| i.role == CollectorRole::Standby)
+        {
+            info!(
+                "No primary found for uuid='{}'. Promoting standby pid={} to primary.",
+                uuid, candidate.pid
+            );
+            candidate.role = CollectorRole::Primary;
+        }
 
         // Phase 4: Initiate a new handoff if required.
-        if is_new_instance && instances.len() > 1
+        if is_new_instance
+            && instances.len() > 1
             && instances.iter().any(|i| i.role == CollectorRole::Primary)
-                && !self.handoffs.contains_key(uuid)
-            {
+            && !self.handoffs.contains_key(uuid)
+        {
             let incumbent_pid = instances
                 .iter()
                 .find(|i| i.role == CollectorRole::Primary)
@@ -200,12 +203,12 @@ impl Scheduler {
                 "Handoff detected for uuid='{}': incumbent_pid={}, new_pid={}",
                 uuid, incumbent_pid, pid
             );
-                let handoff = HandoffState {
-                    new_primary_pid: pid,
-                    swap_at: now + self.swap_delay,
-                };
-                self.handoffs.insert(uuid.to_string(), handoff);
-            }
+            let handoff = HandoffState {
+                new_primary_pid: pid,
+                swap_at: now + self.swap_delay,
+            };
+            self.handoffs.insert(uuid.to_string(), handoff);
+        }
 
         // Phase 5: Calculate return values and write the final state back to the map.
         let role = instances.iter().find(|i| i.pid == pid).unwrap().role;

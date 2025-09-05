@@ -7,7 +7,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_client(true) // We need the client structs
         .compile(
             &["proto/ingestion.proto"], // The file to compile
-            &["proto"], // The path to search for imports
+            &["proto"],                 // The path to search for imports
         )?;
     Ok(())
 }
