@@ -1,104 +1,43 @@
-use crate::{
-    cli::Cli,
-    ping_client::{PingClient, PingResult},
-    ping_surge_client::PingSurgeClient,
-    state_machine::{Action, State, StateMachine},
-};
-use anyhow::{Context, Result};
-use base64::{Engine as _, engine::general_purpose};
-use bincode;
-use log::{error, info, warn};
-use serde::{Deserialize, Serialize};
+//! Core ping loop implementation for the collector.
+//!
+//! This module provides the asynchronous ping loop that maintains
+//! precise rate control and handles concurrent ping operations.
+
+use crate::ping_client::{PingClient, PingResult};
+use log::warn;
 use std::{
-    collections::{HashMap, VecDeque},
-    net::IpAddr,
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokio::{sync::mpsc, task::JoinHandle};
-use tonic::transport::{Certificate, Channel, ClientTlsConfig};
-use zzping_lib::auth::AuthToken;
-use zzping_proto::zzping::{
-    GetRecentDataRequest, HeartbeatRequest, RawDataRecord, SendBatchRequest,
-    ingestion_client::IngestionClient, send_batch_response,
-};
+use tokio::sync::mpsc;
 
-/// A struct for persisting the last known good configuration to disk.
-/// This allows the collector to restart with its previous configuration
-/// in case the database is unavailable.
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct CachedConfig {
-    targets: Vec<String>,
-    ping_rate_pps: u64,
-}
-
-/// Starts or stops pinger tasks based on the desired state from the database.
+/// Asynchronous ping loop for a single target with rate control.
 ///
-/// This function compares the list of currently running pinger tasks with the new
-/// list of targets received in a `HeartbeatResponse`. It ensures that:
-/// - A pinger task is running for every target in the new list.
-/// - Any pinger tasks for targets no longer in the list are stopped.
-/// - If the collector's state is not `Pinging`, all tasks are stopped.
-fn manage_pinger_tasks(
-    should_be_pinging: bool,
-    new_targets: &[String],
-    ping_rate_pps: u64,
-    running_tasks: &mut HashMap<IpAddr, JoinHandle<()>>,
-    ping_results_tx: &mpsc::Sender<PingResult>,
-    cli: &Cli,
-) {
-    let new_targets_set: HashMap<_, _> = if should_be_pinging {
-        new_targets
-            .iter()
-            .filter_map(|s| s.parse::<IpAddr>().ok())
-            .map(|ip| (ip, ()))
-            .collect()
-    } else {
-        HashMap::new() // If not pinging, the target set is empty.
-    };
-
-    // Stop tasks that are no longer in the target list
-    running_tasks.retain(|target, handle| {
-        if !new_targets_set.contains_key(target) {
-            info!("Stopping pinger for target {target}");
-            handle.abort();
-            false
-        } else {
-            true
-        }
-    });
-
-    // Start new tasks for new targets
-    for target_ip in new_targets_set.keys() {
-        if !running_tasks.contains_key(target_ip) {
-            info!("Starting pinger for target {target_ip}");
-            let ping_client: Arc<dyn PingClient> = match PingSurgeClient::new(*target_ip) {
-                Ok(client) => Arc::new(client),
-                Err(e) => {
-                    error!("Failed to create ping client for {target_ip}: {e}");
-                    continue;
-                }
-            };
-            let pinger_handle = tokio::spawn(pinger_loop(
-                ping_client,
-                ping_results_tx.clone(),
-                cli.max_in_flight,
-                ping_rate_pps,
-            ));
-            running_tasks.insert(*target_ip, pinger_handle);
-        }
-    }
-}
-
-/// An asynchronous loop that sends pings to a single target at a specified rate.
+/// This function implements a rate-controlled ping loop that maintains
+/// precise timing using `sleep_until` rather than fixed delays. This
+/// prevents timing drift that accumulates with traditional interval-based
+/// approaches.
 ///
-/// This function is spawned as a separate Tokio task for each target IP address.
-/// It uses a `Semaphore` to limit the number of concurrent, in-flight pings,
-/// preventing the system from being overwhelmed.
+/// ## Design Rationale
 ///
-/// Each successful ping dispatch results in a `PingResult` being sent back to the
-/// main `runner` loop via the `ping_tx` channel.
-async fn pinger_loop(
+/// **Precise Rate Control**: Uses `sleep_until` with absolute timestamps
+/// to maintain accurate ping rates even when ping operations take time.
+///
+/// **Concurrency Bounds**: Semaphore limits concurrent pings to prevent
+/// resource exhaustion and maintain predictable system load.
+///
+/// **Sequence Tracking**: Maintains a wrapping sequence number for
+/// ping identification and debugging.
+///
+/// **Graceful Skipping**: When at concurrency limit, skips pings rather
+/// than queuing them, maintaining the target rate.
+///
+/// # Parameters
+/// * `ping_client` - Client for sending pings to the target
+/// * `ping_tx` - Channel for sending ping results to the batch processor
+/// * `max_in_flight` - Maximum number of concurrent pings allowed
+/// * `rate` - Target ping rate in packets per second
+pub async fn pinger_loop(
     ping_client: Arc<dyn PingClient>,
     ping_tx: mpsc::Sender<PingResult>,
     max_in_flight: usize,
@@ -141,299 +80,173 @@ async fn pinger_loop(
     }
 }
 
-/// An asynchronous loop that collects ping results and sends them to the database in batches.
-///
-/// This function runs in a separate Tokio task. It receives `PingResult`s from
-/// all active `pinger_loop` tasks, buffers them, and sends them to the database
-/// every 1 second.
-///
-/// It also implements the client-side logic for the ACK/DESYNC protocol. If the
-/// database responds with `DESYNC`, this loop will rewind its buffer to the last
-/// known-good state and immediately retry sending the batch.
-pub async fn batch_sender_loop(
-    mut client: IngestionClient<Channel>,
-    collector_uuid: String,
-    mut ping_results_rx: mpsc::Receiver<PingResult>,
-    token: String,
-) {
-    // The buffer now stores a separate queue for each target IP address.
-    const BUFFER_LIMIT: usize = 1_000_000;
-    // The buffer now stores a separate queue for each target IP address.
-    let mut buffers: HashMap<IpAddr, VecDeque<RawDataRecord>> = HashMap::new();
-    // The ACK state is also tracked per-target.
-    let mut last_acked_nanos: HashMap<IpAddr, u64> = HashMap::new();
-    let mut interval = tokio::time::interval(Duration::from_secs(1));
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ping_client::PingResult;
+    use std::net::IpAddr;
+    use tokio::sync::OwnedSemaphorePermit;
+    use tokio::sync::mpsc;
 
-    loop {
-        tokio::select! {
-            Some(ping_result) = ping_results_rx.recv() => {
-                let total_buffered: usize = buffers.values().map(|v| v.len()).sum();
-                if total_buffered >= BUFFER_LIMIT {
-                    // Find the largest buffer and drop the oldest record from it.
-                    if let Some((target, buffer)) = buffers.iter_mut().max_by_key(|(_, v)| v.len()) {
-                        warn!("Buffer limit reached. Dropping oldest record for target {target}");
-                        buffer.pop_front();
-                    }
-                }
+    struct MockPingClient {
+        target: IpAddr,
+        ping_count: std::sync::Arc<std::sync::Mutex<usize>>,
+    }
 
-                let record = RawDataRecord {
-                    sent_nanos: ping_result.sent_nanos,
-                    rtt_nanos: ping_result.rtt.map_or(u64::MAX, |rtt| rtt.as_nanos() as u64),
-                };
-                buffers.entry(ping_result.target).or_default().push_back(record);
-            }
-            _ = interval.tick() => {
-                for (target, buffer) in buffers.iter_mut() {
-                    if buffer.is_empty() {
-                        continue;
-                    }
-
-                    let mut needs_immediate_retry = true;
-                    while needs_immediate_retry {
-                        needs_immediate_retry = false;
-
-                        if buffer.is_empty() {
-                            break;
-                        }
-
-                        let records_to_send: Vec<_> = buffer.iter().cloned().collect();
-                        let last_acked = *last_acked_nanos.get(target).unwrap_or(&0);
-                        let mut request = tonic::Request::new(SendBatchRequest {
-                            collector_uuid: collector_uuid.clone(),
-                            target_ip: target.to_string(),
-                            records: records_to_send,
-                            collector_believes_last_acked_nanos: last_acked,
-                        });
-                        request.metadata_mut().insert("authorization", format!("Bearer {}", token).parse().unwrap());
-
-                        match client.send_batch(request).await {
-                            Ok(response) => {
-                                let response = response.into_inner();
-                                match send_batch_response::Status::try_from(response.status) {
-                                    Ok(send_batch_response::Status::Ok) => {
-                                        let new_acked = response.database_confirms_last_acked_nanos;
-                                        info!("Batch for target {target} sent successfully. New acked_nanos: {new_acked}");
-                                        last_acked_nanos.insert(*target, new_acked);
-                                        buffer.retain(|r| r.sent_nanos > new_acked);
-                                    },
-                                    Ok(send_batch_response::Status::Desync) => {
-                                        let new_acked = response.database_confirms_last_acked_nanos;
-                                        warn!("Received DESYNC for target {target}. DB confirms acked_nanos: {new_acked}. Rewinding buffer.");
-                                        last_acked_nanos.insert(*target, new_acked);
-                                        buffer.retain(|r| r.sent_nanos > new_acked);
-                                        needs_immediate_retry = true;
-                                    }
-                                    Err(_) => {
-                                        error!("Unknown status for target {target} in SendBatchResponse: {}", response.status);
-                                    }
-                                }
-                            },
-                            Err(e) => {
-                                error!("send_batch RPC for target {target} failed: {e}. Data will be retried.");
-                                break;
-                            }
-                        }
-                    }
-                }
+    impl MockPingClient {
+        fn new(target: IpAddr) -> Self {
+            Self {
+                target,
+                ping_count: std::sync::Arc::new(std::sync::Mutex::new(0)),
             }
         }
+
+        fn get_ping_count(&self) -> usize {
+            *self.ping_count.lock().unwrap()
+        }
     }
-}
 
-/// The main entry point and runtime loop for the `zzping-collector` service.
-///
-/// This function orchestrates the entire lifecycle of the collector:
-/// 1.  Parses command-line arguments.
-/// 2.  Establishes a gRPC connection to the database, with a retry loop.
-/// 3.  Spawns the `batch_sender_loop` as a background task.
-/// 4.  Enters the main heartbeat loop, where it periodically calls the `heartbeat`
-///     RPC on the database to get its configuration and role.
-/// 5.  Uses a `StateMachine` to manage its own operational state (`Pinging`,
-///     `Standby`, `Shutdown`).
-/// 6.  Based on the state, it uses `manage_pinger_tasks` to start or stop the
-///     individual pinger tasks for each target IP.
-/// 7.  Handles `Shutdown` commands to exit gracefully.
-pub async fn run() -> Result<()> {
-    use clap::Parser;
-    use std::fs;
-    use std::path::Path;
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .try_init()
-        .ok();
-    let cli = Arc::new(Cli::parse());
-    info!("Starting zzping-collector v{}", env!("CARGO_PKG_VERSION"));
-    info!("Source hostname: {}", cli.source_hostname);
-    info!("Database address: {}", cli.database_addr);
+    #[async_trait::async_trait]
+    impl PingClient for MockPingClient {
+        fn target(&self) -> IpAddr {
+            self.target
+        }
 
-    // --- State Caching and Fail-Static Setup ---
-    let cache_dir = Path::new(".cache/zzping");
-    fs::create_dir_all(cache_dir)?;
-    let cache_file = cache_dir.join("last_config.bin");
+        async fn ping(
+            &self,
+            _sequence: u16,
+            tx: mpsc::Sender<PingResult>,
+            _permit: OwnedSemaphorePermit,
+            start_time: Instant,
+            _target_time: Instant,
+        ) {
+            {
+                let mut count = self.ping_count.lock().unwrap();
+                *count += 1;
+            } // Drop the lock before awaiting
 
-    let mut running_tasks: HashMap<IpAddr, JoinHandle<()>> = HashMap::new();
-    let mut state_machine = StateMachine::new(cli.source_hostname.clone());
-    let mut last_cached_config: Option<CachedConfig> = None;
+            let result = PingResult {
+                target: self.target,
+                sent_nanos: start_time.elapsed().as_nanos() as u64,
+                rtt: Some(Duration::from_micros(1000)), // 1ms RTT
+            };
 
-    let (mut ping_results_tx, _ping_results_rx) = mpsc::channel(1000);
-
-    // Load cached config on startup and immediately start pinging.
-    if let Ok(bytes) = fs::read(&cache_file)
-        && let Ok(config) = bincode::deserialize::<CachedConfig>(&bytes)
-    {
-        info!("Loaded cached config: {:?}", config);
-        manage_pinger_tasks(
-            true,
-            &config.targets,
-            config.ping_rate_pps,
-            &mut running_tasks,
-            &ping_results_tx,
-            &cli,
-        );
-        last_cached_config = Some(config);
+            let _ = tx.send(result).await;
+        }
     }
-    // --- End State Caching Setup ---
 
-    let ca_cert = tokio::fs::read("ca.pem")
-        .await
-        .context("Unable to read ca_cert as ./ca.pem")?;
-    let retry_delay = Duration::from_secs(5);
-    let pid = std::process::id() as u64;
+    #[tokio::test]
+    #[ntest::timeout(100)]
+    async fn test_pinger_loop_zero_rate() {
+        let (tx, _rx) = mpsc::channel(10);
+        let client = Arc::new(MockPingClient::new("127.0.0.1".parse().unwrap()));
 
-    loop {
-        info!("Attempting to connect to gRPC server...");
-        let host = if cli.database_addr.starts_with("https://") {
-            cli.database_addr.strip_prefix("https://").unwrap()
-        } else {
-            &cli.database_addr
-        };
-        let domain_name = host.split(':').next().unwrap();
-        let ca = if cli.database_addr.starts_with("https://") {
-            Some(Certificate::from_pem(ca_cert.clone()))
-        } else {
-            None
-        };
-        let tls_config = ca.as_ref().map(|ca| {
-            ClientTlsConfig::new()
-                .domain_name(domain_name)
-                .ca_certificate(ca.clone())
+        // Test that zero rate exits immediately
+        pinger_loop(client, tx, 10, 0).await;
+        // Should return immediately without panicking
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(100)]
+    async fn test_pinger_loop_basic_operation() {
+        let (tx, _rx) = mpsc::channel(10);
+        let client = Arc::new(MockPingClient::new("127.0.0.1".parse().unwrap()));
+
+        // Test that we can spawn the pinger loop and abort it quickly
+        let client_clone = client.clone();
+        let handle = tokio::spawn(async move {
+            pinger_loop(client_clone, tx, 10, 1000).await; // 1000 pps
         });
-        let channel_builder = Channel::from_shared(cli.database_addr.clone()).unwrap();
-        let channel = if let Some(tls) = tls_config {
-            channel_builder.tls_config(tls).unwrap()
-        } else {
-            channel_builder
-        };
 
-        match channel.connect().await {
-            Ok(channel) => {
-                let mut client = IngestionClient::new(channel.clone());
-                info!("gRPC client connected. Starting main loop.");
+        // Abort immediately
+        handle.abort();
 
-                // Create a new receiver for the batch sender loop.
-                // The single producer (tx) is cloned for each pinger task.
-                let (new_tx, new_rx) = mpsc::channel(1000);
-                ping_results_tx = new_tx;
+        // Just check that we can create and abort the task without issues
+        // The actual ping testing is covered by other tests
+    }
 
-                let token = {
-                    let auth_token = AuthToken {
-                        sub: cli.source_hostname.clone(),
-                        roles: vec!["collector".to_string()],
-                    };
-                    let json = serde_json::to_string(&auth_token).unwrap();
-                    general_purpose::STANDARD.encode(json)
-                };
-                let batch_sender_handle = tokio::spawn(batch_sender_loop(
-                    IngestionClient::new(channel.clone()),
-                    cli.source_hostname.clone(),
-                    new_rx,
-                    token.clone(),
-                ));
+    #[tokio::test]
+    #[ntest::timeout(100)]
+    async fn test_pinger_loop_semaphore_limiting() {
+        let (tx, _rx) = mpsc::channel(10);
+        let client = Arc::new(MockPingClient::new("127.0.0.1".parse().unwrap()));
 
-                let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(1));
-                loop {
-                    heartbeat_interval.tick().await;
-                    let mut request = tonic::Request::new(HeartbeatRequest {
-                        collector_uuid: cli.source_hostname.clone(),
-                        pid,
-                    });
-                    request.metadata_mut().insert(
-                        "authorization",
-                        format!("Bearer {}", token).parse().unwrap(),
-                    );
+        // Use very low max_in_flight to test semaphore
+        let client_clone = client.clone();
+        let handle = tokio::spawn(async move {
+            pinger_loop(client_clone, tx, 1, 1000).await; // 1000 pps, max 1 in flight
+        });
 
-                    match client.heartbeat(request).await {
-                        Ok(response) => {
-                            let response = response.into_inner();
-                            let action = state_machine.handle_heartbeat_response(&response);
+        // Let it run for a short time
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        handle.abort();
 
-                            // Cache the new config if it's different.
-                            let new_config = CachedConfig {
-                                targets: response.targets.clone(),
-                                ping_rate_pps: response.ping_rate_pps,
-                            };
-                            if Some(&new_config) != last_cached_config.as_ref() {
-                                info!(
-                                    "New configuration received. Caching to disk: {:?}",
-                                    new_config
-                                );
-                                if let Ok(bytes) = bincode::serialize(&new_config)
-                                    && let Err(e) = fs::write(&cache_file, bytes)
-                                {
-                                    warn!("Failed to write to cache file: {e}");
-                                }
-                                last_cached_config = Some(new_config);
-                            }
+        // With semaphore limit of 1 and high rate, we should still get some pings
+        let ping_count = client.get_ping_count();
+        assert!(
+            ping_count > 0,
+            "Should have sent some pings even with low semaphore limit"
+        );
+    }
 
-                            if let Some(Action::SeedBuffer) = action {
-                                info!("Transitioning to PRIMARY. Requesting buffer seed...");
-                                let request = tonic::Request::new(GetRecentDataRequest {
-                                    collector_uuid: cli.source_hostname.clone(),
-                                    lookback_seconds: 3600, // 1 hour
-                                });
-                                match client.get_recent_data(request).await {
-                                    Ok(data) => info!(
-                                        "Successfully seeded buffer with {} records.",
-                                        data.into_inner().records.len()
-                                    ),
-                                    Err(e) => warn!("Failed to seed buffer: {e}"),
-                                }
-                            }
+    #[tokio::test]
+    #[ntest::timeout(100)]
+    async fn test_pinger_loop_sequence_wrapping() {
+        let (tx, _rx) = mpsc::channel(10);
+        let client = Arc::new(MockPingClient::new("127.0.0.1".parse().unwrap()));
 
-                            if state_machine.current_state == State::Shutdown {
-                                info!("Received SHUTDOWN command. Exiting.");
-                                batch_sender_handle.abort();
-                                for handle in running_tasks.values() {
-                                    handle.abort();
-                                }
-                                return Ok(());
-                            }
+        // Test sequence number wrapping by running enough iterations
+        let client_clone = client.clone();
+        let handle = tokio::spawn(async move {
+            pinger_loop(client_clone, tx, 10, 10000).await; // Very high rate
+        });
 
-                            let should_be_pinging = state_machine.current_state == State::Pinging;
-                            manage_pinger_tasks(
-                                should_be_pinging,
-                                &response.targets,
-                                response.ping_rate_pps,
-                                &mut running_tasks,
-                                &ping_results_tx,
-                                &cli,
-                            );
-                        }
-                        Err(e) => {
-                            error!("Heartbeat failed: {e}. Reconnecting...");
-                            // On heartbeat failure, we DO NOT stop the pingers.
-                            // They continue with the last known configuration.
-                            // We do need to abort the batch sender as its client is now invalid.
-                            batch_sender_handle.abort();
-                            break;
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                error!("Failed to connect to gRPC server: {e}. Retrying in {retry_delay:?}.");
-                tokio::time::sleep(retry_delay).await;
-            }
-        }
+        // Let it run long enough to potentially wrap sequence numbers
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        handle.abort();
+
+        // With u16 sequence numbers, wrapping happens at 65536
+        // At 10000 pps, we'd need 6.5 seconds to wrap, so this test just ensures
+        // the loop runs without issues
+        let ping_count = client.get_ping_count();
+        assert!(
+            ping_count > 0,
+            "Should have sent pings during sequence test"
+        );
+    }
+
+    #[tokio::test]
+    #[ntest::timeout(1200)]
+    async fn test_pinger_loop_rate_control() {
+        let (tx, _rx) = mpsc::channel(10);
+        let client = Arc::new(MockPingClient::new("127.0.0.1".parse().unwrap()));
+
+        let start = Instant::now();
+        let client_clone = client.clone();
+        let handle = tokio::spawn(async move {
+            pinger_loop(client_clone, tx, 10, 10).await; // 10 pps = 100ms intervals
+        });
+
+        // Let it run for about 1 second
+        tokio::time::sleep(Duration::from_millis(1050)).await;
+        handle.abort();
+
+        let elapsed = start.elapsed();
+        let ping_count = client.get_ping_count();
+
+        // At 10 pps, we should get roughly 10-11 pings in 1 second
+        // Allow some tolerance for timing variations
+        assert!(
+            (8..=12).contains(&ping_count),
+            "Expected ~10 pings in 1 second at 10 pps, got {}",
+            ping_count
+        );
+
+        // Verify timing is reasonable (should be close to 1 second)
+        assert!(
+            elapsed >= Duration::from_millis(1000) && elapsed <= Duration::from_millis(1100),
+            "Test should run for about 1 second, ran for {:?}",
+            elapsed
+        );
     }
 }

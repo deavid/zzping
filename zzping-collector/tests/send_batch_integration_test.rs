@@ -2,84 +2,62 @@ use ntest::timeout;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use tokio::time::Duration;
-use tonic::{Request, Response, Status};
-use zzping_collector::runner::batch_sender_loop;
-use zzping_database::{auth::generate_test_token, grpc_server::check_auth};
+use zzping_collector::batch_submitter::BatchSubmitter;
+use zzping_collector::database_client::{DatabaseClient, SharedDatabaseClient};
+use zzping_database::auth::generate_test_token;
 use zzping_proto::zzping::{
-    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse, QueryRequest,
-    QueryResponse, SendBatchRequest, SendBatchResponse,
-    ingestion_client::IngestionClient,
-    ingestion_server::{Ingestion, IngestionServer},
-    send_batch_response,
+    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse,
+    SendBatchRequest, SendBatchResponse, send_batch_response,
 };
 
 #[derive(Clone)]
-struct MockIngestionService {
+struct MockDatabaseClient {
     request_tx: mpsc::Sender<SendBatchRequest>,
     responses: Arc<Mutex<Vec<SendBatchResponse>>>,
 }
 
-#[tonic::async_trait]
-impl Ingestion for MockIngestionService {
+#[async_trait::async_trait]
+impl DatabaseClient for MockDatabaseClient {
     async fn heartbeat(
         &self,
-        _request: Request<HeartbeatRequest>,
-    ) -> Result<Response<HeartbeatResponse>, Status> {
+        _req: tonic::Request<HeartbeatRequest>,
+    ) -> anyhow::Result<HeartbeatResponse> {
         unimplemented!()
     }
 
     async fn send_batch(
         &self,
-        request: Request<SendBatchRequest>,
-    ) -> Result<Response<SendBatchResponse>, Status> {
-        let req = request.into_inner();
-        self.request_tx.send(req).await.unwrap();
+        req: tonic::Request<SendBatchRequest>,
+    ) -> anyhow::Result<SendBatchResponse> {
+        let req_inner = req.into_inner();
+        self.request_tx.send(req_inner).await.unwrap();
         let response = self
             .responses
             .lock()
             .unwrap()
             .pop()
             .expect("Mock server ran out of responses");
-        Ok(Response::new(response))
+        Ok(response)
     }
 
     async fn get_recent_data(
         &self,
-        _request: Request<GetRecentDataRequest>,
-    ) -> Result<Response<GetRecentDataResponse>, Status> {
-        unimplemented!()
-    }
-
-    async fn query_data(
-        &self,
-        _request: Request<QueryRequest>,
-    ) -> Result<Response<QueryResponse>, Status> {
+        _req: tonic::Request<GetRecentDataRequest>,
+    ) -> anyhow::Result<GetRecentDataResponse> {
         unimplemented!()
     }
 }
 
-async fn spawn_mock_server(
+async fn create_mock_client(
     request_tx: mpsc::Sender<SendBatchRequest>,
     mut responses: Vec<SendBatchResponse>,
-) -> String {
+) -> SharedDatabaseClient {
     responses.reverse();
-    let service = MockIngestionService {
+    let mock_client = MockDatabaseClient {
         request_tx,
         responses: Arc::new(Mutex::new(responses)),
     };
-    let server = IngestionServer::with_interceptor(service, check_auth);
-
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    tokio::spawn(async move {
-        let _ = tonic::transport::Server::builder()
-            .add_service(server)
-            .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
-            .await;
-    });
-
-    format!("http://{addr}")
+    Arc::new(tokio::sync::Mutex::new(mock_client))
 }
 
 #[tokio::test]
@@ -92,17 +70,15 @@ async fn test_collector_sends_batch_and_prunes_buffer() {
         status: send_batch_response::Status::Ok as i32,
         database_confirms_last_acked_nanos: 2,
     };
-    let server_addr = spawn_mock_server(req_tx, vec![ok_response]).await;
 
     let (ping_tx, ping_rx) = mpsc::channel(100);
-    let client = IngestionClient::connect(server_addr).await.unwrap();
+    let client = create_mock_client(req_tx, vec![ok_response]).await;
     let token = generate_test_token("test-collector", &["collector"]);
-    tokio::spawn(batch_sender_loop(
-        client,
-        "test-collector".to_string(),
-        ping_rx,
-        token,
-    ));
+
+    let batch_submitter = BatchSubmitter::new(client, ping_rx, "test-collector".to_string(), token);
+    tokio::spawn(async move {
+        let _ = batch_submitter.run().await;
+    });
 
     let target_ip = "1.1.1.1".parse().unwrap();
     ping_tx
@@ -161,17 +137,15 @@ async fn test_collector_rewinds_buffer_on_desync() {
             database_confirms_last_acked_nanos: 3,
         },
     ];
-    let server_addr = spawn_mock_server(req_tx, responses).await;
 
     let (ping_tx, ping_rx) = mpsc::channel(100);
-    let client = IngestionClient::connect(server_addr).await.unwrap();
+    let client = create_mock_client(req_tx, responses).await;
     let token = generate_test_token("test-collector", &["collector"]);
-    tokio::spawn(batch_sender_loop(
-        client,
-        "test-collector".to_string(),
-        ping_rx,
-        token,
-    ));
+
+    let batch_submitter = BatchSubmitter::new(client, ping_rx, "test-collector".to_string(), token);
+    tokio::spawn(async move {
+        let _ = batch_submitter.run().await;
+    });
 
     let target_ip = "1.1.1.1".parse().unwrap();
     ping_tx

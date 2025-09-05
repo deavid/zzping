@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{OwnedSemaphorePermit, mpsc};
 
 /// The result of a single ping operation.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PingResult {
     /// The IP address of the target that was pinged.
     pub target: IpAddr,
