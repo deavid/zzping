@@ -7,8 +7,8 @@ use crate::{
 };
 use base64::{engine::general_purpose, Engine as _};
 use dashmap::DashMap;
-use log::{info, warn};
-use std::{collections::HashSet, sync::Arc};
+use log::{error, info, warn};
+use std::{collections::HashSet, net::IpAddr, sync::Arc};
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
 use zzping_proto::zzping::{
@@ -26,7 +26,6 @@ use zzping_proto::zzping::{
 /// If the token is valid, it creates a `UserIdentity` and attaches it to the
 /// request's extensions for use by the actual RPC handler. If any step of this
 /// process fails, it returns an `Unauthenticated` status, and the RPC handler
-
 #[allow(clippy::result_large_err)]
 pub fn check_auth<T>(mut req: Request<T>) -> Result<Request<T>, Status> {
     let token = req
@@ -68,9 +67,9 @@ pub fn check_auth<T>(mut req: Request<T>) -> Result<Request<T>, Status> {
 pub struct IngestionServiceImpl {
     /// A send-only channel to the background storage engine task.
     ///
-    /// This field is not currently used as the storage engine has been simplified,
-    /// but it is kept for potential future enhancements where data ingestion and
-    /// disk I/O are more decoupled.
+    /// Every batch of ping data that is successfully validated and accepted by the
+    /// `send_batch` RPC is sent through this channel to be buffered and eventually
+    /// written to a `.zzp1` file.
     storage_tx: mpsc::Sender<IngestionItem>,
     /// The path to the data directory, used for reading the `intent.ron` file
     /// and for querying historical data.
@@ -78,11 +77,13 @@ pub struct IngestionServiceImpl {
     /// The shared, read-only configuration that dictates the desired state for
     /// all collectors. This is loaded once at startup.
     intent_config: Arc<IntentConfig>,
-    /// A map tracking the last successfully acknowledged timestamp for each collector.
+    /// A map tracking the last successfully acknowledged timestamp for each
+    /// collector/target pair.
     ///
     /// This is used to implement the `OK`/`DESYNC` logic in the `send_batch` RPC,
     /// ensuring that collectors and the database agree on the state of the data stream.
-    collector_states: Arc<DashMap<String, u64>>,
+    /// The key is a tuple of `(collector_uuid, target_ip)`.
+    collector_states: Arc<DashMap<(String, String), u64>>,
     /// The scheduler responsible for managing collector roles and orchestrating
     /// zero-downtime handoffs between them.
     scheduler: Arc<Scheduler>,
@@ -156,6 +157,7 @@ impl Ingestion for IngestionServiceImpl {
         &self,
         request: Request<SendBatchRequest>,
     ) -> Result<Response<SendBatchResponse>, Status> {
+        info!("[DEBUG 1/4] send_batch received with {} records for collector '{}'", request.get_ref().records.len(), request.get_ref().collector_uuid);
         let identity = request.extensions().get::<UserIdentity>().ok_or_else(|| {
             Status::internal("Missing user identity. This should have been handled by the auth interceptor.")
         })?;
@@ -166,18 +168,19 @@ impl Ingestion for IngestionServiceImpl {
 
         let request = request.into_inner();
         let collector_id = request.collector_uuid;
+        let target_ip_str = request.target_ip;
         let collector_believes_last_acked = request.collector_believes_last_acked_nanos;
 
-        let mut collector_state = self
-            .collector_states
-            .entry(collector_id.clone())
-            .or_insert(0);
+        let target_ip: IpAddr = target_ip_str.parse().map_err(|_| Status::invalid_argument("Invalid target_ip format"))?;
+
+        let state_key = (collector_id.clone(), target_ip_str.clone());
+        let mut collector_state = self.collector_states.entry(state_key).or_insert(0);
 
         let db_last_acked = *collector_state;
 
         if db_last_acked != collector_believes_last_acked {
             warn!(
-                "Collector {collector_id} is out of sync. DB acked: {db_last_acked}, collector believed: {collector_believes_last_acked}"
+                "Collector {collector_id} for target {target_ip_str} is out of sync. DB acked: {db_last_acked}, collector believed: {collector_believes_last_acked}"
             );
             return Ok(Response::new(SendBatchResponse {
                 status: send_batch_response::Status::Desync as i32,
@@ -188,11 +191,25 @@ impl Ingestion for IngestionServiceImpl {
         let mut last_sent_nanos = db_last_acked;
         for record in request.records {
             if record.sent_nanos <= db_last_acked {
-                warn!("Collector {collector_id} sent record with old timestamp, ignoring.");
+                warn!("Collector {collector_id} sent record for {target_ip_str} with old timestamp, ignoring.");
                 continue;
             }
-            info!("Record from {collector_id}: {record:?}");
             last_sent_nanos = record.sent_nanos;
+
+            // This is the core fix: send the item to the storage engine.
+            let item = IngestionItem {
+                source_hostname: collector_id.clone(),
+                target: target_ip,
+                record: zzping_lib::protocol::RawDataRecord {
+                    sent_nanos: record.sent_nanos,
+                    rtt_nanos: record.rtt_nanos,
+                },
+            };
+            info!("[DEBUG 2/4] Constructed IngestionItem: {:?}", item);
+            if self.storage_tx.send(item).await.is_err() {
+                error!("Storage task channel closed. This is a fatal error.");
+                return Err(Status::internal("Storage engine has shut down."));
+            }
         }
 
         *collector_state = last_sent_nanos;
@@ -259,8 +276,6 @@ impl Ingestion for IngestionServiceImpl {
 }
 
 #[cfg(feature = "test-utils")]
-use crate::auth;
-#[cfg(feature = "test-utils")]
 use std::time::Duration;
 #[cfg(feature = "test-utils")]
 use tokio::task::JoinHandle;
@@ -304,7 +319,6 @@ mod tests {
     use ntest::timeout;
     use std::io::Write;
     use tempfile::tempdir;
-    use tonic::metadata::AsciiMetadataValue;
     use zzping_proto::zzping::{ingestion_client::IngestionClient, RawDataRecord};
 
     #[test]
@@ -332,7 +346,7 @@ mod tests {
             .insert("authorization", "Bearer not-base64".parse().unwrap());
         assert!(check_auth(bad_req_invalid).is_err());
 
-        let mut bad_req_missing = Request::new(());
+        let bad_req_missing = Request::new(());
         assert!(check_auth(bad_req_missing).is_err());
     }
 
@@ -402,15 +416,18 @@ mod tests {
         server_handle.abort();
     }
 
-    fn create_test_service() -> IngestionServiceImpl {
-        let (tx, _) = mpsc::channel(100);
-        IngestionServiceImpl {
-            storage_tx: tx,
-            data_dir: "".to_string(),
-            intent_config: Arc::new(IntentConfig { ping_rate_pps: 0, targets: vec![] }),
-            collector_states: Arc::new(DashMap::new()),
-            scheduler: Arc::new(Scheduler::new()),
-        }
+    fn create_test_service_with_receiver() -> (IngestionServiceImpl, mpsc::Receiver<IngestionItem>) {
+        let (tx, rx) = mpsc::channel(100);
+        (
+            IngestionServiceImpl {
+                storage_tx: tx,
+                data_dir: "".to_string(),
+                intent_config: Arc::new(IntentConfig { ping_rate_pps: 0, targets: vec![] }),
+                collector_states: Arc::new(DashMap::new()),
+                scheduler: Arc::new(Scheduler::new()),
+            },
+            rx,
+        )
     }
 
     fn create_authed_request<T>(payload: T, sub: &str, roles: &[&str]) -> Request<T> {
@@ -426,11 +443,15 @@ mod tests {
     #[tokio::test]
     #[timeout(100)]
     async fn test_sendbatch_accepts_good_data() {
-        let service = create_test_service();
-        service.collector_states.insert("collector-1".to_string(), 100);
+        let (mut service, mut item_rx) = create_test_service_with_receiver();
+        tokio::spawn(async move { while item_rx.recv().await.is_some() {} });
+
+        let state_key = ("collector-1".to_string(), "1.1.1.1".to_string());
+        service.collector_states.insert(state_key.clone(), 100);
 
         let payload = SendBatchRequest {
             collector_uuid: "collector-1".to_string(),
+            target_ip: "1.1.1.1".to_string(),
             collector_believes_last_acked_nanos: 100,
             records: vec![
                 RawDataRecord { sent_nanos: 101, rtt_nanos: 10 },
@@ -442,17 +463,21 @@ mod tests {
         let response = service.send_batch(request).await.unwrap().into_inner();
         assert_eq!(response.status, send_batch_response::Status::Ok as i32);
         assert_eq!(response.database_confirms_last_acked_nanos, 102);
-        assert_eq!(*service.collector_states.get("collector-1").unwrap(), 102);
+        assert_eq!(*service.collector_states.get(&state_key).unwrap(), 102);
     }
 
     #[tokio::test]
     #[timeout(100)]
     async fn test_sendbatch_rejects_desync_data() {
-        let service = create_test_service();
-        service.collector_states.insert("collector-1".to_string(), 100);
+        let (mut service, mut item_rx) = create_test_service_with_receiver();
+        tokio::spawn(async move { while item_rx.recv().await.is_some() {} });
+
+        let state_key = ("collector-1".to_string(), "1.1.1.1".to_string());
+        service.collector_states.insert(state_key.clone(), 100);
 
         let payload = SendBatchRequest {
             collector_uuid: "collector-1".to_string(),
+            target_ip: "1.1.1.1".to_string(),
             collector_believes_last_acked_nanos: 99,
             records: vec![RawDataRecord { sent_nanos: 101, rtt_nanos: 10 }],
         };
@@ -461,6 +486,6 @@ mod tests {
         let response = service.send_batch(request).await.unwrap().into_inner();
         assert_eq!(response.status, send_batch_response::Status::Desync as i32);
         assert_eq!(response.database_confirms_last_acked_nanos, 100);
-        assert_eq!(*service.collector_states.get("collector-1").unwrap(), 100);
+        assert_eq!(*service.collector_states.get(&state_key).unwrap(), 100);
     }
 }

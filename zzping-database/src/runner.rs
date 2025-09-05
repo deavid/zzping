@@ -21,10 +21,10 @@ pub async fn run() -> Result<()> {
     info!("starting zzping-database server");
 
     // This channel is the central pipeline for all incoming data from collectors.
-    let (tx, rx) = mpsc::channel::<IngestionItem>(1024);
+    let (item_tx, item_rx) = mpsc::channel::<IngestionItem>(1024);
 
     // The storage task runs in the background, consuming from the channel.
-    tokio::spawn(storage_engine::storage_task(rx));
+    tokio::spawn(storage_engine::storage_task(item_rx, DATA_DIR.to_string()));
 
     // Run finalization for any old files on startup.
     if let Err(e) = run_startup_finalization(DATA_DIR) {
@@ -32,7 +32,7 @@ pub async fn run() -> Result<()> {
     }
 
     let addr = INGESTION_ADDR.parse()?;
-    let ingestion_service = IngestionServiceImpl::new(tx, DATA_DIR.to_string());
+    let ingestion_service = IngestionServiceImpl::new(item_tx, DATA_DIR.to_string());
     let server = IngestionServer::new(ingestion_service);
 
     // These paths should be configurable in a real production environment.

@@ -49,8 +49,9 @@ message HeartbeatResponse {
 // --- Message Definitions for SendBatch ---
 message SendBatchRequest {
   string collector_uuid = 1;
-  repeated RawDataRecord records = 2;
-  uint64 collector_believes_last_acked_nanos = 3;
+  string target_ip = 2;
+  repeated RawDataRecord records = 3;
+  uint64 collector_believes_last_acked_nanos = 4;
 }
 message SendBatchResponse {
   enum Status {

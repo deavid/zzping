@@ -105,8 +105,10 @@ async fn test_collector_sends_batch_and_prunes_buffer() {
         token,
     ));
 
+    let target_ip = "1.1.1.1".parse().unwrap();
     ping_tx
         .send(zzping_collector::ping_client::PingResult {
+            target: target_ip,
             sent_nanos: 1,
             rtt: None,
         })
@@ -114,6 +116,7 @@ async fn test_collector_sends_batch_and_prunes_buffer() {
         .unwrap();
     ping_tx
         .send(zzping_collector::ping_client::PingResult {
+            target: target_ip,
             sent_nanos: 2,
             rtt: None,
         })
@@ -129,6 +132,7 @@ async fn test_collector_sends_batch_and_prunes_buffer() {
 
     ping_tx
         .send(zzping_collector::ping_client::PingResult {
+            target: target_ip,
             sent_nanos: 3,
             rtt: None,
         })
@@ -170,8 +174,10 @@ async fn test_collector_rewinds_buffer_on_desync() {
         token,
     ));
 
+    let target_ip = "1.1.1.1".parse().unwrap();
     ping_tx
         .send(zzping_collector::ping_client::PingResult {
+            target: target_ip,
             sent_nanos: 1,
             rtt: None,
         })
@@ -179,6 +185,7 @@ async fn test_collector_rewinds_buffer_on_desync() {
         .unwrap();
     ping_tx
         .send(zzping_collector::ping_client::PingResult {
+            target: target_ip,
             sent_nanos: 2,
             rtt: None,
         })
@@ -201,6 +208,7 @@ async fn test_collector_rewinds_buffer_on_desync() {
 
     ping_tx
         .send(zzping_collector::ping_client::PingResult {
+            target: target_ip,
             sent_nanos: 3,
             rtt: None,
         })

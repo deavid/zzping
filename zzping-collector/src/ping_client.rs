@@ -7,6 +7,8 @@ use tokio::sync::{OwnedSemaphorePermit, mpsc};
 /// The result of a single ping operation.
 #[derive(Debug, Clone)]
 pub struct PingResult {
+    /// The IP address of the target that was pinged.
+    pub target: IpAddr,
     /// The time at which the ping was sent, relative to the start of the session.
     pub sent_nanos: u64,
     /// The round-trip time, or `None` if the packet was lost.

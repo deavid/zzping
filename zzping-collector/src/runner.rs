@@ -147,58 +147,71 @@ pub async fn batch_sender_loop(
     mut ping_results_rx: mpsc::Receiver<PingResult>,
     token: String,
 ) {
-    let mut buffer: VecDeque<RawDataRecord> = VecDeque::new();
-    let mut last_acked_nanos = 0;
+    // The buffer now stores a separate queue for each target IP address.
+    let mut buffers: HashMap<IpAddr, VecDeque<RawDataRecord>> = HashMap::new();
+    // The ACK state is also tracked per-target.
+    let mut last_acked_nanos: HashMap<IpAddr, u64> = HashMap::new();
     let mut interval = tokio::time::interval(Duration::from_secs(1));
 
     loop {
         tokio::select! {
             Some(ping_result) = ping_results_rx.recv() => {
-                buffer.push_back(RawDataRecord {
+                let record = RawDataRecord {
                     sent_nanos: ping_result.sent_nanos,
                     rtt_nanos: ping_result.rtt.map_or(u64::MAX, |rtt| rtt.as_nanos() as u64),
-                });
+                };
+                buffers.entry(ping_result.target).or_default().push_back(record);
             }
             _ = interval.tick() => {
-                let mut needs_immediate_retry = true;
-                while needs_immediate_retry {
-                    needs_immediate_retry = false;
-
+                for (target, buffer) in buffers.iter_mut() {
                     if buffer.is_empty() {
-                        break;
+                        continue;
                     }
 
-                    let records_to_send: Vec<_> = buffer.iter().cloned().collect();
-                    let mut request = tonic::Request::new(SendBatchRequest {
-                        collector_uuid: collector_uuid.clone(),
-                        records: records_to_send,
-                        collector_believes_last_acked_nanos: last_acked_nanos,
-                    });
-                    request.metadata_mut().insert("authorization", format!("Bearer {}", token).parse().unwrap());
+                    let mut needs_immediate_retry = true;
+                    while needs_immediate_retry {
+                        needs_immediate_retry = false;
 
-                    match client.send_batch(request).await {
-                        Ok(response) => {
-                            let response = response.into_inner();
-                            match send_batch_response::Status::try_from(response.status) {
-                                Ok(send_batch_response::Status::Ok) => {
-                                    info!("Batch sent successfully. New acked_nanos: {}", response.database_confirms_last_acked_nanos);
-                                    last_acked_nanos = response.database_confirms_last_acked_nanos;
-                                    buffer.retain(|r| r.sent_nanos > last_acked_nanos);
-                                },
-                                Ok(send_batch_response::Status::Desync) => {
-                                    warn!("Received DESYNC from server. DB confirms acked_nanos: {}. Rewinding buffer.", response.database_confirms_last_acked_nanos);
-                                    last_acked_nanos = response.database_confirms_last_acked_nanos;
-                                    buffer.retain(|r| r.sent_nanos > last_acked_nanos);
-                                    needs_immediate_retry = true;
-                                }
-                                Err(_) => {
-                                    error!("Unknown status in SendBatchResponse: {}", response.status);
-                                }
-                            }
-                        },
-                        Err(e) => {
-                            error!("send_batch RPC failed: {e}. Data will be retried.");
+                        if buffer.is_empty() {
                             break;
+                        }
+
+                        let records_to_send: Vec<_> = buffer.iter().cloned().collect();
+                        let last_acked = *last_acked_nanos.get(target).unwrap_or(&0);
+                        let mut request = tonic::Request::new(SendBatchRequest {
+                            collector_uuid: collector_uuid.clone(),
+                            target_ip: target.to_string(),
+                            records: records_to_send,
+                            collector_believes_last_acked_nanos: last_acked,
+                        });
+                        request.metadata_mut().insert("authorization", format!("Bearer {}", token).parse().unwrap());
+
+                        match client.send_batch(request).await {
+                            Ok(response) => {
+                                let response = response.into_inner();
+                                match send_batch_response::Status::try_from(response.status) {
+                                    Ok(send_batch_response::Status::Ok) => {
+                                        let new_acked = response.database_confirms_last_acked_nanos;
+                                        info!("Batch for target {target} sent successfully. New acked_nanos: {new_acked}");
+                                        last_acked_nanos.insert(*target, new_acked);
+                                        buffer.retain(|r| r.sent_nanos > new_acked);
+                                    },
+                                    Ok(send_batch_response::Status::Desync) => {
+                                        let new_acked = response.database_confirms_last_acked_nanos;
+                                        warn!("Received DESYNC for target {target}. DB confirms acked_nanos: {new_acked}. Rewinding buffer.");
+                                        last_acked_nanos.insert(*target, new_acked);
+                                        buffer.retain(|r| r.sent_nanos > new_acked);
+                                        needs_immediate_retry = true;
+                                    }
+                                    Err(_) => {
+                                        error!("Unknown status for target {target} in SendBatchResponse: {}", response.status);
+                                    }
+                                }
+                            },
+                            Err(e) => {
+                                error!("send_batch RPC for target {target} failed: {e}. Data will be retried.");
+                                break;
+                            }
                         }
                     }
                 }

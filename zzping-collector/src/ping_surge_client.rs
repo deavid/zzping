@@ -56,6 +56,7 @@ impl PingClient for PingSurgeClient {
             .await;
         tokio::spawn(ping_task(
             pinger,
+            self.target,
             sequence_idx,
             tx,
             permit,
@@ -72,6 +73,7 @@ impl PingClient for PingSurgeClient {
 /// a timeout/error) is sent back to the `connection_manager` via an MPSC channel.
 async fn ping_task(
     mut pinger: Pinger,
+    target: IpAddr,
     seq: u16,
     tx: mpsc::Sender<PingResult>,
     _permit: OwnedSemaphorePermit,
@@ -97,7 +99,11 @@ async fn ping_task(
         Err(_) => None,
     };
 
-    let result = PingResult { sent_nanos, rtt };
+    let result = PingResult {
+        target,
+        sent_nanos,
+        rtt,
+    };
 
     if tx.send(result).await.is_err() {
         // Receiver has been dropped, which means the main connection task has

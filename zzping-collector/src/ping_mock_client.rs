@@ -26,6 +26,7 @@ impl PingMockClient {
         Self {
             pings: Arc::new(Mutex::new(Vec::new())),
             result_to_send: Some(PingResult {
+                target: IpAddr::from_str("127.0.0.1").unwrap(),
                 sent_nanos: 12345,
                 rtt: Some(Duration::from_millis(50)),
             }),
@@ -61,7 +62,9 @@ impl PingClient for PingMockClient {
         _target_time: Instant,
     ) {
         self.pings.lock().unwrap().push(sequence_idx);
-        if let Some(result) = self.result_to_send.clone() {
+        if let Some(mut result) = self.result_to_send.clone() {
+            // Ensure the result has the correct target for this client.
+            result.target = self.target();
             tokio::spawn(async move {
                 tx.send(result).await.ok();
             });
@@ -93,8 +96,9 @@ mod tests {
             assert_eq!(*pings, vec![123]);
         }
 
-        // Check that the result was sent
+        // Check that the result was sent and has the correct target
         let result = rx.recv().await.unwrap();
         assert_eq!(result.sent_nanos, 12345);
+        assert_eq!(result.target, client.target());
     }
 }
