@@ -98,26 +98,40 @@ impl CollectorService {
         });
 
         info!("Waiting for a database connection...");
-        while let Some(client) = client_rx.recv().await {
-            info!("Received new database client. Spawning SessionHandler.");
-            client_update_tx
-                .send(ClientUpdate::NewClient(Box::new(client.clone())))
-                .await?;
+        loop {
+            match client_rx.recv().await {
+                Some(client) => {
+                    info!("Received new database client. Spawning SessionHandler.");
+                    client_update_tx
+                        .send(ClientUpdate::NewClient(Box::new(client.clone())))
+                        .await?;
 
-            let session_handler = SessionHandler::new(
-                client,
-                config_tx.clone(),
-                self.config.collector_uuid.clone(),
-                latest_health_rx.clone(),
-                persistence_tx.clone(),
-            );
-            let session_handle = tokio::spawn(session_handler.run());
+                    let session_handler = SessionHandler::new(
+                        client,
+                        config_tx.clone(),
+                        self.config.collector_uuid.clone(),
+                        latest_health_rx.clone(),
+                        persistence_tx.clone(),
+                    );
+                    let session_handle = tokio::spawn(session_handler.run());
 
-            session_handle.await??;
+                    // Wait for the session to end. This can happen if the connection
+                    // is lost or the server commands a shutdown.
+                    if let Err(e) = session_handle.await? {
+                        warn!("Session ended with an error: {e}");
+                    } else {
+                        warn!("Session ended gracefully.");
+                    }
 
-            warn!("Session ended. Notifying supervisor and requesting new connection.");
-            client_update_tx.send(ClientUpdate::ClientLost).await?;
-            reconnect_notify.notify_one();
+                    warn!("Notifying supervisor and requesting new connection.");
+                    client_update_tx.send(ClientUpdate::ClientLost).await?;
+                    reconnect_notify.notify_one();
+                }
+                None => {
+                    warn!("ConnectionManager has shut down. CollectorService can no longer receive new connections.");
+                    break;
+                }
+            }
         }
 
         supervisor_handle.await??;
@@ -130,6 +144,7 @@ impl CollectorService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ntest::timeout;
 
     fn mock_config() -> Config {
         Config {
@@ -140,6 +155,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[timeout(100)]
     async fn test_collector_service_new() {
         let config = mock_config();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

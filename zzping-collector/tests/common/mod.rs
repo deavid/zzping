@@ -150,6 +150,35 @@ impl Ingestion for MockIngestionService {
     }
 }
 
+use tokio::sync::mpsc;
+use zzping_collector::target_worker::WorkerCommand;
+
+// --- Mock TargetWorker ---
+
+/// A mock handle for a TargetWorker, used to receive commands in tests.
+pub struct MockTargetWorkerHandle {
+    pub command_rx: mpsc::Receiver<WorkerCommand>,
+}
+
+/// A factory function to create a real `TargetWorkerHandle` for the supervisor
+/// to use, and a `MockTargetWorkerHandle` for the test to inspect.
+pub fn mock_worker_factory() -> (
+    zzping_collector::target_worker::TargetWorkerHandle,
+    MockTargetWorkerHandle,
+) {
+    let (command_tx, command_rx) = mpsc::channel(10);
+    let mock_handle = MockTargetWorkerHandle { command_rx };
+
+    // The real handle that the supervisor will interact with.
+    let real_handle = zzping_collector::target_worker::TargetWorkerHandle {
+        command_tx,
+        // The task handle is not used by the supervisor test, so we can use a dummy one.
+        task_handle: tokio::spawn(async {}),
+    };
+    (real_handle, mock_handle)
+}
+
+
 /// Helper to spawn a mock server and get its address.
 pub async fn spawn_mock_server(service: MockIngestionService) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
