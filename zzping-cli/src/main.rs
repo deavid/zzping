@@ -54,8 +54,8 @@ fn inspect_file(path: &PathBuf) -> Result<()> {
     let last_record_time =
         DateTime::from_timestamp_nanos(records.last().unwrap().sent_nanos as i64);
     println!("\n--- Header Information ---");
-    println!("Start Time: {}", first_record_time);
-    println!("End Time:   {}", last_record_time);
+    println!("Start Time: {first_record_time}");
+    println!("End Time:   {last_record_time}");
     println!("Duration:   {}", last_record_time - first_record_time);
 
     // --- Statistics ---
@@ -84,15 +84,14 @@ fn inspect_file(path: &PathBuf) -> Result<()> {
     };
 
     println!("\n--- Statistics ---");
-    println!("Total Pings:      {}", total_pings);
-    println!("Successful Pings: {}", successful_pings);
+    println!("Total Pings:      {total_pings}");
+    println!("Successful Pings: {successful_pings}");
     println!(
-        "Lost Packets:     {} ({:.2}%)",
-        lost_packets, packet_loss_pct
+        "Lost Packets:     {lost_packets} ({packet_loss_pct:.2}%)"
     );
-    println!("Min RTT:          {:.3} ms", min_rtt);
-    println!("Median RTT:       {:.3} ms", median_rtt);
-    println!("Max RTT:          {:.3} ms", max_rtt);
+    println!("Min RTT:          {min_rtt:.3} ms");
+    println!("Median RTT:       {median_rtt:.3} ms");
+    println!("Max RTT:          {max_rtt:.3} ms");
 
     // --- Continuity Check ---
     println!("\n--- Continuity Check ---");

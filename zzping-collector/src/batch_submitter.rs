@@ -1,3 +1,8 @@
+// NOTE: The contents of this file have been temporarily commented out to allow
+// the project to compile during the Chapter 1 refactoring. This component
+// will be completely redesigned and reimplemented in Chapter 2.
+
+/*
 //! Buffers and periodically submits ping results to the database.
 //!
 //! This module organizes ping results into per-target buffers and ensures
@@ -212,3 +217,4 @@ impl BatchSubmitter {
         }
     }
 }
+*/

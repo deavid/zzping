@@ -218,7 +218,7 @@ impl Ingestion for IngestionServiceImpl {
                     rtt_nanos: record.rtt_nanos,
                 },
             };
-            info!("[DEBUG 2/4] Constructed IngestionItem: {:?}", item);
+            info!("[DEBUG 2/4] Constructed IngestionItem: {item:?}");
             if self.storage_tx.send(item).await.is_err() {
                 error!("Storage task channel closed. This is a fatal error.");
                 return Err(Status::internal("Storage engine has shut down."));

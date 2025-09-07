@@ -1,0 +1,41 @@
+use zzping_collector::database_client::DatabaseClient;
+use zzping_proto::zzping::{CollectorRole, HeartbeatRequest};
+
+// Import the common test utilities
+mod common;
+use common::spawn_mock_server;
+
+#[tokio::test]
+async fn test_database_client_connect_and_heartbeat() {
+    let addr = spawn_mock_server().await;
+    let client_addr = format!("http://{addr}");
+
+    // Test successful connection and heartbeat.
+    let mut client = DatabaseClient::connect(client_addr.clone(), "test-token".to_string())
+        .await
+        .unwrap();
+
+    let request = HeartbeatRequest {
+        collector_uuid: "test-uuid".to_string(),
+        pid: 1234,
+    };
+    let response = client.heartbeat(request).await;
+    assert!(response.is_ok());
+    let response = response.unwrap().into_inner();
+    assert_eq!(response.ping_rate_pps, 100);
+    assert_eq!(response.role, CollectorRole::Primary as i32);
+
+    // Test with a bad token.
+    let mut bad_client = DatabaseClient::connect(client_addr, "bad-token".to_string())
+        .await
+        .unwrap();
+    let request = HeartbeatRequest {
+        collector_uuid: "test-uuid".to_string(),
+        pid: 1234,
+    };
+    let response = bad_client.heartbeat(request).await;
+    assert!(response.is_err());
+    let err = response.unwrap_err();
+    let status = err.downcast_ref::<tonic::Status>().unwrap();
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+}
