@@ -3,12 +3,12 @@ use tempfile::NamedTempFile;
 use tokio::{net::TcpListener, sync::oneshot, time::timeout};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
-use zzping_collector::{database_client::tests::MockIngestionService, run_with_config_path};
+use zzping_collector::run_with_config_path;
 use zzping_proto::zzping::ingestion_server::IngestionServer;
 
 // Import the common test utilities
 mod common;
-use common::VectorLogger;
+use common::{MockIngestionService, VectorLogger};
 
 /// This is the primary integration test for the collector's resilience.
 /// It verifies that the collector can:
@@ -40,11 +40,10 @@ async fn test_collector_survives_disconnect_and_reconnects() {
         r#"
 (
     collector_uuid: "integ-test-uuid",
-    database_addr: "http://{}",
+    database_addr: "http://{addr}",
     auth_token: "test-token",
 )
-"#,
-        addr
+"#
     );
     let mut config_file = NamedTempFile::new().unwrap();
     config_file.write_all(config_content.as_bytes()).unwrap();

@@ -35,8 +35,3 @@ byteorder.workspace = true
 ntest.workspace = true
 tempfile.workspace = true
 zzping-database = { workspace = true, features = ["test-utils"] }
-
-[features]
-# This feature enables test-only utilities and helpers that can be used
-# by integration tests.
-test-utils = []

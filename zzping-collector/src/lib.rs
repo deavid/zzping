@@ -65,7 +65,7 @@ pub fn bootstrap_collector(config_path: String) -> Result<CollectorService> {
     let lock_addr: SocketAddr = "127.0.0.1:7879".parse()?;
     let lock = match TcpListener::bind(lock_addr) {
         Ok(listener) => {
-            info!("Successfully acquired TCP port lock on {}", lock_addr);
+            info!("Successfully acquired TCP port lock on {lock_addr}");
             listener
         }
         Err(e) => {

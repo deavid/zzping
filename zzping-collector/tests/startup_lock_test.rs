@@ -45,8 +45,7 @@ fn test_port_lock_prevents_second_instance() {
     if let Err(e) = bootstrap_result2 {
         assert!(
             e.to_string().contains("Failed to acquire TCP port lock"),
-            "Error message was not about the TCP port lock: {}",
-            e
+            "Error message was not about the TCP port lock: {e}"
         );
     }
 

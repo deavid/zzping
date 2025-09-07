@@ -249,15 +249,13 @@ mod tests {
         // Allow some tolerance for timing variations
         assert!(
             (8..=12).contains(&ping_count),
-            "Expected ~10 pings in 1 second at 10 pps, got {}",
-            ping_count
+            "Expected ~10 pings in 1 second at 10 pps, got {ping_count}"
         );
 
         // Verify timing is reasonable (should be close to 1 second)
         assert!(
             elapsed >= Duration::from_millis(1000) && elapsed <= Duration::from_millis(1100),
-            "Test should run for about 1 second, ran for {:?}",
-            elapsed
+            "Test should run for about 1 second, ran for {elapsed:?}"
         );
     }
 }

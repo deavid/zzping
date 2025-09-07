@@ -200,8 +200,7 @@ impl Scheduler {
                 .map(|i| i.pid)
                 .unwrap_or(0);
             info!(
-                "Handoff detected for uuid='{}': incumbent_pid={}, new_pid={}",
-                uuid, incumbent_pid, pid
+                "Handoff detected for uuid='{uuid}': incumbent_pid={incumbent_pid}, new_pid={pid}"
             );
             let handoff = HandoffState {
                 new_primary_pid: pid,

@@ -72,7 +72,7 @@ impl CollectorService {
 
             // Wait for the session to end.
             if let Err(e) = session_handle.await {
-                warn!("SessionHandler task failed: {}", e);
+                warn!("SessionHandler task failed: {e}");
             }
 
             // The session has ended. Signal the ConnectionManager to reconnect.

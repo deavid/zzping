@@ -40,8 +40,7 @@ impl TaskSupervisor {
                 // In the future, this is where the reconciliation logic will go.
                 // For now, we just log what we would do.
                 info!(
-                    "TaskSupervisor received new config. Would apply: {:?}",
-                    config
+                    "TaskSupervisor received new config. Would apply: {config:?}"
                 );
             } else {
                 info!("TaskSupervisor received empty config. Would remove all workers.");
