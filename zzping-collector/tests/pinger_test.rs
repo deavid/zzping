@@ -26,11 +26,11 @@ async fn test_pinger_loop() {
     // Spawn a mock gRPC server to handle the AnnouncePings RPC.
     let server_addr = common::spawn_mock_server(MockIngestionService::default()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
 
-    let (_pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);
+    let (pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);
     let pinger = Pinger::new(
         target,
         ping_rate_pps,
@@ -43,6 +43,9 @@ async fn test_pinger_loop() {
     );
 
     let pinger_handle = tokio::spawn(pinger.run());
+
+    // Activate the pinger
+    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
 
     // Let the pinger run for a short duration
     sleep(test_duration);
@@ -83,11 +86,11 @@ async fn test_pinger_handles_lost_packets() {
 
     let server_addr = common::spawn_mock_server(MockIngestionService::default()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
 
-    let (_pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);
+    let (pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);
     let pinger = Pinger::new(
         target,
         10, // Ping rate doesn't matter much for this test
@@ -100,6 +103,9 @@ async fn test_pinger_handles_lost_packets() {
     );
 
     let _pinger_handle = tokio::spawn(pinger.run());
+
+    // Activate the pinger
+    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
 
     // Wait for the grace period to elapse, plus a buffer
     tokio::time::sleep(grace_period + Duration::from_millis(50)).await;
@@ -125,7 +131,7 @@ async fn test_pinger_pauses_and_resumes() {
     let (results_tx, _results_rx) = mpsc::channel(100);
     let server_addr = common::spawn_mock_server(MockIngestionService::default()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
     let (pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);

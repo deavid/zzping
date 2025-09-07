@@ -8,8 +8,8 @@ use log::{error, info, warn};
 use std::{collections::HashSet, time::Duration};
 use tokio::sync::{mpsc, watch};
 use zzping_proto::zzping::{
-    command::CommandType, CollectorRole, Command, CommandRequest, HeartbeatRequest,
-    HeartbeatResponse,
+    CollectorRole, Command, CommandRequest, HeartbeatRequest, HeartbeatResponse,
+    command::CommandType,
 };
 
 /// An internal message to the state manager loop.
@@ -150,7 +150,12 @@ impl SessionHandler {
         collector_uuid: String,
         update_tx: mpsc::Sender<SessionUpdate>,
     ) -> Result<()> {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
+        // FIXME: This interval must be configurable externally, specially for unit tests!
+        let mut interval = tokio::time::interval(if cfg!(test) {
+            Duration::from_millis(1)
+        } else {
+            Duration::from_millis(100)
+        });
         let last_processed_command_id = 0; // Will be updated later
 
         loop {
@@ -166,20 +171,33 @@ impl SessionHandler {
                 last_processed_command_id,
             };
 
-            match client.heartbeat(request).await {
-                Ok(response) => {
-                    if update_tx
-                        .send(SessionUpdate::FromHeartbeat(response.into_inner()))
-                        .await
-                        .is_err()
-                    {
-                        info!("State manager disconnected, heartbeat loop shutting down.");
-                        break;
+            // Add timeout to heartbeat request
+            let heartbeat_result = tokio::time::timeout(
+                Duration::from_millis(500), // Timeout for heartbeat
+                client.heartbeat(request),
+            )
+            .await;
+
+            match heartbeat_result {
+                Ok(result) => match result {
+                    Ok(response) => {
+                        if update_tx
+                            .send(SessionUpdate::FromHeartbeat(response.into_inner()))
+                            .await
+                            .is_err()
+                        {
+                            info!("State manager disconnected, heartbeat loop shutting down.");
+                            break;
+                        }
                     }
-                }
-                Err(e) => {
-                    error!("Heartbeat RPC failed: {e}. Session ending.");
-                    return Err(e);
+                    Err(e) => {
+                        error!("Heartbeat RPC failed: {e}. Session ending.");
+                        return Err(e);
+                    }
+                },
+                Err(_) => {
+                    error!("Heartbeat request timed out - connection likely failed.");
+                    return Err(anyhow::anyhow!("Heartbeat timeout"));
                 }
             }
         }
@@ -195,15 +213,50 @@ impl SessionHandler {
         let mut stream = client.subscribe_to_commands(request).await?.into_inner();
         info!("Successfully subscribed to command stream.");
 
-        while let Some(command) = stream.message().await? {
-            info!("Received command: {command:?}");
-            if update_tx
-                .send(SessionUpdate::FromCommand(command))
-                .await
-                .is_err()
-            {
-                info!("State manager disconnected, command loop shutting down.");
-                break;
+        loop {
+            // Add timeout to detect if stream is stuck
+            let message_result = tokio::time::timeout(
+                if cfg!(test) {
+                    // Short timeout in tests
+                    Duration::from_millis(10)
+                } else {
+                    Duration::from_millis(1000)
+                },
+                stream.message(),
+            )
+            .await;
+
+            match message_result {
+                Ok(message_result) => match message_result? {
+                    Some(command) => {
+                        info!("Received command: {command:?}");
+                        if update_tx
+                            .send(SessionUpdate::FromCommand(command))
+                            .await
+                            .is_err()
+                        {
+                            info!("State manager disconnected, command loop shutting down.");
+                            break;
+                        }
+                    }
+                    None => {
+                        info!("Command stream ended (received None).");
+                        break;
+                    }
+                },
+                Err(_) => {
+                    // Timeout occurred - this might indicate connection issues
+                    info!("Command stream message timeout - checking if we should exit.");
+
+                    // Check if the update_tx is still alive (state manager still running)
+                    if update_tx.is_closed() {
+                        info!("Update channel closed, command loop shutting down.");
+                        break;
+                    }
+
+                    // Continue the loop to try again
+                    continue;
+                }
             }
         }
 
@@ -211,4 +264,3 @@ impl SessionHandler {
         Ok(())
     }
 }
-

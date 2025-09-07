@@ -1,5 +1,5 @@
 use crate::{
-    batch_submitter::{BatchSubmitter, SharedBuffer},
+    batch_submitter::{BatchSubmitter, BatchSubmitterCommand, SharedBuffer},
     database_client::DatabaseClient,
     pinger::{FinalizedPing, Pinger, PingerCommand},
     ping_surge_client::PingSurgeClient,
@@ -43,6 +43,7 @@ pub struct TargetWorker {
     target_ip: IpAddr,
     pinger: Pinger,
     pinger_command_tx: mpsc::Sender<PingerCommand>,
+    batch_submitter_command_tx: mpsc::Sender<BatchSubmitterCommand>,
     batch_submitter: BatchSubmitter,
     command_rx: mpsc::Receiver<WorkerCommand>,
     buffer: SharedBuffer,
@@ -60,6 +61,7 @@ impl TargetWorker {
         let (command_tx, command_rx) = mpsc::channel(10);
         let (results_tx, results_rx) = mpsc::channel::<FinalizedPing>(100);
         let (pinger_command_tx, pinger_command_rx) = mpsc::channel(10);
+        let (batch_submitter_command_tx, batch_submitter_command_rx) = mpsc::channel(10);
 
         let ping_client = Arc::new(PingSurgeClient::new(target_ip)?);
 
@@ -84,12 +86,14 @@ impl TargetWorker {
             Duration::from_secs(24 * 3600),
             db_client,
             buffer.clone(),
+            batch_submitter_command_rx,
         );
 
         let worker = Self {
             target_ip,
             pinger,
             pinger_command_tx,
+            batch_submitter_command_tx,
             batch_submitter,
             command_rx,
             buffer,
@@ -113,6 +117,7 @@ impl TargetWorker {
         // Move components out of self to avoid partial move errors.
         let pinger = self.pinger;
         let pinger_command_tx = self.pinger_command_tx;
+        let batch_submitter_command_tx = self.batch_submitter_command_tx;
         let batch_submitter = self.batch_submitter;
         let mut command_rx = self.command_rx;
         let buffer = self.buffer;
@@ -137,6 +142,9 @@ impl TargetWorker {
                             info!("TargetWorker for {} updating role to {:?}", self.target_ip, role);
                             if pinger_command_tx.send(PingerCommand::UpdateRole(role)).await.is_err() {
                                 warn!("Failed to send UpdateRole command to pinger for target {}.", self.target_ip);
+                            }
+                            if batch_submitter_command_tx.send(BatchSubmitterCommand::UpdateRole(role)).await.is_err() {
+                                warn!("Failed to send UpdateRole command to batch_submitter for target {}.", self.target_ip);
                             }
                         }
                         WorkerCommand::Shutdown => {

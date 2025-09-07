@@ -9,14 +9,14 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio_stream::wrappers::TcpListenerStream;
-use tonic::{transport::Server, Request, Response, Status};
+use tonic::{Request, Response, Status, transport::Server};
 use zzping_proto::zzping::{
+    AnnouncePingsRequest, AnnouncePingsResponse, CollectorRole, GetRecentDataRequest,
+    GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse, QueryRequest, QueryResponse,
+    SendBatchRequest, SendBatchResponse,
     ingestion_server::{Ingestion, IngestionServer},
-    send_batch_response, AnnouncePingsRequest, AnnouncePingsResponse, CollectorRole,
-    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse,
-    QueryRequest, QueryResponse, SendBatchRequest, SendBatchResponse,
+    send_batch_response,
 };
-
 
 /// A simple logger that captures log messages into a shared vector.
 pub struct VectorLogger {
@@ -51,13 +51,12 @@ impl VectorLogger {
     }
 }
 
-
 // --- Mock gRPC Server ---
 
 use zzping_proto::zzping::Command;
 
 /// A mock implementation of the Ingestion service for testing.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub struct MockIngestionService {
     pub received_batches: Arc<Mutex<Vec<SendBatchRequest>>>,
@@ -65,6 +64,12 @@ pub struct MockIngestionService {
     pub send_batch_response: Arc<Mutex<SendBatchResponse>>,
     pub heartbeat_response: Arc<Mutex<HeartbeatResponse>>,
     pub command_stream_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Result<Command, Status>>>>>,
+}
+
+impl Default for MockIngestionService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MockIngestionService {
@@ -78,7 +83,7 @@ impl MockIngestionService {
             })),
             heartbeat_response: Arc::new(Mutex::new(HeartbeatResponse {
                 targets: vec!["127.0.0.1".to_string()],
-                ping_rate_pps: 10,
+                ping_rate_pps: 100,
                 role: CollectorRole::Primary as i32,
                 swap_at_nanos: 0,
             })),
@@ -93,6 +98,19 @@ impl Ingestion for MockIngestionService {
         &self,
         request: Request<HeartbeatRequest>,
     ) -> Result<Response<HeartbeatResponse>, Status> {
+        // Check authentication
+        if let Some(auth_header) = request.metadata().get("authorization") {
+            if let Ok(auth_str) = auth_header.to_str() {
+                if !auth_str.starts_with("Bearer ") || &auth_str[7..] != "test-token" {
+                    return Err(Status::unauthenticated("Invalid token"));
+                }
+            } else {
+                return Err(Status::unauthenticated("Invalid token format"));
+            }
+        } else {
+            return Err(Status::unauthenticated("Missing authorization header"));
+        }
+
         self.received_heartbeats
             .lock()
             .unwrap()
@@ -106,6 +124,19 @@ impl Ingestion for MockIngestionService {
         &self,
         request: Request<SendBatchRequest>,
     ) -> Result<Response<SendBatchResponse>, Status> {
+        // Check authentication
+        if let Some(auth_header) = request.metadata().get("authorization") {
+            if let Ok(auth_str) = auth_header.to_str() {
+                if !auth_str.starts_with("Bearer ") || &auth_str[7..] != "test-token" {
+                    return Err(Status::unauthenticated("Invalid token"));
+                }
+            } else {
+                return Err(Status::unauthenticated("Invalid token format"));
+            }
+        } else {
+            return Err(Status::unauthenticated("Missing authorization header"));
+        }
+
         self.received_batches
             .lock()
             .unwrap()
@@ -130,8 +161,21 @@ impl Ingestion for MockIngestionService {
 
     async fn announce_pings(
         &self,
-        _request: Request<AnnouncePingsRequest>,
+        request: Request<AnnouncePingsRequest>,
     ) -> Result<Response<AnnouncePingsResponse>, Status> {
+        // Check authentication
+        if let Some(auth_header) = request.metadata().get("authorization") {
+            if let Ok(auth_str) = auth_header.to_str() {
+                if !auth_str.starts_with("Bearer ") || &auth_str[7..] != "test-token" {
+                    return Err(Status::unauthenticated("Invalid token"));
+                }
+            } else {
+                return Err(Status::unauthenticated("Invalid token format"));
+            }
+        } else {
+            return Err(Status::unauthenticated("Missing authorization header"));
+        }
+
         // This is a fire-and-forget RPC, so we just return OK.
         Ok(Response::new(AnnouncePingsResponse {}))
     }
@@ -141,8 +185,21 @@ impl Ingestion for MockIngestionService {
 
     async fn subscribe_to_commands(
         &self,
-        _request: Request<zzping_proto::zzping::CommandRequest>,
+        request: Request<zzping_proto::zzping::CommandRequest>,
     ) -> Result<Response<Self::SubscribeToCommandsStream>, Status> {
+        // Check authentication
+        if let Some(auth_header) = request.metadata().get("authorization") {
+            if let Ok(auth_str) = auth_header.to_str() {
+                if !auth_str.starts_with("Bearer ") || &auth_str[7..] != "test-token" {
+                    return Err(Status::unauthenticated("Invalid token"));
+                }
+            } else {
+                return Err(Status::unauthenticated("Invalid token format"));
+            }
+        } else {
+            return Err(Status::unauthenticated("Missing authorization header"));
+        }
+
         let (tx, rx) = tokio::sync::mpsc::channel(10);
         *self.command_stream_tx.lock().unwrap() = Some(tx);
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
@@ -177,7 +234,6 @@ pub fn mock_worker_factory() -> (
     };
     (real_handle, mock_handle)
 }
-
 
 /// Helper to spawn a mock server and get its address.
 pub async fn spawn_mock_server(service: MockIngestionService) -> SocketAddr {

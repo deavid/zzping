@@ -1,3 +1,4 @@
+use log::info;
 use ntest::timeout;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
@@ -10,7 +11,7 @@ use zzping_collector::{
 use zzping_proto::zzping::CollectorRole;
 
 mod common;
-use common::{spawn_mock_server, MockIngestionService};
+use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]
 #[timeout(3000)]
@@ -36,12 +37,9 @@ async fn test_session_handler_sends_config_on_success() {
     let (persistence_tx, _persistence_rx) = mpsc::channel::<CachedIntent>(1);
 
     let server_addr = spawn_mock_server(MockIngestionService::default()).await;
-    let client = DatabaseClient::connect(
-        format!("http://{server_addr}"),
-        "test-token".to_string(),
-    )
-    .await
-    .unwrap();
+    let client = DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
+        .await
+        .unwrap();
 
     let handler = SessionHandler::new(
         client,
@@ -65,19 +63,28 @@ async fn test_session_handler_sends_config_on_success() {
     let config = received_config.unwrap();
 
     // Check that the config contains data from the mock response
-    assert_eq!(config.ping_rate_pps, 10);
+    assert_eq!(config.ping_rate_pps, 100);
     assert!(config.targets.contains(&"127.0.0.1".parse().unwrap()));
 }
 
 #[tokio::test]
 #[timeout(3000)]
 async fn test_session_handler_exits_on_connection_failure() {
+    // Initialize env_logger for debug output
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .is_test(true)
+        .try_init()
+        .ok();
+
+    info!("Starting test_session_handler_exits_on_connection_failure");
+
     // This test verifies that the handler's run loop terminates
     // when the database connection fails.
 
     // To test this, we start a server, let the handler connect, then stop the server.
     let (config_tx, _) = watch::channel(None);
-    let (_health_tx, health_rx) = watch::channel(HealthReport {
+    let (health_tx, health_rx) = watch::channel(HealthReport {
         total_buffer_size: 0,
         role: CollectorRole::Standby,
         fatal_errors: vec![],
@@ -87,6 +94,8 @@ async fn test_session_handler_exits_on_connection_failure() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    info!("Starting mock server on {}", addr);
+
     let server_handle = tokio::spawn(async move {
         tonic::transport::Server::builder()
             .add_service(
@@ -107,6 +116,7 @@ async fn test_session_handler_exits_on_connection_failure() {
     let client = DatabaseClient::connect(format!("http://{addr}"), "test-token".to_string())
         .await
         .unwrap();
+    info!("Database client connected to {}", addr);
 
     let handler = SessionHandler::new(
         client,
@@ -116,15 +126,55 @@ async fn test_session_handler_exits_on_connection_failure() {
         persistence_tx,
     );
     let handler_handle = tokio::spawn(handler.run());
+    info!("SessionHandler started");
 
-    // Let it run once successfully
-    tokio::time::sleep(Duration::from_millis(1100)).await;
+    // Send a health report to trigger the heartbeat loop
+    health_tx.send_replace(HealthReport {
+        total_buffer_size: 123,
+        role: CollectorRole::Primary,
+        fatal_errors: vec![],
+    });
+    info!("Health report sent");
+
+    // Let it run once successfully with a shorter wait
+    tokio::time::sleep(Duration::from_millis(10)).await;
+    info!("Initial wait completed");
 
     // Now, shut down the server
+    info!("Shutting down server");
     shutdown_tx.send(()).unwrap();
     server_handle.await.unwrap();
+    info!("Server shutdown complete");
 
     // The handler should now exit gracefully.
-    let result = tokio::time::timeout(Duration::from_secs(2), handler_handle).await;
-    assert!(result.is_ok(), "SessionHandler did not exit after server shutdown");
+    info!("Waiting for SessionHandler to exit");
+    let result = tokio::time::timeout(Duration::from_millis(500), handler_handle).await;
+    match result {
+        Ok(handler_result) => {
+            info!("SessionHandler exited within timeout");
+            // Check if the handler finished (successfully or with error)
+            match handler_result {
+                Ok(session_result) => {
+                    // The session should exit when connection fails, regardless of success/error
+                    match session_result {
+                        Ok(_) => {
+                            info!("SessionHandler exited successfully as expected");
+                        }
+                        Err(e) => {
+                            info!("SessionHandler exited with error (also acceptable): {}", e);
+                        }
+                    }
+                }
+                Err(join_error) => panic!("Handler task panicked: {}", join_error),
+            }
+        }
+        Err(_) => {
+            info!(
+                "SessionHandler did not exit within timeout - this is the bug we're investigating"
+            );
+            panic!("SessionHandler did not exit after server shutdown within timeout");
+        }
+    }
+
+    info!("Test completed");
 }

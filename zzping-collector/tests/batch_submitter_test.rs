@@ -4,6 +4,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::mpsc;
 use zzping_collector::batch_submitter::{BatchSubmitter, SharedBuffer};
 use zzping_collector::database_client::DatabaseClient;
 use zzping_collector::pinger::FinalizedPing;
@@ -19,6 +20,7 @@ fn setup_submitter(
     retention_period: Duration,
 ) -> (BatchSubmitter, SharedBuffer) {
     let buffer = Arc::new(Mutex::new(BTreeMap::new()));
+    let (_command_tx, command_rx) = mpsc::channel(10);
     let submitter = BatchSubmitter::new(
         "test-collector".to_string(),
         IpAddr::from_str("1.1.1.1").unwrap(),
@@ -27,6 +29,7 @@ fn setup_submitter(
         retention_period,
         db_client,
         buffer.clone(),
+        command_rx,
     );
     (submitter, buffer)
 }
@@ -83,7 +86,7 @@ async fn test_send_batch_ok_and_embargo() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service.clone()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
     let (mut submitter, buffer) =
@@ -129,7 +132,7 @@ async fn test_send_batch_desync() {
     }
     let server_addr = common::spawn_mock_server(mock_service.clone()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
     let (mut submitter, _) =

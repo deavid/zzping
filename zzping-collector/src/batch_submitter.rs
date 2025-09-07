@@ -7,9 +7,15 @@ use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-use zzping_proto::zzping::{send_batch_response, RawDataRecord, SendBatchRequest};
+use zzping_proto::zzping::{send_batch_response, CollectorRole, RawDataRecord, SendBatchRequest};
 
 pub type SharedBuffer = Arc<Mutex<BTreeMap<u64, RawDataRecord>>>;
+
+/// Commands that can be sent to the BatchSubmitter.
+#[derive(Debug)]
+pub enum BatchSubmitterCommand {
+    UpdateRole(CollectorRole),
+}
 
 /// The BatchSubmitter is responsible for buffering ping results for a single
 /// target and submitting them to the database in batches.
@@ -22,6 +28,8 @@ pub struct BatchSubmitter {
     db_client: DatabaseClient,
     pub buffer: SharedBuffer,
     pub last_acked_received_nanos: u64,
+    command_rx: mpsc::Receiver<BatchSubmitterCommand>,
+    is_active: bool,
 }
 
 impl BatchSubmitter {
@@ -34,6 +42,7 @@ impl BatchSubmitter {
         retention_period: Duration,
         db_client: DatabaseClient,
         buffer: SharedBuffer,
+        command_rx: mpsc::Receiver<BatchSubmitterCommand>,
     ) -> Self {
         Self {
             collector_uuid,
@@ -44,6 +53,8 @@ impl BatchSubmitter {
             db_client,
             buffer,
             last_acked_received_nanos: 0,
+            command_rx,
+            is_active: true, // Start active
         }
     }
 
@@ -62,11 +73,15 @@ impl BatchSubmitter {
                     info!("BatchSubmitter for {} received finalized ping: {:?}", self.target_ip, finalized_ping);
                     self.ingest_ping_result(finalized_ping);
                 }
+                Some(command) = self.command_rx.recv() => {
+                    self.handle_command(command);
+                }
                 _ = submission_interval.tick() => {
                     self.prune_by_time();
-                    if let Err(e) = self.send_batch().await {
-                        warn!("Failed to send batch for target {}: {}", self.target_ip, e);
-                    }
+                    if self.is_active
+                        && let Err(e) = self.send_batch().await {
+                            warn!("Failed to send batch for target {}: {}", self.target_ip, e);
+                        }
                 }
                 else => {
                     break;
@@ -79,6 +94,24 @@ impl BatchSubmitter {
             self.target_ip
         );
         Ok(())
+    }
+
+    /// Handles a command sent to the BatchSubmitter.
+    fn handle_command(&mut self, command: BatchSubmitterCommand) {
+        match command {
+            BatchSubmitterCommand::UpdateRole(role) => {
+                let should_be_active =
+                    matches!(role, CollectorRole::Primary | CollectorRole::PrimarySupervised);
+                if self.is_active != should_be_active {
+                    self.is_active = should_be_active;
+                    info!(
+                        "BatchSubmitter for {} is now {}.",
+                        self.target_ip,
+                        if self.is_active { "active" } else { "paused" }
+                    );
+                }
+            }
+        }
     }
 
     /// Ingests a single `FinalizedPing` and stores it in the buffer.
@@ -104,8 +137,8 @@ impl BatchSubmitter {
         let mut buffer = self.buffer.lock().unwrap();
         buffer.insert(key, record);
 
-        if buffer.len() > self.buffer_limit {
-            if let Some((key, _)) = buffer.first_key_value() {
+        if buffer.len() > self.buffer_limit
+            && let Some((key, _)) = buffer.first_key_value() {
                 let key = *key;
                 buffer.remove(&key);
                 warn!(
@@ -113,7 +146,6 @@ impl BatchSubmitter {
                     self.target_ip, key
                 );
             }
-        }
     }
 
     /// Sends a batch of records to the database.
