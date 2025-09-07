@@ -259,7 +259,10 @@ impl Ingestion for IngestionServiceImpl {
             "get_recent_data called by '{}', returning empty response for now.",
             identity.id
         );
-        Ok(Response::new(GetRecentDataResponse { records: vec![] }))
+        Ok(Response::new(GetRecentDataResponse {
+            records: vec![],
+            database_confirms_last_acked_received_nanos: 0,
+        }))
     }
 
     /// Allows a client (like `zzping-gui`) to query for historical data.
@@ -320,6 +323,40 @@ impl Ingestion for IngestionServiceImpl {
         debug!("Received AnnouncePings from '{}'", identity.id);
 
         Ok(Response::new(AnnouncePingsResponse {}))
+    }
+
+    type SubscribeToCommandsStream =
+        std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<zzping_proto::zzping::Command, Status>> + Send>>;
+
+    async fn subscribe_to_commands(
+        &self,
+        request: Request<zzping_proto::zzping::CommandRequest>,
+    ) -> Result<Response<Self::SubscribeToCommandsStream>, Status> {
+        let identity = request.extensions().get::<UserIdentity>().ok_or_else(|| {
+            Status::internal(
+                "Missing user identity. This should have been handled by the auth interceptor.",
+            )
+        })?;
+
+        if !identity.has_role("collector") {
+            return Err(Status::permission_denied("Missing 'collector' role."));
+        }
+
+        info!(
+            "Collector '{}' subscribed to command stream.",
+            identity.id
+        );
+
+        // For now, we return an empty stream that closes immediately.
+        let (tx, rx) = mpsc::channel(1);
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        // Keep the sender alive for now, otherwise the stream closes immediately.
+        // A real implementation would store this sender somewhere.
+        tokio::spawn(async move {
+            let _sender = tx;
+        });
+
+        Ok(Response::new(Box::pin(stream)))
     }
 }
 
@@ -461,6 +498,10 @@ mod tests {
         let mut request = Request::new(HeartbeatRequest {
             collector_uuid: "test-collector".to_string(),
             pid: 1234,
+            current_role: 0,
+            buffer_record_count: 0,
+            last_fatal_error: "".to_string(),
+            last_processed_command_id: 0,
         });
         request
             .metadata_mut()
@@ -473,6 +514,10 @@ mod tests {
         let mut request = Request::new(HeartbeatRequest {
             collector_uuid: "test-collector".to_string(),
             pid: 1234,
+            current_role: 0,
+            buffer_record_count: 0,
+            last_fatal_error: "".to_string(),
+            last_processed_command_id: 0,
         });
         request
             .metadata_mut()

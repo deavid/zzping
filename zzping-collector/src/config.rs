@@ -3,8 +3,10 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 
+use serde::Serialize;
+
 /// The file-based configuration for the collector.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
     pub collector_uuid: String,
     pub database_addr: String,

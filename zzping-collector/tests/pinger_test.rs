@@ -30,6 +30,7 @@ async fn test_pinger_loop() {
             .await
             .unwrap();
 
+    let (_pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);
     let pinger = Pinger::new(
         target,
         ping_rate_pps,
@@ -38,6 +39,7 @@ async fn test_pinger_loop() {
         mock_ping_client.clone(),
         results_tx,
         db_client,
+        pinger_cmd_rx,
     );
 
     let pinger_handle = tokio::spawn(pinger.run());
@@ -85,6 +87,7 @@ async fn test_pinger_handles_lost_packets() {
             .await
             .unwrap();
 
+    let (_pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);
     let pinger = Pinger::new(
         target,
         10, // Ping rate doesn't matter much for this test
@@ -93,6 +96,7 @@ async fn test_pinger_handles_lost_packets() {
         mock_ping_client.clone(),
         results_tx,
         db_client,
+        pinger_cmd_rx,
     );
 
     let _pinger_handle = tokio::spawn(pinger.run());

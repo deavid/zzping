@@ -7,7 +7,13 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, Semaphore};
-use zzping_proto::zzping::AnnouncePingsRequest;
+use zzping_proto::zzping::{AnnouncePingsRequest, CollectorRole};
+
+/// A command for the Pinger task.
+#[derive(Debug)]
+pub enum PingerCommand {
+    UpdateRole(CollectorRole),
+}
 
 // ... MonotonicTimeSource ...
 pub struct MonotonicTimeSource {
@@ -79,10 +85,13 @@ pub struct Pinger {
     db_client: DatabaseClient,
     time_source: MonotonicTimeSource,
     in_flight_pings: HashMap<u16, u64>,
+    command_rx: mpsc::Receiver<PingerCommand>,
+    is_active: bool,
 }
 
 impl Pinger {
     /// Creates a new Pinger.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         target: IpAddr,
         ping_rate_pps: u64,
@@ -91,6 +100,7 @@ impl Pinger {
         ping_client: Arc<dyn PingClient>,
         results_tx: mpsc::Sender<FinalizedPing>,
         db_client: DatabaseClient,
+        command_rx: mpsc::Receiver<PingerCommand>,
     ) -> Self {
         Self {
             target,
@@ -102,6 +112,8 @@ impl Pinger {
             db_client,
             time_source: MonotonicTimeSource::new(),
             in_flight_pings: HashMap::new(),
+            command_rx,
+            is_active: false, // Start in a paused state by default
         }
     }
 
@@ -129,72 +141,109 @@ impl Pinger {
         let (internal_tx, mut internal_rx) = mpsc::channel(100);
 
         loop {
-            tokio::select! {
-                _ = ping_interval.tick() => {
-                    let permit = match semaphore.clone().try_acquire_owned() {
-                        Ok(p) => p,
-                        Err(_) => {
-                            warn!("Pinger for {} is busy, skipping a ping.", self.target);
-                            continue;
-                        }
-                    };
-
-                    if let Some(sent_nanos) = self.time_source.now_ns() {
-                        self.in_flight_pings.insert(sequence_idx, sent_nanos);
-
-                        let mut db_client = self.db_client.clone();
-                        tokio::spawn(async move {
-                            let request = AnnouncePingsRequest { sent_nanos: vec![sent_nanos] };
-                            if let Err(e) = db_client.announce_pings(request).await {
-                                debug!("Failed to announce ping: {e}");
+            if self.is_active {
+                tokio::select! {
+                    _ = ping_interval.tick() => {
+                        let permit = match semaphore.clone().try_acquire_owned() {
+                            Ok(p) => p,
+                            Err(_) => {
+                                warn!("Pinger for {} is busy, skipping a ping.", self.target);
+                                continue;
                             }
-                        });
+                        };
 
-                        self.ping_client.ping(sequence_idx, internal_tx.clone(), permit, sent_nanos).await;
-                        sequence_idx = sequence_idx.wrapping_add(1);
-                    }
-                }
-                Some(ping_reply) = internal_rx.recv() => {
-                    if let Some(sent_nanos) = self.in_flight_pings.remove(&ping_reply.sequence_idx) {
-                        let finalized_ping = FinalizedPing { sent_nanos, rtt: ping_reply.rtt };
-                        if self.results_tx.send(finalized_ping).await.is_err() {
-                            info!("BatchSubmitter disconnected, Pinger for {} shutting down.", self.target);
-                            break;
-                        }
-                    } else {
-                        warn!("Received result for untracked sequence: {}", ping_reply.sequence_idx);
-                    }
-                }
-                _ = timeout_interval.tick() => {
-                    let now_ns = self.time_source.now_ns().unwrap_or(self.time_source.last_generated_ns);
-                    let grace_period_ns = self.grace_period.as_nanos() as u64;
+                        if let Some(sent_nanos) = self.time_source.now_ns() {
+                            self.in_flight_pings.insert(sequence_idx, sent_nanos);
 
-                    let mut lost_pings = vec![];
-                    self.in_flight_pings.retain(|&_seq, &mut sent_ns| {
-                        if now_ns.saturating_sub(sent_ns) > grace_period_ns {
-                            lost_pings.push(FinalizedPing {
-                                sent_nanos: sent_ns,
-                                rtt: None, // Mark as lost
+                            let mut db_client = self.db_client.clone();
+                            tokio::spawn(async move {
+                                let request = AnnouncePingsRequest { sent_nanos: vec![sent_nanos] };
+                                if let Err(e) = db_client.announce_pings(request).await {
+                                    debug!("Failed to announce ping: {e}");
+                                }
                             });
-                            false // Remove from in-flight map
-                        } else {
-                            true // Keep in map
-                        }
-                    });
 
-                    for lost_ping in lost_pings {
-                        if self.results_tx.send(lost_ping).await.is_err() {
-                            info!("BatchSubmitter disconnected while sending lost pings, Pinger for {} shutting down.", self.target);
-                            return Ok(()); // Exit the whole function
+                            self.ping_client.ping(sequence_idx, internal_tx.clone(), permit, sent_nanos).await;
+                            sequence_idx = sequence_idx.wrapping_add(1);
                         }
                     }
+                    Some(command) = self.command_rx.recv() => {
+                        self.handle_command(command);
+                    }
+                    Some(ping_reply) = internal_rx.recv() => {
+                        if let Some(sent_nanos) = self.in_flight_pings.remove(&ping_reply.sequence_idx) {
+                            let finalized_ping = FinalizedPing { sent_nanos, rtt: ping_reply.rtt };
+                            info!("Pinger for {} sending finalized ping: {:?}", self.target, finalized_ping);
+                            if self.results_tx.send(finalized_ping).await.is_err() {
+                                info!("BatchSubmitter disconnected, Pinger for {} shutting down.", self.target);
+                                return Ok(());
+                            }
+                        } else {
+                            warn!("Received result for untracked sequence: {}", ping_reply.sequence_idx);
+                        }
+                    }
+                    _ = timeout_interval.tick() => {
+                        if self.handle_timeouts().await.is_err() {
+                            return Ok(()); // Error already logged in handle_timeouts
+                        }
+                    }
+                    else => {
+                        return Ok(());
+                    }
                 }
-                else => {
-                    break;
+            } else {
+                // When not active, only listen for commands.
+                if let Some(command) = self.command_rx.recv().await {
+                    self.handle_command(command);
+                } else {
+                    // Channel closed, shut down.
+                    info!("Command channel closed, Pinger for {} shutting down.", self.target);
+                    return Ok(());
                 }
             }
         }
+    }
 
+    fn handle_command(&mut self, command: PingerCommand) {
+        match command {
+            PingerCommand::UpdateRole(role) => {
+                let should_be_active =
+                    matches!(role, CollectorRole::Primary | CollectorRole::PrimarySupervised);
+                if self.is_active != should_be_active {
+                    self.is_active = should_be_active;
+                    info!(
+                        "Pinger for {} is now {}.",
+                        self.target,
+                        if self.is_active { "active" } else { "paused" }
+                    );
+                }
+            }
+        }
+    }
+
+    async fn handle_timeouts(&mut self) -> Result<()> {
+        let now_ns = self.time_source.now_ns().unwrap_or(self.time_source.last_generated_ns);
+        let grace_period_ns = self.grace_period.as_nanos() as u64;
+
+        let mut lost_pings = vec![];
+        self.in_flight_pings.retain(|&_seq, &mut sent_ns| {
+            if now_ns.saturating_sub(sent_ns) > grace_period_ns {
+                lost_pings.push(FinalizedPing {
+                    sent_nanos: sent_ns,
+                    rtt: None, // Mark as lost
+                });
+                false // Remove from in-flight map
+            } else {
+                true // Keep in map
+            }
+        });
+
+        for lost_ping in lost_pings {
+            if self.results_tx.send(lost_ping).await.is_err() {
+                info!("BatchSubmitter disconnected while sending lost pings, Pinger for {} shutting down.", self.target);
+                return Ok(()); // Exit the whole function
+            }
+        }
         Ok(())
     }
 }

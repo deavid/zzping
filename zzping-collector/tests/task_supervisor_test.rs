@@ -4,6 +4,7 @@ use zzping_collector::{
     ping_surge_client::PingSurgeClient,
     task_supervisor::{SupervisorConfig, TaskSupervisor},
 };
+use zzping_proto::zzping::CollectorRole;
 
 mod common;
 use common::MockIngestionService;
@@ -33,6 +34,7 @@ async fn test_supervisor_reconciliation_with_client_updates() {
     let config1 = Some(SupervisorConfig {
         targets: targets1.clone(),
         ping_rate_pps: 10,
+        role: CollectorRole::Primary,
     });
     supervisor.reconcile(config1).await;
     assert!(
@@ -42,7 +44,7 @@ async fn test_supervisor_reconciliation_with_client_updates() {
 
     // 2. Give it a client. Then re-reconcile with the same config.
     supervisor.db_client = Some(db_client.clone());
-    supervisor.reconcile(Some(SupervisorConfig { targets: targets1, ping_rate_pps: 10 })).await;
+    supervisor.reconcile(Some(SupervisorConfig { targets: targets1, ping_rate_pps: 10, role: CollectorRole::Primary })).await;
     if can_create_workers {
         assert_eq!(supervisor.workers.len(), 1, "Worker should be created after client is received");
     }
@@ -58,6 +60,7 @@ async fn test_supervisor_reconciliation_with_client_updates() {
     let config2 = Some(SupervisorConfig {
         targets: targets2.clone(),
         ping_rate_pps: 10,
+        role: CollectorRole::Primary,
     });
     supervisor.reconcile(config2.clone()).await;
     if can_create_workers {

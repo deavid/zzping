@@ -42,6 +42,10 @@ async fn test_collector_gets_config_via_heartbeat() {
         let mut request = tonic::Request::new(HeartbeatRequest {
             collector_uuid: "test-collector".to_string(),
             pid: 1234,
+            current_role: 0,
+            buffer_record_count: 0,
+            last_fatal_error: "".to_string(),
+            last_processed_command_id: 0,
         });
         request
             .metadata_mut()

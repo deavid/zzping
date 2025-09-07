@@ -20,6 +20,9 @@ service Ingestion {
 
   // Collector calls this to announce pings for real-time visualization.
   rpc AnnouncePings(AnnouncePingsRequest) returns (AnnouncePingsResponse);
+
+  // Collector subscribes to this stream for low-latency commands from the database.
+  rpc SubscribeToCommands(CommandRequest) returns (stream Command);
 }
 
 // --- Enums ---
@@ -32,6 +35,9 @@ enum CollectorRole {
   SUPERVISING = 2;
   // The collector has been successfully replaced and should shut down.
   SHUTDOWN = 3;
+  // The collector is a new instance starting up during a handoff, actively pinging
+  // but not yet sending data.
+  PRIMARY_SUPERVISED = 4;
 }
 
 // --- Message Definitions for Heartbeat ---
@@ -39,6 +45,14 @@ message HeartbeatRequest {
   string collector_uuid = 1;
   // The process ID of the collector instance.
   uint64 pid = 2;
+  // The collector's current operational role.
+  CollectorRole current_role = 3;
+  // The current total size of the collector's in-memory data buffer.
+  uint64 buffer_record_count = 4;
+  // A message for any persistent, unrecoverable error.
+  string last_fatal_error = 5;
+  // The ID of the last command processed from the command stream.
+  uint64 last_processed_command_id = 6;
 }
 message HeartbeatResponse {
   repeated string targets = 1;
@@ -78,6 +92,11 @@ message GetRecentDataResponse {
   // The requested historical records. The database will return
   // records for all targets associated with the collector_uuid.
   repeated RawDataRecord records = 1;
+
+  // The database's last known ACK point for this collector.
+  // This is critical for the new collector to initialize its cursor
+  // and prevent an immediate DESYNC loop.
+  uint64 database_confirms_last_acked_received_nanos = 2;
 }
 
 // ============== Common & QueryData RPC Messages ==============
@@ -105,4 +124,31 @@ message AnnouncePingsRequest {
 
 message AnnouncePingsResponse {
   // This is currently empty and serves as an acknowledgment.
+}
+
+// --- Message Definitions for SubscribeToCommands ---
+message CommandRequest {
+  // The UUID of the collector subscribing to commands.
+  // This allows the database to associate the stream with a collector.
+  string collector_uuid = 1;
+}
+
+message Command {
+  // A unique, monotonically increasing ID for this command.
+  uint64 command_id = 1;
+
+  oneof command_type {
+    // A command to change the collector's operational role.
+    CollectorRole change_role = 2;
+    // A command to prepare for a handoff.
+    PrepareToSwap prepare_to_swap = 3;
+  }
+}
+
+// A command to instruct the collector to prepare for a handoff at a specific time.
+message PrepareToSwap {
+  // The role the collector should adopt at the swap time.
+  CollectorRole role = 1;
+  // The UTC nanosecond timestamp at which the swap should occur.
+  uint64 swap_at_nanos = 2;
 }

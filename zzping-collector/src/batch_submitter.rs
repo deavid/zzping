@@ -4,9 +4,12 @@ use anyhow::Result;
 use log::{debug, info, warn};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use zzping_proto::zzping::{send_batch_response, RawDataRecord, SendBatchRequest};
+
+pub type SharedBuffer = Arc<Mutex<BTreeMap<u64, RawDataRecord>>>;
 
 /// The BatchSubmitter is responsible for buffering ping results for a single
 /// target and submitting them to the database in batches.
@@ -17,7 +20,7 @@ pub struct BatchSubmitter {
     buffer_limit: usize,
     retention_period: Duration,
     db_client: DatabaseClient,
-    pub buffer: BTreeMap<u64, RawDataRecord>,
+    pub buffer: SharedBuffer,
     pub last_acked_received_nanos: u64,
 }
 
@@ -30,6 +33,7 @@ impl BatchSubmitter {
         buffer_limit: usize,
         retention_period: Duration,
         db_client: DatabaseClient,
+        buffer: SharedBuffer,
     ) -> Self {
         Self {
             collector_uuid,
@@ -38,7 +42,7 @@ impl BatchSubmitter {
             buffer_limit,
             retention_period,
             db_client,
-            buffer: BTreeMap::new(),
+            buffer,
             last_acked_received_nanos: 0,
         }
     }
@@ -55,6 +59,7 @@ impl BatchSubmitter {
         loop {
             tokio::select! {
                 Some(finalized_ping) = results_rx.recv() => {
+                    info!("BatchSubmitter for {} received finalized ping: {:?}", self.target_ip, finalized_ping);
                     self.ingest_ping_result(finalized_ping);
                 }
                 _ = submission_interval.tick() => {
@@ -95,12 +100,14 @@ impl BatchSubmitter {
                 },
             )
         };
-        self.buffer.insert(key, record);
 
-        if self.buffer.len() > self.buffer_limit {
-            if let Some((key, _)) = self.buffer.first_key_value() {
+        let mut buffer = self.buffer.lock().unwrap();
+        buffer.insert(key, record);
+
+        if buffer.len() > self.buffer_limit {
+            if let Some((key, _)) = buffer.first_key_value() {
                 let key = *key;
-                self.buffer.remove(&key);
+                buffer.remove(&key);
                 warn!(
                     "Buffer limit reached for target {}. Dropped oldest record with key {}.",
                     self.target_ip, key
@@ -113,11 +120,13 @@ impl BatchSubmitter {
     pub async fn send_batch(&mut self) -> Result<()> {
         let now_ns = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
 
-        let records_to_send: Vec<RawDataRecord> = self
-            .buffer
-            .range((self.last_acked_received_nanos + 1)..=now_ns)
-            .map(|(_, record)| record.clone())
-            .collect();
+        let records_to_send: Vec<RawDataRecord> = {
+            let buffer = self.buffer.lock().unwrap();
+            buffer
+                .range((self.last_acked_received_nanos + 1)..=now_ns)
+                .map(|(_, record)| record.clone())
+                .collect()
+        };
 
         if records_to_send.is_empty() {
             return Ok(());
@@ -169,12 +178,14 @@ impl BatchSubmitter {
             .unwrap_or_default()
             .as_nanos() as u64;
 
-        self.buffer.retain(|&key, _| key > cutoff_ns);
+        let mut buffer = self.buffer.lock().unwrap();
+        buffer.retain(|&key, _| key > cutoff_ns);
     }
 
     /// Removes records from the buffer that have been acknowledged as flushed
     /// to disk by the database.
     pub fn prune_by_fsync(&mut self, fsync_nanos: u64) {
-        self.buffer.retain(|&key, _| key > fsync_nanos);
+        let mut buffer = self.buffer.lock().unwrap();
+        buffer.retain(|&key, _| key > fsync_nanos);
     }
 }

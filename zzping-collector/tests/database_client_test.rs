@@ -18,6 +18,10 @@ async fn test_database_client_connect_and_heartbeat() {
     let request = HeartbeatRequest {
         collector_uuid: "test-uuid".to_string(),
         pid: 1234,
+        current_role: CollectorRole::Standby as i32,
+        buffer_record_count: 0,
+        last_fatal_error: "".to_string(),
+        last_processed_command_id: 0,
     };
     let response = client.heartbeat(request).await;
     assert!(response.is_ok());
@@ -32,6 +36,10 @@ async fn test_database_client_connect_and_heartbeat() {
     let request = HeartbeatRequest {
         collector_uuid: "test-uuid".to_string(),
         pid: 1234,
+        current_role: CollectorRole::Standby as i32,
+        buffer_record_count: 0,
+        last_fatal_error: "".to_string(),
+        last_processed_command_id: 0,
     };
     let response = bad_client.heartbeat(request).await;
     assert!(response.is_err());

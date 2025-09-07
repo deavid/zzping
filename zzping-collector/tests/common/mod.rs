@@ -54,21 +54,35 @@ impl VectorLogger {
 
 // --- Mock gRPC Server ---
 
+use zzping_proto::zzping::Command;
+
 /// A mock implementation of the Ingestion service for testing.
 #[derive(Clone, Default)]
+#[allow(clippy::type_complexity)]
 pub struct MockIngestionService {
     pub received_batches: Arc<Mutex<Vec<SendBatchRequest>>>,
+    pub received_heartbeats: Arc<Mutex<Vec<HeartbeatRequest>>>,
     pub send_batch_response: Arc<Mutex<SendBatchResponse>>,
+    pub heartbeat_response: Arc<Mutex<HeartbeatResponse>>,
+    pub command_stream_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Result<Command, Status>>>>>,
 }
 
 impl MockIngestionService {
     pub fn new() -> Self {
         Self {
             received_batches: Arc::new(Mutex::new(Vec::new())),
+            received_heartbeats: Arc::new(Mutex::new(Vec::new())),
             send_batch_response: Arc::new(Mutex::new(SendBatchResponse {
                 status: send_batch_response::Status::Ok as i32,
                 database_confirms_last_acked_received_nanos: 0,
             })),
+            heartbeat_response: Arc::new(Mutex::new(HeartbeatResponse {
+                targets: vec!["127.0.0.1".to_string()],
+                ping_rate_pps: 10,
+                role: CollectorRole::Primary as i32,
+                swap_at_nanos: 0,
+            })),
+            command_stream_tx: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -79,20 +93,12 @@ impl Ingestion for MockIngestionService {
         &self,
         request: Request<HeartbeatRequest>,
     ) -> Result<Response<HeartbeatResponse>, Status> {
-        // Check for the auth token in the metadata for tests that need it.
-        if let Some(auth_header) = request.metadata().get("authorization") {
-            if auth_header != "Bearer test-token" {
-                return Err(Status::unauthenticated("Missing or invalid auth token"));
-            }
-        }
+        self.received_heartbeats
+            .lock()
+            .unwrap()
+            .push(request.into_inner());
 
-        // Simulate a successful response.
-        let response = HeartbeatResponse {
-            targets: vec!["8.8.8.8".to_string()],
-            ping_rate_pps: 100,
-            role: CollectorRole::Primary as i32,
-            swap_at_nanos: 0,
-        };
+        let response = self.heartbeat_response.lock().unwrap().clone();
         Ok(Response::new(response))
     }
 
@@ -128,6 +134,19 @@ impl Ingestion for MockIngestionService {
     ) -> Result<Response<AnnouncePingsResponse>, Status> {
         // This is a fire-and-forget RPC, so we just return OK.
         Ok(Response::new(AnnouncePingsResponse {}))
+    }
+
+    type SubscribeToCommandsStream =
+        std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<Command, Status>> + Send>>;
+
+    async fn subscribe_to_commands(
+        &self,
+        _request: Request<zzping_proto::zzping::CommandRequest>,
+    ) -> Result<Response<Self::SubscribeToCommandsStream>, Status> {
+        let (tx, rx) = tokio::sync::mpsc::channel(10);
+        *self.command_stream_tx.lock().unwrap() = Some(tx);
+        let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
+        Ok(Response::new(Box::pin(stream)))
     }
 }
 

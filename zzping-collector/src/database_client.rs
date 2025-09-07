@@ -87,5 +87,26 @@ impl DatabaseClient {
         let response = self.client.send_batch(tonic_request).await?;
         Ok(response)
     }
+
+    /// Subscribes to the command stream.
+    pub async fn subscribe_to_commands(
+        &mut self,
+        request: zzping_proto::zzping::CommandRequest,
+    ) -> Result<
+        tonic::Response<
+            tonic::Streaming<zzping_proto::zzping::Command>,
+        >,
+    > {
+        let mut tonic_request = Request::new(request);
+
+        // Add the authentication token to the request metadata.
+        let token = format!("Bearer {}", self.auth_token);
+        tonic_request
+            .metadata_mut()
+            .insert("authorization", token.parse()?);
+
+        let response = self.client.subscribe_to_commands(tonic_request).await?;
+        Ok(response)
+    }
 }
 
