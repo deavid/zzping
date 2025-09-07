@@ -147,6 +147,8 @@ impl TaskSupervisor {
     /// # Parameters
     /// * `config` - The new desired configuration state
     async fn update_tasks(&mut self, config: &SupervisorConfig) {
+        // FIXME: Actually, we want the targets to be there, ready to ping. We should not remove the targets for this.
+        // ... Instead should_be_pinging should be sent into the actual ping tasks to tell them to not do the final ping, but we want them ready to.
         let new_targets_set: HashMap<_, _> = if config.should_be_pinging {
             config
                 .targets
@@ -173,6 +175,7 @@ impl TaskSupervisor {
         for target_ip in new_targets_set.keys() {
             if !self.running_tasks.contains_key(target_ip) {
                 info!("Starting pinger for target {target_ip}");
+                // FIXME: This code seems that it can be abstracted away.
                 let ping_client: Arc<dyn PingClient> = match PingSurgeClient::new(*target_ip) {
                     Ok(client) => Arc::new(client),
                     Err(e) => {

@@ -4,6 +4,8 @@ use clap::Parser;
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
+    // TODO: we need to play with the "hostname" crate to make the default value the hostname of the PC we're running on.
+
     /// The hostname of this collector instance.
     #[arg(long, default_value = "default-collector-hostname")]
     pub source_hostname: String,

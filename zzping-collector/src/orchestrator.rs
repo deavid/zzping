@@ -26,6 +26,8 @@
 //! - Orchestrator will abort spawned background tasks on disconnect and
 //!   reconnect; ephemeral tasks must be tolerant to abrupt cancellation.
 
+// FIXME: Why isn't the orchestrator then, the one managing the BatchSubmitter? Why do we need Arc<Mutex<DatabaseXYZ>> ??
+
 use crate::{
     batch_submitter::BatchSubmitter,
     cli::Cli,
@@ -62,6 +64,10 @@ use zzping_proto::zzping::{GetRecentDataRequest, HeartbeatRequest};
 /// (targets and ping rate) to keep the cache file small.
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 struct CachedConfig {
+    // FIXME: Is "CachedConfig" a misnomer? True that we add this because we want to persist, but shouldn't be this
+    // .. the main structure to keep in memory to handle what's the current configuration for the work to do, the current intent?
+    // .. How is this used currently? Do we have a proper single source of intent, or do we have it sparse on the code?
+
     /// List of target IP addresses to monitor.
     targets: Vec<String>,
 
@@ -93,6 +99,9 @@ struct CachedConfig {
 /// **Configuration Persistence**: Caches configuration to disk to survive
 /// restarts and database outages.
 pub struct CollectorOrchestrator {
+    // FIXME: Why is this an Arc<T> ? Do we expect others to change the internals? Why not just clone?
+    // ... Also, passing the Cli is probably bad practice because it tightly couples whatever we want on the input flags
+    // ... to be literally the same for internal work functions.
     /// Command-line configuration shared across components.
     cli: Arc<Cli>,
 
@@ -104,32 +113,33 @@ pub struct CollectorOrchestrator {
     /// Components subscribe to receive configuration changes.
     config_tx: watch::Sender<SupervisorConfig>,
 
+    // FIXME: And what is the current config, the main data source for the intent? why isn't this just that? Why does it need to be an option?
     /// Last configuration cached to disk.
     /// Used to detect when new configurations need to be persisted.
     last_cached_config: Option<CachedConfig>,
 
+    // FIXME: to me it seems that this cache_file belongs to whatever struct we use to replace the Cli one.
     /// Path to the configuration cache file.
     cache_file: std::path::PathBuf,
 }
 
 impl CollectorOrchestrator {
     /// Creates a new orchestrator with the given command-line configuration.
-    ///
-    /// # Parameters
-    /// * `cli` - Command-line arguments and configuration
-    ///
-    /// # Returns
-    /// A configured CollectorOrchestrator ready to coordinate components
     pub fn new(cli: Arc<Cli>) -> Self {
+        // FIXME: All these folder-filename needs to be provided externally.
         let cache_dir = Path::new(".cache/zzping");
         fs::create_dir_all(cache_dir).unwrap();
         let cache_file = cache_dir.join("last_config.bin");
 
+        // FIXME: And here we are. This is the current intent config. So we really do have two different intent configs. Bad.
         let initial_config = SupervisorConfig {
             targets: vec![],
             ping_rate_pps: 0,
             should_be_pinging: false,
         };
+        // FIXME: This is a HUGE RED FLAG: We're discarding the RX side. Whatever we're doing with this (no idea), smells a lot like bugs.
+        // .. whatever we send here, no one is listening. - now I notice that for some reason, it seems we can create RX channels out of
+        // .. TX ones, so this would be fine, just a bit weird for me that I'm not used.
         let (config_tx, _) = watch::channel(initial_config);
 
         Self {
@@ -141,30 +151,30 @@ impl CollectorOrchestrator {
         }
     }
 
-    /// Runs the orchestrator's main event loop.
-    ///
-    /// The orchestrator attempts to connect to the database and run the
-    /// collector components. If the connection fails, it retries after
-    /// a delay. The loop continues until a shutdown command is received.
-    ///
-    /// # Returns
-    /// An error if the orchestrator fails to initialize or run
+    /// Runs the orchestrator's main event loop. Attempts to connect to DB
+    /// and run the collector components, retrying the DB connection after a delay.
+    /// Will continue until a shutdown command is received.
     pub async fn run(mut self) -> Result<()> {
+        // FIXME: This function returns a Result, which means that it is fallible, which is against the definition of this function.
         // Load cached config
         if let Ok(bytes) = fs::read(&self.cache_file)
             && let Ok(config) = bincode::deserialize::<CachedConfig>(&bytes)
         {
+            // FIXME: What's bincode doing here? It's a config file, should be RON.
+            // FIXME: This initialization seems that belongs to the constructor.
             info!("Loaded cached config: {:?}", config);
             let supervisor_config = SupervisorConfig {
                 targets: config.targets.clone(),
                 ping_rate_pps: config.ping_rate_pps,
                 should_be_pinging: true,
             };
+            // FIXME: Unwrap? that's bad.
             self.config_tx.send(supervisor_config).unwrap();
             self.last_cached_config = Some(config);
         }
 
         loop {
+            // FIXME: Why is the channel being recreated each time? Why? So we're losing information on each reconnect?
             let (ping_tx, ping_rx) = mpsc::channel(1000);
             match self.connect_and_run(ping_tx, ping_rx).await {
                 Ok(_) => return Ok(()), // Shutdown
@@ -193,6 +203,8 @@ impl CollectorOrchestrator {
         ping_tx: mpsc::Sender<PingResult>,
         ping_rx: mpsc::Receiver<PingResult>,
     ) -> Result<()> {
+        // FIXME: Didn't we connect elsewhere? It doesn't seem so, but database_client has the unit tests for connect. Why isn't this code there?
+
         info!("Attempting to connect to gRPC server...");
         let client = GrpcClient::connect(&self.cli).await?;
         let shared_client = Arc::new(tokio::sync::Mutex::new(client));
@@ -205,6 +217,8 @@ impl CollectorOrchestrator {
             let json = serde_json::to_string(&auth_token).unwrap();
             general_purpose::STANDARD.encode(json)
         };
+
+        // We are recreating the BatchSubmitter here? So it loses the data on reconnects? talk about bad design...
 
         let batch_submitter = BatchSubmitter::new(
             shared_client.clone(),
@@ -245,11 +259,14 @@ impl CollectorOrchestrator {
         client: SharedDatabaseClient,
         token: String,
     ) -> Result<()> {
+        // FIXME: This time should be configurable externally to this function call.
         let mut heartbeat_interval = tokio::time::interval(Duration::from_secs(1));
         let pid = std::process::id() as u64;
 
         loop {
             heartbeat_interval.tick().await;
+            // FIXME: The dance of new request, metadata, lock, heartbeat could be abstracted away.
+            // FIXME: Why are we not publishing the status to the database? shouldn't the database know what is our current intent and health? is this collector primary or standby?
             let mut request = tonic::Request::new(HeartbeatRequest {
                 collector_uuid: self.cli.source_hostname.clone(),
                 pid,
@@ -263,7 +280,10 @@ impl CollectorOrchestrator {
             match client_lock.heartbeat(request).await {
                 Ok(response) => {
                     let action = self.state_machine.handle_heartbeat_response(&response);
+                    // FIXME: Why isn't here a "match action {" to take care? Why Option<T>? isn't it easier to handle a default custom none value?
+                    // .. unless we can use the "None" to short-circuit some of the logic below, Option<T> might not be worth it.
 
+                    // TODO: This needs to be abstracted away from here:
                     // Cache the new config if it's different.
                     let new_config = CachedConfig {
                         targets: response.targets.clone(),
@@ -282,6 +302,9 @@ impl CollectorOrchestrator {
                         self.last_cached_config = Some(new_config);
                     }
 
+                    // TODO: This needs to be abstracted away from here:
+                    // FIXME: WAIT A SECOND. The database is sending "SeedBuffer" to the collector, and the collector is taking this as that it needs to change to primary mode?
+                    // ... this is wrong on so many levels. We need to talk about this.
                     if let Some(Action::SeedBuffer) = action {
                         info!("Transitioning to PRIMARY. Requesting buffer seed...");
                         let request = tonic::Request::new(GetRecentDataRequest {
@@ -297,11 +320,13 @@ impl CollectorOrchestrator {
                         }
                     }
 
+                    // FIXME: This looks weird here, this seems to actually come from "handle_heartbeat_response". This needs review.
                     if self.state_machine.current_state == State::Shutdown {
                         info!("Received SHUTDOWN command. Exiting.");
                         return Ok(());
                     }
 
+                    // FIXME: Why the bounce around from self.state_machine.current_state -> SupervisorConfig; shouldn't the intent config be unified?
                     let should_be_pinging = self.state_machine.current_state == State::Pinging;
                     let supervisor_config = SupervisorConfig {
                         targets: response.targets,

@@ -48,6 +48,16 @@ pub async fn pinger_loop(
         return;
     }
     let semaphore = Arc::new(tokio::sync::Semaphore::new(max_in_flight));
+    // FIXME: `sent_nanos` is currently a relative duration from this `start_time`,
+    // but the database expects an absolute UNIX timestamp. This causes all persisted
+    // data to be stored with incorrect timestamps (e.g., in the year 1970).
+    // The fix is to create a synchronized (SystemTime, Instant) reference here,
+    // refresh it periodically, and use it to calculate an absolute wall-clock
+    // timestamp for each ping, while guaranteeing monotonicity. We need to consider
+    // as well that clock rates could be skewed by a NTP client
+    // On top of that, this code is called for every database reconnect, so the
+    // timing isn't even consistent. If we fix this, we need to take into account
+    // that currently this code starts only when the DB connects, and on every reconnect (which is wrong, should be permanent)
     let start_time = Instant::now();
     let mut sequence_idx: u16 = 0;
     let interval_duration = Duration::from_secs_f64(1.0 / rate as f64);
@@ -75,6 +85,7 @@ pub async fn pinger_loop(
             // If we can't acquire a permit, it means we are at max_in_flight.
             // We should skip this tick and try again at the next scheduled time.
             // The `next_tick` update above handles this automatically.
+            // FIXME: This message needs to be rate-limited. 1 every 5 seconds max.
             warn!("Max in-flight pings reached. Skipping a ping to maintain rate.");
         }
     }

@@ -38,6 +38,10 @@ pub trait DatabaseClient: Send + Sync {
 /// Encapsulates gRPC details, ensuring a stable interface for the collector.
 #[derive(Debug)]
 pub struct GrpcClient {
+    // FIXME: Why is the Arc-Mutex needed? This sounds like we can only use 1 call at a time. That's suboptimal.
+    // ... Also the design of zzping-collector seems to have an aggregate sender to the DB via BatchSubmitter, it's unclear to me
+    // ... where are the other pieces of code that need database connection.
+
     /// gRPC client for ingestion service.
     client: Arc<tokio::sync::Mutex<IngestionClient<Channel>>>,
 }
@@ -48,6 +52,9 @@ impl GrpcClient {
     /// Reads a pinned CA certificate for TLS and supports both secure and
     /// insecure endpoints.
     pub async fn connect(cli: &Cli) -> Result<Self> {
+        // FIXME: All this should be configurable, maybe a factory struct or something with the config, instead of Cli, including
+        // .. on the ca.pem that should be possible to provide even an in-memory one. We need proper decoupling.
+        
         let ca_cert = tokio::fs::read("ca.pem")
             .await
             .context("Unable to read ca_cert as ./ca.pem")?;
