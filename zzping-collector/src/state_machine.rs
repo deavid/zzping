@@ -67,7 +67,7 @@ impl StateMachine {
 
         // FIXME: CollectorRole and State above look too similar, probably we could just use CollectorRole.
         let new_state = match new_role {
-            CollectorRole::Primary => State::Pinging,
+            CollectorRole::Primary | CollectorRole::PrimarySupervised => State::Pinging,
             CollectorRole::Standby | CollectorRole::Supervising => State::Standby,
             CollectorRole::Shutdown => State::Shutdown,
         };

@@ -1,7 +1,7 @@
 use std::io::Write;
 use tempfile::NamedTempFile;
 // This function doesn't exist yet, so this won't compile until I refactor lib.rs
-use zzping_collector::bootstrap_collector;
+use zzping_collector::bootstrap_collector_with_port;
 
 // Helper function to create a temporary config file for tests.
 fn create_mock_config() -> (NamedTempFile, String) {
@@ -23,8 +23,11 @@ fn test_port_lock_prevents_second_instance() {
     // 1. Setup mock config.
     let (_temp_file, config_path) = create_mock_config();
 
+    // Use a specific port for testing the lock mechanism
+    let test_port = 17879;
+
     // 2. Bootstrap once. This should succeed and hold the lock inside the service.
-    let bootstrap_result1 = bootstrap_collector(config_path.clone());
+    let bootstrap_result1 = bootstrap_collector_with_port(config_path.clone(), Some(test_port));
     assert!(
         bootstrap_result1.is_ok(),
         "First bootstrap failed: {:?}",
@@ -35,7 +38,7 @@ fn test_port_lock_prevents_second_instance() {
     let _service1 = bootstrap_result1.unwrap();
 
     // 3. Attempt to bootstrap a second time.
-    let bootstrap_result2 = bootstrap_collector(config_path);
+    let bootstrap_result2 = bootstrap_collector_with_port(config_path, Some(test_port));
 
     // 4. Assert that the second attempt failed because the port is locked.
     assert!(
@@ -44,7 +47,7 @@ fn test_port_lock_prevents_second_instance() {
     );
     if let Err(e) = bootstrap_result2 {
         assert!(
-            e.to_string().contains("Failed to acquire TCP port lock"),
+            e.to_string().contains("Address already in use"),
             "Error message was not about the TCP port lock: {e}"
         );
     }

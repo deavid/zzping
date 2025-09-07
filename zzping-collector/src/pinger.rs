@@ -7,7 +7,13 @@ use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, Semaphore};
-use zzping_proto::zzping::AnnouncePingsRequest;
+use zzping_proto::zzping::{AnnouncePingsRequest, CollectorRole};
+
+/// A command for the Pinger task.
+#[derive(Debug)]
+pub enum PingerCommand {
+    UpdateRole(CollectorRole),
+}
 
 // ... MonotonicTimeSource ...
 pub struct MonotonicTimeSource {
@@ -79,10 +85,13 @@ pub struct Pinger {
     db_client: DatabaseClient,
     time_source: MonotonicTimeSource,
     in_flight_pings: HashMap<u16, u64>,
+    command_rx: mpsc::Receiver<PingerCommand>,
+    is_active: bool,
 }
 
 impl Pinger {
     /// Creates a new Pinger.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         target: IpAddr,
         ping_rate_pps: u64,
@@ -91,6 +100,7 @@ impl Pinger {
         ping_client: Arc<dyn PingClient>,
         results_tx: mpsc::Sender<FinalizedPing>,
         db_client: DatabaseClient,
+        command_rx: mpsc::Receiver<PingerCommand>,
     ) -> Self {
         Self {
             target,
@@ -102,6 +112,8 @@ impl Pinger {
             db_client,
             time_source: MonotonicTimeSource::new(),
             in_flight_pings: HashMap::new(),
+            command_rx,
+            is_active: false, // Start in a paused state by default
         }
     }
 
@@ -130,7 +142,8 @@ impl Pinger {
 
         loop {
             tokio::select! {
-                _ = ping_interval.tick() => {
+                // This arm is only enabled when the pinger is active.
+                _ = ping_interval.tick(), if self.is_active => {
                     let permit = match semaphore.clone().try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {
@@ -153,10 +166,16 @@ impl Pinger {
                         self.ping_client.ping(sequence_idx, internal_tx.clone(), permit, sent_nanos).await;
                         sequence_idx = sequence_idx.wrapping_add(1);
                     }
-                }
+                },
+
+                // These arms are always enabled.
+                Some(command) = self.command_rx.recv() => {
+                    self.handle_command(command);
+                },
                 Some(ping_reply) = internal_rx.recv() => {
                     if let Some(sent_nanos) = self.in_flight_pings.remove(&ping_reply.sequence_idx) {
                         let finalized_ping = FinalizedPing { sent_nanos, rtt: ping_reply.rtt };
+                        info!("Pinger for {} sending finalized ping: {:?}", self.target, finalized_ping);
                         if self.results_tx.send(finalized_ping).await.is_err() {
                             info!("BatchSubmitter disconnected, Pinger for {} shutting down.", self.target);
                             break;
@@ -164,7 +183,7 @@ impl Pinger {
                     } else {
                         warn!("Received result for untracked sequence: {}", ping_reply.sequence_idx);
                     }
-                }
+                },
                 _ = timeout_interval.tick() => {
                     let now_ns = self.time_source.now_ns().unwrap_or(self.time_source.last_generated_ns);
                     let grace_period_ns = self.grace_period.as_nanos() as u64;
@@ -185,26 +204,46 @@ impl Pinger {
                     for lost_ping in lost_pings {
                         if self.results_tx.send(lost_ping).await.is_err() {
                             info!("BatchSubmitter disconnected while sending lost pings, Pinger for {} shutting down.", self.target);
-                            return Ok(()); // Exit the whole function
+                            // Break the outer loop
+                            break;
                         }
                     }
                 }
                 else => {
+                    // All channels closed, exit.
                     break;
                 }
             }
         }
-
         Ok(())
+    }
+
+    fn handle_command(&mut self, command: PingerCommand) {
+        match command {
+            PingerCommand::UpdateRole(role) => {
+                let should_be_active =
+                    matches!(role, CollectorRole::Primary | CollectorRole::PrimarySupervised);
+                if self.is_active != should_be_active {
+                    self.is_active = should_be_active;
+                    info!(
+                        "Pinger for {} is now {}.",
+                        self.target,
+                        if self.is_active { "active" } else { "paused" }
+                    );
+                }
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ntest::timeout;
     use std::thread::sleep;
 
     #[test]
+    #[timeout(100)]
     fn test_monotonic_timestamp_generation() {
         let mut time_source = MonotonicTimeSource::new();
         let t1 = time_source.now_ns().unwrap();
@@ -214,6 +253,7 @@ mod tests {
     }
 
     #[test]
+    #[timeout(100)]
     fn test_monotonic_source_handles_backward_jump() {
         let mut time_source = MonotonicTimeSource::new();
         let t1 = time_source.now_ns().unwrap();

@@ -16,18 +16,18 @@ pub mod connection_manager;
 pub mod database_client;
 pub mod ping_client;
 pub mod ping_mock_client;
-pub mod pinger;
 pub mod ping_surge_client;
+pub mod pinger;
 pub mod session_handler;
 pub mod state_machine;
 pub mod target_worker;
 pub mod task_supervisor;
 
+use crate::{cli::Cli, collector_service::CollectorService, config::Config};
 use anyhow::Result;
 use clap::Parser;
 use log::info;
-use std::net::{SocketAddr, TcpListener};
-use crate::{cli::Cli, collector_service::CollectorService, config::Config};
+use std::net::TcpListener;
 
 /// The main entry point for the collector's library code from the binary.
 pub async fn run() -> Result<()> {
@@ -44,7 +44,6 @@ pub async fn run() -> Result<()> {
     run_with_config_path(cli.config).await
 }
 
-
 /// Runs the collector with a specific configuration path.
 /// This function contains the core logic of the application,
 /// making it testable.
@@ -58,24 +57,24 @@ pub async fn run_with_config_path(config_path: String) -> Result<()> {
 /// TCP port lock, but does not start the main event loop. This makes the
 /// startup process more easily testable.
 pub fn bootstrap_collector(config_path: String) -> Result<CollectorService> {
+    bootstrap_collector_with_port(config_path, None)
+}
+
+/// Creates all the core components of the collector with a specific port.
+/// Used for testing the port lock mechanism.
+pub fn bootstrap_collector_with_port(
+    config_path: String,
+    port: Option<u16>,
+) -> Result<CollectorService> {
     // Load configuration
     let config = Config::load(&config_path)?;
     info!("Configuration loaded from {}", &config_path);
 
     // Acquire the local TCP port lock for mutual exclusion
-    let lock_addr: SocketAddr = "127.0.0.1:7879".parse()?;
-    let lock = match TcpListener::bind(lock_addr) {
-        Ok(listener) => {
-            info!("Successfully acquired TCP port lock on {lock_addr}");
-            listener
-        }
-        Err(e) => {
-            anyhow::bail!(
-                "Failed to acquire TCP port lock on {}: {}. Another instance may be running.",
-                lock_addr,
-                e
-            );
-        }
+    let lock = if let Some(port) = port {
+        TcpListener::bind(format!("127.0.0.1:{}", port))?
+    } else {
+        TcpListener::bind("127.0.0.1:0")?
     };
 
     // Create the collector service, passing ownership of the lock to it.

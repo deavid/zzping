@@ -1,11 +1,11 @@
 // zzping-collector/tests/pinger_test.rs
 
+use ntest::timeout;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::timeout;
 use zzping_collector::database_client::DatabaseClient;
 use zzping_collector::pinger::Pinger;
 use zzping_collector::ping_mock_client::PingMockClient;
@@ -26,10 +26,11 @@ async fn test_pinger_loop() {
     // Spawn a mock gRPC server to handle the AnnouncePings RPC.
     let server_addr = common::spawn_mock_server(MockIngestionService::default()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
 
+    let (pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);
     let pinger = Pinger::new(
         target,
         ping_rate_pps,
@@ -38,9 +39,13 @@ async fn test_pinger_loop() {
         mock_ping_client.clone(),
         results_tx,
         db_client,
+        pinger_cmd_rx,
     );
 
     let pinger_handle = tokio::spawn(pinger.run());
+
+    // Activate the pinger
+    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
 
     // Let the pinger run for a short duration
     sleep(test_duration);
@@ -49,7 +54,7 @@ async fn test_pinger_loop() {
     drop(results_rx);
 
     // Wait for the pinger to finish, panicking if it times out or panics itself.
-    timeout(Duration::from_secs(1), pinger_handle)
+    tokio::time::timeout(Duration::from_secs(1), pinger_handle)
         .await
         .expect("Pinger task timed out")
         .expect("Pinger task panicked")
@@ -81,10 +86,11 @@ async fn test_pinger_handles_lost_packets() {
 
     let server_addr = common::spawn_mock_server(MockIngestionService::default()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
 
+    let (pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);
     let pinger = Pinger::new(
         target,
         10, // Ping rate doesn't matter much for this test
@@ -93,19 +99,73 @@ async fn test_pinger_handles_lost_packets() {
         mock_ping_client.clone(),
         results_tx,
         db_client,
+        pinger_cmd_rx,
     );
 
     let _pinger_handle = tokio::spawn(pinger.run());
+
+    // Activate the pinger
+    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
 
     // Wait for the grace period to elapse, plus a buffer
     tokio::time::sleep(grace_period + Duration::from_millis(50)).await;
 
     // The pinger should have detected the lost ping and sent a result
-    let result = timeout(Duration::from_millis(10), results_rx.recv())
+    let result = tokio::time::timeout(Duration::from_millis(10), results_rx.recv())
         .await
         .expect("Test timed out waiting for lost packet result")
         .expect("Channel should not be empty");
 
     assert!(result.rtt.is_none(), "RTT should be None for a lost packet");
     assert_ne!(result.sent_nanos, 0, "sent_nanos should be populated");
+}
+
+use zzping_collector::pinger::PingerCommand;
+use zzping_proto::zzping::CollectorRole;
+
+#[tokio::test]
+#[timeout(1000)]
+async fn test_pinger_pauses_and_resumes() {
+    let target: IpAddr = "127.0.0.1".parse().unwrap();
+    let mock_ping_client = Arc::new(PingMockClient::new());
+    let (results_tx, _results_rx) = mpsc::channel(100);
+    let server_addr = common::spawn_mock_server(MockIngestionService::default()).await;
+    let db_client =
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
+            .await
+            .unwrap();
+    let (pinger_cmd_tx, pinger_cmd_rx) = mpsc::channel(10);
+    let pinger = Pinger::new(
+        target,
+        100, // High rate to ensure we see pings quickly
+        Duration::from_secs(1),
+        Duration::from_secs(1),
+        mock_ping_client.clone(),
+        results_tx,
+        db_client,
+        pinger_cmd_rx,
+    );
+    let _pinger_handle = tokio::spawn(pinger.run());
+
+    // 1. Should not be active initially
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(mock_ping_client.pings.lock().unwrap().len(), 0, "Pinger should not be active by default");
+
+    // 2. Activate it
+    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let count_after_activate = mock_ping_client.pings.lock().unwrap().len();
+    assert!(count_after_activate > 0, "Pinger should start sending pings when role is Primary");
+
+    // 3. Pause it
+    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Standby)).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let count_after_pause = mock_ping_client.pings.lock().unwrap().len();
+    assert_eq!(count_after_pause, count_after_activate, "Pinger should stop sending pings when role is Standby");
+
+    // 4. Resume it
+    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let count_after_resume = mock_ping_client.pings.lock().unwrap().len();
+    assert!(count_after_resume > count_after_pause, "Pinger should resume sending pings when role is Primary again");
 }

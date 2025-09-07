@@ -1,7 +1,11 @@
+use ntest::timeout;
+use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use zzping_collector::batch_submitter::BatchSubmitter;
+use tokio::sync::mpsc;
+use zzping_collector::batch_submitter::{BatchSubmitter, SharedBuffer};
 use zzping_collector::database_client::DatabaseClient;
 use zzping_collector::pinger::FinalizedPing;
 
@@ -10,7 +14,28 @@ use zzping_proto::zzping::{send_batch_response, SendBatchResponse};
 
 mod common;
 
+fn setup_submitter(
+    db_client: DatabaseClient,
+    buffer_limit: usize,
+    retention_period: Duration,
+) -> (BatchSubmitter, SharedBuffer) {
+    let buffer = Arc::new(Mutex::new(BTreeMap::new()));
+    let (_command_tx, command_rx) = mpsc::channel(10);
+    let submitter = BatchSubmitter::new(
+        "test-collector".to_string(),
+        IpAddr::from_str("1.1.1.1").unwrap(),
+        Duration::from_secs(60),
+        buffer_limit,
+        retention_period,
+        db_client,
+        buffer.clone(),
+        command_rx,
+    );
+    (submitter, buffer)
+}
+
 #[tokio::test]
+#[timeout(5000)]
 async fn test_ingestion_logic() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
@@ -18,14 +43,8 @@ async fn test_ingestion_logic() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let mut submitter = BatchSubmitter::new(
-        "test-collector".to_string(),
-        IpAddr::from_str("1.1.1.1").unwrap(),
-        Duration::from_secs(60),
-        1_000_000,
-        Duration::from_secs(24 * 3600),
-        db_client,
-    );
+    let (mut submitter, buffer) =
+        setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
     let grace_period_ns = submitter.grace_period.as_nanos() as u64;
 
     // 1. Ingest a successful ping
@@ -36,11 +55,14 @@ async fn test_ingestion_logic() {
     let rtt_ns = successful_ping.rtt.unwrap().as_nanos() as u64;
     submitter.ingest_ping_result(successful_ping);
 
-    assert_eq!(submitter.buffer.len(), 1);
-    let (key, record) = submitter.buffer.iter().next().unwrap();
-    assert_eq!(*key, 1000 + rtt_ns);
-    assert_eq!(record.sent_nanos, 1000);
-    assert_eq!(record.rtt_nanos, rtt_ns);
+    {
+        let buffer_lock = buffer.lock().unwrap();
+        assert_eq!(buffer_lock.len(), 1);
+        let (key, record) = buffer_lock.iter().next().unwrap();
+        assert_eq!(*key, 1000 + rtt_ns);
+        assert_eq!(record.sent_nanos, 1000);
+        assert_eq!(record.rtt_nanos, rtt_ns);
+    } // Lock is dropped here
 
     // 2. Ingest a lost ping
     let lost_ping = FinalizedPing {
@@ -49,30 +71,26 @@ async fn test_ingestion_logic() {
     };
     submitter.ingest_ping_result(lost_ping);
 
-    assert_eq!(submitter.buffer.len(), 2);
+    let buffer_lock = buffer.lock().unwrap();
+    assert_eq!(buffer_lock.len(), 2);
     let lost_key = 2000 + grace_period_ns;
-    let lost_record = submitter.buffer.get(&lost_key).unwrap();
+    let lost_record = buffer_lock.get(&lost_key).unwrap();
     assert_eq!(lost_record.sent_nanos, 2000);
     assert_eq!(lost_record.rtt_nanos, u64::MAX);
 }
 
 #[tokio::test]
+#[timeout(2000)]
 async fn test_send_batch_ok_and_embargo() {
     // 1. Setup
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service.clone()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
-    let mut submitter = BatchSubmitter::new(
-        "test-collector".to_string(),
-        IpAddr::from_str("1.1.1.1").unwrap(),
-        Duration::from_secs(60),
-        1_000_000,
-        Duration::from_secs(24 * 3600),
-        db_client,
-    );
+    let (mut submitter, buffer) =
+        setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
 
     // 2. Ingest a record that is in the past (should be sent)
     submitter.ingest_ping_result(FinalizedPing {
@@ -89,7 +107,7 @@ async fn test_send_batch_ok_and_embargo() {
         sent_nanos: future_sent_nanos,
         rtt: None,
     });
-    assert_eq!(submitter.buffer.len(), 2);
+    assert_eq!(buffer.lock().unwrap().len(), 2);
 
     // 4. Trigger send_batch. Only the first record should be sent.
     submitter.send_batch().await.unwrap();
@@ -100,6 +118,7 @@ async fn test_send_batch_ok_and_embargo() {
 }
 
 #[tokio::test]
+#[timeout(2000)]
 async fn test_send_batch_desync() {
     // 1. Setup: Configure mock server to return DESYNC
     let mock_service = MockIngestionService::new();
@@ -113,17 +132,11 @@ async fn test_send_batch_desync() {
     }
     let server_addr = common::spawn_mock_server(mock_service.clone()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
-    let mut submitter = BatchSubmitter::new(
-        "test-collector".to_string(),
-        IpAddr::from_str("1.1.1.1").unwrap(),
-        Duration::from_secs(60),
-        1_000_000,
-        Duration::from_secs(24 * 3600),
-        db_client,
-    );
+    let (mut submitter, _) =
+        setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
 
     // 2. Ingest data that will be sent
     submitter.ingest_ping_result(FinalizedPing {
@@ -165,8 +178,8 @@ async fn test_send_batch_desync() {
     );
 }
 
-
 #[tokio::test]
+#[timeout(2000)]
 async fn test_prune_by_buffer_limit() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
@@ -174,14 +187,7 @@ async fn test_prune_by_buffer_limit() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let mut submitter = BatchSubmitter::new(
-        "test-collector".to_string(),
-        IpAddr::from_str("1.1.1.1").unwrap(),
-        Duration::from_secs(60),
-        5, // Set a small buffer limit for the test
-        Duration::from_secs(24 * 3600),
-        db_client,
-    );
+    let (mut submitter, buffer) = setup_submitter(db_client, 5, Duration::from_secs(24 * 3600));
 
     // Ingest 6 records, exceeding the limit of 5
     for i in 0..6 {
@@ -192,13 +198,15 @@ async fn test_prune_by_buffer_limit() {
     }
 
     // The buffer should have pruned the oldest record and contain only 5
-    assert_eq!(submitter.buffer.len(), 5);
+    let buffer_lock = buffer.lock().unwrap();
+    assert_eq!(buffer_lock.len(), 5);
     // The first record should now be the one with sent_nanos = 1100
-    let (first_key, _) = submitter.buffer.iter().next().unwrap();
+    let (first_key, _) = buffer_lock.iter().next().unwrap();
     assert_eq!(*first_key, 1100 + 50_000_000);
 }
 
 #[tokio::test]
+#[timeout(4000)]
 async fn test_prune_by_time_retention() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
@@ -206,14 +214,7 @@ async fn test_prune_by_time_retention() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let mut submitter = BatchSubmitter::new(
-        "test-collector".to_string(),
-        IpAddr::from_str("1.1.1.1").unwrap(),
-        Duration::from_secs(60),
-        1_000_000,
-        Duration::from_secs(1), // Short retention for test
-        db_client,
-    );
+    let (mut submitter, buffer) = setup_submitter(db_client, 1_000_000, Duration::from_secs(1));
 
     // Ingest a record now
     submitter.ingest_ping_result(FinalizedPing {
@@ -223,7 +224,7 @@ async fn test_prune_by_time_retention() {
             .as_nanos() as u64,
         rtt: Some(Duration::from_millis(50)),
     });
-    assert_eq!(submitter.buffer.len(), 1);
+    assert_eq!(buffer.lock().unwrap().len(), 1);
 
     // Wait for longer than the retention period
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -233,13 +234,14 @@ async fn test_prune_by_time_retention() {
 
     // The buffer should now be empty
     assert_eq!(
-        submitter.buffer.len(),
+        buffer.lock().unwrap().len(),
         0,
         "Buffer should be empty after pruning by time"
     );
 }
 
 #[tokio::test]
+#[timeout(2000)]
 async fn test_prune_by_fsync() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
@@ -247,14 +249,8 @@ async fn test_prune_by_fsync() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let mut submitter = BatchSubmitter::new(
-        "test-collector".to_string(),
-        IpAddr::from_str("1.1.1.1").unwrap(),
-        Duration::from_secs(60),
-        100,
-        Duration::from_secs(24 * 3600),
-        db_client,
-    );
+    let (mut submitter, buffer) =
+        setup_submitter(db_client, 100, Duration::from_secs(24 * 3600));
 
     // Ingest 5 records
     for i in 0..5 {
@@ -263,7 +259,7 @@ async fn test_prune_by_fsync() {
             rtt: Some(Duration::from_millis(50)),
         });
     }
-    assert_eq!(submitter.buffer.len(), 5);
+    assert_eq!(buffer.lock().unwrap().len(), 5);
 
     // The keys will be 1050M, 1150M, 1250M, 1350M, 1450M (in nanos)
     // Prune everything up to and including 1250M
@@ -271,13 +267,15 @@ async fn test_prune_by_fsync() {
     submitter.prune_by_fsync(fsync_nanos);
 
     // 2 records should remain
-    assert_eq!(submitter.buffer.len(), 2);
+    let buffer_lock = buffer.lock().unwrap();
+    assert_eq!(buffer_lock.len(), 2);
     // The first remaining record should be the one with sent_nanos = 1300
-    let (first_key, _) = submitter.buffer.iter().next().unwrap();
+    let (first_key, _) = buffer_lock.iter().next().unwrap();
     assert_eq!(*first_key, 1300 + 50_000_000);
 }
 
 #[tokio::test]
+#[timeout(2000)]
 async fn test_pruning_precedence() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
@@ -285,14 +283,7 @@ async fn test_pruning_precedence() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let mut submitter = BatchSubmitter::new(
-        "test-collector".to_string(),
-        IpAddr::from_str("1.1.1.1").unwrap(),
-        Duration::from_secs(60),
-        5, // Set a small buffer limit for the test
-        Duration::from_secs(10), // Time-based pruning is longer
-        db_client,
-    );
+    let (mut submitter, buffer) = setup_submitter(db_client, 5, Duration::from_secs(10));
 
     // Ingest 6 records. All have recent timestamps.
     for i in 0..6 {
@@ -309,7 +300,7 @@ async fn test_pruning_precedence() {
     // Assert that the buffer limit was applied immediately on ingest,
     // before the time-based pruning had a chance to run.
     assert_eq!(
-        submitter.buffer.len(),
+        buffer.lock().unwrap().len(),
         5,
         "Buffer should be pruned by count immediately upon insertion"
     );
