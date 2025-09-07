@@ -107,5 +107,5 @@ async fn test_pinger_handles_lost_packets() {
         .expect("Channel should not be empty");
 
     assert!(result.rtt.is_none(), "RTT should be None for a lost packet");
-    assert_eq!(result.sequence_idx, 0, "Sequence index should be correct");
+    assert_ne!(result.sent_nanos, 0, "sent_nanos should be populated");
 }

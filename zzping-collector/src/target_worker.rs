@@ -1,5 +1,7 @@
 use crate::{
-    batch_submitter::BatchSubmitter, database_client::DatabaseClient, pinger::Pinger,
+    batch_submitter::BatchSubmitter,
+    database_client::DatabaseClient,
+    pinger::{FinalizedPing, Pinger},
     ping_surge_client::PingSurgeClient,
 };
 use anyhow::Result;
@@ -40,7 +42,7 @@ impl TargetWorker {
         db_client: DatabaseClient,
     ) -> Result<TargetWorkerHandle> {
         let (command_tx, command_rx) = mpsc::channel(1);
-        let (results_tx, results_rx) = mpsc::channel(100);
+        let (results_tx, results_rx) = mpsc::channel::<FinalizedPing>(100);
 
         let ping_client = Arc::new(PingSurgeClient::new(target_ip)?);
 
@@ -82,7 +84,7 @@ impl TargetWorker {
 
     /// Runs the TargetWorker's main loop, which spawns and supervises the
     /// Pinger and BatchSubmitter tasks.
-    async fn run(self, results_rx: mpsc::Receiver<crate::ping_client::PingResult>) {
+    async fn run(self, results_rx: mpsc::Receiver<FinalizedPing>) {
         info!("TargetWorker started for target {}", self.target_ip);
 
         // Move components out of self to avoid partial move errors.

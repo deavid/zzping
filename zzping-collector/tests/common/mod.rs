@@ -67,7 +67,7 @@ impl MockIngestionService {
             received_batches: Arc::new(Mutex::new(Vec::new())),
             send_batch_response: Arc::new(Mutex::new(SendBatchResponse {
                 status: send_batch_response::Status::Ok as i32,
-                database_confirms_last_acked_nanos: 0,
+                database_confirms_last_acked_received_nanos: 0,
             })),
         }
     }

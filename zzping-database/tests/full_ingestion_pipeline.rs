@@ -39,7 +39,7 @@ async fn test_full_ingestion_pipeline() -> Result<()> {
         collector_uuid: "test-collector".to_string(),
         target_ip: "1.1.1.1".to_string(),
         records: records_minute_1.clone(),
-        collector_believes_last_acked_nanos: 0,
+        collector_believes_last_acked_received_nanos: 0,
     });
     request1
         .metadata_mut()
@@ -55,7 +55,7 @@ async fn test_full_ingestion_pipeline() -> Result<()> {
         collector_uuid: "test-collector".to_string(),
         target_ip: "1.1.1.1".to_string(),
         records: records_minute_2.clone(),
-        collector_believes_last_acked_nanos: NANOS_PER_MINUTE + 200,
+        collector_believes_last_acked_received_nanos: NANOS_PER_MINUTE + 200,
     });
     request2
         .metadata_mut()

@@ -1,35 +1,26 @@
 use crate::database_client::DatabaseClient;
-use crate::ping_client::{PingClient, PingResult};
+use crate::ping_client::PingClient;
 use anyhow::Result;
 use log::{debug, error, info, warn};
+use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::{mpsc, Semaphore};
 use zzping_proto::zzping::AnnouncePingsRequest;
 
-// ... MonotonicTimeSource struct and impl from before ...
-/// A source for creating absolute, monotonic timestamps.
-///
-/// This struct holds a reference point of a `SystemTime` and an `Instant`.
-/// It calculates new timestamps by taking the duration since the reference `Instant`
-/// and adding it to the reference `SystemTime`. This produces timestamps that are
-/// both absolute (based on wall-clock time) and monotonic (guaranteed to always
-/// move forward, unlike `SystemTime` which can go backward due to NTP adjustments).
+// ... MonotonicTimeSource ...
 pub struct MonotonicTimeSource {
     reference_instant: Instant,
     reference_system_time: SystemTime,
     last_generated_ns: u64,
 }
-
 impl Default for MonotonicTimeSource {
     fn default() -> Self {
         Self::new()
     }
 }
-
 impl MonotonicTimeSource {
-    /// Creates a new `MonotonicTimeSource` with the current time as the reference.
     pub fn new() -> Self {
         let now_instant = Instant::now();
         let now_system_time = SystemTime::now();
@@ -37,52 +28,43 @@ impl MonotonicTimeSource {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos() as u64;
-
         Self {
             reference_instant: now_instant,
             reference_system_time: now_system_time,
             last_generated_ns: now_ns,
         }
     }
-
-    /// Recalibrates the time source's reference point.
-    /// This should be called periodically to account for NTP clock slew.
     pub fn resync(&mut self) {
         self.reference_instant = Instant::now();
         self.reference_system_time = SystemTime::now();
     }
-
-    /// Returns the current absolute, monotonic time as a UNIX timestamp in nanoseconds.
-    ///
-    /// Returns `None` if monotonicity is violated (i.e., the system clock has stepped
-    /// backwards). It is the caller's responsibility to handle this, e.g., by skipping
-    /// the operation for this interval.
     pub fn now_ns(&mut self) -> Option<u64> {
         let elapsed = self.reference_instant.elapsed();
         let current_system_time = self.reference_system_time + elapsed;
-
         let now_ns = current_system_time
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("SystemTime is before UNIX_EPOCH")
             .as_nanos() as u64;
-
         if now_ns < self.last_generated_ns {
             let backward_jump = Duration::from_nanos(self.last_generated_ns - now_ns);
             warn!("Monotonicity violation: System clock may have stepped backwards by {backward_jump:?}. Skipping timestamp.");
-
             if backward_jump > Duration::from_secs(5) {
                 error!("Large backward time jump detected: {backward_jump:?}. This may indicate a critical system clock issue.");
             }
             return None;
         }
-
         self.last_generated_ns = now_ns;
         Some(now_ns)
     }
 }
 
 
-use std::collections::HashMap;
+/// The final, processed result of a ping attempt, ready for the BatchSubmitter.
+#[derive(Debug)]
+pub struct FinalizedPing {
+    pub sent_nanos: u64,
+    pub rtt: Option<Duration>,
+}
 
 /// The Pinger task is responsible for sending ICMP pings to a single target,
 /// generating correct timestamps, tracking in-flight pings, and forwarding
@@ -93,7 +75,7 @@ pub struct Pinger {
     grace_period: Duration,
     timeout_check_interval: Duration,
     ping_client: Arc<dyn PingClient>,
-    results_tx: mpsc::Sender<PingResult>,
+    results_tx: mpsc::Sender<FinalizedPing>,
     db_client: DatabaseClient,
     time_source: MonotonicTimeSource,
     in_flight_pings: HashMap<u16, u64>,
@@ -107,7 +89,7 @@ impl Pinger {
         grace_period: Duration,
         timeout_check_interval: Duration,
         ping_client: Arc<dyn PingClient>,
-        results_tx: mpsc::Sender<PingResult>,
+        results_tx: mpsc::Sender<FinalizedPing>,
         db_client: DatabaseClient,
     ) -> Self {
         Self {
@@ -172,14 +154,15 @@ impl Pinger {
                         sequence_idx = sequence_idx.wrapping_add(1);
                     }
                 }
-                Some(ping_result) = internal_rx.recv() => {
-                    if self.in_flight_pings.remove(&ping_result.sequence_idx).is_some() {
-                        if self.results_tx.send(ping_result).await.is_err() {
+                Some(ping_reply) = internal_rx.recv() => {
+                    if let Some(sent_nanos) = self.in_flight_pings.remove(&ping_reply.sequence_idx) {
+                        let finalized_ping = FinalizedPing { sent_nanos, rtt: ping_reply.rtt };
+                        if self.results_tx.send(finalized_ping).await.is_err() {
                             info!("BatchSubmitter disconnected, Pinger for {} shutting down.", self.target);
                             break;
                         }
                     } else {
-                        warn!("Received result for untracked sequence: {}", ping_result.sequence_idx);
+                        warn!("Received result for untracked sequence: {}", ping_reply.sequence_idx);
                     }
                 }
                 _ = timeout_interval.tick() => {
@@ -187,10 +170,9 @@ impl Pinger {
                     let grace_period_ns = self.grace_period.as_nanos() as u64;
 
                     let mut lost_pings = vec![];
-                    self.in_flight_pings.retain(|&seq, &mut sent_ns| {
+                    self.in_flight_pings.retain(|&_seq, &mut sent_ns| {
                         if now_ns.saturating_sub(sent_ns) > grace_period_ns {
-                            lost_pings.push(PingResult {
-                                sequence_idx: seq,
+                            lost_pings.push(FinalizedPing {
                                 sent_nanos: sent_ns,
                                 rtt: None, // Mark as lost
                             });
@@ -217,7 +199,6 @@ impl Pinger {
     }
 }
 
-// ... tests module from before ...
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -230,10 +211,23 @@ mod tests {
         sleep(Duration::from_millis(10));
         let t2 = time_source.now_ns().unwrap();
         assert!(t2 > t1, "t2 should be greater than t1");
+    }
 
-        // A more thorough test for clock-step violation is difficult in a unit test
-        // without mocking `Instant` and `SystemTime`, which is overly complex.
-        // The core logic is tested by the fact that it compiles and runs.
-        // The integration test for the Pinger will provide higher-level confidence.
+    #[test]
+    fn test_monotonic_source_handles_backward_jump() {
+        let mut time_source = MonotonicTimeSource::new();
+        let t1 = time_source.now_ns().unwrap();
+
+        // Simulate a backward clock jump by manually setting the last generated time
+        // to a point in the "future".
+        time_source.last_generated_ns = t1 + Duration::from_secs(10).as_nanos() as u64;
+
+        // The next call to now_ns should detect the time has gone "backward"
+        // relative to the (fake) last generated time, and return None.
+        let t2 = time_source.now_ns();
+        assert!(
+            t2.is_none(),
+            "now_ns() should return None when a backward clock jump is detected"
+        );
     }
 }

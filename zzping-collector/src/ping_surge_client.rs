@@ -1,6 +1,6 @@
 //! The default `PingClient` implementation that uses the `surge-ping` library.
 
-use crate::ping_client::{PingClient, PingResult};
+use crate::ping_client::{PingClient, PingReply};
 use anyhow::Result;
 use async_trait::async_trait;
 use log::debug;
@@ -44,7 +44,7 @@ impl PingClient for PingSurgeClient {
     async fn ping(
         &self,
         sequence_idx: u16,
-        tx: mpsc::Sender<PingResult>,
+        tx: mpsc::Sender<PingReply>,
         permit: OwnedSemaphorePermit,
         sent_nanos: u64,
     ) {
@@ -64,17 +64,16 @@ impl PingClient for PingSurgeClient {
 async fn ping_task(
     mut pinger: Pinger,
     seq: u16,
-    tx: mpsc::Sender<PingResult>,
+    tx: mpsc::Sender<PingReply>,
     permit: OwnedSemaphorePermit,
-    sent_nanos: u64,
+    _sent_nanos: u64,
 ) {
     // Timing is now handled by the calling Pinger task. This task executes immediately.
     let result = pinger.ping(PingSequence(seq), &[0; 8]).await;
     let rtt = result.ok().map(|(_, rtt)| rtt);
 
-    let result = PingResult {
+    let result = PingReply {
         sequence_idx: seq,
-        sent_nanos,
         rtt,
     };
 
@@ -134,9 +133,8 @@ mod tests {
         // but we can test the channel communication and timeout handling
 
         // Create a simple test that sends a result through the channel
-        let test_result = PingResult {
+        let test_result = PingReply {
             sequence_idx: 123,
-            sent_nanos: 1000000,
             rtt: Some(Duration::from_micros(1000)),
         };
 
@@ -158,9 +156,8 @@ mod tests {
         drop(rx);
 
         // Try to send - this should fail gracefully
-        let test_result = PingResult {
+        let test_result = PingReply {
             sequence_idx: 123,
-            sent_nanos: 1000000,
             rtt: Some(Duration::from_micros(1000)),
         };
 
@@ -172,18 +169,15 @@ mod tests {
     }
 
     #[test]
-    fn test_ping_result_structure() {
-        let sent_nanos = 1234567890;
+    fn test_ping_reply_structure() {
         let rtt = Some(Duration::from_micros(5000));
 
-        let result = PingResult {
+        let result = PingReply {
             sequence_idx: 456,
-            sent_nanos,
             rtt,
         };
 
         assert_eq!(result.sequence_idx, 456);
-        assert_eq!(result.sent_nanos, sent_nanos);
         assert_eq!(result.rtt, rtt);
     }
 }

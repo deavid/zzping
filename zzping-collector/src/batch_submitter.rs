@@ -1,5 +1,5 @@
 use crate::database_client::DatabaseClient;
-use crate::ping_client::PingResult;
+use crate::pinger::FinalizedPing;
 use anyhow::Result;
 use log::{debug, info, warn};
 use std::collections::BTreeMap;
@@ -44,7 +44,7 @@ impl BatchSubmitter {
     }
 
     /// Runs the BatchSubmitter's main loop.
-    pub async fn run(mut self, mut results_rx: mpsc::Receiver<PingResult>) -> Result<()> {
+    pub async fn run(mut self, mut results_rx: mpsc::Receiver<FinalizedPing>) -> Result<()> {
         info!(
             "BatchSubmitter task started for target {}.",
             self.target_ip
@@ -54,8 +54,8 @@ impl BatchSubmitter {
 
         loop {
             tokio::select! {
-                Some(ping_result) = results_rx.recv() => {
-                    self.ingest_ping_result(ping_result);
+                Some(finalized_ping) = results_rx.recv() => {
+                    self.ingest_ping_result(finalized_ping);
                 }
                 _ = submission_interval.tick() => {
                     self.prune_by_time();
@@ -64,7 +64,6 @@ impl BatchSubmitter {
                     }
                 }
                 else => {
-                    // Pinger disconnected
                     break;
                 }
             }
@@ -77,28 +76,27 @@ impl BatchSubmitter {
         Ok(())
     }
 
-    /// Ingests a single `PingResult` and stores it in the buffer.
-    pub fn ingest_ping_result(&mut self, ping_result: PingResult) {
-        let (key, record) = if let Some(rtt) = ping_result.rtt {
+    /// Ingests a single `FinalizedPing` and stores it in the buffer.
+    pub fn ingest_ping_result(&mut self, finalized_ping: FinalizedPing) {
+        let (key, record) = if let Some(rtt) = finalized_ping.rtt {
             (
-                ping_result.sent_nanos + rtt.as_nanos() as u64,
+                finalized_ping.sent_nanos + rtt.as_nanos() as u64,
                 RawDataRecord {
-                    sent_nanos: ping_result.sent_nanos,
+                    sent_nanos: finalized_ping.sent_nanos,
                     rtt_nanos: rtt.as_nanos() as u64,
                 },
             )
         } else {
             (
-                ping_result.sent_nanos + self.grace_period.as_nanos() as u64,
+                finalized_ping.sent_nanos + self.grace_period.as_nanos() as u64,
                 RawDataRecord {
-                    sent_nanos: ping_result.sent_nanos,
+                    sent_nanos: finalized_ping.sent_nanos,
                     rtt_nanos: u64::MAX,
                 },
             )
         };
         self.buffer.insert(key, record);
 
-        // Enforce the hard buffer limit by removing the oldest entry if full.
         if self.buffer.len() > self.buffer_limit {
             if let Some((key, _)) = self.buffer.first_key_value() {
                 let key = *key;
@@ -115,8 +113,6 @@ impl BatchSubmitter {
     pub async fn send_batch(&mut self) -> Result<()> {
         let now_ns = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
 
-        // Embargo: Only send records with a received_nanos key in the past.
-        // We also only send records that are newer than the last ACKed record.
         let records_to_send: Vec<RawDataRecord> = self
             .buffer
             .range((self.last_acked_received_nanos + 1)..=now_ns)
@@ -137,14 +133,15 @@ impl BatchSubmitter {
             collector_uuid: self.collector_uuid.clone(),
             target_ip: self.target_ip.to_string(),
             records: records_to_send,
-            collector_believes_last_acked_nanos: self.last_acked_received_nanos,
+            collector_believes_last_acked_received_nanos: self.last_acked_received_nanos,
         };
 
         let response = self.db_client.send_batch(request).await?.into_inner();
 
         match send_batch_response::Status::try_from(response.status)? {
             send_batch_response::Status::Ok => {
-                self.last_acked_received_nanos = response.database_confirms_last_acked_nanos;
+                self.last_acked_received_nanos =
+                    response.database_confirms_last_acked_received_nanos;
                 debug!(
                     "Batch for {} OK. New acked_nanos: {}",
                     self.target_ip, self.last_acked_received_nanos
@@ -153,9 +150,10 @@ impl BatchSubmitter {
             send_batch_response::Status::Desync => {
                 warn!(
                     "DESYNC for target {}. DB expects records after {}. Rewinding.",
-                    self.target_ip, response.database_confirms_last_acked_nanos
+                    self.target_ip, response.database_confirms_last_acked_received_nanos
                 );
-                self.last_acked_received_nanos = response.database_confirms_last_acked_nanos;
+                self.last_acked_received_nanos =
+                    response.database_confirms_last_acked_received_nanos;
             }
         }
 
@@ -171,15 +169,12 @@ impl BatchSubmitter {
             .unwrap_or_default()
             .as_nanos() as u64;
 
-        let original_len = self.buffer.len();
         self.buffer.retain(|&key, _| key > cutoff_ns);
-        let removed_count = original_len - self.buffer.len();
+    }
 
-        if removed_count > 0 {
-            debug!(
-                "Pruned {} records older than {:?} for target {}",
-                removed_count, self.retention_period, self.target_ip
-            );
-        }
+    /// Removes records from the buffer that have been acknowledged as flushed
+    /// to disk by the database.
+    pub fn prune_by_fsync(&mut self, fsync_nanos: u64) {
+        self.buffer.retain(|&key, _| key > fsync_nanos);
     }
 }

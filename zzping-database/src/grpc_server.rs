@@ -178,7 +178,7 @@ impl Ingestion for IngestionServiceImpl {
         let request = request.into_inner();
         let collector_id = request.collector_uuid;
         let target_ip_str = request.target_ip;
-        let collector_believes_last_acked = request.collector_believes_last_acked_nanos;
+        let collector_believes_last_acked = request.collector_believes_last_acked_received_nanos;
 
         let target_ip: IpAddr = target_ip_str
             .parse()
@@ -195,7 +195,7 @@ impl Ingestion for IngestionServiceImpl {
             );
             return Ok(Response::new(SendBatchResponse {
                 status: send_batch_response::Status::Desync as i32,
-                database_confirms_last_acked_nanos: db_last_acked,
+                database_confirms_last_acked_received_nanos: db_last_acked,
             }));
         }
 
@@ -229,7 +229,7 @@ impl Ingestion for IngestionServiceImpl {
 
         Ok(Response::new(SendBatchResponse {
             status: send_batch_response::Status::Ok as i32,
-            database_confirms_last_acked_nanos: last_sent_nanos,
+            database_confirms_last_acked_received_nanos: last_sent_nanos,
         }))
     }
 
@@ -526,7 +526,7 @@ mod tests {
         let payload = SendBatchRequest {
             collector_uuid: "collector-1".to_string(),
             target_ip: "1.1.1.1".to_string(),
-            collector_believes_last_acked_nanos: 100,
+            collector_believes_last_acked_received_nanos: 100,
             records: vec![
                 RawDataRecord {
                     sent_nanos: 101,
@@ -542,7 +542,10 @@ mod tests {
 
         let response = service.send_batch(request).await.unwrap().into_inner();
         assert_eq!(response.status, send_batch_response::Status::Ok as i32);
-        assert_eq!(response.database_confirms_last_acked_nanos, 102);
+        assert_eq!(
+            response.database_confirms_last_acked_received_nanos,
+            102
+        );
         assert_eq!(*service.collector_states.get(&state_key).unwrap(), 102);
     }
 
@@ -558,7 +561,7 @@ mod tests {
         let payload = SendBatchRequest {
             collector_uuid: "collector-1".to_string(),
             target_ip: "1.1.1.1".to_string(),
-            collector_believes_last_acked_nanos: 99,
+            collector_believes_last_acked_received_nanos: 99,
             records: vec![RawDataRecord {
                 sent_nanos: 101,
                 rtt_nanos: 10,
@@ -568,7 +571,10 @@ mod tests {
 
         let response = service.send_batch(request).await.unwrap().into_inner();
         assert_eq!(response.status, send_batch_response::Status::Desync as i32);
-        assert_eq!(response.database_confirms_last_acked_nanos, 100);
+        assert_eq!(
+            response.database_confirms_last_acked_received_nanos,
+            100
+        );
         assert_eq!(*service.collector_states.get(&state_key).unwrap(), 100);
     }
 }
