@@ -70,11 +70,10 @@ impl TaskSupervisor {
                     let mut total_buffer_size = 0;
                     for worker_handle in self.workers.values() {
                         let (tx, rx) = oneshot::channel();
-                        if worker_handle.command_tx.send(WorkerCommand::GetHealth(tx)).await.is_ok() {
-                            if let Ok(health) = rx.await {
+                        if worker_handle.command_tx.send(WorkerCommand::GetHealth(tx)).await.is_ok()
+                            && let Ok(health) = rx.await {
                                 total_buffer_size += health.buffer_size;
                             }
-                        }
                     }
 
                     // NOTE: Fatal error reporting is not yet implemented.

@@ -1,17 +1,12 @@
 use crate::{
-    batch_submitter::{BatchSubmitter, BatchSubmitterCommand, SharedBuffer},
+    batch_submitter::{BatchSubmitter, BatchSubmitterCommand},
     database_client::DatabaseClient,
-    pinger::{FinalizedPing, Pinger, PingerCommand},
     ping_surge_client::PingSurgeClient,
+    pinger::{FinalizedPing, Pinger, PingerCommand},
 };
 use anyhow::Result;
 use log::{info, warn};
-use std::{
-    collections::BTreeMap,
-    net::IpAddr,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::{net::IpAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use zzping_proto::zzping::CollectorRole;
@@ -46,7 +41,6 @@ pub struct TargetWorker {
     batch_submitter_command_tx: mpsc::Sender<BatchSubmitterCommand>,
     batch_submitter: BatchSubmitter,
     command_rx: mpsc::Receiver<WorkerCommand>,
-    buffer: SharedBuffer,
 }
 
 impl TargetWorker {
@@ -76,8 +70,6 @@ impl TargetWorker {
             pinger_command_rx,
         );
 
-        let buffer = Arc::new(Mutex::new(BTreeMap::new()));
-
         let batch_submitter = BatchSubmitter::new(
             collector_uuid,
             target_ip,
@@ -85,7 +77,6 @@ impl TargetWorker {
             1_000_000,
             Duration::from_secs(24 * 3600),
             db_client,
-            buffer.clone(),
             batch_submitter_command_rx,
         );
 
@@ -96,7 +87,6 @@ impl TargetWorker {
             batch_submitter_command_tx,
             batch_submitter,
             command_rx,
-            buffer,
         };
 
         let task_handle = tokio::spawn(async move {
@@ -120,7 +110,6 @@ impl TargetWorker {
         let batch_submitter_command_tx = self.batch_submitter_command_tx;
         let batch_submitter = self.batch_submitter;
         let mut command_rx = self.command_rx;
-        let buffer = self.buffer;
 
         let mut pinger_handle = tokio::spawn(pinger.run());
         let mut submitter_handle = tokio::spawn(batch_submitter.run(results_rx));
@@ -130,13 +119,26 @@ impl TargetWorker {
                 Some(command) = command_rx.recv() => {
                     match command {
                         WorkerCommand::GetHealth(tx) => {
-                            let len = buffer.lock().unwrap().len();
-                            info!(
-                                "TargetWorker for {} reporting health: buffer_size = {}",
-                                self.target_ip, len
-                            );
-                            let health = WorkerHealth { buffer_size: len };
-                            let _ = tx.send(health);
+                            let (health_tx, health_rx) = oneshot::channel();
+                            if batch_submitter_command_tx.send(BatchSubmitterCommand::GetHealth(health_tx)).await.is_err() {
+                                warn!("Failed to send GetHealth command to batch_submitter for target {}.", self.target_ip);
+                                let _ = tx.send(WorkerHealth { buffer_size: 0 });
+                            } else {
+                                match health_rx.await {
+                                    Ok(buffer_size) => {
+                                        info!(
+                                            "TargetWorker for {} reporting health: buffer_size = {}",
+                                            self.target_ip, buffer_size
+                                        );
+                                        let health = WorkerHealth { buffer_size };
+                                        let _ = tx.send(health);
+                                    }
+                                    Err(_) => {
+                                        warn!("Failed to receive health response from batch_submitter for target {}.", self.target_ip);
+                                        let _ = tx.send(WorkerHealth { buffer_size: 0 });
+                                    }
+                                }
+                            }
                         }
                         WorkerCommand::UpdateRole(role) => {
                             info!("TargetWorker for {} updating role to {:?}", self.target_ip, role);

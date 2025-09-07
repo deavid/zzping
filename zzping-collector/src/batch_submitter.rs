@@ -4,17 +4,15 @@ use anyhow::Result;
 use log::{debug, info, warn};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
-use zzping_proto::zzping::{send_batch_response, CollectorRole, RawDataRecord, SendBatchRequest};
-
-pub type SharedBuffer = Arc<Mutex<BTreeMap<u64, RawDataRecord>>>;
+use zzping_proto::zzping::{CollectorRole, RawDataRecord, SendBatchRequest, send_batch_response};
 
 /// Commands that can be sent to the BatchSubmitter.
 #[derive(Debug)]
 pub enum BatchSubmitterCommand {
     UpdateRole(CollectorRole),
+    GetHealth(tokio::sync::oneshot::Sender<usize>),
 }
 
 /// The BatchSubmitter is responsible for buffering ping results for a single
@@ -26,8 +24,8 @@ pub struct BatchSubmitter {
     buffer_limit: usize,
     retention_period: Duration,
     db_client: DatabaseClient,
-    pub buffer: SharedBuffer,
-    pub last_acked_received_nanos: u64,
+    buffer: BTreeMap<u64, RawDataRecord>,
+    last_acked_received_nanos: u64,
     command_rx: mpsc::Receiver<BatchSubmitterCommand>,
     is_active: bool,
 }
@@ -41,7 +39,6 @@ impl BatchSubmitter {
         buffer_limit: usize,
         retention_period: Duration,
         db_client: DatabaseClient,
-        buffer: SharedBuffer,
         command_rx: mpsc::Receiver<BatchSubmitterCommand>,
     ) -> Self {
         Self {
@@ -51,7 +48,7 @@ impl BatchSubmitter {
             buffer_limit,
             retention_period,
             db_client,
-            buffer,
+            buffer: BTreeMap::new(),
             last_acked_received_nanos: 0,
             command_rx,
             is_active: true, // Start active
@@ -60,10 +57,7 @@ impl BatchSubmitter {
 
     /// Runs the BatchSubmitter's main loop.
     pub async fn run(mut self, mut results_rx: mpsc::Receiver<FinalizedPing>) -> Result<()> {
-        info!(
-            "BatchSubmitter task started for target {}.",
-            self.target_ip
-        );
+        info!("BatchSubmitter task started for target {}.", self.target_ip);
 
         let mut submission_interval = tokio::time::interval(Duration::from_secs(1));
 
@@ -100,8 +94,10 @@ impl BatchSubmitter {
     fn handle_command(&mut self, command: BatchSubmitterCommand) {
         match command {
             BatchSubmitterCommand::UpdateRole(role) => {
-                let should_be_active =
-                    matches!(role, CollectorRole::Primary | CollectorRole::PrimarySupervised);
+                let should_be_active = matches!(
+                    role,
+                    CollectorRole::Primary | CollectorRole::PrimarySupervised
+                );
                 if self.is_active != should_be_active {
                     self.is_active = should_be_active;
                     info!(
@@ -110,6 +106,10 @@ impl BatchSubmitter {
                         if self.is_active { "active" } else { "paused" }
                     );
                 }
+            }
+            BatchSubmitterCommand::GetHealth(tx) => {
+                let buffer_size = self.buffer.len();
+                let _ = tx.send(buffer_size);
             }
         }
     }
@@ -134,18 +134,18 @@ impl BatchSubmitter {
             )
         };
 
-        let mut buffer = self.buffer.lock().unwrap();
-        buffer.insert(key, record);
+        self.buffer.insert(key, record);
 
-        if buffer.len() > self.buffer_limit
-            && let Some((key, _)) = buffer.first_key_value() {
-                let key = *key;
-                buffer.remove(&key);
-                warn!(
-                    "Buffer limit reached for target {}. Dropped oldest record with key {}.",
-                    self.target_ip, key
-                );
-            }
+        if self.buffer.len() > self.buffer_limit
+            && let Some((key, _)) = self.buffer.first_key_value()
+        {
+            let key = *key;
+            self.buffer.remove(&key);
+            warn!(
+                "Buffer limit reached for target {}. Dropped oldest record with key {}.",
+                self.target_ip, key
+            );
+        }
     }
 
     /// Sends a batch of records to the database.
@@ -153,8 +153,7 @@ impl BatchSubmitter {
         let now_ns = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
 
         let records_to_send: Vec<RawDataRecord> = {
-            let buffer = self.buffer.lock().unwrap();
-            buffer
+            self.buffer
                 .range((self.last_acked_received_nanos + 1)..=now_ns)
                 .map(|(_, record)| record.clone())
                 .collect()
@@ -210,14 +209,27 @@ impl BatchSubmitter {
             .unwrap_or_default()
             .as_nanos() as u64;
 
-        let mut buffer = self.buffer.lock().unwrap();
-        buffer.retain(|&key, _| key > cutoff_ns);
+        self.buffer.retain(|&key, _| key > cutoff_ns);
     }
 
     /// Removes records from the buffer that have been acknowledged as flushed
     /// to disk by the database.
     pub fn prune_by_fsync(&mut self, fsync_nanos: u64) {
-        let mut buffer = self.buffer.lock().unwrap();
-        buffer.retain(|&key, _| key > fsync_nanos);
+        self.buffer.retain(|&key, _| key > fsync_nanos);
+    }
+
+    /// Returns the current size of the buffer (for testing purposes).
+    pub fn buffer_len(&self) -> usize {
+        self.buffer.len()
+    }
+
+    /// Returns a copy of the buffer contents (for testing purposes).
+    pub fn buffer_contents(&self) -> BTreeMap<u64, RawDataRecord> {
+        self.buffer.clone()
+    }
+
+    /// Returns the last acked received nanos (for testing purposes).
+    pub fn last_acked_received_nanos(&self) -> u64 {
+        self.last_acked_received_nanos
     }
 }

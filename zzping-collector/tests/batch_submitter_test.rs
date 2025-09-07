@@ -1,11 +1,9 @@
 use ntest::timeout;
-use std::collections::BTreeMap;
 use std::net::IpAddr;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
-use zzping_collector::batch_submitter::{BatchSubmitter, SharedBuffer};
+use zzping_collector::batch_submitter::BatchSubmitter;
 use zzping_collector::database_client::DatabaseClient;
 use zzping_collector::pinger::FinalizedPing;
 
@@ -18,20 +16,17 @@ fn setup_submitter(
     db_client: DatabaseClient,
     buffer_limit: usize,
     retention_period: Duration,
-) -> (BatchSubmitter, SharedBuffer) {
-    let buffer = Arc::new(Mutex::new(BTreeMap::new()));
+) -> BatchSubmitter {
     let (_command_tx, command_rx) = mpsc::channel(10);
-    let submitter = BatchSubmitter::new(
+    BatchSubmitter::new(
         "test-collector".to_string(),
         IpAddr::from_str("1.1.1.1").unwrap(),
         Duration::from_secs(60),
         buffer_limit,
         retention_period,
         db_client,
-        buffer.clone(),
         command_rx,
-    );
-    (submitter, buffer)
+    )
 }
 
 #[tokio::test]
@@ -43,8 +38,7 @@ async fn test_ingestion_logic() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let (mut submitter, buffer) =
-        setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
+    let mut submitter = setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
     let grace_period_ns = submitter.grace_period.as_nanos() as u64;
 
     // 1. Ingest a successful ping
@@ -56,9 +50,9 @@ async fn test_ingestion_logic() {
     submitter.ingest_ping_result(successful_ping);
 
     {
-        let buffer_lock = buffer.lock().unwrap();
-        assert_eq!(buffer_lock.len(), 1);
-        let (key, record) = buffer_lock.iter().next().unwrap();
+        let buffer_contents = submitter.buffer_contents();
+        assert_eq!(buffer_contents.len(), 1);
+        let (key, record) = buffer_contents.iter().next().unwrap();
         assert_eq!(*key, 1000 + rtt_ns);
         assert_eq!(record.sent_nanos, 1000);
         assert_eq!(record.rtt_nanos, rtt_ns);
@@ -71,10 +65,10 @@ async fn test_ingestion_logic() {
     };
     submitter.ingest_ping_result(lost_ping);
 
-    let buffer_lock = buffer.lock().unwrap();
-    assert_eq!(buffer_lock.len(), 2);
+    let buffer_contents = submitter.buffer_contents();
+    assert_eq!(buffer_contents.len(), 2);
     let lost_key = 2000 + grace_period_ns;
-    let lost_record = buffer_lock.get(&lost_key).unwrap();
+    let lost_record = buffer_contents.get(&lost_key).unwrap();
     assert_eq!(lost_record.sent_nanos, 2000);
     assert_eq!(lost_record.rtt_nanos, u64::MAX);
 }
@@ -89,8 +83,7 @@ async fn test_send_batch_ok_and_embargo() {
         DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
-    let (mut submitter, buffer) =
-        setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
+    let mut submitter = setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
 
     // 2. Ingest a record that is in the past (should be sent)
     submitter.ingest_ping_result(FinalizedPing {
@@ -107,7 +100,7 @@ async fn test_send_batch_ok_and_embargo() {
         sent_nanos: future_sent_nanos,
         rtt: None,
     });
-    assert_eq!(buffer.lock().unwrap().len(), 2);
+    assert_eq!(submitter.buffer_len(), 2);
 
     // 4. Trigger send_batch. Only the first record should be sent.
     submitter.send_batch().await.unwrap();
@@ -135,8 +128,7 @@ async fn test_send_batch_desync() {
         DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .unwrap();
-    let (mut submitter, _) =
-        setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
+    let mut submitter = setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
 
     // 2. Ingest data that will be sent
     submitter.ingest_ping_result(FinalizedPing {
@@ -147,7 +139,7 @@ async fn test_send_batch_desync() {
     // 3. Trigger send and assert DESYNC handling
     submitter.send_batch().await.unwrap();
     assert_eq!(
-        submitter.last_acked_received_nanos, new_acked_nanos,
+        submitter.last_acked_received_nanos(), new_acked_nanos,
         "Submitter should update its acked_nanos to the value from the DB on DESYNC"
     );
 
@@ -173,7 +165,7 @@ async fn test_send_batch_desync() {
         "The second batch should use the corrected acked_nanos value"
     );
     assert_eq!(
-        submitter.last_acked_received_nanos, final_acked_nanos,
+        submitter.last_acked_received_nanos(), final_acked_nanos,
         "Submitter should update its acked_nanos after the successful batch"
     );
 }
@@ -187,7 +179,7 @@ async fn test_prune_by_buffer_limit() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let (mut submitter, buffer) = setup_submitter(db_client, 5, Duration::from_secs(24 * 3600));
+    let mut submitter = setup_submitter(db_client, 5, Duration::from_secs(24 * 3600));
 
     // Ingest 6 records, exceeding the limit of 5
     for i in 0..6 {
@@ -198,10 +190,10 @@ async fn test_prune_by_buffer_limit() {
     }
 
     // The buffer should have pruned the oldest record and contain only 5
-    let buffer_lock = buffer.lock().unwrap();
-    assert_eq!(buffer_lock.len(), 5);
+    let buffer_contents = submitter.buffer_contents();
+    assert_eq!(buffer_contents.len(), 5);
     // The first record should now be the one with sent_nanos = 1100
-    let (first_key, _) = buffer_lock.iter().next().unwrap();
+    let (first_key, _) = buffer_contents.iter().next().unwrap();
     assert_eq!(*first_key, 1100 + 50_000_000);
 }
 
@@ -214,7 +206,7 @@ async fn test_prune_by_time_retention() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let (mut submitter, buffer) = setup_submitter(db_client, 1_000_000, Duration::from_secs(1));
+    let mut submitter = setup_submitter(db_client, 1_000_000, Duration::from_secs(1));
 
     // Ingest a record now
     submitter.ingest_ping_result(FinalizedPing {
@@ -224,7 +216,7 @@ async fn test_prune_by_time_retention() {
             .as_nanos() as u64,
         rtt: Some(Duration::from_millis(50)),
     });
-    assert_eq!(buffer.lock().unwrap().len(), 1);
+    assert_eq!(submitter.buffer_len(), 1);
 
     // Wait for longer than the retention period
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -234,7 +226,7 @@ async fn test_prune_by_time_retention() {
 
     // The buffer should now be empty
     assert_eq!(
-        buffer.lock().unwrap().len(),
+        submitter.buffer_len(),
         0,
         "Buffer should be empty after pruning by time"
     );
@@ -249,8 +241,7 @@ async fn test_prune_by_fsync() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let (mut submitter, buffer) =
-        setup_submitter(db_client, 100, Duration::from_secs(24 * 3600));
+    let mut submitter = setup_submitter(db_client, 100, Duration::from_secs(24 * 3600));
 
     // Ingest 5 records
     for i in 0..5 {
@@ -259,7 +250,7 @@ async fn test_prune_by_fsync() {
             rtt: Some(Duration::from_millis(50)),
         });
     }
-    assert_eq!(buffer.lock().unwrap().len(), 5);
+    assert_eq!(submitter.buffer_len(), 5);
 
     // The keys will be 1050M, 1150M, 1250M, 1350M, 1450M (in nanos)
     // Prune everything up to and including 1250M
@@ -267,10 +258,10 @@ async fn test_prune_by_fsync() {
     submitter.prune_by_fsync(fsync_nanos);
 
     // 2 records should remain
-    let buffer_lock = buffer.lock().unwrap();
-    assert_eq!(buffer_lock.len(), 2);
+    let buffer_contents = submitter.buffer_contents();
+    assert_eq!(buffer_contents.len(), 2);
     // The first remaining record should be the one with sent_nanos = 1300
-    let (first_key, _) = buffer_lock.iter().next().unwrap();
+    let (first_key, _) = buffer_contents.iter().next().unwrap();
     assert_eq!(*first_key, 1300 + 50_000_000);
 }
 
@@ -283,7 +274,7 @@ async fn test_pruning_precedence() {
         DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
             .await
             .unwrap();
-    let (mut submitter, buffer) = setup_submitter(db_client, 5, Duration::from_secs(10));
+    let mut submitter = setup_submitter(db_client, 5, Duration::from_secs(10));
 
     // Ingest 6 records. All have recent timestamps.
     for i in 0..6 {
@@ -300,7 +291,7 @@ async fn test_pruning_precedence() {
     // Assert that the buffer limit was applied immediately on ingest,
     // before the time-based pruning had a chance to run.
     assert_eq!(
-        buffer.lock().unwrap().len(),
+        submitter.buffer_len(),
         5,
         "Buffer should be pruned by count immediately upon insertion"
     );
