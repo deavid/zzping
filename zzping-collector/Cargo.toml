@@ -22,6 +22,7 @@ clap = { workspace = true, features = ["derive"] }
 env_logger.workspace = true
 log.workspace = true
 rand.workspace = true
+ron = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true
 surge-ping.workspace = true
