@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::{OwnedSemaphorePermit, mpsc};
 
 /// A mock `PingClient` that records calls to its `ping` method.
@@ -17,19 +17,15 @@ pub struct PingMockClient {
     /// A shared, mutable vector that stores the sequence numbers of each ping call.
     /// Tests can inspect this vector to assert that `ping` was called.
     pub pings: Arc<Mutex<Vec<u16>>>,
-    /// An optional `PingResult` to send back to the caller. If `None`, no result is sent.
-    pub result_to_send: Option<PingResult>,
+    /// An optional RTT duration to send back to the caller. If `None`, no result is sent.
+    pub rtt_to_send: Option<Duration>,
 }
 
 impl PingMockClient {
     pub fn new() -> Self {
         Self {
             pings: Arc::new(Mutex::new(Vec::new())),
-            result_to_send: Some(PingResult {
-                target: IpAddr::from_str("127.0.0.1").unwrap(),
-                sent_nanos: 12345,
-                rtt: Some(Duration::from_millis(50)),
-            }),
+            rtt_to_send: Some(Duration::from_millis(50)),
         }
     }
 }
@@ -49,7 +45,7 @@ impl PingClient for PingMockClient {
     }
 
     /// This mock implementation records the sequence number of the ping call and
-    /// optionally sends a pre-configured `PingResult` back to the `PingerSession`.
+    /// optionally sends a `PingResult` back to the caller.
     ///
     /// The `permit` is passed in and immediately dropped, which simulates the
     /// semaphore permit being released after a ping operation completes.
@@ -58,13 +54,15 @@ impl PingClient for PingMockClient {
         sequence_idx: u16,
         tx: mpsc::Sender<PingResult>,
         _permit: OwnedSemaphorePermit,
-        _start_time: Instant,
-        _target_time: Instant,
+        sent_nanos: u64,
     ) {
         self.pings.lock().unwrap().push(sequence_idx);
-        if let Some(mut result) = self.result_to_send.clone() {
-            // Ensure the result has the correct target for this client.
-            result.target = self.target();
+        if let Some(rtt) = self.rtt_to_send {
+            let result = PingResult {
+                sequence_idx,
+                sent_nanos,
+                rtt: Some(rtt),
+            };
             tokio::spawn(async move {
                 tx.send(result).await.ok();
             });
@@ -85,10 +83,10 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
         let semaphore = Arc::new(Semaphore::new(1));
         let permit = semaphore.try_acquire_owned().unwrap();
+        let sent_nanos = 999_999;
+        let sequence_idx = 123;
 
-        client
-            .ping(123, tx, permit, Instant::now(), Instant::now())
-            .await;
+        client.ping(sequence_idx, tx, permit, sent_nanos).await;
 
         // Check that the ping was recorded
         {
@@ -96,9 +94,10 @@ mod tests {
             assert_eq!(*pings, vec![123]);
         }
 
-        // Check that the result was sent and has the correct target
+        // Check that the result was sent with the correct timestamp and sequence
         let result = rx.recv().await.unwrap();
-        assert_eq!(result.sent_nanos, 12345);
-        assert_eq!(result.target, client.target());
+        assert_eq!(result.sequence_idx, sequence_idx);
+        assert_eq!(result.sent_nanos, sent_nanos);
+        assert_eq!(result.rtt, Some(Duration::from_millis(50)));
     }
 }

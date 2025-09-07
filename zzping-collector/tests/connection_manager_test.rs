@@ -3,11 +3,11 @@ use tokio::sync::{mpsc, Notify};
 use zzping_collector::connection_manager::ConnectionManager;
 
 mod common;
-use common::spawn_mock_server;
+use common::{spawn_mock_server, MockIngestionService};
 
 #[tokio::test]
 async fn test_connection_manager_connects_and_sends_client() {
-    let addr = spawn_mock_server().await;
+    let addr = spawn_mock_server(MockIngestionService::default()).await;
     let client_addr = format!("http://{addr}");
     let (client_tx, mut client_rx) = mpsc::channel(1);
     let notify = Arc::new(Notify::new());

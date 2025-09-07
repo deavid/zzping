@@ -7,15 +7,15 @@ use crate::{
 };
 use base64::{Engine as _, engine::general_purpose};
 use dashmap::DashMap;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::{collections::HashSet, net::IpAddr, sync::Arc};
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
 use zzping_lib::auth::AuthToken;
 use zzping_proto::zzping::{
-    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse, QueryRequest,
-    QueryResponse, SendBatchRequest, SendBatchResponse, ingestion_server::Ingestion,
-    send_batch_response,
+    AnnouncePingsRequest, AnnouncePingsResponse, GetRecentDataRequest, GetRecentDataResponse,
+    HeartbeatRequest, HeartbeatResponse, QueryRequest, QueryResponse, SendBatchRequest,
+    SendBatchResponse, ingestion_server::Ingestion, send_batch_response,
 };
 
 /// A `tonic` interceptor that validates role-based authentication tokens.
@@ -292,6 +292,34 @@ impl Ingestion for IngestionServiceImpl {
             .collect();
 
         Ok(Response::new(QueryResponse { records }))
+    }
+
+    /// Receives a fire-and-forget announcement of pings being sent.
+    ///
+    /// This is used for low-latency, real-time visualization in the GUI. The data
+    /// is not considered durable and may be dropped. The database is expected to
+    /// hold it in a short-lived in-memory cache.
+    ///
+    /// Requires the `"collector"` role.
+    async fn announce_pings(
+        &self,
+        request: Request<AnnouncePingsRequest>,
+    ) -> Result<Response<AnnouncePingsResponse>, Status> {
+        let identity = request.extensions().get::<UserIdentity>().ok_or_else(|| {
+            Status::internal(
+                "Missing user identity. This should have been handled by the auth interceptor.",
+            )
+        })?;
+
+        if !identity.has_role("collector") {
+            return Err(Status::permission_denied("Missing 'collector' role."));
+        }
+
+        // For now, we just accept the request and do nothing with it.
+        // A future implementation would add this to a live-data cache.
+        debug!("Received AnnouncePings from '{}'", identity.id);
+
+        Ok(Response::new(AnnouncePingsResponse {}))
     }
 }
 

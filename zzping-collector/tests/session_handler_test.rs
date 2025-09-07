@@ -13,7 +13,7 @@ async fn test_session_handler_sends_config_on_success() {
 
     // 1. Setup
     let (config_tx, mut config_rx) = watch::channel(None);
-    let server_addr = spawn_mock_server().await;
+    let server_addr = spawn_mock_server(MockIngestionService::default()).await;
     let client = DatabaseClient::connect(
         format!("http://{server_addr}"),
         "test-token".to_string(),
@@ -36,9 +36,9 @@ async fn test_session_handler_sends_config_on_success() {
     assert!(received_config.is_some());
     let config = received_config.unwrap();
 
-    // Check that the placeholder string contains data from the mock response
-    assert!(config.placeholder.contains("Primary"));
-    assert!(config.placeholder.contains("8.8.8.8"));
+    // Check that the config contains data from the mock response
+    assert_eq!(config.ping_rate_pps, 100);
+    assert!(config.targets.contains(&"8.8.8.8".parse().unwrap()));
 }
 
 #[tokio::test]

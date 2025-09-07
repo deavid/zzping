@@ -3,28 +3,26 @@ use crate::{
     connection_manager::ConnectionManager,
     database_client::DatabaseClient,
     session_handler::SessionHandler,
-    task_supervisor::{SupervisorConfig, TaskSupervisor},
+    task_supervisor::{ClientUpdate, SupervisorConfig, TaskSupervisor},
 };
 use anyhow::Result;
-use log::info;
+use log::{info, warn};
 use std::net::TcpListener;
 use tokio::sync::{mpsc, watch};
+use std::sync::Arc;
+use tokio::sync::Notify;
 
-/// The long-lived root of the application, owning all resilient states
-/// (via its child components) and supervising the overall connection lifecycle.
+/// The long-lived root of the application.
 pub struct CollectorService {
     config: Config,
     task_supervisor: TaskSupervisor,
-    /// The TCP listener that acts as a lock to prevent multiple
-    /// instances of the collector from running simultaneously.
-    /// It's held here to ensure its lifetime matches the service's lifetime.
     _lock: TcpListener,
 }
 
 impl CollectorService {
     /// Creates a new `CollectorService`.
     pub fn new(config: Config, lock: TcpListener) -> Result<Self> {
-        let task_supervisor = TaskSupervisor::new()?;
+        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone());
         Ok(Self {
             config,
             task_supervisor,
@@ -35,16 +33,12 @@ impl CollectorService {
     /// Runs the `CollectorService` to completion.
     pub async fn run(self) -> Result<()> {
         info!("CollectorService running.");
-        use log::warn;
-        use std::sync::Arc;
-        use tokio::sync::Notify;
 
-        // Create the channels for communication between components.
         let (client_tx, mut client_rx) = mpsc::channel::<DatabaseClient>(1);
         let (config_tx, config_rx) = watch::channel::<Option<SupervisorConfig>>(None);
+        let (client_update_tx, client_update_rx) = mpsc::channel::<ClientUpdate>(10);
         let reconnect_notify = Arc::new(Notify::new());
 
-        // Spawn the permanent ConnectionManager task.
         let connection_manager = ConnectionManager::new(
             self.config.database_addr.clone(),
             self.config.auth_token.clone(),
@@ -53,16 +47,16 @@ impl CollectorService {
         );
         tokio::spawn(connection_manager.run());
 
-        // Spawn the permanent TaskSupervisor task.
-        // We pass it the receiver end of the config channel.
-        let supervisor_handle = tokio::spawn(self.task_supervisor.run(config_rx));
+        let supervisor_handle =
+            tokio::spawn(self.task_supervisor.run(config_rx, client_update_rx));
 
         info!("Waiting for a database connection...");
-        // Main loop: Supervise sessions.
         while let Some(client) = client_rx.recv().await {
             info!("Received new database client. Spawning SessionHandler.");
+            client_update_tx
+                .send(ClientUpdate::NewClient(Box::new(client.clone())))
+                .await?;
 
-            // For each new connection, spawn an ephemeral SessionHandler.
             let session_handler = SessionHandler::new(
                 client,
                 config_tx.clone(),
@@ -70,35 +64,27 @@ impl CollectorService {
             );
             let session_handle = tokio::spawn(session_handler.run());
 
-            // Wait for the session to end.
-            if let Err(e) = session_handle.await {
-                warn!("SessionHandler task failed: {e}");
-            }
+            session_handle.await??;
 
-            // The session has ended. Signal the ConnectionManager to reconnect.
-            info!("Session ended. Requesting new connection.");
+            warn!("Session ended. Notifying supervisor and requesting new connection.");
+            client_update_tx.send(ClientUpdate::ClientLost).await?;
             reconnect_notify.notify_one();
         }
 
-        // If the client_rx loop exits, it means the ConnectionManager has shut down.
-        // We can now wait for the supervisor to finish.
         supervisor_handle.await??;
-
         info!("CollectorService has shut down.");
         Ok(())
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // We need a mock config for testing.
     fn mock_config() -> Config {
         Config {
             collector_uuid: "test-uuid".to_string(),
-            database_addr: "http://127.0.0.1:0".to_string(), // Invalid port
+            database_addr: "http://127.0.0.1:0".to_string(),
             auth_token: "test-token".to_string(),
         }
     }
@@ -106,13 +92,8 @@ mod tests {
     #[tokio::test]
     async fn test_collector_service_new() {
         let config = mock_config();
-        // We need a dummy listener for the test.
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let service = CollectorService::new(config, listener);
         assert!(service.is_ok());
     }
-
-    // The full test for the service's `run` method will be the
-    // new integration test, as it requires mocking multiple components
-    // and their interactions.
 }

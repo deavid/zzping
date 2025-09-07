@@ -5,7 +5,6 @@ use anyhow::Result;
 use async_trait::async_trait;
 use log::debug;
 use std::net::IpAddr;
-use std::time::Instant;
 use surge_ping::{Client, Config, PingIdentifier, PingSequence, Pinger};
 use tokio::sync::{OwnedSemaphorePermit, mpsc};
 
@@ -47,22 +46,13 @@ impl PingClient for PingSurgeClient {
         sequence_idx: u16,
         tx: mpsc::Sender<PingResult>,
         permit: OwnedSemaphorePermit,
-        start_time: Instant,
-        target_time: Instant,
+        sent_nanos: u64,
     ) {
         let pinger = self
             .pinger_client
             .pinger(self.target, self.pinger_ident)
             .await;
-        tokio::spawn(ping_task(
-            pinger,
-            self.target,
-            sequence_idx,
-            tx,
-            permit,
-            start_time,
-            target_time,
-        ));
+        tokio::spawn(ping_task(pinger, sequence_idx, tx, permit, sent_nanos));
     }
 }
 
@@ -70,46 +60,30 @@ impl PingClient for PingSurgeClient {
 ///
 /// This function is spawned for each individual ping. It uses the `surge-ping` library
 /// to send the packet and await a response. The result (either the RTT or `None` for
-/// a timeout/error) is sent back to the `connection_manager` via an MPSC channel.
+/// a timeout/error) is sent back to the calling `Pinger` task via an MPSC channel.
 async fn ping_task(
     mut pinger: Pinger,
-    target: IpAddr,
     seq: u16,
     tx: mpsc::Sender<PingResult>,
     permit: OwnedSemaphorePermit,
-    start_time: Instant,
-    target_time: Instant,
+    sent_nanos: u64,
 ) {
-    // Simple precision timing: sleep until target time
-    let now = Instant::now();
-    if target_time > now {
-        let remaining = target_time - now;
-
-        // NOTE: Using std::thread::sleep() instead of tokio::time::sleep_until() for better precision.
-        // Empirical testing shows std::thread::sleep() provides ~10µs precision vs ~400µs for tokio sleep.
-        // This blocks the current async task but doesn't block the tokio runtime since each ping
-        // runs in its own spawned task. The precision gain (40x improvement) justifies this approach.
-        std::thread::sleep(remaining);
-    }
-
-    let sent_nanos = start_time.elapsed().as_nanos() as u64;
+    // Timing is now handled by the calling Pinger task. This task executes immediately.
     let result = pinger.ping(PingSequence(seq), &[0; 8]).await;
-    let rtt = match result {
-        Ok((_, rtt)) => Some(rtt),
-        Err(_) => None,
-    };
+    let rtt = result.ok().map(|(_, rtt)| rtt);
 
     let result = PingResult {
-        target,
+        sequence_idx: seq,
         sent_nanos,
         rtt,
     };
 
     if tx.send(result).await.is_err() {
-        // Receiver has been dropped, which means the main connection task has
-        // terminated. This task can now gracefully exit.
+        // Receiver has been dropped, which means the main Pinger task has
+        // terminated. This child task can now gracefully exit.
         debug!("Receiver dropped, ping task exiting.");
     }
+    // The permit is dropped here, releasing the semaphore slot for the next ping.
     // The permit needs to be dropped here, so we un-reserve it once we received the response from the ping.
     drop(permit);
 }
@@ -155,14 +129,13 @@ mod tests {
     #[ntest::timeout(100)]
     async fn test_ping_task_timeout_handling() {
         let (tx, mut rx) = mpsc::channel(10);
-        let target: IpAddr = "127.0.0.1".parse().unwrap();
 
         // We can't easily test the actual ping_task without network access,
         // but we can test the channel communication and timeout handling
 
         // Create a simple test that sends a result through the channel
         let test_result = PingResult {
-            target,
+            sequence_idx: 123,
             sent_nanos: 1000000,
             rtt: Some(Duration::from_micros(1000)),
         };
@@ -180,14 +153,13 @@ mod tests {
     #[ntest::timeout(100)]
     async fn test_ping_task_channel_closed() {
         let (tx, rx) = mpsc::channel(10);
-        let target: IpAddr = "127.0.0.1".parse().unwrap();
 
         // Drop the receiver to simulate channel being closed
         drop(rx);
 
         // Try to send - this should fail gracefully
         let test_result = PingResult {
-            target,
+            sequence_idx: 123,
             sent_nanos: 1000000,
             rtt: Some(Duration::from_micros(1000)),
         };
@@ -201,17 +173,16 @@ mod tests {
 
     #[test]
     fn test_ping_result_structure() {
-        let target: IpAddr = "10.0.0.1".parse().unwrap();
         let sent_nanos = 1234567890;
         let rtt = Some(Duration::from_micros(5000));
 
         let result = PingResult {
-            target,
+            sequence_idx: 456,
             sent_nanos,
             rtt,
         };
 
-        assert_eq!(result.target, target);
+        assert_eq!(result.sequence_idx, 456);
         assert_eq!(result.sent_nanos, sent_nanos);
         assert_eq!(result.rtt, rtt);
     }

@@ -3,11 +3,11 @@ use zzping_proto::zzping::{CollectorRole, HeartbeatRequest};
 
 // Import the common test utilities
 mod common;
-use common::spawn_mock_server;
+use common::{spawn_mock_server, MockIngestionService};
 
 #[tokio::test]
 async fn test_database_client_connect_and_heartbeat() {
-    let addr = spawn_mock_server().await;
+    let addr = spawn_mock_server(MockIngestionService::default()).await;
     let client_addr = format!("http://{addr}");
 
     // Test successful connection and heartbeat.

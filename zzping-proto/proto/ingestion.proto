@@ -17,6 +17,9 @@ service Ingestion {
 
   // GUI/CLI calls this for historical data.
   rpc QueryData(QueryRequest) returns (QueryResponse);
+
+  // Collector calls this to announce pings for real-time visualization.
+  rpc AnnouncePings(AnnouncePingsRequest) returns (AnnouncePingsResponse);
 }
 
 // --- Enums ---
@@ -92,4 +95,14 @@ message QueryRequest {
 // Sent from Database -> GUI
 message QueryResponse {
     repeated RawDataRecord records = 1;
+}
+
+// --- Message Definitions for AnnouncePings ---
+message AnnouncePingsRequest {
+  // A list of absolute, monotonic UNIX timestamps (in nanos) for pings that were just sent.
+  repeated uint64 sent_nanos = 1;
+}
+
+message AnnouncePingsResponse {
+  // This is currently empty and serves as an acknowledgment.
 }
