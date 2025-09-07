@@ -9,7 +9,7 @@ Read and Consider:
 
 **Guiding Principle:** Each step is a self-contained unit of work that should result in a Pull Request. The entire workspace must be in a clean, test-passing state upon completion of each step.
 
-#### **Chapter 1: Laying the Foundation (The Un-crashable Core)**
+#### **Chapter 1: Laying the Foundation (The Un-crashable Core)** (COMPLETED)
 
 **Goal:** Gut the old, fragile `Orchestrator` and replace it with the new, resilient `CollectorService` and its decoupled connection logic. At the end of this chapter, the collector will start, connect, and handle disconnects, but will not yet perform any pinging.
 
@@ -33,7 +33,7 @@ Read and Consider:
         3.  Delete the old `orchestrator.rs` file and all related code.
     *   **Verification:** A new integration test starts the collector. It must successfully connect to a test database and log that it is "ready". The process must remain running and attempt to reconnect if the test database is shut down.
 
-#### **Chapter 2: Implementing the Data Pipeline (The Workers)**
+#### **Chapter 2: Implementing the Data Pipeline (The Workers)** (CURRENT TASK / PR)
 
 **Goal:** Build the self-contained `TargetWorker`s and their sub-components. This chapter focuses on the "upstream" data flow, from ping generation to data submission.
 
@@ -58,7 +58,7 @@ Read and Consider:
         3.  Implement the "fire-and-forget" `AnnouncePings` RPC call within the `Pinger`.
     *   **Verification:** Unit tests for the timestamp generation logic must prove it is both absolute and monotonic, correctly handling simulated clock drift and jumps.
 
-#### **Chapter 3: Activating the System (The Session Handler)**
+#### **Chapter 3: Activating the System (The Session Handler)** (FUTURE TASK)
 
 **Goal:** Wire the network-facing components to the stateful core. This chapter makes the collector fully interactive and responsive to the database.
 
@@ -83,7 +83,7 @@ Read and Consider:
         1.  Connect all the pieces. The `TaskSupervisor` now receives real configs from the `SessionHandler` and spawns fully functional `TargetWorker`s.
     *   **Verification:** A full, end-to-end integration test. Start a test database, start the collector, change the database's `intent.ron` file, and verify that the collector dynamically starts and stops the correct pinging tasks.
 
-#### **Chapter 4: Finalizing and Hardening**
+#### **Chapter 4: Finalizing and Hardening** (FUTURE TASK/PR)
 
 **Goal:** Implement the final, most complex features of the system: graceful shutdown and the zero-downtime handoff.
 
