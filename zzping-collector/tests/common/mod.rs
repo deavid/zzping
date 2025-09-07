@@ -12,8 +12,9 @@ use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{transport::Server, Request, Response, Status};
 use zzping_proto::zzping::{
     ingestion_server::{Ingestion, IngestionServer},
-    CollectorRole, HeartbeatRequest, HeartbeatResponse, QueryRequest, QueryResponse,
-    SendBatchRequest, SendBatchResponse, GetRecentDataRequest, GetRecentDataResponse,
+    send_batch_response, AnnouncePingsRequest, AnnouncePingsResponse, CollectorRole,
+    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse,
+    QueryRequest, QueryResponse, SendBatchRequest, SendBatchResponse,
 };
 
 
@@ -54,8 +55,23 @@ impl VectorLogger {
 // --- Mock gRPC Server ---
 
 /// A mock implementation of the Ingestion service for testing.
-#[derive(Default)]
-pub struct MockIngestionService {}
+#[derive(Clone, Default)]
+pub struct MockIngestionService {
+    pub received_batches: Arc<Mutex<Vec<SendBatchRequest>>>,
+    pub send_batch_response: Arc<Mutex<SendBatchResponse>>,
+}
+
+impl MockIngestionService {
+    pub fn new() -> Self {
+        Self {
+            received_batches: Arc::new(Mutex::new(Vec::new())),
+            send_batch_response: Arc::new(Mutex::new(SendBatchResponse {
+                status: send_batch_response::Status::Ok as i32,
+                database_confirms_last_acked_received_nanos: 0,
+            })),
+        }
+    }
+}
 
 #[tonic::async_trait]
 impl Ingestion for MockIngestionService {
@@ -82,9 +98,14 @@ impl Ingestion for MockIngestionService {
 
     async fn send_batch(
         &self,
-        _request: Request<SendBatchRequest>,
+        request: Request<SendBatchRequest>,
     ) -> Result<Response<SendBatchResponse>, Status> {
-        unimplemented!()
+        self.received_batches
+            .lock()
+            .unwrap()
+            .push(request.into_inner());
+        let response = self.send_batch_response.lock().unwrap().clone();
+        Ok(Response::new(response))
     }
 
     async fn get_recent_data(
@@ -100,13 +121,20 @@ impl Ingestion for MockIngestionService {
     ) -> Result<Response<QueryResponse>, Status> {
         unimplemented!()
     }
+
+    async fn announce_pings(
+        &self,
+        _request: Request<AnnouncePingsRequest>,
+    ) -> Result<Response<AnnouncePingsResponse>, Status> {
+        // This is a fire-and-forget RPC, so we just return OK.
+        Ok(Response::new(AnnouncePingsResponse {}))
+    }
 }
 
 /// Helper to spawn a mock server and get its address.
-pub async fn spawn_mock_server() -> SocketAddr {
+pub async fn spawn_mock_server(service: MockIngestionService) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let service = MockIngestionService::default();
     let server = IngestionServer::new(service);
 
     tokio::spawn(async move {

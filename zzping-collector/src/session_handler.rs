@@ -48,13 +48,18 @@ impl SessionHandler {
                 Ok(response) => {
                     let response = response.into_inner();
                     // This conversion will be more complex later.
-                    let role = CollectorRole::try_from(response.role)
+                    let _role = CollectorRole::try_from(response.role)
                         .unwrap_or(CollectorRole::Standby);
 
+                    let targets = response
+                        .targets
+                        .into_iter()
+                        .filter_map(|s| s.parse::<std::net::IpAddr>().ok())
+                        .collect();
+
                     let config = SupervisorConfig {
-                        // For now, we just use a placeholder.
-                        // In the future, this will be populated from the response.
-                        placeholder: format!("Role: {:?}, Targets: {:?}", role, response.targets),
+                        targets,
+                        ping_rate_pps: response.ping_rate_pps,
                     };
 
                     if self.config_tx.send(Some(config)).is_err() {

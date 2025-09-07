@@ -2,12 +2,13 @@ use anyhow::Result;
 use tonic::transport::{Channel, Endpoint};
 use tonic::Request;
 use zzping_proto::zzping::{
-    ingestion_client::IngestionClient, HeartbeatRequest, HeartbeatResponse,
+    ingestion_client::IngestionClient, AnnouncePingsRequest, AnnouncePingsResponse,
+    HeartbeatRequest, HeartbeatResponse, SendBatchRequest, SendBatchResponse,
 };
 
 /// A lightweight, cloneable wrapper around the `tonic` gRPC client that
 /// centralizes request creation and authentication logic.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DatabaseClient {
     /// The underlying gRPC client.
     client: IngestionClient<Channel>,
@@ -52,5 +53,39 @@ impl DatabaseClient {
     }
 
     // `send_batch` and other RPC wrappers will be added in later steps.
+
+    /// Performs an AnnouncePings RPC.
+    pub async fn announce_pings(
+        &mut self,
+        request: AnnouncePingsRequest,
+    ) -> Result<tonic::Response<AnnouncePingsResponse>> {
+        let mut tonic_request = Request::new(request);
+
+        // Add the authentication token to the request metadata.
+        let token = format!("Bearer {}", self.auth_token);
+        tonic_request
+            .metadata_mut()
+            .insert("authorization", token.parse()?);
+
+        let response = self.client.announce_pings(tonic_request).await?;
+        Ok(response)
+    }
+
+    /// Performs a SendBatch RPC.
+    pub async fn send_batch(
+        &mut self,
+        request: SendBatchRequest,
+    ) -> Result<tonic::Response<SendBatchResponse>> {
+        let mut tonic_request = Request::new(request);
+
+        // Add the authentication token to the request metadata.
+        let token = format!("Bearer {}", self.auth_token);
+        tonic_request
+            .metadata_mut()
+            .insert("authorization", token.parse()?);
+
+        let response = self.client.send_batch(tonic_request).await?;
+        Ok(response)
+    }
 }
 

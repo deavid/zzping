@@ -17,6 +17,9 @@ service Ingestion {
 
   // GUI/CLI calls this for historical data.
   rpc QueryData(QueryRequest) returns (QueryResponse);
+
+  // Collector calls this to announce pings for real-time visualization.
+  rpc AnnouncePings(AnnouncePingsRequest) returns (AnnouncePingsResponse);
 }
 
 // --- Enums ---
@@ -51,7 +54,7 @@ message SendBatchRequest {
   string collector_uuid = 1;
   string target_ip = 2;
   repeated RawDataRecord records = 3;
-  uint64 collector_believes_last_acked_nanos = 4;
+  uint64 collector_believes_last_acked_received_nanos = 4;
 }
 message SendBatchResponse {
   enum Status {
@@ -59,7 +62,7 @@ message SendBatchResponse {
     DESYNC = 1;
   }
   Status status = 1;
-  uint64 database_confirms_last_acked_nanos = 2;
+  uint64 database_confirms_last_acked_received_nanos = 2;
 }
 
 // --- Message Definitions for GetRecentData ---
@@ -92,4 +95,14 @@ message QueryRequest {
 // Sent from Database -> GUI
 message QueryResponse {
     repeated RawDataRecord records = 1;
+}
+
+// --- Message Definitions for AnnouncePings ---
+message AnnouncePingsRequest {
+  // A list of absolute, monotonic UNIX timestamps (in nanos) for pings that were just sent.
+  repeated uint64 sent_nanos = 1;
+}
+
+message AnnouncePingsResponse {
+  // This is currently empty and serves as an acknowledgment.
 }

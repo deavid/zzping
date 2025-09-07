@@ -7,15 +7,15 @@ use crate::{
 };
 use base64::{Engine as _, engine::general_purpose};
 use dashmap::DashMap;
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::{collections::HashSet, net::IpAddr, sync::Arc};
 use tokio::sync::mpsc;
 use tonic::{Request, Response, Status};
 use zzping_lib::auth::AuthToken;
 use zzping_proto::zzping::{
-    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse, QueryRequest,
-    QueryResponse, SendBatchRequest, SendBatchResponse, ingestion_server::Ingestion,
-    send_batch_response,
+    AnnouncePingsRequest, AnnouncePingsResponse, GetRecentDataRequest, GetRecentDataResponse,
+    HeartbeatRequest, HeartbeatResponse, QueryRequest, QueryResponse, SendBatchRequest,
+    SendBatchResponse, ingestion_server::Ingestion, send_batch_response,
 };
 
 /// A `tonic` interceptor that validates role-based authentication tokens.
@@ -178,7 +178,7 @@ impl Ingestion for IngestionServiceImpl {
         let request = request.into_inner();
         let collector_id = request.collector_uuid;
         let target_ip_str = request.target_ip;
-        let collector_believes_last_acked = request.collector_believes_last_acked_nanos;
+        let collector_believes_last_acked = request.collector_believes_last_acked_received_nanos;
 
         let target_ip: IpAddr = target_ip_str
             .parse()
@@ -195,7 +195,7 @@ impl Ingestion for IngestionServiceImpl {
             );
             return Ok(Response::new(SendBatchResponse {
                 status: send_batch_response::Status::Desync as i32,
-                database_confirms_last_acked_nanos: db_last_acked,
+                database_confirms_last_acked_received_nanos: db_last_acked,
             }));
         }
 
@@ -229,7 +229,7 @@ impl Ingestion for IngestionServiceImpl {
 
         Ok(Response::new(SendBatchResponse {
             status: send_batch_response::Status::Ok as i32,
-            database_confirms_last_acked_nanos: last_sent_nanos,
+            database_confirms_last_acked_received_nanos: last_sent_nanos,
         }))
     }
 
@@ -292,6 +292,34 @@ impl Ingestion for IngestionServiceImpl {
             .collect();
 
         Ok(Response::new(QueryResponse { records }))
+    }
+
+    /// Receives a fire-and-forget announcement of pings being sent.
+    ///
+    /// This is used for low-latency, real-time visualization in the GUI. The data
+    /// is not considered durable and may be dropped. The database is expected to
+    /// hold it in a short-lived in-memory cache.
+    ///
+    /// Requires the `"collector"` role.
+    async fn announce_pings(
+        &self,
+        request: Request<AnnouncePingsRequest>,
+    ) -> Result<Response<AnnouncePingsResponse>, Status> {
+        let identity = request.extensions().get::<UserIdentity>().ok_or_else(|| {
+            Status::internal(
+                "Missing user identity. This should have been handled by the auth interceptor.",
+            )
+        })?;
+
+        if !identity.has_role("collector") {
+            return Err(Status::permission_denied("Missing 'collector' role."));
+        }
+
+        // For now, we just accept the request and do nothing with it.
+        // A future implementation would add this to a live-data cache.
+        debug!("Received AnnouncePings from '{}'", identity.id);
+
+        Ok(Response::new(AnnouncePingsResponse {}))
     }
 }
 
@@ -498,7 +526,7 @@ mod tests {
         let payload = SendBatchRequest {
             collector_uuid: "collector-1".to_string(),
             target_ip: "1.1.1.1".to_string(),
-            collector_believes_last_acked_nanos: 100,
+            collector_believes_last_acked_received_nanos: 100,
             records: vec![
                 RawDataRecord {
                     sent_nanos: 101,
@@ -514,7 +542,10 @@ mod tests {
 
         let response = service.send_batch(request).await.unwrap().into_inner();
         assert_eq!(response.status, send_batch_response::Status::Ok as i32);
-        assert_eq!(response.database_confirms_last_acked_nanos, 102);
+        assert_eq!(
+            response.database_confirms_last_acked_received_nanos,
+            102
+        );
         assert_eq!(*service.collector_states.get(&state_key).unwrap(), 102);
     }
 
@@ -530,7 +561,7 @@ mod tests {
         let payload = SendBatchRequest {
             collector_uuid: "collector-1".to_string(),
             target_ip: "1.1.1.1".to_string(),
-            collector_believes_last_acked_nanos: 99,
+            collector_believes_last_acked_received_nanos: 99,
             records: vec![RawDataRecord {
                 sent_nanos: 101,
                 rtt_nanos: 10,
@@ -540,7 +571,10 @@ mod tests {
 
         let response = service.send_batch(request).await.unwrap().into_inner();
         assert_eq!(response.status, send_batch_response::Status::Desync as i32);
-        assert_eq!(response.database_confirms_last_acked_nanos, 100);
+        assert_eq!(
+            response.database_confirms_last_acked_received_nanos,
+            100
+        );
         assert_eq!(*service.collector_states.get(&state_key).unwrap(), 100);
     }
 }

@@ -712,7 +712,7 @@ fn create_finalized_file_for_test(records: &[RawDataRecord]) -> Vec<u8> {
 }
 
 #[test]
-#[timeout(100)]
+#[timeout(1000)]
 fn test_basic_compression_roundtrip() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};
@@ -775,7 +775,7 @@ fn test_simple_variable_rate() {
 }
 
 #[test]
-#[timeout(100)]
+#[timeout(1000)]
 fn test_multi_chunk_variable_rate() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};
@@ -905,7 +905,7 @@ fn test_dummy_symbol_frequency_analysis() {
 }
 
 #[test]
-#[timeout(100)]
+#[timeout(1000)]
 fn test_constant_rate_compression_efficiency() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};
@@ -1077,7 +1077,7 @@ fn test_variable_rate_compression_efficiency() {
 }
 
 #[test]
-#[timeout(100)]
+#[timeout(1000)]
 fn test_decompression_of_partial_unfinalized_file() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};

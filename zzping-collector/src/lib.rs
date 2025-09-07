@@ -16,10 +16,11 @@ pub mod connection_manager;
 pub mod database_client;
 pub mod ping_client;
 pub mod ping_mock_client;
+pub mod pinger;
 pub mod ping_surge_client;
-pub mod runner;
 pub mod session_handler;
 pub mod state_machine;
+pub mod target_worker;
 pub mod task_supervisor;
 
 use anyhow::Result;
