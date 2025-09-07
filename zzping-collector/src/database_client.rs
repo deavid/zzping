@@ -54,7 +54,7 @@ impl DatabaseClient {
     // `send_batch` and other RPC wrappers will be added in later steps.
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-utils"))]
 pub mod tests {
     use super::*;
     use std::net::SocketAddr;

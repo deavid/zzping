@@ -48,13 +48,22 @@ pub async fn run() -> Result<()> {
 /// This function contains the core logic of the application,
 /// making it testable.
 pub async fn run_with_config_path(config_path: String) -> Result<()> {
+    let service = bootstrap_collector(config_path)?;
+    // The lock is now owned by the service, so we just need to run it.
+    service.run().await
+}
+
+/// Creates all the core components of the collector, including acquiring the
+/// TCP port lock, but does not start the main event loop. This makes the
+/// startup process more easily testable.
+pub fn bootstrap_collector(config_path: String) -> Result<CollectorService> {
     // Load configuration
     let config = Config::load(&config_path)?;
     info!("Configuration loaded from {}", &config_path);
 
     // Acquire the local TCP port lock for mutual exclusion
     let lock_addr: SocketAddr = "127.0.0.1:7879".parse()?;
-    let _lock = match TcpListener::bind(lock_addr) {
+    let lock = match TcpListener::bind(lock_addr) {
         Ok(listener) => {
             info!("Successfully acquired TCP port lock on {}", lock_addr);
             listener
@@ -68,7 +77,7 @@ pub async fn run_with_config_path(config_path: String) -> Result<()> {
         }
     };
 
-    // Create and run the collector service
-    let service = CollectorService::new(config)?;
-    service.run().await
+    // Create the collector service, passing ownership of the lock to it.
+    let service = CollectorService::new(config, lock)?;
+    Ok(service)
 }

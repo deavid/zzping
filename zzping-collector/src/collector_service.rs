@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::Result;
 use log::info;
+use std::net::TcpListener;
 use tokio::sync::{mpsc, watch};
 
 /// The long-lived root of the application, owning all resilient states
@@ -14,31 +15,41 @@ use tokio::sync::{mpsc, watch};
 pub struct CollectorService {
     config: Config,
     task_supervisor: TaskSupervisor,
+    /// The TCP listener that acts as a lock to prevent multiple
+    /// instances of the collector from running simultaneously.
+    /// It's held here to ensure its lifetime matches the service's lifetime.
+    _lock: TcpListener,
 }
 
 impl CollectorService {
     /// Creates a new `CollectorService`.
-    pub fn new(config: Config) -> Result<Self> {
+    pub fn new(config: Config, lock: TcpListener) -> Result<Self> {
         let task_supervisor = TaskSupervisor::new()?;
         Ok(Self {
             config,
             task_supervisor,
+            _lock: lock,
         })
     }
 
     /// Runs the `CollectorService` to completion.
     pub async fn run(self) -> Result<()> {
         info!("CollectorService running.");
+        use log::warn;
+        use std::sync::Arc;
+        use tokio::sync::Notify;
 
         // Create the channels for communication between components.
         let (client_tx, mut client_rx) = mpsc::channel::<DatabaseClient>(1);
         let (config_tx, config_rx) = watch::channel::<Option<SupervisorConfig>>(None);
+        let reconnect_notify = Arc::new(Notify::new());
 
         // Spawn the permanent ConnectionManager task.
         let connection_manager = ConnectionManager::new(
             self.config.database_addr.clone(),
             self.config.auth_token.clone(),
             client_tx,
+            reconnect_notify.clone(),
         );
         tokio::spawn(connection_manager.run());
 
@@ -57,7 +68,16 @@ impl CollectorService {
                 config_tx.clone(),
                 self.config.collector_uuid.clone(),
             );
-            tokio::spawn(session_handler.run());
+            let session_handle = tokio::spawn(session_handler.run());
+
+            // Wait for the session to end.
+            if let Err(e) = session_handle.await {
+                warn!("SessionHandler task failed: {}", e);
+            }
+
+            // The session has ended. Signal the ConnectionManager to reconnect.
+            info!("Session ended. Requesting new connection.");
+            reconnect_notify.notify_one();
         }
 
         // If the client_rx loop exits, it means the ConnectionManager has shut down.
@@ -86,7 +106,9 @@ mod tests {
     #[tokio::test]
     async fn test_collector_service_new() {
         let config = mock_config();
-        let service = CollectorService::new(config);
+        // We need a dummy listener for the test.
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let service = CollectorService::new(config, listener);
         assert!(service.is_ok());
     }
 

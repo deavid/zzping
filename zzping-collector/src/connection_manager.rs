@@ -1,8 +1,7 @@
 use crate::database_client::DatabaseClient;
-use anyhow::Result;
 use log::{info, warn};
-use std::time::Duration;
-use tokio::sync::mpsc;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::{mpsc, Notify};
 
 /// A task that relentlessly and resiliently provides healthy database connections.
 pub struct ConnectionManager {
@@ -12,6 +11,13 @@ pub struct ConnectionManager {
     auth_token: String,
     /// The channel to send new `DatabaseClient` handles to.
     client_tx: mpsc::Sender<DatabaseClient>,
+    /// A channel used by the `CollectorService` to signal that we need to
+    /// create a new connection because the previous session has ended.
+    reconnect_notify: Arc<Notify>,
+    /// An optional channel used in tests to signal that a connection
+    /// attempt is being made.
+    #[cfg(feature = "test-utils")]
+    connect_notify: Option<Arc<Notify>>,
 }
 
 impl ConnectionManager {
@@ -20,18 +26,34 @@ impl ConnectionManager {
         addr: String,
         auth_token: String,
         client_tx: mpsc::Sender<DatabaseClient>,
+        reconnect_notify: Arc<Notify>,
     ) -> Self {
         Self {
             addr,
             auth_token,
             client_tx,
+            reconnect_notify,
+            #[cfg(feature = "test-utils")]
+            connect_notify: None,
         }
+    }
+
+    /// Injects a notifier for testing purposes to observe connection attempts.
+    #[cfg(feature = "test-utils")]
+    pub fn set_connect_notify(&mut self, notify: Arc<Notify>) {
+        self.connect_notify = Some(notify);
     }
 
     /// Runs the `ConnectionManager`'s infinite connect/retry loop.
     pub async fn run(self) {
         info!("ConnectionManager started.");
         loop {
+            // Notify tests that we are about to attempt a connection.
+            #[cfg(feature = "test-utils")]
+            if let Some(notify) = &self.connect_notify {
+                notify.notify_one();
+            }
+
             info!("Attempting to connect to database at {}...", self.addr);
             match DatabaseClient::connect(self.addr.clone(), self.auth_token.clone()).await {
                 Ok(client) => {
@@ -42,9 +64,9 @@ impl ConnectionManager {
                         info!("Client channel closed. ConnectionManager shutting down.");
                         break;
                     }
-                    // Wait for the receiver to be dropped, which signals that the session has ended
-                    // and we should try to reconnect.
-                    self.client_tx.closed().await;
+                    // Wait for the CollectorService to signal that the session has ended
+                    // and we need to create a new connection.
+                    self.reconnect_notify.notified().await;
                     info!("Session ended. Reconnecting...");
                 }
                 Err(e) => {
@@ -62,72 +84,23 @@ impl ConnectionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::SocketAddr;
-    use tokio::net::TcpListener;
-    use tokio_stream::wrappers::TcpListenerStream;
-    use tonic::transport::Server;
-    use zzping_proto::zzping::{
-        ingestion_server::{Ingestion, IngestionServer},
-        HeartbeatRequest, HeartbeatResponse, QueryRequest, QueryResponse, SendBatchRequest,
-        SendBatchResponse, GetRecentDataRequest, GetRecentDataResponse,
-    };
-
-    #[derive(Default)]
-    struct MockIngestionService {}
-
-    #[tonic::async_trait]
-    impl Ingestion for MockIngestionService {
-        async fn heartbeat(
-            &self,
-            _request: tonic::Request<HeartbeatRequest>,
-        ) -> Result<tonic::Response<HeartbeatResponse>, tonic::Status> {
-            unimplemented!()
-        }
-        async fn send_batch(
-            &self,
-            _request: tonic::Request<SendBatchRequest>,
-        ) -> Result<tonic::Response<SendBatchResponse>, tonic::Status> {
-            unimplemented!()
-        }
-        async fn get_recent_data(
-            &self,
-            _request: tonic::Request<GetRecentDataRequest>,
-        ) -> Result<tonic::Response<GetRecentDataResponse>, tonic::Status> {
-            unimplemented!()
-        }
-        async fn query_data(
-            &self,
-            _request: tonic::Request<QueryRequest>,
-        ) -> Result<tonic::Response<QueryResponse>, tonic::Status> {
-            unimplemented!()
-        }
-    }
-
-    async fn spawn_mock_server() -> SocketAddr {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let service = MockIngestionService::default();
-        let server = IngestionServer::new(service);
-
-        tokio::spawn(async move {
-            Server::builder()
-                .add_service(server)
-                .serve_with_incoming(TcpListenerStream::new(listener))
-                .await
-                .unwrap();
-        });
-
-        addr
-    }
+    use crate::database_client::tests::spawn_mock_server;
+    use std::time::Duration;
+    use tokio::sync::{mpsc, Notify};
 
     #[tokio::test]
     async fn test_connection_manager_connects_and_sends_client() {
         let addr = spawn_mock_server().await;
         let client_addr = format!("http://{}", addr);
         let (client_tx, mut client_rx) = mpsc::channel(1);
+        let notify = Arc::new(Notify::new());
 
-        let manager =
-            ConnectionManager::new(client_addr, "test-token".to_string(), client_tx);
+        let manager = ConnectionManager::new(
+            client_addr,
+            "test-token".to_string(),
+            client_tx,
+            notify.clone(),
+        );
         tokio::spawn(manager.run());
 
         // The manager should connect and send a client.
@@ -143,9 +116,14 @@ mod tests {
         // Don't spawn a server, so connection will fail.
         let client_addr = "http://127.0.0.1:0".to_string();
         let (client_tx, mut client_rx) = mpsc::channel(1);
+        let notify = Arc::new(Notify::new());
 
-        let manager =
-            ConnectionManager::new(client_addr, "test-token".to_string(), client_tx);
+        let manager = ConnectionManager::new(
+            client_addr,
+            "test-token".to_string(),
+            client_tx,
+            notify.clone(),
+        );
         tokio::spawn(manager.run());
 
         // The manager should not send a client.
