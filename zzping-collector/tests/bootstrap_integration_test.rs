@@ -1,6 +1,7 @@
+use ntest::timeout;
 use std::{io::Write, sync::{Arc, Mutex}, time::Duration};
 use tempfile::NamedTempFile;
-use tokio::{net::TcpListener, sync::oneshot, time::timeout};
+use tokio::{net::TcpListener, sync::oneshot};
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::transport::Server;
 use zzping_collector::run_with_config_path;
@@ -16,6 +17,7 @@ use common::{MockIngestionService, VectorLogger};
 /// 2. Survive a database connection failure.
 /// 3. Actively attempt to reconnect after the failure.
 #[tokio::test]
+#[timeout(11000)]
 async fn test_collector_survives_disconnect_and_reconnects() {
     // 1. Setup a logger to capture output.
     let log_messages = Arc::new(Mutex::new(Vec::new()));
@@ -54,7 +56,7 @@ async fn test_collector_survives_disconnect_and_reconnects() {
 
     // 5. Wait for the initial connection.
     let check_logs = || log_messages.lock().unwrap().clone();
-    timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             if check_logs().iter().any(|s| s.contains("Attempting to connect")) {
                 break;
@@ -69,7 +71,7 @@ async fn test_collector_survives_disconnect_and_reconnects() {
 
     // 7. Wait for the reconnection attempt.
     // The collector should notice the session died and try again.
-    timeout(Duration::from_secs(3), async {
+    tokio::time::timeout(Duration::from_secs(3), async {
         loop {
             // We expect to see "Session ended" followed by another "Attempting to connect".
             let logs = check_logs();
