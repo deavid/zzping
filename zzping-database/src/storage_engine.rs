@@ -95,9 +95,7 @@ pub async fn storage_task(mut item_rx: mpsc::Receiver<IngestionItem>, data_dir: 
     let mut engine = StorageEngine::new(&data_dir);
 
     while let Some(item) = item_rx.recv().await {
-        info!(
-            "[DEBUG 3/4] storage_task received IngestionItem: {item:?}"
-        );
+        info!("[DEBUG 3/4] storage_task received IngestionItem: {item:?}");
         engine.handle_item(item).await;
     }
 

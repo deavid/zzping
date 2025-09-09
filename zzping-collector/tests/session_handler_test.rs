@@ -19,7 +19,10 @@ async fn test_session_handler_sends_config_on_success() {
     // This test verifies that if the heartbeat call is successful, the
     // SessionHandler correctly translates the response and sends it
     // over the watch channel.
-
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Debug)
+        .try_init();
     // 1. Setup
     let (config_tx, mut config_rx) = watch::channel::<Option<SupervisorConfig>>(None);
     let (health_tx, health_rx) = watch::channel(HealthReport {
@@ -36,7 +39,7 @@ async fn test_session_handler_sends_config_on_success() {
 
     let (persistence_tx, _persistence_rx) = mpsc::channel::<CachedIntent>(1);
 
-    let server_addr = spawn_mock_server(MockIngestionService::default()).await;
+    let server_addr = spawn_mock_server(MockIngestionService::with_ping_rate(10)).await;
     let client = DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
         .await
         .unwrap();
@@ -47,6 +50,7 @@ async fn test_session_handler_sends_config_on_success() {
         "test-uuid".to_string(),
         health_rx,
         persistence_tx,
+        true, // Use mock client in tests
     );
 
     // 2. Run the handler in a separate task
@@ -63,7 +67,7 @@ async fn test_session_handler_sends_config_on_success() {
     let config = received_config.unwrap();
 
     // Check that the config contains data from the mock response
-    assert_eq!(config.ping_rate_pps, 100);
+    assert_eq!(config.ping_rate_pps, 10);
     assert!(config.targets.contains(&"127.0.0.1".parse().unwrap()));
 }
 
@@ -124,6 +128,7 @@ async fn test_session_handler_exits_on_connection_failure() {
         "test-uuid".to_string(),
         health_rx,
         persistence_tx,
+        true, // Use mock client in tests
     );
     let handler_handle = tokio::spawn(handler.run());
     info!("SessionHandler started");

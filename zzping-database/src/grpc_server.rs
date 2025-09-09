@@ -325,8 +325,9 @@ impl Ingestion for IngestionServiceImpl {
         Ok(Response::new(AnnouncePingsResponse {}))
     }
 
-    type SubscribeToCommandsStream =
-        std::pin::Pin<Box<dyn tokio_stream::Stream<Item = Result<zzping_proto::zzping::Command, Status>> + Send>>;
+    type SubscribeToCommandsStream = std::pin::Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<zzping_proto::zzping::Command, Status>> + Send>,
+    >;
 
     async fn subscribe_to_commands(
         &self,
@@ -342,10 +343,7 @@ impl Ingestion for IngestionServiceImpl {
             return Err(Status::permission_denied("Missing 'collector' role."));
         }
 
-        info!(
-            "Collector '{}' subscribed to command stream.",
-            identity.id
-        );
+        info!("Collector '{}' subscribed to command stream.", identity.id);
 
         // For now, we return an empty stream that closes immediately.
         let (tx, rx) = mpsc::channel(1);
@@ -587,10 +585,7 @@ mod tests {
 
         let response = service.send_batch(request).await.unwrap().into_inner();
         assert_eq!(response.status, send_batch_response::Status::Ok as i32);
-        assert_eq!(
-            response.database_confirms_last_acked_received_nanos,
-            102
-        );
+        assert_eq!(response.database_confirms_last_acked_received_nanos, 102);
         assert_eq!(*service.collector_states.get(&state_key).unwrap(), 102);
     }
 
@@ -616,10 +611,7 @@ mod tests {
 
         let response = service.send_batch(request).await.unwrap().into_inner();
         assert_eq!(response.status, send_batch_response::Status::Desync as i32);
-        assert_eq!(
-            response.database_confirms_last_acked_received_nanos,
-            100
-        );
+        assert_eq!(response.database_confirms_last_acked_received_nanos, 100);
         assert_eq!(*service.collector_states.get(&state_key).unwrap(), 100);
     }
 }

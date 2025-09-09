@@ -8,7 +8,7 @@ use zzping_collector::database_client::DatabaseClient;
 use zzping_collector::pinger::FinalizedPing;
 
 use common::MockIngestionService;
-use zzping_proto::zzping::{send_batch_response, SendBatchResponse};
+use zzping_proto::zzping::{SendBatchResponse, send_batch_response};
 
 mod common;
 
@@ -34,12 +34,11 @@ fn setup_submitter(
 async fn test_ingestion_logic() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
-    let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
-            .await
-            .unwrap();
+    let db_client = DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        .await
+        .unwrap();
     let mut submitter = setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
-    let grace_period_ns = submitter.grace_period.as_nanos() as u64;
+    let grace_period_ns = Duration::from_secs(60).as_nanos() as u64;
 
     // 1. Ingest a successful ping
     let successful_ping = FinalizedPing {
@@ -139,7 +138,8 @@ async fn test_send_batch_desync() {
     // 3. Trigger send and assert DESYNC handling
     submitter.send_batch().await.unwrap();
     assert_eq!(
-        submitter.last_acked_received_nanos(), new_acked_nanos,
+        submitter.last_acked_received_nanos(),
+        new_acked_nanos,
         "Submitter should update its acked_nanos to the value from the DB on DESYNC"
     );
 
@@ -159,13 +159,12 @@ async fn test_send_batch_desync() {
     let received_batches = mock_service.received_batches.lock().unwrap();
     assert_eq!(received_batches.len(), 2, "Should have sent a second batch");
     assert_eq!(
-        received_batches[1]
-            .collector_believes_last_acked_received_nanos,
-        new_acked_nanos,
+        received_batches[1].collector_believes_last_acked_received_nanos, new_acked_nanos,
         "The second batch should use the corrected acked_nanos value"
     );
     assert_eq!(
-        submitter.last_acked_received_nanos(), final_acked_nanos,
+        submitter.last_acked_received_nanos(),
+        final_acked_nanos,
         "Submitter should update its acked_nanos after the successful batch"
     );
 }
@@ -175,10 +174,9 @@ async fn test_send_batch_desync() {
 async fn test_prune_by_buffer_limit() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
-    let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
-            .await
-            .unwrap();
+    let db_client = DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        .await
+        .unwrap();
     let mut submitter = setup_submitter(db_client, 5, Duration::from_secs(24 * 3600));
 
     // Ingest 6 records, exceeding the limit of 5
@@ -202,10 +200,9 @@ async fn test_prune_by_buffer_limit() {
 async fn test_prune_by_time_retention() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
-    let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
-            .await
-            .unwrap();
+    let db_client = DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        .await
+        .unwrap();
     let mut submitter = setup_submitter(db_client, 1_000_000, Duration::from_secs(1));
 
     // Ingest a record now
@@ -237,10 +234,9 @@ async fn test_prune_by_time_retention() {
 async fn test_prune_by_fsync() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
-    let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
-            .await
-            .unwrap();
+    let db_client = DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        .await
+        .unwrap();
     let mut submitter = setup_submitter(db_client, 100, Duration::from_secs(24 * 3600));
 
     // Ingest 5 records
@@ -270,10 +266,9 @@ async fn test_prune_by_fsync() {
 async fn test_pruning_precedence() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
-    let db_client =
-        DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
-            .await
-            .unwrap();
+    let db_client = DatabaseClient::connect(format!("http://{server_addr}"), "token".to_string())
+        .await
+        .unwrap();
     let mut submitter = setup_submitter(db_client, 5, Duration::from_secs(10));
 
     // Ingest 6 records. All have recent timestamps.

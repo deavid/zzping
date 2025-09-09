@@ -3,7 +3,9 @@ use crate::{
     connection_manager::ConnectionManager,
     database_client::DatabaseClient,
     session_handler::SessionHandler,
-    task_supervisor::{ClientUpdate, HealthReport, SupervisorConfig, TaskSupervisor},
+    task_supervisor::{
+        ClientUpdate, HealthReport, SupervisorConfig, SupervisorShutdown, TaskSupervisor,
+    },
 };
 use anyhow::Result;
 use log::{debug, info, warn};
@@ -11,7 +13,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::net::{IpAddr, TcpListener};
 use std::sync::Arc;
-use tokio::sync::{mpsc, watch, Notify};
+use tokio::{
+    sync::{Notify, mpsc, oneshot, watch},
+    task::JoinHandle,
+};
 use zzping_proto::zzping::CollectorRole;
 
 /// The configuration that is persisted to disk to allow for continued
@@ -25,25 +30,146 @@ pub struct CachedIntent {
 /// The long-lived root of the application.
 pub struct CollectorService {
     config: Config,
-    task_supervisor: TaskSupervisor,
+    // This is an option so we can `take` it in the run method.
+    task_supervisor: Option<TaskSupervisor>,
     _lock: TcpListener,
+    // The handle to the supervisor task, so we can await it during shutdown.
+    supervisor_handle: Option<JoinHandle<Result<()>>>,
+    // The sender for the shutdown signal to the supervisor.
+    supervisor_shutdown_tx: Option<mpsc::Sender<SupervisorShutdown>>,
+    // A channel to send the supervisor_shutdown_tx to the test harness.
+    test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
 }
 
 impl CollectorService {
     /// Creates a new `CollectorService`.
     pub fn new(config: Config, lock: TcpListener) -> Result<Self> {
-        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone());
+        // Default health interval is 1000ms
+        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone(), 1000);
         Ok(Self {
             config,
-            task_supervisor,
+            task_supervisor: Some(task_supervisor),
             _lock: lock,
+            supervisor_handle: None,
+            supervisor_shutdown_tx: None,
+            test_shutdown_tx_sender: None,
         })
     }
 
-    /// Runs the `CollectorService` to completion.
-    pub async fn run(self) -> Result<()> {
-        info!("CollectorService running.");
+    /// Creates a new `CollectorService` for testing, with channels for injecting commands.
+    pub fn new_for_test(
+        config: Config,
+        lock: TcpListener,
+        test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
+    ) -> Result<Self> {
+        // For tests use the standard default interval of 1000ms. Tests that need a faster
+        // interval should call `new_for_test_with_interval` below.
+        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone(), 1000);
+        Ok(Self {
+            config,
+            task_supervisor: Some(task_supervisor),
+            _lock: lock,
+            supervisor_handle: None,
+            supervisor_shutdown_tx: None,
+            test_shutdown_tx_sender,
+        })
+    }
 
+    /// Test helper which allows specifying a custom health interval (ms).
+    pub fn new_for_test_with_interval(
+        config: Config,
+        lock: TcpListener,
+        test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
+        health_interval_ms: u64,
+    ) -> Result<Self> {
+        let task_supervisor =
+            TaskSupervisor::new(config.collector_uuid.clone(), health_interval_ms);
+        Ok(Self {
+            config,
+            task_supervisor: Some(task_supervisor),
+            _lock: lock,
+            supervisor_handle: None,
+            supervisor_shutdown_tx: None,
+            test_shutdown_tx_sender,
+        })
+    }
+
+    /// Initiates a graceful shutdown of the collector and all its tasks.
+    pub async fn shutdown(&mut self) -> Result<()> {
+        info!("CollectorService shutdown initiated.");
+
+        // If the shutdown sender exists, send the shutdown command.
+        if let Some(shutdown_tx) = self.supervisor_shutdown_tx.take() {
+            let (ack_tx, ack_rx) = oneshot::channel();
+            info!("Sending shutdown command to TaskSupervisor...");
+            if shutdown_tx
+                .send(SupervisorShutdown { ack_sender: ack_tx })
+                .await
+                .is_err()
+            {
+                warn!(
+                    "Failed to send shutdown command to TaskSupervisor. It may have already exited."
+                );
+            } else {
+                // Wait for the supervisor to acknowledge the shutdown.
+                if ack_rx.await.is_err() {
+                    warn!("TaskSupervisor did not acknowledge shutdown. It may have panicked.");
+                }
+            }
+        }
+
+        // Wait for the supervisor task to fully complete.
+        if let Some(handle) = self.supervisor_handle.take() {
+            info!("Awaiting TaskSupervisor completion...");
+            if let Err(e) = handle.await? {
+                warn!("TaskSupervisor exited with an error: {}", e);
+            }
+        }
+
+        info!("CollectorService shutdown complete.");
+        Ok(())
+    }
+
+    /// Runs the `CollectorService` to completion, including signal handling.
+    pub async fn run(mut self) -> Result<()> {
+        info!("CollectorService running. Press Ctrl+C to exit.");
+        use std::time::Duration;
+        use tokio::signal::unix::{SignalKind, signal};
+        use tokio::time::timeout;
+
+        let mut sigterm = signal(SignalKind::terminate())?;
+
+        tokio::select! {
+            res = self.run_internal() => {
+                if let Err(e) = res {
+                    warn!("Collector service exited with an error: {e}");
+                } else {
+                    info!("Collector service exited gracefully.");
+                }
+            },
+            _ = tokio::signal::ctrl_c() => {
+                info!("Received SIGINT. Initiating graceful shutdown.");
+                if timeout(Duration::from_secs(10), self.shutdown()).await.is_err() {
+                    warn!("Graceful shutdown timed out. Exiting forcefully.");
+                } else {
+                    info!("Graceful shutdown complete.");
+                }
+            },
+            _ = sigterm.recv() => {
+                info!("Received SIGTERM. Initiating graceful shutdown.");
+                if timeout(Duration::from_secs(10), self.shutdown()).await.is_err() {
+                    warn!("Graceful shutdown timed out. Exiting forcefully.");
+                } else {
+                    info!("Graceful shutdown complete.");
+                }
+            },
+        }
+
+        Ok(())
+    }
+
+    /// The main internal loop of the `CollectorService`.
+    async fn run_internal(&mut self) -> Result<()> {
         let (client_tx, mut client_rx) = mpsc::channel::<DatabaseClient>(1);
         let (config_tx, config_rx) = watch::channel::<Option<SupervisorConfig>>(None);
         let (client_update_tx, client_update_rx) = mpsc::channel::<ClientUpdate>(10);
@@ -54,27 +180,29 @@ impl CollectorService {
             fatal_errors: vec![],
         });
         let (persistence_tx, mut persistence_rx) = mpsc::channel::<CachedIntent>(1);
+        let (supervisor_shutdown_tx, supervisor_shutdown_rx) =
+            mpsc::channel::<SupervisorShutdown>(1);
 
+        self.supervisor_shutdown_tx = Some(supervisor_shutdown_tx.clone());
+        if let Some(sender) = &self.test_shutdown_tx_sender
+            && sender.send(supervisor_shutdown_tx).await.is_err()
+        {
+            warn!("Failed to send supervisor_shutdown_tx to test harness. Test might hang.");
+        }
         let reconnect_notify = Arc::new(Notify::new());
 
-        // This task handles writing the last known intent to disk.
+        // Persistence task
         tokio::spawn(async move {
             while let Some(intent) = persistence_rx.recv().await {
-                match ron::to_string(&intent) {
-                    Ok(ron_string) => {
-                        if let Err(e) = tokio::fs::write("last_intent.ron", ron_string).await {
-                            warn!("Failed to write last_intent.ron: {e}");
-                        } else {
-                            info!("Successfully persisted last known intent to last_intent.ron");
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Failed to serialize CachedIntent to RON: {e}");
-                    }
+                if let Ok(ron_string) = ron::to_string(&intent)
+                    && let Err(e) = tokio::fs::write("last_intent.ron", ron_string).await
+                {
+                    warn!("Failed to write last_intent.ron: {e}");
                 }
             }
         });
 
+        // ConnectionManager task
         let connection_manager = ConnectionManager::new(
             self.config.database_addr.clone(),
             self.config.auth_token.clone(),
@@ -83,13 +211,16 @@ impl CollectorService {
         );
         tokio::spawn(connection_manager.run());
 
-        let supervisor_handle =
-            tokio::spawn(
-                self.task_supervisor
-                    .run(config_rx, client_update_rx, health_report_tx),
-            );
+        // TaskSupervisor task
+        let supervisor = self.task_supervisor.take().expect("No supervisor");
+        self.supervisor_handle = Some(tokio::spawn(supervisor.run(
+            config_rx,
+            client_update_rx,
+            health_report_tx,
+            supervisor_shutdown_rx,
+        )));
 
-        // This task forwards health reports from the mpsc channel to the watch channel.
+        // Health forwarder task
         let health_forwarder_handle = tokio::spawn(async move {
             while let Some(report) = health_report_rx.recv().await {
                 debug!("Forwarding new health report: {report:?}");
@@ -97,46 +228,52 @@ impl CollectorService {
             }
         });
 
-        info!("Waiting for a database connection...");
-        loop {
-            match client_rx.recv().await {
-                Some(client) => {
-                    info!("Received new database client. Spawning SessionHandler.");
-                    client_update_tx
-                        .send(ClientUpdate::NewClient(Box::new(client.clone())))
-                        .await?;
+        // Main session loop
+        let supervisor_handle = self
+            .supervisor_handle
+            .as_mut()
+            .expect("Supervisor handle should exist");
 
-                    let session_handler = SessionHandler::new(
-                        client,
-                        config_tx.clone(),
-                        self.config.collector_uuid.clone(),
-                        latest_health_rx.clone(),
-                        persistence_tx.clone(),
-                    );
-                    let session_handle = tokio::spawn(session_handler.run());
+        tokio::select! {
+            _ = async {
+                loop {
+                    if let Some(client) = client_rx.recv().await {
+                        client_update_tx.send(ClientUpdate::NewClient(Box::new(client.clone()))).await.ok();
+                        let session_handler = SessionHandler::new(
+                            client,
+                            config_tx.clone(),
+                            self.config.collector_uuid.clone(),
+                            latest_health_rx.clone(),
+                            persistence_tx.clone(),
+                            self.config.use_mock_ping_client,
+                        );
+                        let session_handle = tokio::spawn(session_handler.run());
 
-                    // Wait for the session to end. This can happen if the connection
-                    // is lost or the server commands a shutdown.
-                    if let Err(e) = session_handle.await? {
-                        warn!("Session ended with an error: {e}");
+                        if let Err(e) = session_handle.await {
+                            warn!("Session ended with an error: {:?}", e);
+                        }
+
+                        client_update_tx.send(ClientUpdate::ClientLost).await.ok();
+                        reconnect_notify.notify_one();
                     } else {
-                        warn!("Session ended gracefully.");
+                        warn!("ConnectionManager has shut down.");
+                        break;
                     }
-
-                    warn!("Notifying supervisor and requesting new connection.");
-                    client_update_tx.send(ClientUpdate::ClientLost).await?;
-                    reconnect_notify.notify_one();
                 }
-                None => {
-                    warn!("ConnectionManager has shut down. CollectorService can no longer receive new connections.");
-                    break;
+            } => {
+                warn!("Main session loop exited unexpectedly.");
+            },
+            res = supervisor_handle => {
+                match res {
+                    Ok(Ok(_)) => info!("TaskSupervisor exited gracefully."),
+                    Ok(Err(e)) => warn!("TaskSupervisor exited with an error: {}", e),
+                    Err(e) => warn!("TaskSupervisor task panicked: {}", e),
                 }
             }
         }
 
-        supervisor_handle.await??;
         health_forwarder_handle.abort();
-        info!("CollectorService has shut down.");
+        info!("CollectorService internal loop has shut down.");
         Ok(())
     }
 }
@@ -151,6 +288,7 @@ mod tests {
             collector_uuid: "test-uuid".to_string(),
             database_addr: "http://127.0.0.1:0".to_string(),
             auth_token: "test-token".to_string(),
+            use_mock_ping_client: true,
         }
     }
 

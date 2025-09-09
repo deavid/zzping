@@ -1,1 +1,1 @@
-(targets:["127.0.0.1"],ping_rate_pps:100)
+(targets:["127.0.0.1"],ping_rate_pps:0)

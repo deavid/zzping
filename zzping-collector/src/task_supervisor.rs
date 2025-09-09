@@ -3,6 +3,7 @@ use crate::{
     target_worker::{TargetWorker, TargetWorkerHandle, WorkerCommand},
 };
 use anyhow::Result;
+use futures::future::join_all;
 use log::{error, info, warn};
 use std::{
     collections::{HashMap, HashSet},
@@ -18,6 +19,7 @@ pub struct SupervisorConfig {
     pub targets: HashSet<IpAddr>,
     pub ping_rate_pps: u64,
     pub role: CollectorRole,
+    pub use_mock_ping_client: bool,
 }
 
 /// A command to update the TaskSupervisor's database client.
@@ -25,6 +27,12 @@ pub struct SupervisorConfig {
 pub enum ClientUpdate {
     NewClient(Box<DatabaseClient>),
     ClientLost,
+}
+
+/// A command to shut down the supervisor gracefully.
+#[derive(Debug)]
+pub struct SupervisorShutdown {
+    pub ack_sender: oneshot::Sender<()>,
 }
 
 /// A report of the system's health, sent from the supervisor to the service.
@@ -41,16 +49,19 @@ pub struct TaskSupervisor {
     pub db_client: Option<DatabaseClient>,
     pub workers: HashMap<IpAddr, TargetWorkerHandle>,
     current_role: CollectorRole,
+    // Health heartbeat interval in milliseconds. Defaults to 1000ms.
+    health_interval_ms: u64,
 }
 
 impl TaskSupervisor {
     /// Creates a new `TaskSupervisor`.
-    pub fn new(collector_uuid: String) -> Self {
+    pub fn new(collector_uuid: String, health_interval_ms: u64) -> Self {
         Self {
             collector_uuid,
             db_client: None,
             workers: HashMap::new(),
             current_role: CollectorRole::Standby,
+            health_interval_ms,
         }
     }
 
@@ -60,9 +71,16 @@ impl TaskSupervisor {
         mut config_rx: watch::Receiver<Option<SupervisorConfig>>,
         mut client_update_rx: mpsc::Receiver<ClientUpdate>,
         health_report_tx: mpsc::Sender<HealthReport>,
+        mut supervisor_shutdown_rx: mpsc::Receiver<SupervisorShutdown>,
     ) -> Result<()> {
         info!("TaskSupervisor running.");
-        let mut health_interval = tokio::time::interval(Duration::from_secs(1));
+        // Allow tests to override the health heartbeat interval via environment
+        // variable so integration tests can run quickly without changing
+        // production behaviour. Value is in milliseconds.
+        // Use the configured health interval (in milliseconds). Tests should
+        // pass a small value via TaskSupervisor::new when bootstrapping.
+        let mut health_interval =
+            tokio::time::interval(Duration::from_millis(self.health_interval_ms));
 
         loop {
             tokio::select! {
@@ -106,6 +124,13 @@ impl TaskSupervisor {
                         }
                     }
                 }
+                Some(command) = supervisor_shutdown_rx.recv() => {
+                    info!("TaskSupervisor received shutdown command.");
+                    self.shutdown().await;
+                    // Acknowledge that the shutdown is complete.
+                    command.ack_sender.send(()).ok();
+                    break;
+                }
                 else => {
                     info!("All channels closed. TaskSupervisor shutting down.");
                     break;
@@ -113,63 +138,92 @@ impl TaskSupervisor {
             }
         }
 
-        info!("Shutting down all workers.");
-        self.reconcile(None).await;
+        info!("TaskSupervisor exited main loop.");
 
         Ok(())
     }
 
+    /// Shuts down all workers gracefully.
+    async fn shutdown(&mut self) {
+        info!("SHUTDOWN_LOG: TaskSupervisor::shutdown started.");
+        let handles: Vec<_> = self.workers.drain().map(|(_, handle)| handle).collect();
+        info!("SHUTDOWN_LOG: Drained {} workers.", handles.len());
+        let shutdown_commands = handles
+            .iter()
+            .map(|handle| {
+                info!("SHUTDOWN_LOG: Sending Shutdown to worker.");
+                handle.command_tx.send(WorkerCommand::Shutdown)
+            })
+            .collect::<Vec<_>>();
+
+        join_all(shutdown_commands).await;
+        info!("SHUTDOWN_LOG: All worker shutdown commands sent.");
+
+        let shutdown_futures = handles.into_iter().map(|handle| handle.task_handle);
+        join_all(shutdown_futures).await;
+        info!("SHUTDOWN_LOG: All workers have been joined.");
+        info!("All workers have been shut down.");
+    }
+
     /// Compares the desired state with the actual state and takes action.
     pub async fn reconcile(&mut self, config: Option<SupervisorConfig>) {
-        let (desired_targets, ping_rate_pps, new_role) = match config {
-            Some(c) => (c.targets, c.ping_rate_pps, c.role),
-            None => (HashSet::new(), 0, CollectorRole::Standby),
+        let (desired_targets, ping_rate_pps, new_role, use_mock_ping_client) = match config {
+            Some(c) => (c.targets, c.ping_rate_pps, c.role, c.use_mock_ping_client),
+            None => (HashSet::new(), 0, CollectorRole::Standby, false),
         };
         self.current_role = new_role;
 
         let current_workers = self.workers.keys().cloned().collect::<HashSet<_>>();
 
+        self.reconcile_workers(&current_workers, &desired_targets)
+            .await;
+
         // Add new workers
         for &target_ip in desired_targets.difference(&current_workers) {
             if let Some(db_client) = &self.db_client {
                 info!("TaskSupervisor: Adding worker for target {target_ip}");
-                match TargetWorker::new(
-                    self.collector_uuid.clone(),
-                    target_ip,
-                    ping_rate_pps,
-                    db_client.clone(),
-                ) {
-                    Ok(handle) => {
-                        self.workers.insert(target_ip, handle);
+                let worker_result = if use_mock_ping_client {
+                    // For tests, use MockPingClient
+                    use crate::ping_client::MockPingClient;
+                    let ping_client = std::sync::Arc::new(MockPingClient::new(target_ip));
+                    TargetWorker::new_with_ping_client(
+                        self.collector_uuid.clone(),
+                        target_ip,
+                        ping_rate_pps,
+                        db_client.clone(),
+                        ping_client,
+                    )
+                } else {
+                    // For production, use real PingSurgeClient
+                    TargetWorker::new(
+                        self.collector_uuid.clone(),
+                        target_ip,
+                        ping_rate_pps,
+                        db_client.clone(),
+                    )
+                };
+                match worker_result {
+                    Ok(handles) => {
+                        self.workers.insert(target_ip, handles.handle);
                     }
                     Err(e) => {
-                        error!("Failed to create TargetWorker for {target_ip}: {e}. This may be a permissions issue.");
+                        error!(
+                            "Failed to create TargetWorker for {target_ip}: {e}. This may be a permissions issue."
+                        );
                     }
                 }
             } else {
-                info!("TaskSupervisor: Deferring worker creation for {target_ip}, no database client.");
-            }
-        }
-
-        // Remove old workers
-        for &target_ip in current_workers.difference(&desired_targets) {
-            info!("TaskSupervisor: Removing worker for target {target_ip}");
-            if let Some(worker_handle) = self.workers.remove(&target_ip) {
-                if worker_handle
-                    .command_tx
-                    .send(WorkerCommand::Shutdown)
-                    .await
-                    .is_err()
-                {
-                    warn!("Failed to send shutdown command to worker for target {target_ip}");
-                }
-                // TODO: Await the handle instead of aborting for graceful shutdown.
-                worker_handle.task_handle.abort();
+                info!(
+                    "TaskSupervisor: Deferring worker creation for {target_ip}, no database client."
+                );
             }
         }
 
         // Update role for all current workers
-        info!("TaskSupervisor: Updating role for all workers to {:?}", self.current_role);
+        info!(
+            "TaskSupervisor: Updating role for all workers to {:?}",
+            self.current_role
+        );
         for worker_handle in self.workers.values() {
             if worker_handle
                 .command_tx
@@ -180,5 +234,37 @@ impl TaskSupervisor {
                 warn!("Failed to send UpdateRole command to a worker.");
             }
         }
+    }
+
+    /// Removes workers that are in `current` but not in `desired`.
+    async fn reconcile_workers(&mut self, current: &HashSet<IpAddr>, desired: &HashSet<IpAddr>) {
+        let workers_to_remove = current.difference(desired);
+        let mut shutdown_handles = vec![];
+
+        for &target_ip in workers_to_remove {
+            info!("TaskSupervisor: Removing worker for target {target_ip}");
+            if let Some(worker_handle) = self.workers.remove(&target_ip) {
+                if worker_handle
+                    .command_tx
+                    .send(WorkerCommand::Shutdown)
+                    .await
+                    .is_err()
+                {
+                    warn!("Failed to send shutdown command to worker for target {target_ip}");
+                }
+                // Collect the handle to await it later.
+                shutdown_handles.push(async move {
+                    if let Err(e) = worker_handle.task_handle.await {
+                        warn!(
+                            "Worker task for target {} panicked during shutdown: {:?}",
+                            target_ip, e
+                        );
+                    }
+                });
+            }
+        }
+
+        // Await all the workers that were shut down.
+        join_all(shutdown_handles).await;
     }
 }

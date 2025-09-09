@@ -11,6 +11,9 @@ pub struct Config {
     pub collector_uuid: String,
     pub database_addr: String,
     pub auth_token: String,
+    /// Test-only field: when true, use MockPingClient instead of real ping client
+    #[serde(default)]
+    pub use_mock_ping_client: bool,
 }
 
 impl Config {
@@ -50,7 +53,10 @@ mod tests {
         assert!(config.is_ok());
         let config = config.unwrap();
 
-        assert_eq!(config.collector_uuid, "a1b2c3d4-e5f6-7890-1234-567890abcdef");
+        assert_eq!(
+            config.collector_uuid,
+            "a1b2c3d4-e5f6-7890-1234-567890abcdef"
+        );
         assert_eq!(config.database_addr, "http://127.0.0.1:7878");
         assert_eq!(config.auth_token, "my-secret-token");
     }

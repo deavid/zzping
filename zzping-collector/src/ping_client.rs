@@ -43,3 +43,38 @@ pub trait PingClient: Send + Sync {
         sent_nanos: u64,
     );
 }
+
+/// A mock implementation of PingClient for testing purposes.
+pub struct MockPingClient {
+    target: IpAddr,
+}
+
+impl MockPingClient {
+    pub fn new(target: IpAddr) -> Self {
+        Self { target }
+    }
+}
+
+#[async_trait]
+impl PingClient for MockPingClient {
+    fn target(&self) -> IpAddr {
+        self.target
+    }
+
+    async fn ping(
+        &self,
+        sequence_idx: u16,
+        tx: mpsc::Sender<PingReply>,
+        permit: OwnedSemaphorePermit,
+        _sent_nanos: u64,
+    ) {
+        // For mock, just send a fake reply immediately.
+        let reply = PingReply {
+            sequence_idx,
+            rtt: Some(Duration::from_millis(10)),
+        };
+        let _ = tx.send(reply).await;
+        // Release the permit
+        drop(permit);
+    }
+}

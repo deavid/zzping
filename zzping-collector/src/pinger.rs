@@ -6,64 +6,15 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{mpsc, Semaphore};
+use tokio::sync::{Semaphore, mpsc};
 use zzping_proto::zzping::{AnnouncePingsRequest, CollectorRole};
 
 /// A command for the Pinger task.
 #[derive(Debug)]
 pub enum PingerCommand {
     UpdateRole(CollectorRole),
+    Shutdown,
 }
-
-// ... MonotonicTimeSource ...
-pub struct MonotonicTimeSource {
-    reference_instant: Instant,
-    reference_system_time: SystemTime,
-    last_generated_ns: u64,
-}
-impl Default for MonotonicTimeSource {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-impl MonotonicTimeSource {
-    pub fn new() -> Self {
-        let now_instant = Instant::now();
-        let now_system_time = SystemTime::now();
-        let now_ns = now_system_time
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos() as u64;
-        Self {
-            reference_instant: now_instant,
-            reference_system_time: now_system_time,
-            last_generated_ns: now_ns,
-        }
-    }
-    pub fn resync(&mut self) {
-        self.reference_instant = Instant::now();
-        self.reference_system_time = SystemTime::now();
-    }
-    pub fn now_ns(&mut self) -> Option<u64> {
-        let elapsed = self.reference_instant.elapsed();
-        let current_system_time = self.reference_system_time + elapsed;
-        let now_ns = current_system_time
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .expect("SystemTime is before UNIX_EPOCH")
-            .as_nanos() as u64;
-        if now_ns < self.last_generated_ns {
-            let backward_jump = Duration::from_nanos(self.last_generated_ns - now_ns);
-            warn!("Monotonicity violation: System clock may have stepped backwards by {backward_jump:?}. Skipping timestamp.");
-            if backward_jump > Duration::from_secs(5) {
-                error!("Large backward time jump detected: {backward_jump:?}. This may indicate a critical system clock issue.");
-            }
-            return None;
-        }
-        self.last_generated_ns = now_ns;
-        Some(now_ns)
-    }
-}
-
 
 /// The final, processed result of a ping attempt, ready for the BatchSubmitter.
 #[derive(Debug)]
@@ -119,31 +70,33 @@ impl Pinger {
 
     /// Runs the Pinger's main loop.
     pub async fn run(mut self) -> Result<()> {
-        info!(
-            "Pinger task started for target {} at {} pps.",
-            self.target, self.ping_rate_pps
-        );
+        info!("Pinger task started for target {}", self.target);
 
-        if self.ping_rate_pps == 0 {
-            info!("Ping rate is 0, pinger for {} will not run.", self.target);
-            return Ok(());
-        }
-
-        let mut ping_interval =
-            tokio::time::interval(Duration::from_secs_f64(1.0 / self.ping_rate_pps as f64));
-        ping_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+        let mut ping_interval = if self.ping_rate_pps == 0 {
+            // If ping_rate_pps is 0, create an interval that never ticks
+            tokio::time::interval(Duration::from_secs(86400)) // 1 day
+        } else {
+            let mut interval =
+                tokio::time::interval(Duration::from_secs_f64(1.0 / self.ping_rate_pps as f64));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Burst);
+            interval
+        };
 
         let mut timeout_interval = tokio::time::interval(self.timeout_check_interval);
 
         let mut sequence_idx: u16 = 0;
-        let semaphore = Arc::new(Semaphore::new(self.ping_rate_pps as usize * 2));
+        let semaphore = Arc::new(Semaphore::new(if self.ping_rate_pps == 0 {
+            1
+        } else {
+            self.ping_rate_pps as usize * 2
+        }));
 
         let (internal_tx, mut internal_rx) = mpsc::channel(100);
 
         loop {
             tokio::select! {
-                // This arm is only enabled when the pinger is active.
-                _ = ping_interval.tick(), if self.is_active => {
+                // This arm is only enabled when the pinger is active and ping_rate_pps > 0.
+                _ = ping_interval.tick(), if self.is_active && self.ping_rate_pps > 0 => {
                     let permit = match semaphore.clone().try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {
@@ -170,8 +123,16 @@ impl Pinger {
 
                 // These arms are always enabled.
                 Some(command) = self.command_rx.recv() => {
-                    self.handle_command(command);
-                },
+                    match command {
+                        PingerCommand::UpdateRole(role) => {
+                            self.update_role(role);
+                        }
+                        PingerCommand::Shutdown => {
+                            info!("SHUTDOWN_LOG: Pinger for {} received shutdown command.", self.target);
+                            break;
+                        }
+                    }
+                }
                 Some(ping_reply) = internal_rx.recv() => {
                     if let Some(sent_nanos) = self.in_flight_pings.remove(&ping_reply.sequence_idx) {
                         let finalized_ping = FinalizedPing { sent_nanos, rtt: ping_reply.rtt };
@@ -215,24 +176,84 @@ impl Pinger {
                 }
             }
         }
+
+        info!(
+            "SHUTDOWN_LOG: Pinger for {} task shutting down.",
+            self.target
+        );
         Ok(())
     }
 
-    fn handle_command(&mut self, command: PingerCommand) {
-        match command {
-            PingerCommand::UpdateRole(role) => {
-                let should_be_active =
-                    matches!(role, CollectorRole::Primary | CollectorRole::PrimarySupervised);
-                if self.is_active != should_be_active {
-                    self.is_active = should_be_active;
-                    info!(
-                        "Pinger for {} is now {}.",
-                        self.target,
-                        if self.is_active { "active" } else { "paused" }
-                    );
-                }
-            }
+    fn update_role(&mut self, role: CollectorRole) {
+        let should_be_active = matches!(
+            role,
+            CollectorRole::Primary | CollectorRole::PrimarySupervised
+        );
+        if self.is_active != should_be_active {
+            self.is_active = should_be_active;
+            info!(
+                "Pinger for {} is now {}.",
+                self.target,
+                if self.is_active { "active" } else { "paused" }
+            );
         }
+    }
+}
+
+/// A source for monotonically increasing timestamps, designed to be resilient
+/// to system clock adjustments.
+#[derive(Debug, Clone)]
+struct MonotonicTimeSource {
+    reference_instant: Instant,
+    reference_system_time: SystemTime,
+    last_generated_ns: u64,
+}
+
+impl Default for MonotonicTimeSource {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl MonotonicTimeSource {
+    pub fn new() -> Self {
+        let now_instant = Instant::now();
+        let now_system_time = SystemTime::now();
+        let now_ns = now_system_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64;
+        Self {
+            reference_instant: now_instant,
+            reference_system_time: now_system_time,
+            last_generated_ns: now_ns,
+        }
+    }
+    // FIXME: Method not used - why?
+    pub fn _resync(&mut self) {
+        self.reference_instant = Instant::now();
+        self.reference_system_time = SystemTime::now();
+    }
+    pub fn now_ns(&mut self) -> Option<u64> {
+        let elapsed = self.reference_instant.elapsed();
+        let current_system_time = self.reference_system_time + elapsed;
+        let now_ns = current_system_time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("SystemTime is before UNIX_EPOCH")
+            .as_nanos() as u64;
+        if now_ns < self.last_generated_ns {
+            let backward_jump = Duration::from_nanos(self.last_generated_ns - now_ns);
+            warn!(
+                "Monotonicity violation: System clock may have stepped backwards by {backward_jump:?}. Skipping timestamp."
+            );
+            if backward_jump > Duration::from_secs(5) {
+                error!(
+                    "Large backward time jump detected: {backward_jump:?}. This may indicate a critical system clock issue."
+                );
+            }
+            return None;
+        }
+        self.last_generated_ns = now_ns;
+        Some(now_ns)
     }
 }
 

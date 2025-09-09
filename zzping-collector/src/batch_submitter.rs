@@ -13,6 +13,8 @@ use zzping_proto::zzping::{CollectorRole, RawDataRecord, SendBatchRequest, send_
 pub enum BatchSubmitterCommand {
     UpdateRole(CollectorRole),
     GetHealth(tokio::sync::oneshot::Sender<usize>),
+    InitializeAckCursor(u64),
+    Shutdown,
 }
 
 /// The BatchSubmitter is responsible for buffering ping results for a single
@@ -20,7 +22,7 @@ pub enum BatchSubmitterCommand {
 pub struct BatchSubmitter {
     collector_uuid: String,
     target_ip: IpAddr,
-    pub grace_period: Duration,
+    grace_period: Duration,
     buffer_limit: usize,
     retention_period: Duration,
     db_client: DatabaseClient,
@@ -64,11 +66,48 @@ impl BatchSubmitter {
         loop {
             tokio::select! {
                 Some(finalized_ping) = results_rx.recv() => {
-                    info!("BatchSubmitter for {} received finalized ping: {:?}", self.target_ip, finalized_ping);
+                    debug!("BatchSubmitter for {} received finalized ping: {:?}", self.target_ip, finalized_ping);
                     self.ingest_ping_result(finalized_ping);
                 }
                 Some(command) = self.command_rx.recv() => {
-                    self.handle_command(command);
+                    match command {
+                        BatchSubmitterCommand::UpdateRole(role) => {
+                            // The submitter should send data when it's the PRIMARY, or when it's a SUPERVISING
+                            // instance that needs to drain its buffer.
+                            self.is_active = matches!(role, CollectorRole::Primary | CollectorRole::Supervising);
+                            info!(
+                                "BatchSubmitter for {} role updated. Active: {}.",
+                                self.target_ip, self.is_active
+                            );
+                        }
+                        BatchSubmitterCommand::GetHealth(tx) => {
+                            let buffer_size = self.buffer.len();
+                            let _ = tx.send(buffer_size);
+                        }
+                        BatchSubmitterCommand::InitializeAckCursor(nanos) => {
+                            info!(
+                                "BatchSubmitter for {} initializing ACK cursor to {}.",
+                                self.target_ip, nanos
+                            );
+                            self.last_acked_received_nanos = nanos;
+                        }
+                        BatchSubmitterCommand::Shutdown => {
+                            info!(
+                                "SHUTDOWN_LOG: BatchSubmitter for {} received shutdown command.",
+                                self.target_ip
+                            );
+                            // Prevent the periodic tick from attempting to send while we
+                            // proceed to the canonical final flush after the loop. The
+                            // actual final send will be performed once outside the loop
+                            // to ensure only one final batch is sent.
+                            self.is_active = false;
+                            info!(
+                                "SHUTDOWN_LOG: BatchSubmitter for {} marked inactive; will perform final flush after loop.",
+                                self.target_ip
+                            );
+                            break; // Signal to stop the loop
+                        }
+                    }
                 }
                 _ = submission_interval.tick() => {
                     self.prune_by_time();
@@ -84,34 +123,27 @@ impl BatchSubmitter {
         }
 
         info!(
-            "Pinger disconnected, BatchSubmitter for {} shutting down.",
+            "SHUTDOWN_LOG: BatchSubmitter for {} shutting down. Buffer has {} records. Attempting to send one final batch.",
+            self.target_ip,
+            self.buffer.len()
+        );
+        if let Err(e) = self.send_batch().await {
+            warn!(
+                "Failed to send final batch for target {}: {}",
+                self.target_ip, e
+            );
+        } else {
+            info!(
+                "SHUTDOWN_LOG: Final batch sent successfully for target {}.",
+                self.target_ip
+            );
+        }
+
+        info!(
+            "SHUTDOWN_LOG: BatchSubmitter for {} finished.",
             self.target_ip
         );
         Ok(())
-    }
-
-    /// Handles a command sent to the BatchSubmitter.
-    fn handle_command(&mut self, command: BatchSubmitterCommand) {
-        match command {
-            BatchSubmitterCommand::UpdateRole(role) => {
-                let should_be_active = matches!(
-                    role,
-                    CollectorRole::Primary | CollectorRole::PrimarySupervised
-                );
-                if self.is_active != should_be_active {
-                    self.is_active = should_be_active;
-                    info!(
-                        "BatchSubmitter for {} is now {}.",
-                        self.target_ip,
-                        if self.is_active { "active" } else { "paused" }
-                    );
-                }
-            }
-            BatchSubmitterCommand::GetHealth(tx) => {
-                let buffer_size = self.buffer.len();
-                let _ = tx.send(buffer_size);
-            }
-        }
     }
 
     /// Ingests a single `FinalizedPing` and stores it in the buffer.
@@ -135,6 +167,8 @@ impl BatchSubmitter {
         };
 
         self.buffer.insert(key, record);
+
+    debug!("BatchSubmitter for {} buffer size after insert: {}", self.target_ip, self.buffer.len());
 
         if self.buffer.len() > self.buffer_limit
             && let Some((key, _)) = self.buffer.first_key_value()

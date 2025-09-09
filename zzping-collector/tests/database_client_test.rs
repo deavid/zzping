@@ -3,11 +3,15 @@ use zzping_proto::zzping::{CollectorRole, HeartbeatRequest};
 
 // Import the common test utilities
 mod common;
-use common::{spawn_mock_server, MockIngestionService};
+use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]
 async fn test_database_client_connect_and_heartbeat() {
-    let addr = spawn_mock_server(MockIngestionService::default()).await;
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Debug)
+        .try_init();
+    let addr = spawn_mock_server(MockIngestionService::with_ping_rate(10)).await;
     let client_addr = format!("http://{addr}");
 
     // Test successful connection and heartbeat.
@@ -26,7 +30,7 @@ async fn test_database_client_connect_and_heartbeat() {
     let response = client.heartbeat(request).await;
     assert!(response.is_ok());
     let response = response.unwrap().into_inner();
-    assert_eq!(response.ping_rate_pps, 100);
+    assert_eq!(response.ping_rate_pps, 10);
     assert_eq!(response.role, CollectorRole::Primary as i32);
 
     // Test with a bad token.
