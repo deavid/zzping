@@ -1,10 +1,10 @@
 use anyhow::Result;
-use tonic::transport::{Channel, Endpoint};
 use tonic::Request;
+use tonic::transport::{Channel, Endpoint};
 use zzping_proto::zzping::{
-    ingestion_client::IngestionClient, AnnouncePingsRequest, AnnouncePingsResponse,
-    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse,
-    SendBatchRequest, SendBatchResponse,
+    AnnouncePingsRequest, AnnouncePingsResponse, GetRecentDataRequest, GetRecentDataResponse,
+    HeartbeatRequest, HeartbeatResponse, SendBatchRequest, SendBatchResponse,
+    ingestion_client::IngestionClient,
 };
 
 /// A lightweight, cloneable wrapper around the `tonic` gRPC client that
@@ -110,11 +110,7 @@ impl DatabaseClient {
     pub async fn subscribe_to_commands(
         &mut self,
         request: zzping_proto::zzping::CommandRequest,
-    ) -> Result<
-        tonic::Response<
-            tonic::Streaming<zzping_proto::zzping::Command>,
-        >,
-    > {
+    ) -> Result<tonic::Response<tonic::Streaming<zzping_proto::zzping::Command>>> {
         let mut tonic_request = Request::new(request);
 
         // Add the authentication token to the request metadata.
@@ -127,4 +123,3 @@ impl DatabaseClient {
         Ok(response)
     }
 }
-

@@ -1,7 +1,7 @@
 use crate::database_client::DatabaseClient;
 use log::{info, warn};
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{Notify, mpsc};
 
 /// A task that relentlessly and resiliently provides healthy database connections.
 pub struct ConnectionManager {
@@ -52,13 +52,10 @@ impl ConnectionManager {
                     info!("Session ended. Reconnecting...");
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to connect to database: {e}. Retrying in 2 seconds..."
-                    );
+                    warn!("Failed to connect to database: {e}. Retrying in 2 seconds...");
                     tokio::time::sleep(Duration::from_secs(2)).await;
                 }
             }
         }
     }
 }
-

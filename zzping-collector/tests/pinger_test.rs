@@ -7,8 +7,8 @@ use std::thread::sleep;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use zzping_collector::database_client::DatabaseClient;
-use zzping_collector::pinger::Pinger;
 use zzping_collector::ping_mock_client::PingMockClient;
+use zzping_collector::pinger::Pinger;
 
 // Include the test utilities
 mod common;
@@ -45,7 +45,10 @@ async fn test_pinger_loop() {
     let pinger_handle = tokio::spawn(pinger.run());
 
     // Activate the pinger
-    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
+    pinger_cmd_tx
+        .send(PingerCommand::UpdateRole(CollectorRole::Primary))
+        .await
+        .unwrap();
 
     // Let the pinger run for a short duration
     sleep(test_duration);
@@ -105,7 +108,10 @@ async fn test_pinger_handles_lost_packets() {
     let _pinger_handle = tokio::spawn(pinger.run());
 
     // Activate the pinger
-    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
+    pinger_cmd_tx
+        .send(PingerCommand::UpdateRole(CollectorRole::Primary))
+        .await
+        .unwrap();
 
     // Wait for the grace period to elapse, plus a buffer
     tokio::time::sleep(grace_period + Duration::from_millis(50)).await;
@@ -149,27 +155,49 @@ async fn test_pinger_pauses_and_resumes() {
 
     // 1. Should not be active initially
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(mock_ping_client.pings.lock().unwrap().len(), 0, "Pinger should not be active by default");
+    assert_eq!(
+        mock_ping_client.pings.lock().unwrap().len(),
+        0,
+        "Pinger should not be active by default"
+    );
 
     // 2. Activate it
-    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
+    pinger_cmd_tx
+        .send(PingerCommand::UpdateRole(CollectorRole::Primary))
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     let count_after_activate = mock_ping_client.pings.lock().unwrap().len();
-    assert!(count_after_activate > 0, "Pinger should start sending pings when role is Primary");
+    assert!(
+        count_after_activate > 0,
+        "Pinger should start sending pings when role is Primary"
+    );
 
     // 3. Pause it
-    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Standby)).await.unwrap();
+    pinger_cmd_tx
+        .send(PingerCommand::UpdateRole(CollectorRole::Standby))
+        .await
+        .unwrap();
     // Give the command time to be processed
     tokio::time::sleep(Duration::from_millis(10)).await;
     let count_after_pause = mock_ping_client.pings.lock().unwrap().len();
     // A small sleep to check if any *more* pings are sent after pausing.
     tokio::time::sleep(Duration::from_millis(50)).await;
     let count_after_pause_check = mock_ping_client.pings.lock().unwrap().len();
-    assert_eq!(count_after_pause, count_after_pause_check, "Pinger should stop sending pings when role is Standby");
+    assert_eq!(
+        count_after_pause, count_after_pause_check,
+        "Pinger should stop sending pings when role is Standby"
+    );
 
     // 4. Resume it
-    pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();
+    pinger_cmd_tx
+        .send(PingerCommand::UpdateRole(CollectorRole::Primary))
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
     let count_after_resume = mock_ping_client.pings.lock().unwrap().len();
-    assert!(count_after_resume > count_after_pause, "Pinger should resume sending pings when role is Primary again");
+    assert!(
+        count_after_resume > count_after_pause,
+        "Pinger should resume sending pings when role is Primary again"
+    );
 }

@@ -86,9 +86,7 @@ fn inspect_file(path: &PathBuf) -> Result<()> {
     println!("\n--- Statistics ---");
     println!("Total Pings:      {total_pings}");
     println!("Successful Pings: {successful_pings}");
-    println!(
-        "Lost Packets:     {lost_packets} ({packet_loss_pct:.2}%)"
-    );
+    println!("Lost Packets:     {lost_packets} ({packet_loss_pct:.2}%)");
     println!("Min RTT:          {min_rtt:.3} ms");
     println!("Median RTT:       {median_rtt:.3} ms");
     println!("Max RTT:          {max_rtt:.3} ms");

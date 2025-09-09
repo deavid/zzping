@@ -19,7 +19,10 @@ async fn test_session_handler_sends_config_on_success() {
     // This test verifies that if the heartbeat call is successful, the
     // SessionHandler correctly translates the response and sends it
     // over the watch channel.
-
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Debug)
+        .try_init();
     // 1. Setup
     let (config_tx, mut config_rx) = watch::channel::<Option<SupervisorConfig>>(None);
     let (health_tx, health_rx) = watch::channel(HealthReport {
@@ -36,7 +39,7 @@ async fn test_session_handler_sends_config_on_success() {
 
     let (persistence_tx, _persistence_rx) = mpsc::channel::<CachedIntent>(1);
 
-    let server_addr = spawn_mock_server(MockIngestionService::default()).await;
+    let server_addr = spawn_mock_server(MockIngestionService::with_ping_rate(10)).await;
     let client = DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
         .await
         .unwrap();

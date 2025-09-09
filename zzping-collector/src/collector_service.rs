@@ -15,7 +15,7 @@ use std::collections::HashSet;
 use std::net::{IpAddr, TcpListener};
 use std::sync::Arc;
 use tokio::{
-    sync::{mpsc, oneshot, watch, Notify},
+    sync::{Notify, mpsc, oneshot, watch},
     task::JoinHandle,
 };
 use zzping_proto::zzping::CollectorRole;
@@ -45,7 +45,8 @@ pub struct CollectorService {
 impl CollectorService {
     /// Creates a new `CollectorService`.
     pub fn new(config: Config, lock: TcpListener) -> Result<Self> {
-        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone(), None);
+        // Default health interval is 1000ms
+        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone(), None, 1000);
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -63,8 +64,34 @@ impl CollectorService {
         test_data_tx_sender: Option<mpsc::Sender<mpsc::Sender<FinalizedPing>>>,
         test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
     ) -> Result<Self> {
+        // For tests allow passing the test_data_tx_sender and use the standard
+        // default interval of 1000ms. Tests that need a faster interval should
+        // call `new_for_test_with_interval` below.
         let task_supervisor =
-            TaskSupervisor::new(config.collector_uuid.clone(), test_data_tx_sender);
+            TaskSupervisor::new(config.collector_uuid.clone(), test_data_tx_sender, 1000);
+        Ok(Self {
+            config,
+            task_supervisor: Some(task_supervisor),
+            _lock: lock,
+            supervisor_handle: None,
+            supervisor_shutdown_tx: None,
+            test_shutdown_tx_sender,
+        })
+    }
+
+    /// Test helper which allows specifying a custom health interval (ms).
+    pub fn new_for_test_with_interval(
+        config: Config,
+        lock: TcpListener,
+        test_data_tx_sender: Option<mpsc::Sender<mpsc::Sender<FinalizedPing>>>,
+        test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
+        health_interval_ms: u64,
+    ) -> Result<Self> {
+        let task_supervisor = TaskSupervisor::new(
+            config.collector_uuid.clone(),
+            test_data_tx_sender,
+            health_interval_ms,
+        );
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -84,13 +111,13 @@ impl CollectorService {
             let (ack_tx, ack_rx) = oneshot::channel();
             info!("Sending shutdown command to TaskSupervisor...");
             if shutdown_tx
-                .send(SupervisorShutdown {
-                    ack_sender: ack_tx,
-                })
+                .send(SupervisorShutdown { ack_sender: ack_tx })
                 .await
                 .is_err()
             {
-                warn!("Failed to send shutdown command to TaskSupervisor. It may have already exited.");
+                warn!(
+                    "Failed to send shutdown command to TaskSupervisor. It may have already exited."
+                );
             } else {
                 // Wait for the supervisor to acknowledge the shutdown.
                 if ack_rx.await.is_err() {
@@ -114,9 +141,9 @@ impl CollectorService {
     /// Runs the `CollectorService` to completion, including signal handling.
     pub async fn run(mut self) -> Result<()> {
         info!("CollectorService running. Press Ctrl+C to exit.");
-        use tokio::signal::unix::{signal, SignalKind};
-        use tokio::time::timeout;
         use std::time::Duration;
+        use tokio::signal::unix::{SignalKind, signal};
+        use tokio::time::timeout;
 
         let mut sigterm = signal(SignalKind::terminate())?;
 
@@ -165,20 +192,20 @@ impl CollectorService {
             mpsc::channel::<SupervisorShutdown>(1);
 
         self.supervisor_shutdown_tx = Some(supervisor_shutdown_tx.clone());
-        if let Some(sender) = &self.test_shutdown_tx_sender {
-            if sender.send(supervisor_shutdown_tx).await.is_err() {
-                warn!("Failed to send supervisor_shutdown_tx to test harness. Test might hang.");
-            }
+        if let Some(sender) = &self.test_shutdown_tx_sender
+            && sender.send(supervisor_shutdown_tx).await.is_err()
+        {
+            warn!("Failed to send supervisor_shutdown_tx to test harness. Test might hang.");
         }
         let reconnect_notify = Arc::new(Notify::new());
 
         // Persistence task
         tokio::spawn(async move {
             while let Some(intent) = persistence_rx.recv().await {
-                if let Ok(ron_string) = ron::to_string(&intent) {
-                    if let Err(e) = tokio::fs::write("last_intent.ron", ron_string).await {
-                        warn!("Failed to write last_intent.ron: {e}");
-                    }
+                if let Ok(ron_string) = ron::to_string(&intent)
+                    && let Err(e) = tokio::fs::write("last_intent.ron", ron_string).await
+                {
+                    warn!("Failed to write last_intent.ron: {e}");
                 }
             }
         });
@@ -210,7 +237,10 @@ impl CollectorService {
         });
 
         // Main session loop
-        let supervisor_handle = self.supervisor_handle.as_mut().expect("Supervisor handle should exist");
+        let supervisor_handle = self
+            .supervisor_handle
+            .as_mut()
+            .expect("Supervisor handle should exist");
 
         tokio::select! {
             _ = async {

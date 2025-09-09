@@ -51,6 +51,8 @@ pub struct TaskSupervisor {
     current_role: CollectorRole,
     // A channel to send the data injection sender to the test harness.
     test_data_tx_sender: Option<mpsc::Sender<mpsc::Sender<FinalizedPing>>>,
+    // Health heartbeat interval in milliseconds. Defaults to 1000ms.
+    health_interval_ms: u64,
 }
 
 impl TaskSupervisor {
@@ -58,6 +60,7 @@ impl TaskSupervisor {
     pub fn new(
         collector_uuid: String,
         test_data_tx_sender: Option<mpsc::Sender<mpsc::Sender<FinalizedPing>>>,
+        health_interval_ms: u64,
     ) -> Self {
         Self {
             collector_uuid,
@@ -65,6 +68,7 @@ impl TaskSupervisor {
             workers: HashMap::new(),
             current_role: CollectorRole::Standby,
             test_data_tx_sender,
+            health_interval_ms,
         }
     }
 
@@ -77,7 +81,13 @@ impl TaskSupervisor {
         mut supervisor_shutdown_rx: mpsc::Receiver<SupervisorShutdown>,
     ) -> Result<()> {
         info!("TaskSupervisor running.");
-        let mut health_interval = tokio::time::interval(Duration::from_secs(1));
+        // Allow tests to override the health heartbeat interval via environment
+        // variable so integration tests can run quickly without changing
+        // production behaviour. Value is in milliseconds.
+        // Use the configured health interval (in milliseconds). Tests should
+        // pass a small value via TaskSupervisor::new when bootstrapping.
+        let mut health_interval =
+            tokio::time::interval(Duration::from_millis(self.health_interval_ms));
 
         loop {
             tokio::select! {
@@ -135,17 +145,31 @@ impl TaskSupervisor {
             }
         }
 
-        info!("Shutting down all workers.");
-        self.shutdown().await;
+        info!("TaskSupervisor exited main loop.");
 
         Ok(())
     }
 
     /// Shuts down all workers gracefully.
     async fn shutdown(&mut self) {
-        let current_workers = self.workers.keys().cloned().collect::<HashSet<_>>();
-        self.reconcile_workers(&current_workers, &HashSet::new())
-            .await;
+        info!("SHUTDOWN_LOG: TaskSupervisor::shutdown started.");
+        let handles: Vec<_> = self.workers.drain().map(|(_, handle)| handle).collect();
+        info!("SHUTDOWN_LOG: Drained {} workers.", handles.len());
+        let shutdown_commands = handles
+            .iter()
+            .map(|handle| {
+                info!("SHUTDOWN_LOG: Sending Shutdown to worker.");
+                handle.command_tx.send(WorkerCommand::Shutdown)
+            })
+            .collect::<Vec<_>>();
+
+        join_all(shutdown_commands).await;
+        info!("SHUTDOWN_LOG: All worker shutdown commands sent.");
+
+        let shutdown_futures = handles.into_iter().map(|handle| handle.task_handle);
+        join_all(shutdown_futures).await;
+        info!("SHUTDOWN_LOG: All workers have been joined.");
+        info!("All workers have been shut down.");
     }
 
     /// Compares the desired state with the actual state and takes action.
@@ -172,19 +196,25 @@ impl TaskSupervisor {
                     db_client.clone(),
                 ) {
                     Ok(handles) => {
-                        if let Some(sender) = &self.test_data_tx_sender {
-                            if sender.send(handles.data_tx).await.is_err() {
-                                warn!("Failed to send worker data_tx to test harness. Test might hang.");
-                            }
+                        if let Some(sender) = &self.test_data_tx_sender
+                            && sender.send(handles.data_tx).await.is_err()
+                        {
+                            warn!(
+                                "Failed to send worker data_tx to test harness. Test might hang."
+                            );
                         }
                         self.workers.insert(target_ip, handles.handle);
                     }
                     Err(e) => {
-                        error!("Failed to create TargetWorker for {target_ip}: {e}. This may be a permissions issue.");
+                        error!(
+                            "Failed to create TargetWorker for {target_ip}: {e}. This may be a permissions issue."
+                        );
                     }
                 }
             } else {
-                info!("TaskSupervisor: Deferring worker creation for {target_ip}, no database client.");
+                info!(
+                    "TaskSupervisor: Deferring worker creation for {target_ip}, no database client."
+                );
             }
         }
 
@@ -206,11 +236,7 @@ impl TaskSupervisor {
     }
 
     /// Removes workers that are in `current` but not in `desired`.
-    async fn reconcile_workers(
-        &mut self,
-        current: &HashSet<IpAddr>,
-        desired: &HashSet<IpAddr>,
-    ) {
+    async fn reconcile_workers(&mut self, current: &HashSet<IpAddr>, desired: &HashSet<IpAddr>) {
         let workers_to_remove = current.difference(desired);
         let mut shutdown_handles = vec![];
 

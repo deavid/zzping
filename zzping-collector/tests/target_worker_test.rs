@@ -2,7 +2,6 @@
 
 use anyhow::Result;
 use std::net::IpAddr;
-use tokio::sync::mpsc;
 use zzping_collector::{
     database_client::DatabaseClient,
     target_worker::{TargetWorker, WorkerCommand},
@@ -14,12 +13,12 @@ mod common;
 use common::MockIngestionService;
 
 #[tokio::test]
-#[ignore] // Ignoring this test because it's not fully implemented and relies on a complex setup.
 async fn test_target_worker_primary_supervised_role_sends_init_command() -> Result<()> {
     // 1. Setup
     let mock_service = MockIngestionService::new();
     let addr = common::spawn_mock_server(mock_service.clone()).await;
-    let db_client = DatabaseClient::connect(format!("http://{}", addr), "test-token".to_string()).await?;
+    let db_client =
+        DatabaseClient::connect(format!("http://{}", addr), "test-token".to_string()).await?;
 
     // Configure the mock response for GetRecentData
     let expected_ack_nanos = 1234567890;
@@ -34,12 +33,16 @@ async fn test_target_worker_primary_supervised_role_sends_init_command() -> Resu
     let handles = TargetWorker::new(
         "test-uuid".to_string(),
         "127.0.0.1".parse::<IpAddr>()?,
-        10,
+        0, // use 0 to select MockPingClient for hermetic tests
         db_client,
     )?;
 
     // 3. Send the command and verify the result
-    handles.handle.command_tx.send(WorkerCommand::UpdateRole(CollectorRole::PrimarySupervised)).await?;
+    handles
+        .handle
+        .command_tx
+        .send(WorkerCommand::UpdateRole(CollectorRole::PrimarySupervised))
+        .await?;
 
     // We would need to intercept the channels created inside TargetWorker::new to actually test this.
     // The current design does not permit this easily.

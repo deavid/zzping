@@ -1,6 +1,7 @@
 use crate::{
     batch_submitter::{BatchSubmitter, BatchSubmitterCommand},
     database_client::DatabaseClient,
+    ping_client::{MockPingClient, PingClient},
     ping_surge_client::PingSurgeClient,
     pinger::{FinalizedPing, Pinger, PingerCommand},
 };
@@ -67,7 +68,16 @@ impl TargetWorker {
         let (pinger_command_tx, pinger_command_rx) = mpsc::channel(10);
         let (batch_submitter_command_tx, batch_submitter_command_rx) = mpsc::channel(10);
 
-        let ping_client = Arc::new(PingSurgeClient::new(target_ip)?);
+        let ping_client: Arc<dyn PingClient> = {
+            log::debug!("ping_rate_pps = {}", ping_rate_pps);
+            if ping_rate_pps == 0 {
+                log::debug!("Using mock ping client for target {}", target_ip);
+                Arc::new(MockPingClient::new(target_ip))
+            } else {
+                log::debug!("Using real ping client for target {}", target_ip);
+                Arc::new(PingSurgeClient::new(target_ip)?)
+            }
+        };
 
         let pinger = Pinger::new(
             target_ip,
@@ -192,62 +202,52 @@ impl TargetWorker {
                         }
                         WorkerCommand::Shutdown => {
                             info!(
-                                "TargetWorker for {} received shutdown command.",
+                                "SHUTDOWN_LOG: TargetWorker for {} received shutdown command.",
                                 self.target_ip
                             );
+                            // Send shutdown to children, but don't wait.
+                            let _ = pinger_command_tx.send(PingerCommand::Shutdown).await;
+                            let _ = batch_submitter_command_tx.send(BatchSubmitterCommand::Shutdown).await;
+                            info!("SHUTDOWN_LOG: TargetWorker for {} sent shutdown to children.", self.target_ip);
                             break; // Exit the loop to shut down
                         }
                     }
                 }
-                _ = &mut pinger_handle => {
-                    warn!("Pinger task for {} exited unexpectedly.", self.target_ip);
+                // Exit if a child task finishes unexpectedly
+                res = &mut pinger_handle => {
+                    warn!("Pinger task for {} exited unexpectedly: {:?}", self.target_ip, res);
                     break;
                 }
-                _ = &mut submitter_handle => {
-                    warn!("BatchSubmitter task for {} exited unexpectedly.", self.target_ip);
+                res = &mut submitter_handle => {
+                    warn!("BatchSubmitter task for {} exited unexpectedly: {:?}", self.target_ip, res);
+                    break;
+                }
+                else => {
+                    info!("TargetWorker for {} channels closed. Shutting down.", self.target_ip);
                     break;
                 }
             }
         }
 
-        // Now that the loop has exited, we can gracefully shut down the child tasks.
+        // After the loop, await the child tasks to ensure they shut down cleanly.
         info!(
-            "TargetWorker for {} shutting down Pinger and BatchSubmitter.",
+            "SHUTDOWN_LOG: TargetWorker for {} waiting for child tasks to complete.",
             self.target_ip
         );
-
-        // Shut down the pinger first to stop new data from being generated.
-        if pinger_command_tx.send(PingerCommand::Shutdown).await.is_err() {
-            warn!(
-                "Failed to send shutdown command to pinger for target {}. It may have already exited.",
-                self.target_ip
-            );
-        }
         if let Err(e) = pinger_handle.await {
             warn!(
-                "Pinger task for target {} panicked during shutdown: {:?}",
+                "Pinger task for {} panicked or failed: {:?}",
                 self.target_ip, e
             );
         }
-
-        // Shut down the batch submitter. It will attempt to send one final batch.
-        if batch_submitter_command_tx
-            .send(BatchSubmitterCommand::Shutdown)
-            .await
-            .is_err()
-        {
-            warn!(
-                "Failed to send shutdown command to batch submitter for target {}. It may have already exited.",
-                self.target_ip
-            );
-        }
+        info!("SHUTDOWN_LOG: Pinger for {} joined.", self.target_ip);
         if let Err(e) = submitter_handle.await {
             warn!(
-                "BatchSubmitter task for target {} panicked during shutdown: {:?}",
+                "BatchSubmitter task for {} panicked or failed: {:?}",
                 self.target_ip, e
             );
         }
-
-        info!("TargetWorker for {} has shut down gracefully.", self.target_ip);
+        info!("SHUTDOWN_LOG: Submitter for {} joined.", self.target_ip);
+        info!("TargetWorker for {} has shut down.", self.target_ip);
     }
 }

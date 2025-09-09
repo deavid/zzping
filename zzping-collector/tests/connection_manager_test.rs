@@ -1,9 +1,9 @@
 use std::{sync::Arc, time::Duration};
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{Notify, mpsc};
 use zzping_collector::connection_manager::ConnectionManager;
 
 mod common;
-use common::{spawn_mock_server, MockIngestionService};
+use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]
 async fn test_connection_manager_connects_and_sends_client() {
@@ -45,7 +45,10 @@ async fn test_connection_manager_retries_on_failure() {
 
     // The manager should not send a client.
     let result = tokio::time::timeout(Duration::from_secs(1), client_rx.recv()).await;
-    assert!(result.is_err(), "ConnectionManager sent a client when it should have failed");
+    assert!(
+        result.is_err(),
+        "ConnectionManager sent a client when it should have failed"
+    );
 
     // In a real test, we would capture logs to verify retry attempts.
     // For now, we just ensure it doesn't crash and doesn't send a client.

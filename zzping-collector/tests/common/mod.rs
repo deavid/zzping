@@ -75,7 +75,16 @@ impl Default for MockIngestionService {
 }
 
 impl MockIngestionService {
+    /// Create a new mock ingestion service with the default heartbeat
+    /// ping_rate_pps of 0 (prevents real pings in tests). Use
+    /// `with_ping_rate` if tests need a different default.
     pub fn new() -> Self {
+        Self::with_ping_rate(0)
+    }
+
+    /// Create a new mock ingestion service with a configurable
+    /// `ping_rate_pps` in the default heartbeat response.
+    pub fn with_ping_rate(ping_rate_pps: u64) -> Self {
         Self {
             received_batches: Arc::new(Mutex::new(Vec::new())),
             received_heartbeats: Arc::new(Mutex::new(Vec::new())),
@@ -85,7 +94,7 @@ impl MockIngestionService {
             })),
             heartbeat_response: Arc::new(Mutex::new(HeartbeatResponse {
                 targets: vec!["127.0.0.1".to_string()],
-                ping_rate_pps: 10, // Lowered for test stability
+                ping_rate_pps,
                 role: CollectorRole::Primary as i32,
                 swap_at_nanos: 0,
             })),

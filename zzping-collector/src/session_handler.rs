@@ -50,7 +50,6 @@ impl SessionHandler {
             persistence_tx,
         }
     }
-
     /// Runs the `SessionHandler`'s main loops.
     pub async fn run(self) -> Result<()> {
         info!("SessionHandler started.");

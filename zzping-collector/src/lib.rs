@@ -23,9 +23,7 @@ pub mod state_machine;
 pub mod target_worker;
 pub mod task_supervisor;
 
-use crate::{
-    cli::Cli, collector_service::CollectorService, config::Config, pinger::FinalizedPing,
-};
+use crate::{cli::Cli, collector_service::CollectorService, config::Config, pinger::FinalizedPing};
 use anyhow::Result;
 use clap::Parser;
 use log::info;
@@ -80,6 +78,25 @@ pub fn bootstrap_collector_for_test(
         Some(test_data_tx_sender),
         Some(test_shutdown_tx_sender),
     )
+}
+
+/// Test helper that allows specifying a custom health interval (ms).
+pub fn bootstrap_collector_for_test_with_interval(
+    config_path: String,
+    test_data_tx_sender: mpsc::Sender<mpsc::Sender<FinalizedPing>>,
+    test_shutdown_tx_sender: mpsc::Sender<mpsc::Sender<SupervisorShutdown>>,
+    health_interval_ms: u64,
+) -> Result<CollectorService> {
+    let config = Config::load(&config_path)?;
+    let lock = TcpListener::bind("127.0.0.1:0")?;
+    let svc = CollectorService::new_for_test_with_interval(
+        config,
+        lock,
+        Some(test_data_tx_sender),
+        Some(test_shutdown_tx_sender),
+        health_interval_ms,
+    )?;
+    Ok(svc)
 }
 
 /// Creates all the core components of the collector with a specific port.
