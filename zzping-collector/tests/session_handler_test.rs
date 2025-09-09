@@ -63,7 +63,7 @@ async fn test_session_handler_sends_config_on_success() {
     let config = received_config.unwrap();
 
     // Check that the config contains data from the mock response
-    assert_eq!(config.ping_rate_pps, 100);
+    assert_eq!(config.ping_rate_pps, 10);
     assert!(config.targets.contains(&"127.0.0.1".parse().unwrap()));
 }
 

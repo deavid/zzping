@@ -27,7 +27,8 @@ fn test_port_lock_prevents_second_instance() {
     let test_port = 17879;
 
     // 2. Bootstrap once. This should succeed and hold the lock inside the service.
-    let bootstrap_result1 = bootstrap_collector_with_port(config_path.clone(), Some(test_port));
+    let bootstrap_result1 =
+        bootstrap_collector_with_port(config_path.clone(), Some(test_port), None);
     assert!(
         bootstrap_result1.is_ok(),
         "First bootstrap failed: {:?}",
@@ -38,7 +39,7 @@ fn test_port_lock_prevents_second_instance() {
     let _service1 = bootstrap_result1.unwrap();
 
     // 3. Attempt to bootstrap a second time.
-    let bootstrap_result2 = bootstrap_collector_with_port(config_path, Some(test_port));
+    let bootstrap_result2 = bootstrap_collector_with_port(config_path, Some(test_port), None);
 
     // 4. Assert that the second attempt failed because the port is locked.
     assert!(

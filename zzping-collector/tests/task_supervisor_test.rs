@@ -11,7 +11,7 @@ use common::mock_worker_factory;
 #[timeout(1000)]
 async fn test_supervisor_sends_update_role_on_config_change() {
     // 1. Setup
-    let mut supervisor = TaskSupervisor::new("test-uuid".to_string());
+    let mut supervisor = TaskSupervisor::new("test-uuid".to_string(), None);
 
     // Manually insert a mock worker for the test.
     let target_ip = IpAddr::from_str("1.1.1.1").unwrap();
@@ -51,7 +51,7 @@ async fn test_supervisor_sends_update_role_on_config_change() {
 #[timeout(1000)]
 async fn test_supervisor_sends_shutdown_to_removed_workers() {
     // 1. Setup
-    let mut supervisor = TaskSupervisor::new("test-uuid".to_string());
+    let mut supervisor = TaskSupervisor::new("test-uuid".to_string(), None);
 
     // Manually insert a mock worker for the test.
     let target_ip = IpAddr::from_str("1.1.1.1").unwrap();

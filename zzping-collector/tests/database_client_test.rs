@@ -26,7 +26,7 @@ async fn test_database_client_connect_and_heartbeat() {
     let response = client.heartbeat(request).await;
     assert!(response.is_ok());
     let response = response.unwrap().into_inner();
-    assert_eq!(response.ping_rate_pps, 100);
+    assert_eq!(response.ping_rate_pps, 10);
     assert_eq!(response.role, CollectorRole::Primary as i32);
 
     // Test with a bad token.

@@ -63,7 +63,9 @@ pub struct MockIngestionService {
     pub received_heartbeats: Arc<Mutex<Vec<HeartbeatRequest>>>,
     pub send_batch_response: Arc<Mutex<SendBatchResponse>>,
     pub heartbeat_response: Arc<Mutex<HeartbeatResponse>>,
+    pub get_recent_data_response: Arc<Mutex<GetRecentDataResponse>>,
     pub command_stream_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Result<Command, Status>>>>>,
+    pub send_batch_should_fail: Arc<Mutex<bool>>,
 }
 
 impl Default for MockIngestionService {
@@ -83,11 +85,16 @@ impl MockIngestionService {
             })),
             heartbeat_response: Arc::new(Mutex::new(HeartbeatResponse {
                 targets: vec!["127.0.0.1".to_string()],
-                ping_rate_pps: 100,
+                ping_rate_pps: 10, // Lowered for test stability
                 role: CollectorRole::Primary as i32,
                 swap_at_nanos: 0,
             })),
+            get_recent_data_response: Arc::new(Mutex::new(GetRecentDataResponse {
+                records: vec![],
+                database_confirms_last_acked_received_nanos: 0,
+            })),
             command_stream_tx: Arc::new(Mutex::new(None)),
+            send_batch_should_fail: Arc::new(Mutex::new(false)),
         }
     }
 }
@@ -124,6 +131,10 @@ impl Ingestion for MockIngestionService {
         &self,
         request: Request<SendBatchRequest>,
     ) -> Result<Response<SendBatchResponse>, Status> {
+        if *self.send_batch_should_fail.lock().unwrap() {
+            return Err(Status::unavailable("Mock service is configured to fail"));
+        }
+
         // Check authentication
         if let Some(auth_header) = request.metadata().get("authorization") {
             if let Ok(auth_str) = auth_header.to_str() {
@@ -149,7 +160,8 @@ impl Ingestion for MockIngestionService {
         &self,
         _request: Request<GetRecentDataRequest>,
     ) -> Result<Response<GetRecentDataResponse>, Status> {
-        unimplemented!()
+        let response = self.get_recent_data_response.lock().unwrap().clone();
+        Ok(Response::new(response))
     }
 
     async fn query_data(

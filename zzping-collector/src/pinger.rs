@@ -13,6 +13,7 @@ use zzping_proto::zzping::{AnnouncePingsRequest, CollectorRole};
 #[derive(Debug)]
 pub enum PingerCommand {
     UpdateRole(CollectorRole),
+    Shutdown,
 }
 
 // ... MonotonicTimeSource ...
@@ -170,7 +171,9 @@ impl Pinger {
 
                 // These arms are always enabled.
                 Some(command) = self.command_rx.recv() => {
-                    self.handle_command(command);
+                    if !self.handle_command(command) {
+                        break;
+                    }
                 },
                 Some(ping_reply) = internal_rx.recv() => {
                     if let Some(sent_nanos) = self.in_flight_pings.remove(&ping_reply.sequence_idx) {
@@ -218,7 +221,7 @@ impl Pinger {
         Ok(())
     }
 
-    fn handle_command(&mut self, command: PingerCommand) {
+    fn handle_command(&mut self, command: PingerCommand) -> bool {
         match command {
             PingerCommand::UpdateRole(role) => {
                 let should_be_active =
@@ -231,6 +234,11 @@ impl Pinger {
                         if self.is_active { "active" } else { "paused" }
                     );
                 }
+                true // Continue running
+            }
+            PingerCommand::Shutdown => {
+                info!("Pinger for {} received shutdown command.", self.target);
+                false // Stop running
             }
         }
     }

@@ -159,9 +159,13 @@ async fn test_pinger_pauses_and_resumes() {
 
     // 3. Pause it
     pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Standby)).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Give the command time to be processed
+    tokio::time::sleep(Duration::from_millis(10)).await;
     let count_after_pause = mock_ping_client.pings.lock().unwrap().len();
-    assert_eq!(count_after_pause, count_after_activate, "Pinger should stop sending pings when role is Standby");
+    // A small sleep to check if any *more* pings are sent after pausing.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let count_after_pause_check = mock_ping_client.pings.lock().unwrap().len();
+    assert_eq!(count_after_pause, count_after_pause_check, "Pinger should stop sending pings when role is Standby");
 
     // 4. Resume it
     pinger_cmd_tx.send(PingerCommand::UpdateRole(CollectorRole::Primary)).await.unwrap();

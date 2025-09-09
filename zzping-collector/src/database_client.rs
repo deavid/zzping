@@ -3,7 +3,8 @@ use tonic::transport::{Channel, Endpoint};
 use tonic::Request;
 use zzping_proto::zzping::{
     ingestion_client::IngestionClient, AnnouncePingsRequest, AnnouncePingsResponse,
-    HeartbeatRequest, HeartbeatResponse, SendBatchRequest, SendBatchResponse,
+    GetRecentDataRequest, GetRecentDataResponse, HeartbeatRequest, HeartbeatResponse,
+    SendBatchRequest, SendBatchResponse,
 };
 
 /// A lightweight, cloneable wrapper around the `tonic` gRPC client that
@@ -85,6 +86,23 @@ impl DatabaseClient {
             .insert("authorization", token.parse()?);
 
         let response = self.client.send_batch(tonic_request).await?;
+        Ok(response)
+    }
+
+    /// Performs a GetRecentData RPC.
+    pub async fn get_recent_data(
+        &mut self,
+        request: GetRecentDataRequest,
+    ) -> Result<tonic::Response<GetRecentDataResponse>> {
+        let mut tonic_request = Request::new(request);
+
+        // Add the authentication token to the request metadata.
+        let token = format!("Bearer {}", self.auth_token);
+        tonic_request
+            .metadata_mut()
+            .insert("authorization", token.parse()?);
+
+        let response = self.client.get_recent_data(tonic_request).await?;
         Ok(response)
     }
 

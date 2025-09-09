@@ -32,10 +32,20 @@ pub struct TargetWorkerHandle {
     pub task_handle: JoinHandle<()>,
 }
 
+/// A collection of handles for a TargetWorker, including a channel to inject data for testing.
+#[derive(Debug)]
+pub struct TargetWorkerHandles {
+    pub handle: TargetWorkerHandle,
+    pub data_tx: mpsc::Sender<FinalizedPing>,
+}
+
+use zzping_proto::zzping::GetRecentDataRequest;
+
 /// The TargetWorker is a self-contained, independent task that owns all state
 /// and logic for monitoring a single target IP address.
 pub struct TargetWorker {
     target_ip: IpAddr,
+    db_client: DatabaseClient,
     pinger: Pinger,
     pinger_command_tx: mpsc::Sender<PingerCommand>,
     batch_submitter_command_tx: mpsc::Sender<BatchSubmitterCommand>,
@@ -51,7 +61,7 @@ impl TargetWorker {
         target_ip: IpAddr,
         ping_rate_pps: u64,
         db_client: DatabaseClient,
-    ) -> Result<TargetWorkerHandle> {
+    ) -> Result<TargetWorkerHandles> {
         let (command_tx, command_rx) = mpsc::channel(10);
         let (results_tx, results_rx) = mpsc::channel::<FinalizedPing>(100);
         let (pinger_command_tx, pinger_command_rx) = mpsc::channel(10);
@@ -65,7 +75,7 @@ impl TargetWorker {
             Duration::from_secs(60),
             Duration::from_secs(5),
             ping_client,
-            results_tx,
+            results_tx.clone(),
             db_client.clone(),
             pinger_command_rx,
         );
@@ -76,12 +86,13 @@ impl TargetWorker {
             Duration::from_secs(60),
             1_000_000,
             Duration::from_secs(24 * 3600),
-            db_client,
+            db_client.clone(),
             batch_submitter_command_rx,
         );
 
         let worker = Self {
             target_ip,
+            db_client,
             pinger,
             pinger_command_tx,
             batch_submitter_command_tx,
@@ -93,9 +104,12 @@ impl TargetWorker {
             worker.run(results_rx).await;
         });
 
-        Ok(TargetWorkerHandle {
-            command_tx,
-            task_handle,
+        Ok(TargetWorkerHandles {
+            handle: TargetWorkerHandle {
+                command_tx,
+                task_handle,
+            },
+            data_tx: results_tx,
         })
     }
 
@@ -142,6 +156,33 @@ impl TargetWorker {
                         }
                         WorkerCommand::UpdateRole(role) => {
                             info!("TargetWorker for {} updating role to {:?}", self.target_ip, role);
+
+                            // If we are becoming PRIMARY_SUPERVISED, we need to get the recent data
+                            // and initialize the batch submitter's ACK cursor.
+                            if role == CollectorRole::PrimarySupervised {
+                                let mut db_client = self.db_client.clone();
+                                let bsc_tx = batch_submitter_command_tx.clone();
+                                tokio::spawn(async move {
+                                    info!("TargetWorker becoming PRIMARY_SUPERVISED, fetching recent data.");
+                                    let request = GetRecentDataRequest {
+                                        // These fields are not used yet, but will be.
+                                        collector_uuid: "".to_string(),
+                                        lookback_seconds: 30,
+                                    };
+                                    match db_client.get_recent_data(request).await {
+                                        Ok(response) => {
+                                            let ack_nanos = response.into_inner().database_confirms_last_acked_received_nanos;
+                                            if bsc_tx.send(BatchSubmitterCommand::InitializeAckCursor(ack_nanos)).await.is_err() {
+                                                warn!("Failed to send InitializeAckCursor command to BatchSubmitter.");
+                                            }
+                                        }
+                                        Err(e) => {
+                                            warn!("Failed to get recent data: {}", e);
+                                        }
+                                    }
+                                });
+                            }
+
                             if pinger_command_tx.send(PingerCommand::UpdateRole(role)).await.is_err() {
                                 warn!("Failed to send UpdateRole command to pinger for target {}.", self.target_ip);
                             }
@@ -169,9 +210,44 @@ impl TargetWorker {
             }
         }
 
-        // When shutdown is received, abort the child tasks.
-        pinger_handle.abort();
-        submitter_handle.abort();
-        info!("TargetWorker for {} has shut down.", self.target_ip);
+        // Now that the loop has exited, we can gracefully shut down the child tasks.
+        info!(
+            "TargetWorker for {} shutting down Pinger and BatchSubmitter.",
+            self.target_ip
+        );
+
+        // Shut down the pinger first to stop new data from being generated.
+        if pinger_command_tx.send(PingerCommand::Shutdown).await.is_err() {
+            warn!(
+                "Failed to send shutdown command to pinger for target {}. It may have already exited.",
+                self.target_ip
+            );
+        }
+        if let Err(e) = pinger_handle.await {
+            warn!(
+                "Pinger task for target {} panicked during shutdown: {:?}",
+                self.target_ip, e
+            );
+        }
+
+        // Shut down the batch submitter. It will attempt to send one final batch.
+        if batch_submitter_command_tx
+            .send(BatchSubmitterCommand::Shutdown)
+            .await
+            .is_err()
+        {
+            warn!(
+                "Failed to send shutdown command to batch submitter for target {}. It may have already exited.",
+                self.target_ip
+            );
+        }
+        if let Err(e) = submitter_handle.await {
+            warn!(
+                "BatchSubmitter task for target {} panicked during shutdown: {:?}",
+                self.target_ip, e
+            );
+        }
+
+        info!("TargetWorker for {} has shut down gracefully.", self.target_ip);
     }
 }
