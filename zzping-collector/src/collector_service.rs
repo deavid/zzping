@@ -2,7 +2,6 @@ use crate::{
     config::Config,
     connection_manager::ConnectionManager,
     database_client::DatabaseClient,
-    pinger::FinalizedPing,
     session_handler::SessionHandler,
     task_supervisor::{
         ClientUpdate, HealthReport, SupervisorConfig, SupervisorShutdown, TaskSupervisor,
@@ -46,7 +45,7 @@ impl CollectorService {
     /// Creates a new `CollectorService`.
     pub fn new(config: Config, lock: TcpListener) -> Result<Self> {
         // Default health interval is 1000ms
-        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone(), None, 1000);
+        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone(), 1000);
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -57,18 +56,15 @@ impl CollectorService {
         })
     }
 
-    /// Creates a new `CollectorService` for testing, with channels for injecting data and commands.
+    /// Creates a new `CollectorService` for testing, with channels for injecting commands.
     pub fn new_for_test(
         config: Config,
         lock: TcpListener,
-        test_data_tx_sender: Option<mpsc::Sender<mpsc::Sender<FinalizedPing>>>,
         test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
     ) -> Result<Self> {
-        // For tests allow passing the test_data_tx_sender and use the standard
-        // default interval of 1000ms. Tests that need a faster interval should
-        // call `new_for_test_with_interval` below.
-        let task_supervisor =
-            TaskSupervisor::new(config.collector_uuid.clone(), test_data_tx_sender, 1000);
+        // For tests use the standard default interval of 1000ms. Tests that need a faster
+        // interval should call `new_for_test_with_interval` below.
+        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone(), 1000);
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -83,15 +79,11 @@ impl CollectorService {
     pub fn new_for_test_with_interval(
         config: Config,
         lock: TcpListener,
-        test_data_tx_sender: Option<mpsc::Sender<mpsc::Sender<FinalizedPing>>>,
         test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
         health_interval_ms: u64,
     ) -> Result<Self> {
-        let task_supervisor = TaskSupervisor::new(
-            config.collector_uuid.clone(),
-            test_data_tx_sender,
-            health_interval_ms,
-        );
+        let task_supervisor =
+            TaskSupervisor::new(config.collector_uuid.clone(), health_interval_ms);
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),

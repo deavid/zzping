@@ -23,7 +23,7 @@ pub mod state_machine;
 pub mod target_worker;
 pub mod task_supervisor;
 
-use crate::{cli::Cli, collector_service::CollectorService, config::Config, pinger::FinalizedPing};
+use crate::{cli::Cli, collector_service::CollectorService, config::Config};
 use anyhow::Result;
 use clap::Parser;
 use log::info;
@@ -63,11 +63,9 @@ pub fn bootstrap_collector(config_path: String) -> Result<CollectorService> {
 
 use crate::task_supervisor::SupervisorShutdown;
 
-/// Test-only bootstrap function that allows injecting a channel to receive
-/// worker data senders.
+/// Test-only bootstrap function that allows injecting shutdown commands.
 pub fn bootstrap_collector_for_test(
     config_path: String,
-    test_data_tx_sender: mpsc::Sender<mpsc::Sender<FinalizedPing>>,
     test_shutdown_tx_sender: mpsc::Sender<mpsc::Sender<SupervisorShutdown>>,
 ) -> Result<CollectorService> {
     let config = Config::load(&config_path)?;
@@ -75,7 +73,6 @@ pub fn bootstrap_collector_for_test(
     CollectorService::new_for_test(
         config,
         lock,
-        Some(test_data_tx_sender),
         Some(test_shutdown_tx_sender),
     )
 }
@@ -83,7 +80,6 @@ pub fn bootstrap_collector_for_test(
 /// Test helper that allows specifying a custom health interval (ms).
 pub fn bootstrap_collector_for_test_with_interval(
     config_path: String,
-    test_data_tx_sender: mpsc::Sender<mpsc::Sender<FinalizedPing>>,
     test_shutdown_tx_sender: mpsc::Sender<mpsc::Sender<SupervisorShutdown>>,
     health_interval_ms: u64,
 ) -> Result<CollectorService> {
@@ -92,7 +88,6 @@ pub fn bootstrap_collector_for_test_with_interval(
     let svc = CollectorService::new_for_test_with_interval(
         config,
         lock,
-        Some(test_data_tx_sender),
         Some(test_shutdown_tx_sender),
         health_interval_ms,
     )?;
@@ -104,7 +99,7 @@ pub fn bootstrap_collector_for_test_with_interval(
 pub fn bootstrap_collector_with_port(
     config_path: String,
     port: Option<u16>,
-    _test_data_tx_sender: Option<mpsc::Sender<mpsc::Sender<FinalizedPing>>>,
+    _unused_test_param: Option<()>,
 ) -> Result<CollectorService> {
     // Load configuration
     let config = Config::load(&config_path)?;

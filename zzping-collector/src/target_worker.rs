@@ -135,8 +135,22 @@ impl TargetWorker {
         let batch_submitter = self.batch_submitter;
         let mut command_rx = self.command_rx;
 
-        let mut pinger_handle = tokio::spawn(pinger.run());
-        let mut submitter_handle = tokio::spawn(batch_submitter.run(results_rx));
+        // Spawn children and create oneshot monitors to detect when they exit.
+        let pinger_handle = tokio::spawn(pinger.run());
+        let (pinger_done_tx, mut pinger_done_rx) = oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = pinger_handle.await;
+            let _ = pinger_done_tx.send(());
+        });
+
+        let submitter_handle = tokio::spawn(batch_submitter.run(results_rx));
+        let (submitter_done_tx, mut submitter_done_rx) = oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let _ = submitter_handle.await;
+            let _ = submitter_done_tx.send(());
+        });
+        // Track whether we should perform an ordered shutdown sequence after the loop.
+        let mut perform_ordered_shutdown = false;
 
         loop {
             tokio::select! {
@@ -168,29 +182,29 @@ impl TargetWorker {
                             info!("TargetWorker for {} updating role to {:?}", self.target_ip, role);
 
                             // If we are becoming PRIMARY_SUPERVISED, we need to get the recent data
-                            // and initialize the batch submitter's ACK cursor.
+                            // and initialize the batch submitter's ACK cursor synchronously.
                             if role == CollectorRole::PrimarySupervised {
+                                info!("TargetWorker becoming PRIMARY_SUPERVISED, fetching recent data.");
+                                let request = GetRecentDataRequest {
+                                    // These fields are not used yet, but will be.
+                                    collector_uuid: "".to_string(),
+                                    lookback_seconds: 30,
+                                };
                                 let mut db_client = self.db_client.clone();
-                                let bsc_tx = batch_submitter_command_tx.clone();
-                                tokio::spawn(async move {
-                                    info!("TargetWorker becoming PRIMARY_SUPERVISED, fetching recent data.");
-                                    let request = GetRecentDataRequest {
-                                        // These fields are not used yet, but will be.
-                                        collector_uuid: "".to_string(),
-                                        lookback_seconds: 30,
-                                    };
-                                    match db_client.get_recent_data(request).await {
-                                        Ok(response) => {
-                                            let ack_nanos = response.into_inner().database_confirms_last_acked_received_nanos;
-                                            if bsc_tx.send(BatchSubmitterCommand::InitializeAckCursor(ack_nanos)).await.is_err() {
-                                                warn!("Failed to send InitializeAckCursor command to BatchSubmitter.");
-                                            }
-                                        }
-                                        Err(e) => {
-                                            warn!("Failed to get recent data: {}", e);
+                                match db_client.get_recent_data(request).await {
+                                    Ok(response) => {
+                                        let ack_nanos = response.into_inner().database_confirms_last_acked_received_nanos;
+                                        info!("Handoff: Initializing ACK cursor to {} for target {}", ack_nanos, self.target_ip);
+                                        if batch_submitter_command_tx.send(BatchSubmitterCommand::InitializeAckCursor(ack_nanos)).await.is_err() {
+                                            warn!("Failed to send InitializeAckCursor command to BatchSubmitter for target {}.", self.target_ip);
+                                        } else {
+                                            info!("Handoff: ACK cursor initialization completed for target {}", self.target_ip);
                                         }
                                     }
-                                });
+                                    Err(e) => {
+                                        warn!("Failed to get recent data for target {}: {}", self.target_ip, e);
+                                    }
+                                }
                             }
 
                             if pinger_command_tx.send(PingerCommand::UpdateRole(role)).await.is_err() {
@@ -205,21 +219,26 @@ impl TargetWorker {
                                 "SHUTDOWN_LOG: TargetWorker for {} received shutdown command.",
                                 self.target_ip
                             );
-                            // Send shutdown to children, but don't wait.
-                            let _ = pinger_command_tx.send(PingerCommand::Shutdown).await;
-                            let _ = batch_submitter_command_tx.send(BatchSubmitterCommand::Shutdown).await;
-                            info!("SHUTDOWN_LOG: TargetWorker for {} sent shutdown to children.", self.target_ip);
-                            break; // Exit the loop to shut down
+                            // Request ordered shutdown: first stop the pinger so no new
+                            // data is generated, then after the loop we will wait for the
+                            // pinger to finish and then instruct the submitter to shut
+                            // down and drain its buffer.
+                            if pinger_command_tx.send(PingerCommand::Shutdown).await.is_err() {
+                                warn!("Failed to send Shutdown to pinger for {}.", self.target_ip);
+                            }
+                            perform_ordered_shutdown = true;
+                            info!("SHUTDOWN_LOG: TargetWorker for {} requested ordered shutdown.", self.target_ip);
+                            break; // Exit the loop to perform ordered shutdown below
                         }
                     }
                 }
-                // Exit if a child task finishes unexpectedly
-                res = &mut pinger_handle => {
-                    warn!("Pinger task for {} exited unexpectedly: {:?}", self.target_ip, res);
+                // Exit if a child task finishes unexpectedly (observed via the monitor)
+                _ = &mut pinger_done_rx => {
+                    warn!("Pinger task for {} exited unexpectedly.", self.target_ip);
                     break;
                 }
-                res = &mut submitter_handle => {
-                    warn!("BatchSubmitter task for {} exited unexpectedly: {:?}", self.target_ip, res);
+                _ = &mut submitter_done_rx => {
+                    warn!("BatchSubmitter task for {} exited unexpectedly.", self.target_ip);
                     break;
                 }
                 else => {
@@ -234,20 +253,52 @@ impl TargetWorker {
             "SHUTDOWN_LOG: TargetWorker for {} waiting for child tasks to complete.",
             self.target_ip
         );
-        if let Err(e) = pinger_handle.await {
-            warn!(
-                "Pinger task for {} panicked or failed: {:?}",
-                self.target_ip, e
+        if perform_ordered_shutdown {
+            // We already requested the pinger to shut down before exiting the loop.
+            info!(
+                "SHUTDOWN_LOG: TargetWorker for {} performing ordered shutdown.",
+                self.target_ip
             );
+
+            match pinger_done_rx.await {
+                Ok(_) => info!("SHUTDOWN_LOG: Pinger for {} finished.", self.target_ip),
+                Err(_) => warn!("Pinger monitor channel closed for {}.", self.target_ip),
+            }
+
+            // Now tell the batch submitter to shut down and wait for it to finish.
+            if batch_submitter_command_tx
+                .send(BatchSubmitterCommand::Shutdown)
+                .await
+                .is_err()
+            {
+                warn!(
+                    "Failed to send Shutdown to batch_submitter for {}.",
+                    self.target_ip
+                );
+            }
+
+            match submitter_done_rx.await {
+                Ok(_) => info!(
+                    "SHUTDOWN_LOG: BatchSubmitter for {} finished.",
+                    self.target_ip
+                ),
+                Err(_) => warn!(
+                    "BatchSubmitter monitor channel closed for {}.",
+                    self.target_ip
+                ),
+            }
+        } else {
+            // If we didn't request ordered shutdown, just wait for both children
+            // to finish (they might have exited unexpectedly already).
+            match pinger_done_rx.await {
+                Ok(_) => info!("SHUTDOWN_LOG: Pinger for {} joined.", self.target_ip),
+                Err(_) => warn!("Pinger monitor channel closed for {}.", self.target_ip),
+            }
+            match submitter_done_rx.await {
+                Ok(_) => info!("SHUTDOWN_LOG: Submitter for {} joined.", self.target_ip),
+                Err(_) => warn!("Submitter monitor channel closed for {}.", self.target_ip),
+            }
         }
-        info!("SHUTDOWN_LOG: Pinger for {} joined.", self.target_ip);
-        if let Err(e) = submitter_handle.await {
-            warn!(
-                "BatchSubmitter task for {} panicked or failed: {:?}",
-                self.target_ip, e
-            );
-        }
-        info!("SHUTDOWN_LOG: Submitter for {} joined.", self.target_ip);
         info!("TargetWorker for {} has shut down.", self.target_ip);
     }
 }

@@ -1,6 +1,5 @@
 use crate::{
     database_client::DatabaseClient,
-    pinger::FinalizedPing,
     target_worker::{TargetWorker, TargetWorkerHandle, WorkerCommand},
 };
 use anyhow::Result;
@@ -49,25 +48,18 @@ pub struct TaskSupervisor {
     pub db_client: Option<DatabaseClient>,
     pub workers: HashMap<IpAddr, TargetWorkerHandle>,
     current_role: CollectorRole,
-    // A channel to send the data injection sender to the test harness.
-    test_data_tx_sender: Option<mpsc::Sender<mpsc::Sender<FinalizedPing>>>,
     // Health heartbeat interval in milliseconds. Defaults to 1000ms.
     health_interval_ms: u64,
 }
 
 impl TaskSupervisor {
     /// Creates a new `TaskSupervisor`.
-    pub fn new(
-        collector_uuid: String,
-        test_data_tx_sender: Option<mpsc::Sender<mpsc::Sender<FinalizedPing>>>,
-        health_interval_ms: u64,
-    ) -> Self {
+    pub fn new(collector_uuid: String, health_interval_ms: u64) -> Self {
         Self {
             collector_uuid,
             db_client: None,
             workers: HashMap::new(),
             current_role: CollectorRole::Standby,
-            test_data_tx_sender,
             health_interval_ms,
         }
     }
@@ -196,13 +188,6 @@ impl TaskSupervisor {
                     db_client.clone(),
                 ) {
                     Ok(handles) => {
-                        if let Some(sender) = &self.test_data_tx_sender
-                            && sender.send(handles.data_tx).await.is_err()
-                        {
-                            warn!(
-                                "Failed to send worker data_tx to test harness. Test might hang."
-                            );
-                        }
                         self.workers.insert(target_ip, handles.handle);
                     }
                     Err(e) => {
