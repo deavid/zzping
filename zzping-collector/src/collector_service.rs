@@ -245,6 +245,7 @@ impl CollectorService {
                             self.config.collector_uuid.clone(),
                             latest_health_rx.clone(),
                             persistence_tx.clone(),
+                            self.config.use_mock_ping_client,
                         );
                         let session_handle = tokio::spawn(session_handler.run());
 
@@ -287,6 +288,7 @@ mod tests {
             collector_uuid: "test-uuid".to_string(),
             database_addr: "http://127.0.0.1:0".to_string(),
             auth_token: "test-token".to_string(),
+            use_mock_ping_client: true,
         }
     }
 

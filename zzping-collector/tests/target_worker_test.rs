@@ -1,9 +1,10 @@
 // tests/target_worker_test.rs
 
 use anyhow::Result;
-use std::net::IpAddr;
+use std::{net::IpAddr, sync::Arc};
 use zzping_collector::{
     database_client::DatabaseClient,
+    ping_client::MockPingClient,
     target_worker::{TargetWorker, WorkerCommand},
 };
 use zzping_proto::zzping::{CollectorRole, GetRecentDataResponse};
@@ -29,12 +30,15 @@ async fn test_target_worker_primary_supervised_role_sends_init_command() -> Resu
     };
     *mock_service.get_recent_data_response.lock().unwrap() = response;
 
-    // 2. Create the TargetWorker
-    let handles = TargetWorker::new(
+    // 2. Create the TargetWorker with MockPingClient
+    let target_ip = "127.0.0.1".parse::<IpAddr>()?;
+    let ping_client = Arc::new(MockPingClient::new(target_ip));
+    let handles = TargetWorker::new_with_ping_client(
         "test-uuid".to_string(),
-        "127.0.0.1".parse::<IpAddr>()?,
-        0, // use 0 to select MockPingClient for hermetic tests
+        target_ip,
+        1, // Use a normal ping rate since we're providing our own client
         db_client,
+        ping_client,
     )?;
 
     // 3. Send the command and verify the result

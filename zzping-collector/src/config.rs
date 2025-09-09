@@ -11,6 +11,9 @@ pub struct Config {
     pub collector_uuid: String,
     pub database_addr: String,
     pub auth_token: String,
+    /// Test-only field: when true, use MockPingClient instead of real ping client
+    #[serde(default)]
+    pub use_mock_ping_client: bool,
 }
 
 impl Config {

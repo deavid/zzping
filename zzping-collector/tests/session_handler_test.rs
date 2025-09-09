@@ -50,6 +50,7 @@ async fn test_session_handler_sends_config_on_success() {
         "test-uuid".to_string(),
         health_rx,
         persistence_tx,
+        true, // Use mock client in tests
     );
 
     // 2. Run the handler in a separate task
@@ -127,6 +128,7 @@ async fn test_session_handler_exits_on_connection_failure() {
         "test-uuid".to_string(),
         health_rx,
         persistence_tx,
+        true, // Use mock client in tests
     );
     let handler_handle = tokio::spawn(handler.run());
     info!("SessionHandler started");

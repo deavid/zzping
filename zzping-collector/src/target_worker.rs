@@ -1,7 +1,7 @@
 use crate::{
     batch_submitter::{BatchSubmitter, BatchSubmitterCommand},
     database_client::DatabaseClient,
-    ping_client::{MockPingClient, PingClient},
+    ping_client::PingClient,
     ping_surge_client::PingSurgeClient,
     pinger::{FinalizedPing, Pinger, PingerCommand},
 };
@@ -63,21 +63,29 @@ impl TargetWorker {
         ping_rate_pps: u64,
         db_client: DatabaseClient,
     ) -> Result<TargetWorkerHandles> {
+        let ping_client = Arc::new(PingSurgeClient::new(target_ip)?);
+        Self::new_with_ping_client(
+            collector_uuid,
+            target_ip,
+            ping_rate_pps,
+            db_client,
+            ping_client,
+        )
+    }
+
+    /// Creates a new TargetWorker with a custom PingClient (useful for testing).
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new_with_ping_client(
+        collector_uuid: String,
+        target_ip: IpAddr,
+        ping_rate_pps: u64,
+        db_client: DatabaseClient,
+        ping_client: Arc<dyn PingClient>,
+    ) -> Result<TargetWorkerHandles> {
         let (command_tx, command_rx) = mpsc::channel(10);
         let (results_tx, results_rx) = mpsc::channel::<FinalizedPing>(100);
         let (pinger_command_tx, pinger_command_rx) = mpsc::channel(10);
         let (batch_submitter_command_tx, batch_submitter_command_rx) = mpsc::channel(10);
-
-        let ping_client: Arc<dyn PingClient> = {
-            log::debug!("ping_rate_pps = {}", ping_rate_pps);
-            if ping_rate_pps == 0 {
-                log::debug!("Using mock ping client for target {}", target_ip);
-                Arc::new(MockPingClient::new(target_ip))
-            } else {
-                log::debug!("Using real ping client for target {}", target_ip);
-                Arc::new(PingSurgeClient::new(target_ip)?)
-            }
-        };
 
         let pinger = Pinger::new(
             target_ip,
@@ -135,20 +143,10 @@ impl TargetWorker {
         let batch_submitter = self.batch_submitter;
         let mut command_rx = self.command_rx;
 
-        // Spawn children and create oneshot monitors to detect when they exit.
-        let pinger_handle = tokio::spawn(pinger.run());
-        let (pinger_done_tx, mut pinger_done_rx) = oneshot::channel::<()>();
-        tokio::spawn(async move {
-            let _ = pinger_handle.await;
-            let _ = pinger_done_tx.send(());
-        });
+        // Spawn children tasks and store their handles for proper shutdown coordination
+        let mut pinger_handle = tokio::spawn(pinger.run());
+        let mut submitter_handle = tokio::spawn(batch_submitter.run(results_rx));
 
-        let submitter_handle = tokio::spawn(batch_submitter.run(results_rx));
-        let (submitter_done_tx, mut submitter_done_rx) = oneshot::channel::<()>();
-        tokio::spawn(async move {
-            let _ = submitter_handle.await;
-            let _ = submitter_done_tx.send(());
-        });
         // Track whether we should perform an ordered shutdown sequence after the loop.
         let mut perform_ordered_shutdown = false;
 
@@ -220,9 +218,7 @@ impl TargetWorker {
                                 self.target_ip
                             );
                             // Request ordered shutdown: first stop the pinger so no new
-                            // data is generated, then after the loop we will wait for the
-                            // pinger to finish and then instruct the submitter to shut
-                            // down and drain its buffer.
+                            // data is generated.
                             if pinger_command_tx.send(PingerCommand::Shutdown).await.is_err() {
                                 warn!("Failed to send Shutdown to pinger for {}.", self.target_ip);
                             }
@@ -232,13 +228,19 @@ impl TargetWorker {
                         }
                     }
                 }
-                // Exit if a child task finishes unexpectedly (observed via the monitor)
-                _ = &mut pinger_done_rx => {
-                    warn!("Pinger task for {} exited unexpectedly.", self.target_ip);
+                // Exit if a child task finishes unexpectedly
+                result = &mut pinger_handle => {
+                    match result {
+                        Ok(_) => warn!("Pinger task for {} exited.", self.target_ip),
+                        Err(e) => warn!("Pinger task for {} panicked: {}", self.target_ip, e),
+                    }
                     break;
                 }
-                _ = &mut submitter_done_rx => {
-                    warn!("BatchSubmitter task for {} exited unexpectedly.", self.target_ip);
+                result = &mut submitter_handle => {
+                    match result {
+                        Ok(_) => warn!("BatchSubmitter task for {} exited.", self.target_ip),
+                        Err(e) => warn!("BatchSubmitter task for {} panicked: {}", self.target_ip, e),
+                    }
                     break;
                 }
                 else => {
@@ -255,14 +257,18 @@ impl TargetWorker {
         );
         if perform_ordered_shutdown {
             // We already requested the pinger to shut down before exiting the loop.
+            // Now wait for it to complete.
             info!(
                 "SHUTDOWN_LOG: TargetWorker for {} performing ordered shutdown.",
                 self.target_ip
             );
 
-            match pinger_done_rx.await {
+            match pinger_handle.await {
                 Ok(_) => info!("SHUTDOWN_LOG: Pinger for {} finished.", self.target_ip),
-                Err(_) => warn!("Pinger monitor channel closed for {}.", self.target_ip),
+                Err(e) => warn!(
+                    "Pinger task for {} panicked during shutdown: {}",
+                    self.target_ip, e
+                ),
             }
 
             // Now tell the batch submitter to shut down and wait for it to finish.
@@ -277,26 +283,27 @@ impl TargetWorker {
                 );
             }
 
-            match submitter_done_rx.await {
+            match submitter_handle.await {
                 Ok(_) => info!(
                     "SHUTDOWN_LOG: BatchSubmitter for {} finished.",
                     self.target_ip
                 ),
-                Err(_) => warn!(
-                    "BatchSubmitter monitor channel closed for {}.",
-                    self.target_ip
+                Err(e) => warn!(
+                    "BatchSubmitter task for {} panicked during shutdown: {}",
+                    self.target_ip, e
                 ),
             }
         } else {
             // If we didn't request ordered shutdown, just wait for both children
             // to finish (they might have exited unexpectedly already).
-            match pinger_done_rx.await {
+            let (pinger_result, submitter_result) = tokio::join!(pinger_handle, submitter_handle);
+            match pinger_result {
                 Ok(_) => info!("SHUTDOWN_LOG: Pinger for {} joined.", self.target_ip),
-                Err(_) => warn!("Pinger monitor channel closed for {}.", self.target_ip),
+                Err(e) => warn!("Pinger task for {} panicked: {}", self.target_ip, e),
             }
-            match submitter_done_rx.await {
+            match submitter_result {
                 Ok(_) => info!("SHUTDOWN_LOG: Submitter for {} joined.", self.target_ip),
-                Err(_) => warn!("Submitter monitor channel closed for {}.", self.target_ip),
+                Err(e) => warn!("Submitter task for {} panicked: {}", self.target_ip, e),
             }
         }
         info!("TargetWorker for {} has shut down.", self.target_ip);

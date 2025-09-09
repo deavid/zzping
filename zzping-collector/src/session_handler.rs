@@ -31,6 +31,8 @@ pub struct SessionHandler {
     health_rx: watch::Receiver<HealthReport>,
     /// A sender for persisting the latest config.
     persistence_tx: mpsc::Sender<CachedIntent>,
+    /// Whether to use mock ping clients (for testing).
+    use_mock_ping_client: bool,
 }
 
 impl SessionHandler {
@@ -41,6 +43,7 @@ impl SessionHandler {
         collector_uuid: String,
         health_rx: watch::Receiver<HealthReport>,
         persistence_tx: mpsc::Sender<CachedIntent>,
+        use_mock_ping_client: bool,
     ) -> Self {
         Self {
             client,
@@ -48,6 +51,7 @@ impl SessionHandler {
             collector_uuid,
             health_rx,
             persistence_tx,
+            use_mock_ping_client,
         }
     }
     /// Runs the `SessionHandler`'s main loops.
@@ -73,6 +77,7 @@ impl SessionHandler {
             update_rx,
             self.config_tx,
             self.persistence_tx,
+            self.use_mock_ping_client,
         ));
 
         // The session ends if any of the core loops fails.
@@ -89,11 +94,13 @@ impl SessionHandler {
         mut update_rx: mpsc::Receiver<SessionUpdate>,
         config_tx: watch::Sender<Option<SupervisorConfig>>,
         persistence_tx: mpsc::Sender<CachedIntent>,
+        use_mock_ping_client: bool,
     ) -> Result<()> {
         let mut current_config = SupervisorConfig {
             targets: HashSet::new(),
             ping_rate_pps: 0,
             role: CollectorRole::Standby,
+            use_mock_ping_client,
         };
         // TODO: We should probably load the last known config from disk here.
 

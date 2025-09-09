@@ -19,6 +19,7 @@ pub struct SupervisorConfig {
     pub targets: HashSet<IpAddr>,
     pub ping_rate_pps: u64,
     pub role: CollectorRole,
+    pub use_mock_ping_client: bool,
 }
 
 /// A command to update the TaskSupervisor's database client.
@@ -166,9 +167,9 @@ impl TaskSupervisor {
 
     /// Compares the desired state with the actual state and takes action.
     pub async fn reconcile(&mut self, config: Option<SupervisorConfig>) {
-        let (desired_targets, ping_rate_pps, new_role) = match config {
-            Some(c) => (c.targets, c.ping_rate_pps, c.role),
-            None => (HashSet::new(), 0, CollectorRole::Standby),
+        let (desired_targets, ping_rate_pps, new_role, use_mock_ping_client) = match config {
+            Some(c) => (c.targets, c.ping_rate_pps, c.role, c.use_mock_ping_client),
+            None => (HashSet::new(), 0, CollectorRole::Standby, false),
         };
         self.current_role = new_role;
 
@@ -181,12 +182,27 @@ impl TaskSupervisor {
         for &target_ip in desired_targets.difference(&current_workers) {
             if let Some(db_client) = &self.db_client {
                 info!("TaskSupervisor: Adding worker for target {target_ip}");
-                match TargetWorker::new(
-                    self.collector_uuid.clone(),
-                    target_ip,
-                    ping_rate_pps,
-                    db_client.clone(),
-                ) {
+                let worker_result = if use_mock_ping_client {
+                    // For tests, use MockPingClient
+                    use crate::ping_client::MockPingClient;
+                    let ping_client = std::sync::Arc::new(MockPingClient::new(target_ip));
+                    TargetWorker::new_with_ping_client(
+                        self.collector_uuid.clone(),
+                        target_ip,
+                        ping_rate_pps,
+                        db_client.clone(),
+                        ping_client,
+                    )
+                } else {
+                    // For production, use real PingSurgeClient
+                    TargetWorker::new(
+                        self.collector_uuid.clone(),
+                        target_ip,
+                        ping_rate_pps,
+                        db_client.clone(),
+                    )
+                };
+                match worker_result {
                     Ok(handles) => {
                         self.workers.insert(target_ip, handles.handle);
                     }

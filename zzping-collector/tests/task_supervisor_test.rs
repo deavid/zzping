@@ -25,6 +25,7 @@ async fn test_supervisor_sends_update_role_on_config_change() {
         targets,
         ping_rate_pps: 10,
         role: CollectorRole::Primary,
+        use_mock_ping_client: true, // Use mock client in tests
     });
 
     // 3. Reconcile with the new config
@@ -64,6 +65,7 @@ async fn test_supervisor_sends_shutdown_to_removed_workers() {
         targets: HashSet::new(),
         ping_rate_pps: 10,
         role: CollectorRole::Primary,
+        use_mock_ping_client: true, // Use mock client in tests
     });
 
     // 3. Reconcile with the new config
