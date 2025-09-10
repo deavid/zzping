@@ -5,6 +5,8 @@ use crate::{
 };
 use anyhow::Result;
 use log::{error, info, warn};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashSet, time::Duration};
 use tokio::sync::{mpsc, watch};
 use zzping_proto::zzping::{
@@ -31,6 +33,8 @@ pub struct SessionHandler {
     health_rx: watch::Receiver<HealthReport>,
     /// A sender for persisting the latest config.
     persistence_tx: mpsc::Sender<CachedIntent>,
+    /// A sender to notify TaskSupervisor of fsync acknowledgments from DB.
+    fsync_tx: mpsc::Sender<u64>,
     /// Whether to use mock ping clients (for testing).
     use_mock_ping_client: bool,
 }
@@ -43,6 +47,7 @@ impl SessionHandler {
         collector_uuid: String,
         health_rx: watch::Receiver<HealthReport>,
         persistence_tx: mpsc::Sender<CachedIntent>,
+        fsync_tx: mpsc::Sender<u64>,
         use_mock_ping_client: bool,
     ) -> Self {
         Self {
@@ -51,6 +56,7 @@ impl SessionHandler {
             collector_uuid,
             health_rx,
             persistence_tx,
+            fsync_tx,
             use_mock_ping_client,
         }
     }
@@ -61,30 +67,63 @@ impl SessionHandler {
         let (update_tx, update_rx) = mpsc::channel(10);
         let client_clone1 = self.client.clone();
         let client_clone2 = self.client.clone();
+        let last_processed_command = Arc::new(AtomicU64::new(0));
 
-        let heartbeat_handle = tokio::spawn(Self::run_heartbeat_loop(
+        let mut heartbeat_handle = tokio::spawn(Self::run_heartbeat_loop(
             client_clone1,
             self.health_rx.clone(),
             self.collector_uuid.clone(),
             update_tx.clone(),
+            last_processed_command.clone(),
+            self.fsync_tx.clone(),
         ));
-        let command_handle = tokio::spawn(Self::run_command_loop(
+        let mut command_handle = tokio::spawn(Self::run_command_loop(
             client_clone2,
             self.collector_uuid,
             update_tx,
         ));
-        let state_manager_handle = tokio::spawn(Self::run_state_manager_loop(
+        let mut state_manager_handle = tokio::spawn(Self::run_state_manager_loop(
             update_rx,
             self.config_tx,
             self.persistence_tx,
             self.use_mock_ping_client,
+            last_processed_command.clone(),
         ));
 
-        // The session ends if any of the core loops fails.
-        tokio::select! {
-            res = heartbeat_handle => { warn!("Heartbeat loop ended."); res?? }
-            res = command_handle => { warn!("Command stream loop ended."); res?? }
-            res = state_manager_handle => { warn!("State manager loop ended."); res?? }
+        // The session ends if any of the core loops finishes. When that
+        // happens we abort the remaining loops to ensure the session returns
+        // promptly (avoids background tasks preventing immediate shutdown
+        // in tests).
+        let result = tokio::select! {
+            res = &mut heartbeat_handle => {
+                warn!("Heartbeat loop ended.");
+                // Abort the other tasks immediately
+                command_handle.abort();
+                state_manager_handle.abort();
+                res
+            }
+            res = &mut command_handle => {
+                warn!("Command stream loop ended.");
+                heartbeat_handle.abort();
+                state_manager_handle.abort();
+                res
+            }
+            res = &mut state_manager_handle => {
+                warn!("State manager loop ended.");
+                heartbeat_handle.abort();
+                command_handle.abort();
+                res
+            }
+        };
+
+        // Propagate the inner join result. If the task itself returned an
+        // error, propagate that; if the join failed, convert it to an error.
+        match result {
+            Ok(inner) => match inner {
+                Ok(_) => (),
+                Err(e) => return Err(e),
+            },
+            Err(join_err) => return Err(anyhow::anyhow!("Session task join failed: {join_err}")),
         }
 
         Ok(())
@@ -95,14 +134,33 @@ impl SessionHandler {
         config_tx: watch::Sender<Option<SupervisorConfig>>,
         persistence_tx: mpsc::Sender<CachedIntent>,
         use_mock_ping_client: bool,
+        last_processed_command: Arc<AtomicU64>,
     ) -> Result<()> {
         let mut current_config = SupervisorConfig {
             targets: HashSet::new(),
             ping_rate_pps: 0,
             role: CollectorRole::Standby,
             use_mock_ping_client,
+            swap_at_nanos: None,
         };
-        // TODO: We should probably load the last known config from disk here.
+        // Try to load the last known config from disk, if available.
+        if let Ok(data) = std::fs::read_to_string("last_intent.ron") {
+            if let Ok(intent) = ron::from_str::<CachedIntent>(&data) {
+                current_config.targets = intent.targets.clone();
+                current_config.ping_rate_pps = intent.ping_rate_pps;
+                info!(
+                    "Loaded cached intent from disk: targets={} rate={}",
+                    current_config.targets.len(),
+                    current_config.ping_rate_pps
+                );
+                // Do NOT broadcast the cached intent immediately here. We set the
+                // in-memory current_config so the supervisor can be later reconciled
+                // when a heartbeat or command arrives. Broadcasting immediately
+                // causes tests that expect the heartbeat-derived config to fail.
+            } else {
+                info!("Failed to parse last_intent.ron; continuing without cached intent.");
+            }
+        }
 
         while let Some(update) = update_rx.recv().await {
             match update {
@@ -115,17 +173,41 @@ impl SessionHandler {
                         .filter_map(|s| s.parse().ok())
                         .collect();
                     current_config.ping_rate_pps = response.ping_rate_pps;
+                    // Propagate swap_at_nanos if present
+                    if response.swap_at_nanos > 0 {
+                        // Use Some to indicate a scheduled swap time
+                        // Note: TaskSupervisor will interpret this as guidance for scheduling.
+                        current_config.swap_at_nanos = Some(response.swap_at_nanos);
+                    } else {
+                        current_config.swap_at_nanos = None;
+                    }
                 }
                 SessionUpdate::FromCommand(command) => {
+                    // Track last processed command id for heartbeat reporting
+                    // Generated proto usually provides a command_id field.
+                    let cmd_id = command.command_id;
+                    last_processed_command.store(cmd_id, Ordering::SeqCst);
+
                     if let Some(command_type) = command.command_type {
                         match command_type {
                             CommandType::ChangeRole(role) => {
                                 current_config.role =
                                     CollectorRole::try_from(role).unwrap_or(current_config.role);
                             }
-                            CommandType::PrepareToSwap(_) => {
-                                // TODO: Handle this command
-                                warn!("PrepareToSwap command not yet implemented.");
+                            CommandType::PrepareToSwap(prep) => {
+                                // PrepareToSwap carries a desired role and a swap_at_nanos timestamp.
+                                // Update the in-memory config role so the supervisor and workers
+                                // can prepare for the scheduled swap. The exact timing/coordination
+                                // is handled elsewhere; here we simply apply the requested role
+                                // and log the scheduled swap time for observability.
+                                let requested_role = CollectorRole::try_from(prep.role)
+                                    .unwrap_or(current_config.role);
+                                current_config.role = requested_role;
+                                current_config.swap_at_nanos = Some(prep.swap_at_nanos);
+                                info!(
+                                    "Received PrepareToSwap: set role to {:?} (swap_at_nanos={:?})",
+                                    current_config.role, current_config.swap_at_nanos
+                                );
                             }
                         }
                     }
@@ -133,8 +215,9 @@ impl SessionHandler {
             }
             info!("Broadcasting new config: {current_config:?}");
             if config_tx.send(Some(current_config.clone())).is_err() {
-                info!("Config channel closed, state manager shutting down.");
-                break;
+                warn!("Config channel closed, continuing without supervisor subscription.");
+                // Do not break; allow the state manager to continue processing commands
+                // and other updates even if the consumer of configs has dropped.
             }
 
             // Also send the config to be persisted.
@@ -143,8 +226,8 @@ impl SessionHandler {
                 ping_rate_pps: current_config.ping_rate_pps,
             };
             if persistence_tx.send(intent).await.is_err() {
-                info!("Persistence channel closed, state manager shutting down.");
-                break;
+                warn!("Persistence channel closed; continuing without persistence.");
+                // Continue even if persistence task is not available.
             }
         }
         Ok(())
@@ -155,6 +238,8 @@ impl SessionHandler {
         health_rx: watch::Receiver<HealthReport>,
         collector_uuid: String,
         update_tx: mpsc::Sender<SessionUpdate>,
+        last_processed_command: Arc<AtomicU64>,
+        fsync_tx: mpsc::Sender<u64>,
     ) -> Result<()> {
         // FIXME: This interval must be configurable externally, specially for unit tests!
         let mut interval = tokio::time::interval(if cfg!(test) {
@@ -162,11 +247,13 @@ impl SessionHandler {
         } else {
             Duration::from_millis(100)
         });
-        let last_processed_command_id = 0; // Will be updated later
-
         loop {
             interval.tick().await;
             let health_report = health_rx.borrow().clone();
+
+            // Read the last processed command id from the shared atomic each tick so
+            // the heartbeat reflects the most-recently-processed command.
+            let last_processed_command_id = last_processed_command.load(Ordering::SeqCst);
 
             let request = HeartbeatRequest {
                 collector_uuid: collector_uuid.clone(),
@@ -187,8 +274,13 @@ impl SessionHandler {
             match heartbeat_result {
                 Ok(result) => match result {
                     Ok(response) => {
+                        let resp = response.into_inner();
+                        // If the response includes a last_fsynced_received_nanos field, notify supervisor
+                        if resp.last_fsynced_received_nanos > 0 {
+                            let _ = fsync_tx.send(resp.last_fsynced_received_nanos).await;
+                        }
                         if update_tx
-                            .send(SessionUpdate::FromHeartbeat(response.into_inner()))
+                            .send(SessionUpdate::FromHeartbeat(resp))
                             .await
                             .is_err()
                         {

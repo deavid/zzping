@@ -61,6 +61,9 @@ message HeartbeatResponse {
   CollectorRole role = 3;
   // If a swap is scheduled, this is the UTC nanosecond timestamp for the swap to occur.
   uint64 swap_at_nanos = 4;
+  // The database's last known fsync point for records it has flushed to disk.
+  // Collectors should prune any buffered records with received_nanos <= this value.
+  uint64 last_fsynced_received_nanos = 5;
 }
 
 // --- Message Definitions for SendBatch ---

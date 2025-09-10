@@ -8,6 +8,7 @@ use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
+use tokio::sync::Mutex as AsyncMutex;
 use tokio_stream::wrappers::TcpListenerStream;
 use tonic::{Request, Response, Status, transport::Server};
 use zzping_proto::zzping::{
@@ -31,8 +32,12 @@ impl Log for VectorLogger {
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
             let msg = format!("{}", record.args());
-            // We only care about connection messages for our test.
-            if msg.starts_with("Attempting to connect") || msg.starts_with("Session ended") {
+            // Capture relevant messages for tests
+            if msg.starts_with("Attempting to connect")
+                || msg.starts_with("Session ended")
+                || msg.contains("Deferring worker creation")
+                || msg.contains("TaskSupervisor: Adding worker")
+            {
                 self.log_messages.lock().unwrap().push(msg);
             }
         }
@@ -63,6 +68,11 @@ pub struct MockIngestionService {
     pub received_heartbeats: Arc<Mutex<Vec<HeartbeatRequest>>>,
     pub send_batch_response: Arc<Mutex<SendBatchResponse>>,
     pub heartbeat_response: Arc<Mutex<HeartbeatResponse>>,
+    /// Test-only hook: when present, the heartbeat RPC will await a
+    /// HeartbeatResponse sent on this receiver. This lets tests deterministically
+    /// trigger heartbeat responses containing e.g. `last_fsynced_received_nanos`.
+    pub heartbeat_override_rx:
+        Arc<AsyncMutex<Option<tokio::sync::mpsc::Receiver<HeartbeatResponse>>>>,
     pub get_recent_data_response: Arc<Mutex<GetRecentDataResponse>>,
     pub command_stream_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Result<Command, Status>>>>>,
     pub send_batch_should_fail: Arc<Mutex<bool>>,
@@ -97,7 +107,9 @@ impl MockIngestionService {
                 ping_rate_pps,
                 role: CollectorRole::Primary as i32,
                 swap_at_nanos: 0,
+                last_fsynced_received_nanos: 0,
             })),
+            heartbeat_override_rx: Arc::new(AsyncMutex::new(None)),
             get_recent_data_response: Arc::new(Mutex::new(GetRecentDataResponse {
                 records: vec![],
                 database_confirms_last_acked_received_nanos: 0,
@@ -105,6 +117,19 @@ impl MockIngestionService {
             command_stream_tx: Arc::new(Mutex::new(None)),
             send_batch_should_fail: Arc::new(Mutex::new(false)),
         }
+    }
+
+    /// Install a test-only override channel. Returns the `Sender` side.
+    /// Send a `HeartbeatResponse` on the returned sender when you want the
+    /// next `heartbeat` call to return that response. The channel is kept
+    /// installed until the sender or receiver is dropped.
+    pub async fn install_heartbeat_override_channel(
+        &self,
+    ) -> tokio::sync::mpsc::Sender<HeartbeatResponse> {
+        let (tx, rx) = tokio::sync::mpsc::channel(1);
+        let mut guard = self.heartbeat_override_rx.lock().await;
+        *guard = Some(rx);
+        tx
     }
 }
 
@@ -131,6 +156,15 @@ impl Ingestion for MockIngestionService {
             .lock()
             .unwrap()
             .push(request.into_inner());
+
+        // If a test has installed an override channel, await a supplied
+        // HeartbeatResponse from the test. Use the async mutex so we can
+        // await without blocking the runtime.
+        if let Some(rx) = self.heartbeat_override_rx.lock().await.as_mut()
+            && let Some(resp) = rx.recv().await
+        {
+            return Ok(Response::new(resp));
+        }
 
         let response = self.heartbeat_response.lock().unwrap().clone();
         Ok(Response::new(response))
@@ -177,7 +211,10 @@ impl Ingestion for MockIngestionService {
         &self,
         _request: Request<QueryRequest>,
     ) -> Result<Response<QueryResponse>, Status> {
-        unimplemented!()
+        // For tests, return an empty QueryResponse. This keeps behavior simple
+        // and avoids panics from unimplemented RPCs when test suites exercise
+        // query-related paths.
+        Ok(Response::new(QueryResponse { records: vec![] }))
     }
 
     async fn announce_pings(

@@ -43,9 +43,9 @@ pub struct CollectorService {
 
 impl CollectorService {
     /// Creates a new `CollectorService`.
-    pub fn new(config: Config, lock: TcpListener) -> Result<Self> {
+    pub fn new(config: Config, lock: TcpListener, cached_intent: Option<CachedIntent>) -> Result<Self> {
         // Default health interval is 1000ms
-        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone(), 1000);
+        let task_supervisor = TaskSupervisor::new_with_worker_count_tx(config.collector_uuid.clone(), 1000, cached_intent, None);
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -61,10 +61,11 @@ impl CollectorService {
         config: Config,
         lock: TcpListener,
         test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
+        cached_intent: Option<CachedIntent>,
     ) -> Result<Self> {
         // For tests use the standard default interval of 1000ms. Tests that need a faster
         // interval should call `new_for_test_with_interval` below.
-        let task_supervisor = TaskSupervisor::new(config.collector_uuid.clone(), 1000);
+        let task_supervisor = TaskSupervisor::new_with_worker_count_tx(config.collector_uuid.clone(), 1000, cached_intent, None);
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -81,9 +82,36 @@ impl CollectorService {
         lock: TcpListener,
         test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
         health_interval_ms: u64,
+        cached_intent: Option<CachedIntent>,
     ) -> Result<Self> {
         let task_supervisor =
-            TaskSupervisor::new(config.collector_uuid.clone(), health_interval_ms);
+            TaskSupervisor::new_with_worker_count_tx(config.collector_uuid.clone(), health_interval_ms, cached_intent, None);
+        Ok(Self {
+            config,
+            task_supervisor: Some(task_supervisor),
+            _lock: lock,
+            supervisor_handle: None,
+            supervisor_shutdown_tx: None,
+            test_shutdown_tx_sender,
+        })
+    }
+
+    /// Test helper which allows specifying a custom health interval (ms) and a
+    /// test-only worker_count_tx to observe reconciliation worker counts.
+    pub fn new_for_test_with_interval_and_worker_tx(
+        config: Config,
+        lock: TcpListener,
+        test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
+        health_interval_ms: u64,
+        cached_intent: Option<CachedIntent>,
+        worker_count_tx: Option<mpsc::Sender<usize>>,
+    ) -> Result<Self> {
+        let task_supervisor = TaskSupervisor::new_with_worker_count_tx(
+            config.collector_uuid.clone(),
+            health_interval_ms,
+            cached_intent,
+            worker_count_tx,
+        );
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -182,6 +210,8 @@ impl CollectorService {
         let (persistence_tx, mut persistence_rx) = mpsc::channel::<CachedIntent>(1);
         let (supervisor_shutdown_tx, supervisor_shutdown_rx) =
             mpsc::channel::<SupervisorShutdown>(1);
+        // Channel to receive fsync notifications from the SessionHandler
+        let (fsync_tx, fsync_rx) = mpsc::channel::<u64>(10);
 
         self.supervisor_shutdown_tx = Some(supervisor_shutdown_tx.clone());
         if let Some(sender) = &self.test_shutdown_tx_sender
@@ -190,6 +220,8 @@ impl CollectorService {
             warn!("Failed to send supervisor_shutdown_tx to test harness. Test might hang.");
         }
         let reconnect_notify = Arc::new(Notify::new());
+
+
 
         // Persistence task
         tokio::spawn(async move {
@@ -218,6 +250,7 @@ impl CollectorService {
             client_update_rx,
             health_report_tx,
             supervisor_shutdown_rx,
+            fsync_rx,
         )));
 
         // Health forwarder task
@@ -245,6 +278,7 @@ impl CollectorService {
                             self.config.collector_uuid.clone(),
                             latest_health_rx.clone(),
                             persistence_tx.clone(),
+                            fsync_tx.clone(),
                             self.config.use_mock_ping_client,
                         );
                         let session_handle = tokio::spawn(session_handler.run());
@@ -297,7 +331,7 @@ mod tests {
     async fn test_collector_service_new() {
         let config = mock_config();
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let service = CollectorService::new(config, listener);
+        let service = CollectorService::new(config, listener, None);
         assert!(service.is_ok());
     }
 }

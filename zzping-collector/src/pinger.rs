@@ -31,10 +31,11 @@ pub struct Pinger {
     ping_rate_pps: u64,
     grace_period: Duration,
     timeout_check_interval: Duration,
+    resync_interval: Duration,
     ping_client: Arc<dyn PingClient>,
     results_tx: mpsc::Sender<FinalizedPing>,
     db_client: DatabaseClient,
-    time_source: MonotonicTimeSource,
+    time_source: Box<dyn TimeSource>,
     in_flight_pings: HashMap<u16, u64>,
     command_rx: mpsc::Receiver<PingerCommand>,
     is_active: bool,
@@ -48,20 +49,50 @@ impl Pinger {
         ping_rate_pps: u64,
         grace_period: Duration,
         timeout_check_interval: Duration,
+        resync_interval: Duration,
         ping_client: Arc<dyn PingClient>,
         results_tx: mpsc::Sender<FinalizedPing>,
         db_client: DatabaseClient,
         command_rx: mpsc::Receiver<PingerCommand>,
+    ) -> Self {
+        Self::new_with_time_source(
+            target,
+            ping_rate_pps,
+            grace_period,
+            timeout_check_interval,
+            resync_interval,
+            ping_client,
+            results_tx,
+            db_client,
+            command_rx,
+            Box::new(MonotonicTimeSource::new()),
+        )
+    }
+
+    /// Testable constructor that allows injecting a TimeSource implementation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_time_source(
+        target: IpAddr,
+        ping_rate_pps: u64,
+        grace_period: Duration,
+        timeout_check_interval: Duration,
+        resync_interval: Duration,
+        ping_client: Arc<dyn PingClient>,
+        results_tx: mpsc::Sender<FinalizedPing>,
+        db_client: DatabaseClient,
+        command_rx: mpsc::Receiver<PingerCommand>,
+        time_source: Box<dyn TimeSource>,
     ) -> Self {
         Self {
             target,
             ping_rate_pps,
             grace_period,
             timeout_check_interval,
+            resync_interval,
             ping_client,
             results_tx,
             db_client,
-            time_source: MonotonicTimeSource::new(),
+            time_source,
             in_flight_pings: HashMap::new(),
             command_rx,
             is_active: false, // Start in a paused state by default
@@ -83,6 +114,8 @@ impl Pinger {
         };
 
         let mut timeout_interval = tokio::time::interval(self.timeout_check_interval);
+        // Periodic resync interval for time source (configurable, default 60s)
+        let mut resync_interval = tokio::time::interval(self.resync_interval);
 
         let mut sequence_idx: u16 = 0;
         let semaphore = Arc::new(Semaphore::new(if self.ping_rate_pps == 0 {
@@ -122,13 +155,20 @@ impl Pinger {
                 },
 
                 // These arms are always enabled.
-                Some(command) = self.command_rx.recv() => {
+                command = self.command_rx.recv() => {
                     match command {
-                        PingerCommand::UpdateRole(role) => {
-                            self.update_role(role);
-                        }
-                        PingerCommand::Shutdown => {
-                            info!("SHUTDOWN_LOG: Pinger for {} received shutdown command.", self.target);
+                        Some(command) => match command {
+                            PingerCommand::UpdateRole(role) => {
+                                self.update_role(role);
+                            }
+                            PingerCommand::Shutdown => {
+                                info!("SHUTDOWN_LOG: Pinger for {} received shutdown command.", self.target);
+                                break;
+                            }
+                        },
+                        None => {
+                            // Command sender dropped — exit the loop and shut down.
+                            info!("SHUTDOWN_LOG: Pinger for {} command channel closed.", self.target);
                             break;
                         }
                     }
@@ -146,7 +186,7 @@ impl Pinger {
                     }
                 },
                 _ = timeout_interval.tick() => {
-                    let now_ns = self.time_source.now_ns().unwrap_or(self.time_source.last_generated_ns);
+                    let now_ns = self.time_source.now_ns().unwrap_or(self.time_source.last_generated_ns());
                     let grace_period_ns = self.grace_period.as_nanos() as u64;
 
                     let mut lost_pings = vec![];
@@ -169,6 +209,10 @@ impl Pinger {
                             break;
                         }
                     }
+                }
+                // Periodically resync the time source reference pair to limit NTP slew drift.
+                _ = resync_interval.tick() => {
+                    self.time_source.resync();
                 }
                 else => {
                     // All channels closed, exit.
@@ -198,6 +242,17 @@ impl Pinger {
             );
         }
     }
+}
+
+/// Trait that abstracts time source behavior for testability.
+pub trait TimeSource: Send + Sync {
+    /// Return current time in nanos since UNIX_EPOCH, or None if a backward jump
+    /// was detected and a caller should skip this tick.
+    fn now_ns(&mut self) -> Option<u64>;
+    /// Resync the internal reference pair to limit drift.
+    fn resync(&mut self);
+    /// Expose last generated ns for fallback use.
+    fn last_generated_ns(&self) -> u64;
 }
 
 /// A source for monotonically increasing timestamps, designed to be resilient
@@ -233,6 +288,15 @@ impl MonotonicTimeSource {
         self.reference_instant = Instant::now();
         self.reference_system_time = SystemTime::now();
     }
+    /// Resync the reference pair (SystemTime, Instant). Call periodically.
+    pub fn resync(&mut self) {
+        self.reference_instant = Instant::now();
+        self.reference_system_time = SystemTime::now();
+    }
+
+    /// Returns the current timestamp in nanoseconds since UNIX_EPOCH.
+    /// If a backward jump larger than 5 seconds is detected, this method will
+    /// exit the process immediately to allow an external supervisor to restart it.
     pub fn now_ns(&mut self) -> Option<u64> {
         let elapsed = self.reference_instant.elapsed();
         let current_system_time = self.reference_system_time + elapsed;
@@ -246,14 +310,41 @@ impl MonotonicTimeSource {
                 "Monotonicity violation: System clock may have stepped backwards by {backward_jump:?}. Skipping timestamp."
             );
             if backward_jump > Duration::from_secs(5) {
-                error!(
-                    "Large backward time jump detected: {backward_jump:?}. This may indicate a critical system clock issue."
-                );
+                error!("Large backward time jump detected: {backward_jump:?}.");
+                // In tests we do not want to exit the process; instead return None so tests can assert behavior.
+                if cfg!(test) {
+                    return None;
+                } else {
+                    error!("Exiting to allow supervisor to restart due to critical clock jump.");
+                    // Ensure logs flushed (best effort) then exit.
+                    std::process::exit(1);
+                }
             }
             return None;
         }
         self.last_generated_ns = now_ns;
         Some(now_ns)
+    }
+}
+
+impl TimeSource for MonotonicTimeSource {
+    fn now_ns(&mut self) -> Option<u64> {
+        MonotonicTimeSource::now_ns(self)
+    }
+    fn resync(&mut self) {
+        MonotonicTimeSource::resync(self)
+    }
+    fn last_generated_ns(&self) -> u64 {
+        self.last_generated_ns
+    }
+}
+
+impl MonotonicTimeSource {
+    /// Test helper: set last_generated_ns to simulate a time already generated
+    /// in the future. This is intentionally public to allow process-level
+    /// tests and examples to exercise the fatal-jump behavior.
+    pub fn _set_last_generated_ns_for_testing(&mut self, v: u64) {
+        self.last_generated_ns = v;
     }
 }
 

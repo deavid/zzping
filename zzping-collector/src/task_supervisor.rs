@@ -1,6 +1,7 @@
 use crate::{
     database_client::DatabaseClient,
     target_worker::{TargetWorker, TargetWorkerHandle, WorkerCommand},
+    collector_service::CachedIntent,
 };
 use anyhow::Result;
 use futures::future::join_all;
@@ -19,6 +20,7 @@ pub struct SupervisorConfig {
     pub targets: HashSet<IpAddr>,
     pub ping_rate_pps: u64,
     pub role: CollectorRole,
+    pub swap_at_nanos: Option<u64>,
     pub use_mock_ping_client: bool,
 }
 
@@ -49,19 +51,45 @@ pub struct TaskSupervisor {
     pub db_client: Option<DatabaseClient>,
     pub workers: HashMap<IpAddr, TargetWorkerHandle>,
     current_role: CollectorRole,
+    current_config: Option<SupervisorConfig>,
     // Health heartbeat interval in milliseconds. Defaults to 1000ms.
     health_interval_ms: u64,
+    // Cancellation handle for a scheduled swap (if any)
+    swap_cancel_tx: Option<oneshot::Sender<()>>,
+    // Test-only: Channel to report worker count after reconciliation
+    worker_count_tx: Option<mpsc::Sender<usize>>,
 }
 
 impl TaskSupervisor {
     /// Creates a new `TaskSupervisor`.
-    pub fn new(collector_uuid: String, health_interval_ms: u64) -> Self {
+    pub fn new(collector_uuid: String, health_interval_ms: u64, cached_intent: Option<CachedIntent>) -> Self {
+        Self::new_with_worker_count_tx(collector_uuid, health_interval_ms, cached_intent, None)
+    }
+
+    /// Test-only: Creates a new `TaskSupervisor` with a channel to report worker count.
+    pub fn new_with_worker_count_tx(
+        collector_uuid: String,
+        health_interval_ms: u64,
+        cached_intent: Option<CachedIntent>,
+        worker_count_tx: Option<mpsc::Sender<usize>>,
+    ) -> Self {
+        let initial_config = cached_intent.map(|intent| SupervisorConfig {
+            targets: intent.targets,
+            ping_rate_pps: intent.ping_rate_pps,
+            role: CollectorRole::Primary, // Default to Primary if loaded from cache
+            swap_at_nanos: None,
+            use_mock_ping_client: false, // This will be overridden by actual config
+        });
+
         Self {
             collector_uuid,
             db_client: None,
             workers: HashMap::new(),
             current_role: CollectorRole::Standby,
+            current_config: initial_config,
             health_interval_ms,
+            swap_cancel_tx: None,
+            worker_count_tx,
         }
     }
 
@@ -72,6 +100,7 @@ impl TaskSupervisor {
         mut client_update_rx: mpsc::Receiver<ClientUpdate>,
         health_report_tx: mpsc::Sender<HealthReport>,
         mut supervisor_shutdown_rx: mpsc::Receiver<SupervisorShutdown>,
+        mut fsync_rx: mpsc::Receiver<u64>,
     ) -> Result<()> {
         info!("TaskSupervisor running.");
         // Allow tests to override the health heartbeat interval via environment
@@ -81,6 +110,13 @@ impl TaskSupervisor {
         // pass a small value via TaskSupervisor::new when bootstrapping.
         let mut health_interval =
             tokio::time::interval(Duration::from_millis(self.health_interval_ms));
+        // Channel used by scheduled swap sleepers to notify the supervisor
+        let (swap_notify_tx, mut swap_notify_rx) = mpsc::channel::<CollectorRole>(1);
+
+        // Initial reconcile if we have cached config
+        if self.current_config.is_some() {
+            self.reconcile(self.current_config.clone()).await;
+        }
 
         loop {
             tokio::select! {
@@ -107,16 +143,46 @@ impl TaskSupervisor {
                 }
                 Ok(_) = config_rx.changed() => {
                     info!("TaskSupervisor received new config: {:?}", config_rx.borrow());
-                    let config = (*config_rx.borrow()).clone();
-                    self.reconcile(config).await;
+                    let new_config = (*config_rx.borrow()).clone();
+                    // Cancel any previously scheduled swap when a new config arrives.
+                    if let Some(cancel) = self.swap_cancel_tx.take() {
+                        let _ = cancel.send(());
+                    }
+                    // Update current_config and then reconcile
+                    self.current_config = new_config.clone();
+                    self.reconcile(new_config.clone()).await;
+                    // If the config includes a swap_at_nanos, schedule a swap notifier
+                    if let Some(swap_at) = new_config.as_ref().and_then(|c| c.swap_at_nanos) {
+                        // Compute duration until swap; if in the past, schedule immediate
+                        let now_ns = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_nanos() as u64;
+                        let dur_nanos = swap_at.saturating_sub(now_ns);
+                        let dur = Duration::from_nanos(dur_nanos);
+                        let swap_tx = swap_notify_tx.clone();
+                        let role_to_apply_at_swap = new_config.clone().unwrap().role; // Capture the role to apply
+                        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+                        self.swap_cancel_tx = Some(cancel_tx);
+                        tokio::spawn(async move {
+                            tokio::select! {
+                                _ = tokio::time::sleep(dur) => {
+                                    let _ = swap_tx.send(role_to_apply_at_swap).await;
+                                }
+                                _ = cancel_rx => {
+                                    // cancelled
+                                }
+                            }
+                        });
+                    }
                 }
                 Some(update) = client_update_rx.recv() => {
                     match update {
                         ClientUpdate::NewClient(client) => {
                             info!("TaskSupervisor received new database client.");
                             self.db_client = Some(*client);
-                            let config = (*config_rx.borrow()).clone();
-                            self.reconcile(config).await;
+                            // Trigger reconciliation with the current config (from cache or last received)
+                            self.reconcile(self.current_config.clone()).await;
                         }
                         ClientUpdate::ClientLost => {
                             info!("TaskSupervisor notified of lost database client.");
@@ -130,6 +196,29 @@ impl TaskSupervisor {
                     // Acknowledge that the shutdown is complete.
                     command.ack_sender.send(()).ok();
                     break;
+                }
+                Some(fsync_nanos) = fsync_rx.recv() => {
+                    info!("TaskSupervisor received fsync notification: {}", fsync_nanos);
+                    // Broadcast prune to all workers. Each worker will forward to its BatchSubmitter.
+                    for worker_handle in self.workers.values() {
+                        if worker_handle
+                            .command_tx
+                            .send(WorkerCommand::PruneByFsync(fsync_nanos)).await
+                            .is_err()
+                        {
+                            warn!("Failed to send PruneByFsync to worker");
+                        }
+                    }
+                }
+                // Received a scheduled swap notification: apply role change now.
+                Some(swap_role) = swap_notify_rx.recv() => {
+                    info!("Scheduled swap triggered: applying role {:?}", swap_role);
+                    self.current_role = swap_role;
+                    // Update self.current_config with the new role before reconciling
+                    if let Some(ref mut config) = self.current_config {
+                        config.role = swap_role;
+                    }
+                    self.reconcile(self.current_config.clone()).await;
                 }
                 else => {
                     info!("All channels closed. TaskSupervisor shutting down.");
@@ -167,10 +256,17 @@ impl TaskSupervisor {
 
     /// Compares the desired state with the actual state and takes action.
     pub async fn reconcile(&mut self, config: Option<SupervisorConfig>) {
-        let (desired_targets, ping_rate_pps, new_role, use_mock_ping_client) = match config {
-            Some(c) => (c.targets, c.ping_rate_pps, c.role, c.use_mock_ping_client),
-            None => (HashSet::new(), 0, CollectorRole::Standby, false),
-        };
+        let (desired_targets, ping_rate_pps, new_role, _swap_at_nanos, use_mock_ping_client) =
+            match config {
+                Some(c) => (
+                    c.targets,
+                    c.ping_rate_pps,
+                    c.role,
+                    c.swap_at_nanos,
+                    c.use_mock_ping_client,
+                ),
+                None => (HashSet::new(), 0, CollectorRole::Standby, None, false),
+            };
         self.current_role = new_role;
 
         let current_workers = self.workers.keys().cloned().collect::<HashSet<_>>();
@@ -233,6 +329,11 @@ impl TaskSupervisor {
             {
                 warn!("Failed to send UpdateRole command to a worker.");
             }
+        }
+
+        // Report worker count for testing
+        if let Some(tx) = &self.worker_count_tx {
+            let _ = tx.send(self.workers.len()).await;
         }
     }
 

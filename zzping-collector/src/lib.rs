@@ -19,11 +19,11 @@ pub mod ping_mock_client;
 pub mod ping_surge_client;
 pub mod pinger;
 pub mod session_handler;
-pub mod state_machine;
+
 pub mod target_worker;
 pub mod task_supervisor;
 
-use crate::{cli::Cli, collector_service::CollectorService, config::Config};
+use crate::{cli::Cli, collector_service::{CollectorService, CachedIntent}, config::Config};
 use anyhow::Result;
 use clap::Parser;
 use log::info;
@@ -70,11 +70,27 @@ pub fn bootstrap_collector_for_test(
 ) -> Result<CollectorService> {
     let config = Config::load(&config_path)?;
     let lock = TcpListener::bind("127.0.0.1:0")?;
-    CollectorService::new_for_test(
+    CollectorService::new_for_test(config, lock, Some(test_shutdown_tx_sender), None)
+}
+
+/// Test helper that also accepts a worker_count_tx to observe worker counts.
+pub fn bootstrap_collector_for_test_with_worker_tx(
+    config_path: String,
+    test_shutdown_tx_sender: mpsc::Sender<mpsc::Sender<SupervisorShutdown>>,
+    worker_count_tx: Option<mpsc::Sender<usize>>,
+) -> Result<CollectorService> {
+    let config = Config::load(&config_path)?;
+    let lock = TcpListener::bind("127.0.0.1:0")?;
+    // Use default interval
+    let svc = CollectorService::new_for_test_with_interval_and_worker_tx(
         config,
         lock,
         Some(test_shutdown_tx_sender),
-    )
+        1000,
+        None,
+        worker_count_tx,
+    )?;
+    Ok(svc)
 }
 
 /// Test helper that allows specifying a custom health interval (ms).
@@ -90,6 +106,7 @@ pub fn bootstrap_collector_for_test_with_interval(
         lock,
         Some(test_shutdown_tx_sender),
         health_interval_ms,
+        None,
     )?;
     Ok(svc)
 }
@@ -113,6 +130,11 @@ pub fn bootstrap_collector_with_port(
     };
 
     // Create the collector service, passing ownership of the lock to it.
-    let service = CollectorService::new(config, lock)?;
+    let cached_intent = if let Ok(data) = std::fs::read_to_string("last_intent.ron") {
+        ron::from_str::<CachedIntent>(&data).ok()
+    } else {
+        None
+    };
+    let service = CollectorService::new(config, lock, cached_intent)?;
     Ok(service)
 }

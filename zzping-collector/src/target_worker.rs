@@ -23,6 +23,7 @@ pub struct WorkerHealth {
 pub enum WorkerCommand {
     GetHealth(oneshot::Sender<WorkerHealth>),
     UpdateRole(CollectorRole),
+    PruneByFsync(u64),
     Shutdown,
 }
 
@@ -92,6 +93,7 @@ impl TargetWorker {
             ping_rate_pps,
             Duration::from_secs(60),
             Duration::from_secs(5),
+            Duration::from_secs(60),
             ping_client,
             results_tx.clone(),
             db_client.clone(),
@@ -210,6 +212,12 @@ impl TargetWorker {
                             }
                             if batch_submitter_command_tx.send(BatchSubmitterCommand::UpdateRole(role)).await.is_err() {
                                 warn!("Failed to send UpdateRole command to batch_submitter for target {}.", self.target_ip);
+                            }
+                        }
+                        WorkerCommand::PruneByFsync(fsync_nanos) => {
+                            info!("TargetWorker for {} received PruneByFsync {}.", self.target_ip, fsync_nanos);
+                            if batch_submitter_command_tx.send(BatchSubmitterCommand::PruneByFsync(fsync_nanos)).await.is_err() {
+                                warn!("Failed to forward PruneByFsync to BatchSubmitter for target {}.", self.target_ip);
                             }
                         }
                         WorkerCommand::Shutdown => {

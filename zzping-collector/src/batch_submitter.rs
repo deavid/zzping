@@ -14,6 +14,7 @@ pub enum BatchSubmitterCommand {
     UpdateRole(CollectorRole),
     GetHealth(tokio::sync::oneshot::Sender<usize>),
     InitializeAckCursor(u64),
+    PruneByFsync(u64),
     Shutdown,
 }
 
@@ -90,6 +91,10 @@ impl BatchSubmitter {
                                 self.target_ip, nanos
                             );
                             self.last_acked_received_nanos = nanos;
+                        }
+                        BatchSubmitterCommand::PruneByFsync(fsync_nanos) => {
+                            info!("BatchSubmitter for {} pruning by fsync {}.", self.target_ip, fsync_nanos);
+                            self.prune_by_fsync(fsync_nanos);
                         }
                         BatchSubmitterCommand::Shutdown => {
                             info!(
@@ -168,7 +173,11 @@ impl BatchSubmitter {
 
         self.buffer.insert(key, record);
 
-    debug!("BatchSubmitter for {} buffer size after insert: {}", self.target_ip, self.buffer.len());
+        debug!(
+            "BatchSubmitter for {} buffer size after insert: {}",
+            self.target_ip,
+            self.buffer.len()
+        );
 
         if self.buffer.len() > self.buffer_limit
             && let Some((key, _)) = self.buffer.first_key_value()

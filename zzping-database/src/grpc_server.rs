@@ -146,6 +146,7 @@ impl Ingestion for IngestionServiceImpl {
             ping_rate_pps: self.intent_config.ping_rate_pps,
             role: role as i32,
             swap_at_nanos,
+            last_fsynced_received_nanos: 0,
         }))
     }
 

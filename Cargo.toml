@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["zzping-gui", "zzping-database", "zzping-collector", "zzping-lib", "zzping-proto", "zzping-cli"]
+members = [
+    "zzping-gui",
+    "zzping-database",
+    "zzping-collector",
+    "zzping-lib",
+    "zzping-proto",
+    "zzping-cli",
+]
 
 [workspace.package]
 version = "0.2.2-beta2"
@@ -54,6 +61,9 @@ surge-ping = "0.8"
 tempfile = "3.21"
 thiserror = "2.0"
 tokio = { version = "1", features = ["full", "test-util"] }
+
+# Health server used by test helpers
+tonic-health = "0.7"
 
 # Dependencies for specific crates that haven't been centralized yet
 rerun = "0.24"

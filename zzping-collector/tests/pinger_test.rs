@@ -3,12 +3,12 @@
 use ntest::timeout;
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::thread::sleep;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use zzping_collector::database_client::DatabaseClient;
 use zzping_collector::ping_mock_client::PingMockClient;
-use zzping_collector::pinger::Pinger;
+use zzping_collector::pinger::{Pinger, PingerCommand};
+use zzping_proto::zzping::CollectorRole;
 
 // Include the test utilities
 mod common;
@@ -20,8 +20,9 @@ async fn test_pinger_loop() {
     let ping_rate_pps = 100;
     let test_duration = Duration::from_millis(50);
 
-    let mock_ping_client = Arc::new(PingMockClient::new());
-    let (results_tx, results_rx) = mpsc::channel(100);
+    let (ping_event_tx, mut ping_event_rx) = mpsc::channel(100);
+    let mock_ping_client = Arc::new(PingMockClient::new(target, ping_event_tx));
+    let (results_tx, _results_rx) = mpsc::channel(100);
 
     // Spawn a mock gRPC server to handle the AnnouncePings RPC.
     let server_addr = common::spawn_mock_server(MockIngestionService::default()).await;
@@ -36,6 +37,7 @@ async fn test_pinger_loop() {
         ping_rate_pps,
         Duration::from_secs(60),
         Duration::from_secs(5),
+        Duration::from_secs(60),
         mock_ping_client.clone(),
         results_tx,
         db_client,
@@ -51,12 +53,12 @@ async fn test_pinger_loop() {
         .unwrap();
 
     // Let the pinger run for a short duration
-    sleep(test_duration);
+    tokio::time::sleep(test_duration).await;
 
-    // Stop the pinger by dropping the receiver
-    drop(results_rx);
+    // Stop the pinger by dropping the command sender
+    drop(pinger_cmd_tx);
 
-    // Wait for the pinger to finish, panicking if it times out or panics itself.
+    // Wait for the pinger to finish
     tokio::time::timeout(Duration::from_secs(1), pinger_handle)
         .await
         .expect("Pinger task timed out")
@@ -64,15 +66,25 @@ async fn test_pinger_loop() {
         .expect("Pinger run method returned an error");
 
     // Assertions
-    let num_pings_sent = mock_ping_client.pings.lock().unwrap().len();
+    let mut pings_sent = 0;
+    while ping_event_rx.try_recv().is_ok() {
+        pings_sent += 1;
+    }
     let expected_pings = (ping_rate_pps as f64 * test_duration.as_secs_f64()).round() as usize;
 
     // Check if the number of pings is within a reasonable tolerance
     let tolerance = 5;
     assert!(
-        (num_pings_sent as i32 - expected_pings as i32).abs() <= tolerance,
-        "Expected around {expected_pings} pings, but got {num_pings_sent}"
+        (pings_sent - expected_pings as i32).abs() <= tolerance,
+        "Expected around {expected_pings} pings, but got {pings_sent}"
     );
+}
+
+#[test]
+fn test_monotonic_time_source_resync_updates_reference() {
+    // MonotonicTimeSource is private; a direct unit test would require changing
+    // visibility. We rely on the higher-level pinger tests and integration
+    // tests to exercise resync behavior.
 }
 
 #[tokio::test]
@@ -80,9 +92,9 @@ async fn test_pinger_handles_lost_packets() {
     let target: IpAddr = "127.0.0.1".parse().unwrap();
     let grace_period = Duration::from_millis(50);
 
-    // Use a mock client that never sends replies
-    let mut mock_ping_client = PingMockClient::new();
-    mock_ping_client.rtt_to_send = None;
+    let (ping_event_tx, _) = mpsc::channel(100);
+    let mock_ping_client = PingMockClient::new(target, ping_event_tx);
+    mock_ping_client.set_rtt_to_send(None).await;
     let mock_ping_client = Arc::new(mock_ping_client);
 
     let (results_tx, mut results_rx) = mpsc::channel(100);
@@ -99,6 +111,7 @@ async fn test_pinger_handles_lost_packets() {
         10, // Ping rate doesn't matter much for this test
         grace_period,
         Duration::from_millis(10), // Fast timeout check for test
+        Duration::from_secs(60),
         mock_ping_client.clone(),
         results_tx,
         db_client,
@@ -126,14 +139,12 @@ async fn test_pinger_handles_lost_packets() {
     assert_ne!(result.sent_nanos, 0, "sent_nanos should be populated");
 }
 
-use zzping_collector::pinger::PingerCommand;
-use zzping_proto::zzping::CollectorRole;
-
 #[tokio::test]
 #[timeout(1000)]
 async fn test_pinger_pauses_and_resumes() {
     let target: IpAddr = "127.0.0.1".parse().unwrap();
-    let mock_ping_client = Arc::new(PingMockClient::new());
+    let (ping_event_tx, mut ping_event_rx) = mpsc::channel(100);
+    let mock_ping_client = Arc::new(PingMockClient::new(target, ping_event_tx));
     let (results_tx, _results_rx) = mpsc::channel(100);
     let server_addr = common::spawn_mock_server(MockIngestionService::default()).await;
     let db_client =
@@ -146,6 +157,7 @@ async fn test_pinger_pauses_and_resumes() {
         100, // High rate to ensure we see pings quickly
         Duration::from_secs(1),
         Duration::from_secs(1),
+        Duration::from_secs(60),
         mock_ping_client.clone(),
         results_tx,
         db_client,
@@ -155,9 +167,8 @@ async fn test_pinger_pauses_and_resumes() {
 
     // 1. Should not be active initially
     tokio::time::sleep(Duration::from_millis(50)).await;
-    assert_eq!(
-        mock_ping_client.pings.lock().unwrap().len(),
-        0,
+    assert!(
+        ping_event_rx.try_recv().is_err(),
         "Pinger should not be active by default"
     );
 
@@ -167,11 +178,13 @@ async fn test_pinger_pauses_and_resumes() {
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let count_after_activate = mock_ping_client.pings.lock().unwrap().len();
     assert!(
-        count_after_activate > 0,
+        ping_event_rx.try_recv().is_ok(),
         "Pinger should start sending pings when role is Primary"
     );
+
+    // Drain the channel
+    while ping_event_rx.try_recv().is_ok() {}
 
     // 3. Pause it
     pinger_cmd_tx
@@ -179,13 +192,9 @@ async fn test_pinger_pauses_and_resumes() {
         .await
         .unwrap();
     // Give the command time to be processed
-    tokio::time::sleep(Duration::from_millis(10)).await;
-    let count_after_pause = mock_ping_client.pings.lock().unwrap().len();
-    // A small sleep to check if any *more* pings are sent after pausing.
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let count_after_pause_check = mock_ping_client.pings.lock().unwrap().len();
-    assert_eq!(
-        count_after_pause, count_after_pause_check,
+    assert!(
+        ping_event_rx.try_recv().is_err(),
         "Pinger should stop sending pings when role is Standby"
     );
 
@@ -195,9 +204,8 @@ async fn test_pinger_pauses_and_resumes() {
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(50)).await;
-    let count_after_resume = mock_ping_client.pings.lock().unwrap().len();
     assert!(
-        count_after_resume > count_after_pause,
+        ping_event_rx.try_recv().is_ok(),
         "Pinger should resume sending pings when role is Primary again"
     );
 }

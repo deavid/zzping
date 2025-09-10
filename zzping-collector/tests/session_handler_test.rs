@@ -44,12 +44,14 @@ async fn test_session_handler_sends_config_on_success() {
         .await
         .unwrap();
 
+    let (fsync_tx, _fsync_rx) = mpsc::channel::<u64>(10);
     let handler = SessionHandler::new(
         client,
         config_tx,
         "test-uuid".to_string(),
         health_rx,
         persistence_tx,
+        fsync_tx,
         true, // Use mock client in tests
     );
 
@@ -122,12 +124,14 @@ async fn test_session_handler_exits_on_connection_failure() {
         .unwrap();
     info!("Database client connected to {}", addr);
 
+    let (fsync_tx, _fsync_rx) = mpsc::channel::<u64>(10);
     let handler = SessionHandler::new(
         client,
         config_tx,
         "test-uuid".to_string(),
         health_rx,
         persistence_tx,
+        fsync_tx,
         true, // Use mock client in tests
     );
     let handler_handle = tokio::spawn(handler.run());
@@ -182,4 +186,76 @@ async fn test_session_handler_exits_on_connection_failure() {
     }
 
     info!("Test completed");
+}
+
+#[tokio::test]
+#[timeout(3000)]
+async fn test_session_handler_reports_last_processed_command_in_heartbeat() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Debug)
+        .try_init();
+
+    let (config_tx, _) = watch::channel::<Option<SupervisorConfig>>(None);
+    let (health_tx, health_rx) = watch::channel(HealthReport {
+        total_buffer_size: 0,
+        role: CollectorRole::Standby,
+        fatal_errors: vec![],
+    });
+    health_tx.send_replace(HealthReport {
+        total_buffer_size: 123,
+        role: CollectorRole::Primary,
+        fatal_errors: vec![],
+    });
+
+    let (persistence_tx, _persistence_rx) = mpsc::channel::<CachedIntent>(1);
+
+    // Prepare mock server with ability to push a command
+    let mock = MockIngestionService::with_ping_rate(0);
+    let server_addr = spawn_mock_server(mock.clone()).await;
+    let client = DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
+        .await
+        .unwrap();
+
+    let (fsync_tx, _fsync_rx) = mpsc::channel::<u64>(10);
+    let handler = SessionHandler::new(
+        client.clone(),
+        config_tx,
+        "test-uuid".to_string(),
+        health_rx,
+        persistence_tx,
+        fsync_tx,
+        true,
+    );
+
+    // Run handler
+    tokio::spawn(handler.run());
+
+    // Wait a bit for subscription to establish
+    tokio::time::sleep(Duration::from_millis(50)).await;
+
+    // Send a command on the mock command stream with id 42
+    if let Some(tx) = &*mock.command_stream_tx.lock().unwrap() {
+        let cmd = zzping_proto::zzping::Command {
+            command_id: 42,
+            command_type: Some(zzping_proto::zzping::command::CommandType::ChangeRole(
+                zzping_proto::zzping::CollectorRole::Primary as i32,
+            )),
+        };
+        tx.clone().try_send(Ok(cmd)).ok();
+    }
+
+    // Wait for the heartbeat to be sent and recorded by the mock server
+    // (longer sleep to avoid flakiness on slower CI or local machines)
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let received = mock.received_heartbeats.lock().unwrap().clone();
+    assert!(
+        !received.is_empty(),
+        "No heartbeats received by mock server"
+    );
+
+    // The last heartbeat should include last_processed_command_id == 42
+    let last = received.last().unwrap();
+    assert_eq!(last.last_processed_command_id, 42);
 }

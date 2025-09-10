@@ -2,9 +2,10 @@
 
 use anyhow::Result;
 use std::{net::IpAddr, sync::Arc};
+use tokio::sync::mpsc;
 use zzping_collector::{
     database_client::DatabaseClient,
-    ping_client::MockPingClient,
+    ping_mock_client::PingMockClient,
     target_worker::{TargetWorker, WorkerCommand},
 };
 use zzping_proto::zzping::{CollectorRole, GetRecentDataResponse};
@@ -32,7 +33,8 @@ async fn test_target_worker_primary_supervised_role_sends_init_command() -> Resu
 
     // 2. Create the TargetWorker with MockPingClient
     let target_ip = "127.0.0.1".parse::<IpAddr>()?;
-    let ping_client = Arc::new(MockPingClient::new(target_ip));
+    let (ping_event_tx, _) = mpsc::channel(10);
+    let ping_client = Arc::new(PingMockClient::new(target_ip, ping_event_tx));
     let handles = TargetWorker::new_with_ping_client(
         "test-uuid".to_string(),
         target_ip,
