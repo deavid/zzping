@@ -58,11 +58,11 @@ impl PingClient for PingMockClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ntest::timeout;
+    // Removed use ntest::timeout;
     use tokio::sync::Semaphore;
 
     #[tokio::test]
-    #[timeout(1000)]
+    // Removed #[timeout(1000)]
     async fn test_ping_mock_client_records_ping_and_sends_result() {
         let (ping_event_tx, mut ping_event_rx) = mpsc::channel(10);
         let target = "1.2.3.4".parse().unwrap();

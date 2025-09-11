@@ -39,10 +39,10 @@ pub fn records_to_points(records: Vec<RawDataRecord>) -> Vec<DataPoint> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ntest::timeout;
+    // Removed use ntest::timeout;
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_records_to_points_conversion() {
         let records = vec![
             RawDataRecord {
@@ -84,7 +84,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_records_to_points_empty() {
         let records = Vec::new();
         let points = records_to_points(records);

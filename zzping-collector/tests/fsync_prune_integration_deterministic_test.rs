@@ -2,6 +2,7 @@ use zzping_proto::zzping::{CollectorRole, HeartbeatResponse};
 
 mod common;
 use common::{MockIngestionService, spawn_mock_server};
+use zzping_collector::database_client::DatabaseClient;
 
 #[tokio::test]
 async fn test_fsync_prune_deterministic_via_override_channel() {
@@ -25,7 +26,7 @@ async fn test_fsync_prune_deterministic_via_override_channel() {
     sender.send(hb.clone()).await.unwrap();
 
     // Create a DatabaseClient that points at the mock server.
-    let mut db_client = zzping_collector::database_client::DatabaseClient::connect(
+    let db_client = DatabaseClient::connect(
         format!("http://{}", addr),
         "test-token".to_string(),
     )

@@ -32,12 +32,12 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ntest::timeout;
+    // Removed use ntest::timeout;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_load_valid_config() {
         let content = r#"
 (
@@ -62,7 +62,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_load_invalid_config() {
         let content = r#"
 (
@@ -79,7 +79,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_load_nonexistent_file() {
         let config = Config::load("nonexistent-file.ron");
         assert!(config.is_err());

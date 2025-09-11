@@ -1,12 +1,12 @@
 use crate::{
     batch_submitter::{BatchSubmitter, BatchSubmitterCommand},
-    database_client::DatabaseClient,
+    database_client::DatabaseClientTrait,
     ping_client::PingClient,
     ping_surge_client::PingSurgeClient,
     pinger::{FinalizedPing, Pinger, PingerCommand},
 };
 use anyhow::Result;
-use log::{info, warn};
+use log::{debug, info, warn};
 use std::{net::IpAddr, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -47,7 +47,7 @@ use zzping_proto::zzping::GetRecentDataRequest;
 /// and logic for monitoring a single target IP address.
 pub struct TargetWorker {
     target_ip: IpAddr,
-    db_client: DatabaseClient,
+    db_client: Arc<dyn DatabaseClientTrait>,
     pinger: Pinger,
     pinger_command_tx: mpsc::Sender<PingerCommand>,
     batch_submitter_command_tx: mpsc::Sender<BatchSubmitterCommand>,
@@ -62,7 +62,7 @@ impl TargetWorker {
         collector_uuid: String,
         target_ip: IpAddr,
         ping_rate_pps: u64,
-        db_client: DatabaseClient,
+        db_client: Arc<dyn DatabaseClientTrait>,
     ) -> Result<TargetWorkerHandles> {
         let ping_client = Arc::new(PingSurgeClient::new(target_ip)?);
         Self::new_with_ping_client(
@@ -80,7 +80,7 @@ impl TargetWorker {
         collector_uuid: String,
         target_ip: IpAddr,
         ping_rate_pps: u64,
-        db_client: DatabaseClient,
+        db_client: Arc<dyn DatabaseClientTrait>,
         ping_client: Arc<dyn PingClient>,
     ) -> Result<TargetWorkerHandles> {
         let (command_tx, command_rx) = mpsc::channel(10);
@@ -157,6 +157,7 @@ impl TargetWorker {
                 Some(command) = command_rx.recv() => {
                     match command {
                         WorkerCommand::GetHealth(tx) => {
+                            debug!("TargetWorker[{}] received GetHealth request", self.target_ip);
                             let (health_tx, health_rx) = oneshot::channel();
                             if batch_submitter_command_tx.send(BatchSubmitterCommand::GetHealth(health_tx)).await.is_err() {
                                 warn!("Failed to send GetHealth command to batch_submitter for target {}.", self.target_ip);
@@ -190,7 +191,7 @@ impl TargetWorker {
                                     collector_uuid: "".to_string(),
                                     lookback_seconds: 30,
                                 };
-                                let mut db_client = self.db_client.clone();
+                                let db_client = self.db_client.clone();
                                 match db_client.get_recent_data(request).await {
                                     Ok(response) => {
                                         let ack_nanos = response.into_inner().database_confirms_last_acked_received_nanos;
@@ -215,6 +216,7 @@ impl TargetWorker {
                             }
                         }
                         WorkerCommand::PruneByFsync(fsync_nanos) => {
+                            debug!("TargetWorker[{}] received PruneByFsync({})", self.target_ip, fsync_nanos);
                             info!("TargetWorker for {} received PruneByFsync {}.", self.target_ip, fsync_nanos);
                             if batch_submitter_command_tx.send(BatchSubmitterCommand::PruneByFsync(fsync_nanos)).await.is_err() {
                                 warn!("Failed to forward PruneByFsync to BatchSubmitter for target {}.", self.target_ip);

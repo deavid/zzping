@@ -20,9 +20,13 @@ use zzping_proto::zzping::{
 };
 
 /// A simple logger that captures log messages into a shared vector.
-pub struct VectorLogger {
-    log_messages: Arc<Mutex<Vec<String>>>,
-}
+pub struct VectorLogger {}
+
+// Global storage for the most-recent test's log_messages buffer. Tests call
+// `VectorLogger::init` with their own Arc<Mutex<Vec>>; we store it here so the
+// single global logger instance can push into the most recent buffer. Use a
+// Mutex to allow replacing the buffer between tests.
+static GLOBAL_LOG_MESSAGES: Mutex<Option<Arc<Mutex<Vec<String>>>>> = Mutex::new(None);
 
 impl Log for VectorLogger {
     fn enabled(&self, metadata: &Metadata) -> bool {
@@ -38,7 +42,14 @@ impl Log for VectorLogger {
                 || msg.contains("Deferring worker creation")
                 || msg.contains("TaskSupervisor: Adding worker")
             {
-                self.log_messages.lock().unwrap().push(msg);
+                // Also print to stderr for test debugging visibility (keeps stdout clean)
+                eprintln!("[zzping-test] {}", msg);
+                let guard = GLOBAL_LOG_MESSAGES
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                if let Some(ref arc) = *guard {
+                    arc.lock().unwrap_or_else(|e| e.into_inner()).push(msg);
+                }
             }
         }
     }
@@ -47,10 +58,20 @@ impl Log for VectorLogger {
 }
 
 impl VectorLogger {
-    /// Initializes the global logger with a `VectorLogger` instance.
+    /// Initializes or replaces the global test log buffer. Multiple tests may
+    /// call this; the global logger instance is set once and future calls will
+    /// replace the buffer that log messages are pushed into.
     pub fn init(log_messages: Arc<Mutex<Vec<String>>>) -> Result<(), SetLoggerError> {
-        let logger = Box::new(VectorLogger { log_messages });
-        log::set_boxed_logger(logger)?;
+        // Replace the global buffer.
+        let mut guard = GLOBAL_LOG_MESSAGES
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        *guard = Some(log_messages);
+
+        // Try to set the global logger. If it fails because a logger was
+        // already installed, ignore the error — we replaced the buffer above
+        // so the existing logger will now write into the new buffer.
+        let _ = log::set_boxed_logger(Box::new(VectorLogger {}));
         log::set_max_level(LevelFilter::Info);
         Ok(())
     }
@@ -154,7 +175,7 @@ impl Ingestion for MockIngestionService {
 
         self.received_heartbeats
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .push(request.into_inner());
 
         // If a test has installed an override channel, await a supplied
@@ -166,7 +187,11 @@ impl Ingestion for MockIngestionService {
             return Ok(Response::new(resp));
         }
 
-        let response = self.heartbeat_response.lock().unwrap().clone();
+        let response = self
+            .heartbeat_response
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         Ok(Response::new(response))
     }
 
@@ -174,7 +199,11 @@ impl Ingestion for MockIngestionService {
         &self,
         request: Request<SendBatchRequest>,
     ) -> Result<Response<SendBatchResponse>, Status> {
-        if *self.send_batch_should_fail.lock().unwrap() {
+        if *self
+            .send_batch_should_fail
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+        {
             return Err(Status::unavailable("Mock service is configured to fail"));
         }
 
@@ -193,9 +222,13 @@ impl Ingestion for MockIngestionService {
 
         self.received_batches
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| e.into_inner())
             .push(request.into_inner());
-        let response = self.send_batch_response.lock().unwrap().clone();
+        let response = self
+            .send_batch_response
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         Ok(Response::new(response))
     }
 
@@ -203,7 +236,11 @@ impl Ingestion for MockIngestionService {
         &self,
         _request: Request<GetRecentDataRequest>,
     ) -> Result<Response<GetRecentDataResponse>, Status> {
-        let response = self.get_recent_data_response.lock().unwrap().clone();
+        let response = self
+            .get_recent_data_response
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         Ok(Response::new(response))
     }
 
@@ -259,7 +296,10 @@ impl Ingestion for MockIngestionService {
         }
 
         let (tx, rx) = tokio::sync::mpsc::channel(10);
-        *self.command_stream_tx.lock().unwrap() = Some(tx);
+        *self
+            .command_stream_tx
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(tx);
         let stream = tokio_stream::wrappers::ReceiverStream::new(rx);
         Ok(Response::new(Box::pin(stream)))
     }

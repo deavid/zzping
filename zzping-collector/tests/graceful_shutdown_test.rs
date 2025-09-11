@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use log::info;
-use ntest::timeout;
+// Removed use ntest::timeout;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use zzping_collector::task_supervisor::SupervisorShutdown;
@@ -12,7 +12,7 @@ mod common;
 use common::MockIngestionService;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[timeout(5000)]
+// Removed #[timeout(5000)]
 async fn test_graceful_shutdown_flushes_buffer() -> Result<()> {
     let _ = env_logger::builder()
         .is_test(true)

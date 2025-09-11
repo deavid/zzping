@@ -1,6 +1,7 @@
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Notify, mpsc};
 use zzping_collector::connection_manager::ConnectionManager;
+use zzping_collector::database_client::DatabaseClientTrait;
 
 mod common;
 use common::{MockIngestionService, spawn_mock_server};
@@ -9,14 +10,15 @@ use common::{MockIngestionService, spawn_mock_server};
 async fn test_connection_manager_connects_and_sends_client() {
     let addr = spawn_mock_server(MockIngestionService::default()).await;
     let client_addr = format!("http://{addr}");
-    let (client_tx, mut client_rx) = mpsc::channel(1);
+    let (client_tx, mut client_rx) = mpsc::channel::<Arc<dyn DatabaseClientTrait>>(1);
     let notify = Arc::new(Notify::new());
 
     let manager = ConnectionManager::new(
         client_addr,
         "test-token".to_string(),
         client_tx,
-        notify.clone(),
+    notify.clone(),
+    None,
     );
     tokio::spawn(manager.run());
 
@@ -32,14 +34,15 @@ async fn test_connection_manager_connects_and_sends_client() {
 async fn test_connection_manager_retries_on_failure() {
     // Don't spawn a server, so connection will fail.
     let client_addr = "http://127.0.0.1:0".to_string();
-    let (client_tx, mut client_rx) = mpsc::channel(1);
+    let (client_tx, mut client_rx) = mpsc::channel::<Arc<dyn DatabaseClientTrait>>(1);
     let notify = Arc::new(Notify::new());
 
     let manager = ConnectionManager::new(
         client_addr,
         "test-token".to_string(),
         client_tx,
-        notify.clone(),
+    notify.clone(),
+    None,
     );
     tokio::spawn(manager.run());
 

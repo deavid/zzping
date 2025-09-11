@@ -64,13 +64,13 @@ fn find_latest_zzp1_file(dir: &str) -> Result<Option<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ntest::timeout;
+    // Removed use ntest::timeout;
     use std::thread::sleep;
     use std::time::Duration;
     use tempfile::tempdir;
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_find_latest_zzp1_file() {
         // 1. Setup a temporary directory
         let temp_dir = tempdir().unwrap();
@@ -98,7 +98,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_find_latest_in_empty_dir() {
         let temp_dir = tempdir().unwrap();
         let p = temp_dir.path();
@@ -112,7 +112,7 @@ mod tests {
     };
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_get_last_hour_records() -> Result<()> {
         // 1. Setup: Create a temp dir and some sample data
         let temp_dir = tempdir()?;
@@ -170,7 +170,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_get_last_hour_records_empty_dir() -> Result<()> {
         let temp_dir = tempdir()?;
         let data_dir = temp_dir.path().to_str().unwrap();

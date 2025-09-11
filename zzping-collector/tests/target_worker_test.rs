@@ -20,7 +20,7 @@ async fn test_target_worker_primary_supervised_role_sends_init_command() -> Resu
     let mock_service = MockIngestionService::new();
     let addr = common::spawn_mock_server(mock_service.clone()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{}", addr), "test-token".to_string()).await?;
+        DatabaseClient::connect(format!("http://{}", addr), "test-token".to_string()).await?; // connect now returns Arc<dyn DatabaseClientTrait>
 
     // Configure the mock response for GetRecentData
     let expected_ack_nanos = 1234567890;
@@ -38,8 +38,8 @@ async fn test_target_worker_primary_supervised_role_sends_init_command() -> Resu
     let handles = TargetWorker::new_with_ping_client(
         "test-uuid".to_string(),
         target_ip,
-        1, // Use a normal ping rate since we're providing our own client
-        db_client,
+        1,         // Use a normal ping rate since we're providing our own client
+        db_client, // No .clone() needed here, as it's moved into the new function
         ping_client,
     )?;
 

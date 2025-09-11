@@ -1,7 +1,8 @@
 use crate::{
     config::Config,
     connection_manager::ConnectionManager,
-    database_client::DatabaseClient,
+    client_holder::ClientHolder,
+    database_client::DatabaseClientTrait,
     session_handler::SessionHandler,
     task_supervisor::{
         ClientUpdate, HealthReport, SupervisorConfig, SupervisorShutdown, TaskSupervisor,
@@ -39,6 +40,8 @@ pub struct CollectorService {
     supervisor_shutdown_tx: Option<mpsc::Sender<SupervisorShutdown>>,
     // A channel to send the supervisor_shutdown_tx to the test harness.
     test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
+    // Optional holder that is kept up-to-date with the current DatabaseClient.
+    client_holder: Option<ClientHolder>,
 }
 
 impl CollectorService {
@@ -53,6 +56,7 @@ impl CollectorService {
             supervisor_handle: None,
             supervisor_shutdown_tx: None,
             test_shutdown_tx_sender: None,
+            client_holder: None,
         })
     }
 
@@ -73,6 +77,7 @@ impl CollectorService {
             supervisor_handle: None,
             supervisor_shutdown_tx: None,
             test_shutdown_tx_sender,
+            client_holder: None,
         })
     }
 
@@ -93,6 +98,7 @@ impl CollectorService {
             supervisor_handle: None,
             supervisor_shutdown_tx: None,
             test_shutdown_tx_sender,
+            client_holder: None,
         })
     }
 
@@ -119,6 +125,7 @@ impl CollectorService {
             supervisor_handle: None,
             supervisor_shutdown_tx: None,
             test_shutdown_tx_sender,
+            client_holder: None,
         })
     }
 
@@ -198,7 +205,7 @@ impl CollectorService {
 
     /// The main internal loop of the `CollectorService`.
     async fn run_internal(&mut self) -> Result<()> {
-        let (client_tx, mut client_rx) = mpsc::channel::<DatabaseClient>(1);
+        let (client_tx, mut client_rx) = mpsc::channel::<Arc<dyn DatabaseClientTrait>>(1);
         let (config_tx, config_rx) = watch::channel::<Option<SupervisorConfig>>(None);
         let (client_update_tx, client_update_rx) = mpsc::channel::<ClientUpdate>(10);
         let (health_report_tx, mut health_report_rx) = mpsc::channel::<HealthReport>(10);
@@ -221,6 +228,11 @@ impl CollectorService {
         }
         let reconnect_notify = Arc::new(Notify::new());
 
+    // Create a shared, updatable ClientHolder and keep a copy on self so
+    // tests or other components can access the current client if needed.
+    let client_holder = ClientHolder::new(None);
+    self.client_holder = Some(client_holder.clone());
+
 
 
         // Persistence task
@@ -240,6 +252,7 @@ impl CollectorService {
             self.config.auth_token.clone(),
             client_tx,
             reconnect_notify.clone(),
+            Some(client_holder.clone()),
         );
         tokio::spawn(connection_manager.run());
 
@@ -271,9 +284,9 @@ impl CollectorService {
             _ = async {
                 loop {
                     if let Some(client) = client_rx.recv().await {
-                        client_update_tx.send(ClientUpdate::NewClient(Box::new(client.clone()))).await.ok();
+                        client_update_tx.send(ClientUpdate::NewClient(client.clone())).await.ok();
                         let session_handler = SessionHandler::new(
-                            client,
+                            client.clone(),
                             config_tx.clone(),
                             self.config.collector_uuid.clone(),
                             latest_health_rx.clone(),

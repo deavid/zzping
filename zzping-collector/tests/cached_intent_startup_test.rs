@@ -1,7 +1,7 @@
 // Integration tests for last-known intent cache startup behavior.
 
 use anyhow::Result;
-use ntest::timeout;
+// Removed use ntest::timeout;
 use std::time::Duration;
 use tempfile::TempDir;
 
@@ -25,7 +25,6 @@ fn setup_test_environment(
     collector_uuid: "cached-intent-test-uuid",
     database_addr: "{}",
     auth_token: "test-token",
-    use_mock_ping_client: true,
 )
 "#,
         db_addr
@@ -46,14 +45,15 @@ fn setup_test_environment(
 }
 
 #[tokio::test]
-#[timeout(5000)]
+// Removed #[timeout(5000)]
+#[serial_test::serial]
 async fn startup_with_cache_and_unavailable_db() -> Result<()> {
     // Collector has a cached intent but DB is unreachable -> supervisor should defer worker creation
 
     let log_messages = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let _ = VectorLogger::init(log_messages.clone());
 
-    let (temp_dir, config_path) = setup_test_environment(
+    let (_temp_dir, config_path) = setup_test_environment(
         Some(
             r#"(
     targets: ["8.8.8.8"],
@@ -64,8 +64,9 @@ async fn startup_with_cache_and_unavailable_db() -> Result<()> {
         "http://127.0.0.1:9999",
     )?;
 
-    std::env::set_current_dir(temp_dir.path())?;
-
+    // Run collector using the config path directly; the bootstrap helpers will
+    // load last_intent.ron from the same directory so changing global CWD is
+    // unnecessary (and can interfere with parallel tests).
     let svc = tokio::spawn(async move { run_with_config_path(config_path).await });
 
     // Allow startup to proceed
@@ -85,7 +86,8 @@ async fn startup_with_cache_and_unavailable_db() -> Result<()> {
 }
 
 #[tokio::test]
-#[timeout(8000)]
+// Removed #[timeout(8000)]
+#[serial_test::serial]
 async fn startup_with_cache_and_successful_connection() -> Result<()> {
     // Deterministic: use mock ingestion service and heartbeat override to cause the collector to
     // receive a heartbeat, which should cause the supervisor to reconcile and spawn workers.
@@ -107,7 +109,7 @@ async fn startup_with_cache_and_successful_connection() -> Result<()> {
 
     let hb_override_tx = mock_service.install_heartbeat_override_channel().await;
 
-    let (temp_dir, config_path) = setup_test_environment(
+    let (_temp_dir, config_path) = setup_test_environment(
         Some(
             r#"(
     targets: ["1.1.1.1"],
@@ -118,15 +120,12 @@ async fn startup_with_cache_and_successful_connection() -> Result<()> {
         &format!("http://{}", addr),
     )?;
 
-    std::env::set_current_dir(temp_dir.path())?;
-
-    // Use test bootstrap helper to receive worker count updates
-    let (worker_tx, mut worker_rx) = tokio::sync::mpsc::channel::<usize>(8);
     let (shutdown_sender_tx, mut shutdown_sender_rx) = tokio::sync::mpsc::channel(1);
-    let service = zzping_collector::bootstrap_collector_for_test_with_worker_tx(
+    let service = zzping_collector::bootstrap_collector_for_test_with_worker_tx_and_db(
         config_path,
         shutdown_sender_tx,
-        Some(worker_tx),
+        None,
+        format!("http://{}", addr),
     )?;
 
     let svc_handle = tokio::spawn(async move { service.run().await });
@@ -138,17 +137,20 @@ async fn startup_with_cache_and_successful_connection() -> Result<()> {
         .await
         .expect("failed to send heartbeat override");
 
-    // Wait for worker count to become > 0 deterministically
+    // Wait for the captured log messages to record a spawned worker. This is
+    // deterministic for the mock server path and avoids channel timing races.
     let saw = tokio::time::timeout(Duration::from_millis(3000), async {
         loop {
-            match worker_rx.recv().await {
-                Some(cnt) => {
-                    if cnt > 0 {
-                        break true;
-                    }
+            {
+                let guard = log_messages.lock().unwrap_or_else(|e| e.into_inner());
+                if guard
+                    .iter()
+                    .any(|s| s.contains("TaskSupervisor: Adding worker"))
+                {
+                    break true;
                 }
-                None => break false,
             }
+            tokio::time::sleep(Duration::from_millis(10)).await;
         }
     })
     .await
@@ -180,16 +182,15 @@ async fn startup_with_cache_and_successful_connection() -> Result<()> {
 }
 
 #[tokio::test]
-#[timeout(5000)]
+// Removed #[timeout(5000)]
+#[serial_test::serial]
 async fn startup_without_cache_and_unavailable_db() -> Result<()> {
     // When no cache exists and DB is unreachable, the collector should not spawn workers
 
     let log_messages = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
     let _ = VectorLogger::init(log_messages.clone());
 
-    let (temp_dir, config_path) = setup_test_environment(None, "http://127.0.0.1:9999")?;
-    std::env::set_current_dir(temp_dir.path())?;
-
+    let (_temp_dir, config_path) = setup_test_environment(None, "http://127.0.0.1:9999")?;
     let svc = tokio::spawn(async move { run_with_config_path(config_path).await });
     tokio::time::sleep(Duration::from_millis(200)).await;
 

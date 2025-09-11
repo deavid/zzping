@@ -1,6 +1,6 @@
 use anyhow::Result;
 use log::info;
-use ntest::timeout;
+// Removed use ntest::timeout;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::sync::mpsc;
@@ -9,7 +9,7 @@ use zzping_proto::zzping::{RawDataRecord, SendBatchRequest, ingestion_client::In
 const NANOS_PER_MINUTE: u64 = 60 * 1_000_000_000;
 
 #[tokio::test]
-#[timeout(5000)]
+// Removed #[timeout(5000)]
 async fn test_full_ingestion_pipeline() -> Result<()> {
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Info)

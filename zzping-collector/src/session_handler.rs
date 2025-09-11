@@ -1,6 +1,6 @@
 use crate::{
     collector_service::CachedIntent,
-    database_client::DatabaseClient,
+    database_client::DatabaseClientTrait,
     task_supervisor::{HealthReport, SupervisorConfig},
 };
 use anyhow::Result;
@@ -24,7 +24,7 @@ enum SessionUpdate {
 /// a single, healthy connection. It dies gracefully on any network error.
 pub struct SessionHandler {
     /// The gRPC client for this session.
-    client: DatabaseClient,
+    client: Arc<dyn DatabaseClientTrait>,
     /// The sender for broadcasting configuration updates.
     config_tx: watch::Sender<Option<SupervisorConfig>>,
     /// The UUID of this collector.
@@ -42,7 +42,7 @@ pub struct SessionHandler {
 impl SessionHandler {
     /// Creates a new `SessionHandler`.
     pub fn new(
-        client: DatabaseClient,
+        client: Arc<dyn DatabaseClientTrait>,
         config_tx: watch::Sender<Option<SupervisorConfig>>,
         collector_uuid: String,
         health_rx: watch::Receiver<HealthReport>,
@@ -234,7 +234,7 @@ impl SessionHandler {
     }
 
     async fn run_heartbeat_loop(
-        mut client: DatabaseClient,
+        client: Arc<dyn DatabaseClientTrait>,
         health_rx: watch::Receiver<HealthReport>,
         collector_uuid: String,
         update_tx: mpsc::Sender<SessionUpdate>,
@@ -303,7 +303,7 @@ impl SessionHandler {
     }
 
     async fn run_command_loop(
-        mut client: DatabaseClient,
+        client: Arc<dyn DatabaseClientTrait>,
         collector_uuid: String,
         update_tx: mpsc::Sender<SessionUpdate>,
     ) -> Result<()> {

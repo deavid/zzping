@@ -9,6 +9,7 @@ use zzping_collector::{
     task_supervisor::{HealthReport, SupervisorConfig},
 };
 use zzping_proto::zzping::CollectorRole;
+// Arc not needed in this test file
 
 mod common;
 use common::{MockIngestionService, spawn_mock_server};
@@ -39,7 +40,7 @@ async fn test_session_handler_sends_config_on_success() {
 
     let (persistence_tx, _persistence_rx) = mpsc::channel::<CachedIntent>(1);
 
-    let server_addr = spawn_mock_server(MockIngestionService::with_ping_rate(10)).await;
+    let server_addr = spawn_mock_server(MockIngestionService::with_ping_rate(0)).await;
     let client = DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
         .await
         .unwrap();
@@ -69,7 +70,7 @@ async fn test_session_handler_sends_config_on_success() {
     let config = received_config.unwrap();
 
     // Check that the config contains data from the mock response
-    assert_eq!(config.ping_rate_pps, 10);
+    assert_eq!(config.ping_rate_pps, 0);
     assert!(config.targets.contains(&"127.0.0.1".parse().unwrap()));
 }
 

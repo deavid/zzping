@@ -1,8 +1,9 @@
 use ntest::timeout;
 use std::{collections::HashSet, net::IpAddr, str::FromStr};
 use zzping_collector::target_worker::WorkerCommand;
-use zzping_collector::task_supervisor::{SupervisorConfig, TaskSupervisor};
+use zzping_collector::task_supervisor::{SupervisorConfig, TaskSupervisor, ClientUpdate};
 use zzping_proto::zzping::CollectorRole;
+use zzping_collector::database_client::DatabaseClient;
 
 mod common;
 use common::mock_worker_factory;
@@ -92,7 +93,6 @@ async fn test_supervisor_sends_shutdown_to_removed_workers() {
 #[tokio::test]
 async fn test_supervisor_defers_and_then_creates_workers() {
     use std::net::IpAddr;
-    use zzping_collector::task_supervisor::ClientUpdate;
     use zzping_collector::task_supervisor::SupervisorConfig;
 
     let supervisor =
@@ -118,7 +118,7 @@ async fn test_supervisor_defers_and_then_creates_workers() {
     };
 
     // Run supervisor in background
-    let supervisor_task = tokio::spawn(async move {
+    let _supervisor_task = tokio::spawn(async move {
         supervisor
             .run(
                 config_rx,
@@ -140,14 +140,14 @@ async fn test_supervisor_defers_and_then_creates_workers() {
     // Start a small mock server to provide a reachable DatabaseClient for the test.
     let mock = common::MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock).await;
-    let dummy_client = zzping_collector::database_client::DatabaseClient::connect(
+    let dummy_client = DatabaseClient::connect( // Returns Arc<dyn DatabaseClientTrait>
         format!("http://{server_addr}"),
         "test-token".to_string(),
     )
     .await
-    .ok();
+    .unwrap();
     client_update_tx
-        .send(ClientUpdate::NewClient(Box::new(dummy_client.unwrap())))
+        .send(ClientUpdate::NewClient(dummy_client)) // Removed Box::new()
         .await
         .ok();
 
@@ -158,7 +158,7 @@ async fn test_supervisor_defers_and_then_creates_workers() {
     // Shut down the background task by dropping channels.
     drop(client_update_tx);
     drop(config_tx);
-    supervisor_task.abort();
+    _supervisor_task.abort();
 }
 
 #[tokio::test]
@@ -177,7 +177,7 @@ async fn test_supervisor_schedules_swap_and_applies_role() {
     let (_fsync_tx, fsync_rx) = tokio::sync::mpsc::channel::<u64>(10);
 
     // Run supervisor in background
-    let supervisor_task = tokio::spawn(async move {
+    let _supervisor_task = tokio::spawn(async move {
         supervisor
             .run(
                 config_rx,
@@ -193,14 +193,14 @@ async fn test_supervisor_schedules_swap_and_applies_role() {
     // Bring up a mock DB client so worker creation proceeds
     let mock = common::MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock).await;
-    let dummy_client = zzping_collector::database_client::DatabaseClient::connect(
+        let dummy_client = DatabaseClient::connect( // Returns Arc<dyn DatabaseClientTrait>
         format!("http://{server_addr}"),
         "test-token".to_string(),
     )
     .await
-    .ok();
+    .unwrap();
     client_update_tx
-        .send(ClientUpdate::NewClient(Box::new(dummy_client.unwrap())))
+        .send(ClientUpdate::NewClient(dummy_client)) // Removed Box::new()
         .await
         .ok();
 
@@ -306,7 +306,6 @@ async fn test_supervisor_schedules_swap_and_applies_role() {
 
     // Cleanup
     small_task.abort();
-    supervisor_task.abort();
 }
 
 #[tokio::test]

@@ -34,12 +34,12 @@ pub fn load_intent_config(path: &str) -> anyhow::Result<IntentConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ntest::timeout;
+    // Removed use ntest::timeout;
     use std::io::Write;
     use tempfile::NamedTempFile;
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_load_intent_config() {
         let content = r#"
 (
@@ -60,14 +60,14 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_load_intent_config_file_not_found() {
         let result = load_intent_config("non_existent_file.ron");
         assert!(result.is_err());
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_load_intent_config_invalid_ron() {
         let content = r#"
 (

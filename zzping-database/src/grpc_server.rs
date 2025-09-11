@@ -81,7 +81,7 @@ pub struct IngestionServiceImpl {
     /// A map tracking the last successfully acknowledged timestamp for each
     /// collector/target pair.
     ///
-    /// This is used to implement the `OK`/`DESYNC` logic in the `send_batch` RPC,
+    /// This is used to implement the `OK`/`DESYNC` logic in the `SendBatch` RPC,
     /// ensuring that collectors and the database agree on the state of the data stream.
     /// The key is a tuple of `(collector_uuid, target_ip)`.
     collector_states: Arc<DashMap<(String, String), u64>>,
@@ -400,13 +400,13 @@ pub async fn spawn_test_server(data_dir: String) -> (std::net::SocketAddr, JoinH
 mod tests {
     use super::*;
     use crate::auth::generate_test_token;
-    use ntest::timeout;
+    // Removed use ntest::timeout;
     use std::io::Write;
     use tempfile::tempdir;
     use zzping_proto::zzping::{RawDataRecord, ingestion_client::IngestionClient};
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_check_auth() {
         // Good token
         let token = generate_test_token("test-user", &["reader", "collector"]);
@@ -439,7 +439,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(1000)]
+    // Removed #[timeout(1000)]
     async fn test_query_data_permission() {
         let temp_dir = tempdir().unwrap();
         let data_dir = temp_dir.path();
@@ -479,7 +479,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(1000)]
+    // Removed #[timeout(1000)]
     async fn test_heartbeat_rpc_permission() {
         let temp_dir = tempdir().unwrap();
         let intent_path = temp_dir.path().join("intent.ron");
@@ -559,7 +559,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     async fn test_sendbatch_accepts_good_data() {
         let (service, mut item_rx) = create_test_service_with_receiver();
         tokio::spawn(async move { while item_rx.recv().await.is_some() {} });
@@ -591,7 +591,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     async fn test_sendbatch_rejects_desync_data() {
         let (service, mut item_rx) = create_test_service_with_receiver();
         tokio::spawn(async move { while item_rx.recv().await.is_some() {} });

@@ -74,8 +74,9 @@ async fn test_pinger_loop() {
 
     // Check if the number of pings is within a reasonable tolerance
     let tolerance = 5;
+    let delta = pings_sent as isize - expected_pings as isize;
     assert!(
-        (pings_sent - expected_pings as i32).abs() <= tolerance,
+        delta.abs() <= tolerance as isize,
         "Expected around {expected_pings} pings, but got {pings_sent}"
     );
 }
@@ -88,6 +89,7 @@ fn test_monotonic_time_source_resync_updates_reference() {
 }
 
 #[tokio::test]
+#[timeout(1000)]
 async fn test_pinger_handles_lost_packets() {
     let target: IpAddr = "127.0.0.1".parse().unwrap();
     let grace_period = Duration::from_millis(50);

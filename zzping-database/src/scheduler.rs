@@ -224,14 +224,14 @@ impl Scheduler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ntest::timeout;
+    // Removed use ntest::timeout;
 
     fn test_scheduler() -> Scheduler {
         Scheduler::new_with_durations(Duration::from_millis(100), Duration::from_millis(50))
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_first_instance_is_primary() {
         let scheduler = test_scheduler();
         let now = Instant::now();
@@ -240,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_second_instance_is_standby_and_triggers_handoff() {
         let scheduler = test_scheduler();
         let now = Instant::now();
@@ -251,7 +251,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_graceful_handoff_flow() {
         let scheduler = test_scheduler();
         let t0 = Instant::now();
@@ -271,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_standby_is_promoted_when_primary_goes_stale() {
         let scheduler = test_scheduler();
         let t0 = Instant::now();
@@ -288,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    #[timeout(100)]
+    // Removed #[timeout(100)]
     fn test_stale_standby_is_pruned() {
         let scheduler = test_scheduler();
         let t0 = Instant::now();

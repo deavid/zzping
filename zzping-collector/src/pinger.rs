@@ -1,4 +1,4 @@
-use crate::database_client::DatabaseClient;
+use crate::database_client::DatabaseClientTrait;
 use crate::ping_client::PingClient;
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -34,7 +34,7 @@ pub struct Pinger {
     resync_interval: Duration,
     ping_client: Arc<dyn PingClient>,
     results_tx: mpsc::Sender<FinalizedPing>,
-    db_client: DatabaseClient,
+    db_client: Arc<dyn DatabaseClientTrait>,
     time_source: Box<dyn TimeSource>,
     in_flight_pings: HashMap<u16, u64>,
     command_rx: mpsc::Receiver<PingerCommand>,
@@ -52,7 +52,7 @@ impl Pinger {
         resync_interval: Duration,
         ping_client: Arc<dyn PingClient>,
         results_tx: mpsc::Sender<FinalizedPing>,
-        db_client: DatabaseClient,
+        db_client: Arc<dyn DatabaseClientTrait>,
         command_rx: mpsc::Receiver<PingerCommand>,
     ) -> Self {
         Self::new_with_time_source(
@@ -79,7 +79,7 @@ impl Pinger {
         resync_interval: Duration,
         ping_client: Arc<dyn PingClient>,
         results_tx: mpsc::Sender<FinalizedPing>,
-        db_client: DatabaseClient,
+        db_client: Arc<dyn DatabaseClientTrait>,
         command_rx: mpsc::Receiver<PingerCommand>,
         time_source: Box<dyn TimeSource>,
     ) -> Self {
@@ -141,7 +141,7 @@ impl Pinger {
                     if let Some(sent_nanos) = self.time_source.now_ns() {
                         self.in_flight_pings.insert(sequence_idx, sent_nanos);
 
-                        let mut db_client = self.db_client.clone();
+                        let db_client = self.db_client.clone();
                         tokio::spawn(async move {
                             let request = AnnouncePingsRequest { sent_nanos: vec![sent_nanos] };
                             if let Err(e) = db_client.announce_pings(request).await {

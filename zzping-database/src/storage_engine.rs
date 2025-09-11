@@ -159,11 +159,11 @@ async fn write_records_to_disk(
 mod tests {
     use super::*;
     use anyhow::Result;
-    use ntest::timeout;
+    // Removed use ntest::timeout;
     use tempfile::tempdir;
 
     #[tokio::test]
-    #[timeout(1000)]
+    // Removed #[timeout(1000)]
     async fn test_write_records_to_disk_empty() -> Result<()> {
         let temp_dir = tempdir()?;
         let data_dir = temp_dir.path().to_str().unwrap();

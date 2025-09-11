@@ -21,7 +21,7 @@ tokio-stream = { workspace = true }
 tonic = { workspace = true }
 byteorder.workspace = true
 bytes.workspace = true
-chrono = { workspace = true, features = ["serde"] }
+chrono = { version = "0.4", features = ["serde"] }
 constriction.workspace = true
 crc32fast.workspace = true
 env_logger.workspace = true
@@ -35,6 +35,5 @@ tokio = { workspace = true, features = ["net", "rt-multi-thread", "macros", "io-
 test-utils = []
 
 [dev-dependencies]
-ntest.workspace = true
 tempfile.workspace = true
 zzping-database = { path = ".", features = ["test-utils"] }

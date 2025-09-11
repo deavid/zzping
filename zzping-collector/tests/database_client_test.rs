@@ -15,7 +15,7 @@ async fn test_database_client_connect_and_heartbeat() {
     let client_addr = format!("http://{addr}");
 
     // Test successful connection and heartbeat.
-    let mut client = DatabaseClient::connect(client_addr.clone(), "test-token".to_string())
+    let client = DatabaseClient::connect(client_addr.clone(), "test-token".to_string())
         .await
         .unwrap();
 
@@ -34,7 +34,7 @@ async fn test_database_client_connect_and_heartbeat() {
     assert_eq!(response.role, CollectorRole::Primary as i32);
 
     // Test with a bad token.
-    let mut bad_client = DatabaseClient::connect(client_addr, "bad-token".to_string())
+    let bad_client = DatabaseClient::connect(client_addr, "bad-token".to_string())
         .await
         .unwrap();
     let request = HeartbeatRequest {

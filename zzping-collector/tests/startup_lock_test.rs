@@ -19,6 +19,7 @@ fn create_mock_config() -> (NamedTempFile, String) {
 }
 
 #[test]
+// Removed #[timeout(100)]
 fn test_port_lock_prevents_second_instance() {
     // 1. Setup mock config.
     let (_temp_file, config_path) = create_mock_config();

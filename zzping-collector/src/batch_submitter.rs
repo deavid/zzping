@@ -1,9 +1,10 @@
-use crate::database_client::DatabaseClient;
+use crate::database_client::DatabaseClientTrait;
 use crate::pinger::FinalizedPing;
 use anyhow::Result;
 use log::{debug, info, warn};
 use std::collections::BTreeMap;
 use std::net::IpAddr;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 use zzping_proto::zzping::{CollectorRole, RawDataRecord, SendBatchRequest, send_batch_response};
@@ -26,11 +27,13 @@ pub struct BatchSubmitter {
     grace_period: Duration,
     buffer_limit: usize,
     retention_period: Duration,
-    db_client: DatabaseClient,
+    db_client: Arc<dyn DatabaseClientTrait>,
     buffer: BTreeMap<u64, RawDataRecord>,
     last_acked_received_nanos: u64,
     command_rx: mpsc::Receiver<BatchSubmitterCommand>,
     is_active: bool,
+    // Test-only: unique id to help distinguish instances in logs (time-based).
+    instance_id: u64,
 }
 
 impl BatchSubmitter {
@@ -41,9 +44,13 @@ impl BatchSubmitter {
         grace_period: Duration,
         buffer_limit: usize,
         retention_period: Duration,
-        db_client: DatabaseClient,
+        db_client: Arc<dyn DatabaseClientTrait>,
         command_rx: mpsc::Receiver<BatchSubmitterCommand>,
     ) -> Self {
+        let instance_id = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
         Self {
             collector_uuid,
             target_ip,
@@ -55,6 +62,7 @@ impl BatchSubmitter {
             last_acked_received_nanos: 0,
             command_rx,
             is_active: true, // Start active
+            instance_id,
         }
     }
 
@@ -83,6 +91,7 @@ impl BatchSubmitter {
                         }
                         BatchSubmitterCommand::GetHealth(tx) => {
                             let buffer_size = self.buffer.len();
+                            debug!("BatchSubmitter[id={}] GetHealth -> buffer_size={}", self.instance_id, buffer_size);
                             let _ = tx.send(buffer_size);
                         }
                         BatchSubmitterCommand::InitializeAckCursor(nanos) => {
@@ -93,8 +102,14 @@ impl BatchSubmitter {
                             self.last_acked_received_nanos = nanos;
                         }
                         BatchSubmitterCommand::PruneByFsync(fsync_nanos) => {
+                            debug!("BatchSubmitter[id={}] PruneByFsync({})", self.instance_id, fsync_nanos);
                             info!("BatchSubmitter for {} pruning by fsync {}.", self.target_ip, fsync_nanos);
                             self.prune_by_fsync(fsync_nanos);
+                            debug!(
+                                "BatchSubmitter[id={}] PruneByFsync complete: buffer_size={}",
+                                self.instance_id,
+                                self.buffer.len()
+                            );
                         }
                         BatchSubmitterCommand::Shutdown => {
                             info!(
@@ -153,6 +168,11 @@ impl BatchSubmitter {
 
     /// Ingests a single `FinalizedPing` and stores it in the buffer.
     pub fn ingest_ping_result(&mut self, finalized_ping: FinalizedPing) {
+        // Test-only trace (debug level): ingest event and key computation.
+        debug!(
+            "BatchSubmitter[id={}] ingest called: sent_nanos={} rtt={:?}",
+            self.instance_id, finalized_ping.sent_nanos, finalized_ping.rtt
+        );
         let (key, record) = if let Some(rtt) = finalized_ping.rtt {
             (
                 finalized_ping.sent_nanos + rtt.as_nanos() as u64,
@@ -174,6 +194,12 @@ impl BatchSubmitter {
         self.buffer.insert(key, record);
 
         debug!(
+            "BatchSubmitter[id={}] buffer after insert (target={}): {}",
+            self.instance_id,
+            self.target_ip,
+            self.buffer.len()
+        );
+        debug!(
             "BatchSubmitter for {} buffer size after insert: {}",
             self.target_ip,
             self.buffer.len()
@@ -193,6 +219,7 @@ impl BatchSubmitter {
 
     /// Sends a batch of records to the database.
     pub async fn send_batch(&mut self) -> Result<()> {
+        // Changed to &self
         let now_ns = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
 
         let records_to_send: Vec<RawDataRecord> = {
@@ -219,7 +246,8 @@ impl BatchSubmitter {
             collector_believes_last_acked_received_nanos: self.last_acked_received_nanos,
         };
 
-        let response = self.db_client.send_batch(request).await?.into_inner();
+        let db_client = self.db_client.clone(); // Cloned the Arc
+        let response = db_client.send_batch(request).await?.into_inner(); // Used cloned db_client
 
         match send_batch_response::Status::try_from(response.status)? {
             send_batch_response::Status::Ok => {

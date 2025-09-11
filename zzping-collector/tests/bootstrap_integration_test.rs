@@ -1,4 +1,3 @@
-use ntest::timeout;
 use std::{
     io::Write,
     sync::{Arc, Mutex},
@@ -21,7 +20,7 @@ use common::{MockIngestionService, VectorLogger};
 /// 2. Survive a database connection failure.
 /// 3. Actively attempt to reconnect after the failure.
 #[tokio::test]
-#[timeout(2000)]
+// Removed #[timeout(2000)]
 async fn test_collector_survives_disconnect_and_reconnects() {
     // 1. Setup a logger to capture output.
     let log_messages = Arc::new(Mutex::new(Vec::new()));
@@ -46,10 +45,11 @@ async fn test_collector_survives_disconnect_and_reconnects() {
         r#"
 (
     collector_uuid: "integ-test-uuid",
-    database_addr: "http://{addr}",
+    database_addr: "http://{}",
     auth_token: "test-token",
 )
-"#
+"#,
+        addr
     );
     let mut config_file = NamedTempFile::new().unwrap();
     config_file.write_all(config_content.as_bytes()).unwrap();

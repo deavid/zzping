@@ -20,10 +20,15 @@ pub mod ping_surge_client;
 pub mod pinger;
 pub mod session_handler;
 
+pub mod client_holder;
 pub mod target_worker;
 pub mod task_supervisor;
 
-use crate::{cli::Cli, collector_service::{CollectorService, CachedIntent}, config::Config};
+use crate::{
+    cli::Cli,
+    collector_service::{CachedIntent, CollectorService},
+    config::Config,
+};
 use anyhow::Result;
 use clap::Parser;
 use log::info;
@@ -70,7 +75,18 @@ pub fn bootstrap_collector_for_test(
 ) -> Result<CollectorService> {
     let config = Config::load(&config_path)?;
     let lock = TcpListener::bind("127.0.0.1:0")?;
-    CollectorService::new_for_test(config, lock, Some(test_shutdown_tx_sender), None)
+    // Try to load a last_intent.ron from the same directory as the config file.
+    let cached_intent = if let Some(parent) = std::path::Path::new(&config_path).parent() {
+        let last_intent_path = parent.join("last_intent.ron");
+        if let Ok(data) = std::fs::read_to_string(last_intent_path) {
+            ron::from_str::<CachedIntent>(&data).ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    CollectorService::new_for_test(config, lock, Some(test_shutdown_tx_sender), cached_intent)
 }
 
 /// Test helper that also accepts a worker_count_tx to observe worker counts.
@@ -81,13 +97,59 @@ pub fn bootstrap_collector_for_test_with_worker_tx(
 ) -> Result<CollectorService> {
     let config = Config::load(&config_path)?;
     let lock = TcpListener::bind("127.0.0.1:0")?;
+    // Use default interval and try to load cached intent from the config's directory
+    let cached_intent = if let Some(parent) = std::path::Path::new(&config_path).parent() {
+        let last_intent_path = parent.join("last_intent.ron");
+        if let Ok(data) = std::fs::read_to_string(last_intent_path) {
+            ron::from_str::<CachedIntent>(&data).ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     // Use default interval
     let svc = CollectorService::new_for_test_with_interval_and_worker_tx(
         config,
         lock,
         Some(test_shutdown_tx_sender),
         1000,
-        None,
+        cached_intent,
+        worker_count_tx,
+    )?;
+    Ok(svc)
+}
+
+/// Test helper that accepts an explicit `database_addr` to avoid relying on the
+/// contents of the config file. This is useful for deterministic integration
+/// tests that spawn mock servers and want to ensure the collector connects to
+/// the intended address.
+pub fn bootstrap_collector_for_test_with_worker_tx_and_db(
+    config_path: String,
+    test_shutdown_tx_sender: mpsc::Sender<mpsc::Sender<SupervisorShutdown>>,
+    worker_count_tx: Option<mpsc::Sender<usize>>,
+    database_addr: String,
+) -> Result<CollectorService> {
+    let mut config = Config::load(&config_path)?;
+    // Override the database address with the explicit value provided by the test.
+    config.database_addr = database_addr;
+    let lock = TcpListener::bind("127.0.0.1:0")?;
+    let cached_intent = if let Some(parent) = std::path::Path::new(&config_path).parent() {
+        let last_intent_path = parent.join("last_intent.ron");
+        if let Ok(data) = std::fs::read_to_string(last_intent_path) {
+            ron::from_str::<CachedIntent>(&data).ok()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let svc = CollectorService::new_for_test_with_interval_and_worker_tx(
+        config,
+        lock,
+        Some(test_shutdown_tx_sender),
+        1000,
+        cached_intent,
         worker_count_tx,
     )?;
     Ok(svc)
@@ -130,8 +192,16 @@ pub fn bootstrap_collector_with_port(
     };
 
     // Create the collector service, passing ownership of the lock to it.
-    let cached_intent = if let Ok(data) = std::fs::read_to_string("last_intent.ron") {
-        ron::from_str::<CachedIntent>(&data).ok()
+    // Try to load last_intent.ron from the same directory as the config file so
+    // tests that pass a config path can include a cached intent without
+    // changing the process CWD.
+    let cached_intent = if let Some(parent) = std::path::Path::new(&config_path).parent() {
+        let last_intent_path = parent.join("last_intent.ron");
+        if let Ok(data) = std::fs::read_to_string(last_intent_path) {
+            ron::from_str::<CachedIntent>(&data).ok()
+        } else {
+            None
+        }
     } else {
         None
     };

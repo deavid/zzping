@@ -1,5 +1,5 @@
 use crate::{
-    database_client::DatabaseClient,
+    database_client::DatabaseClientTrait,
     target_worker::{TargetWorker, TargetWorkerHandle, WorkerCommand},
     collector_service::CachedIntent,
 };
@@ -9,6 +9,7 @@ use log::{error, info, warn};
 use std::{
     collections::{HashMap, HashSet},
     net::IpAddr,
+    sync::Arc,
     time::Duration,
 };
 use tokio::sync::{mpsc, oneshot, watch};
@@ -25,9 +26,9 @@ pub struct SupervisorConfig {
 }
 
 /// A command to update the TaskSupervisor's database client.
-#[derive(Debug)]
+// Removed #[derive(Debug)]
 pub enum ClientUpdate {
-    NewClient(Box<DatabaseClient>),
+    NewClient(Arc<dyn DatabaseClientTrait>),
     ClientLost,
 }
 
@@ -48,7 +49,7 @@ pub struct HealthReport {
 /// The long-lived manager of the worker pool.
 pub struct TaskSupervisor {
     collector_uuid: String,
-    pub db_client: Option<DatabaseClient>,
+    pub db_client: Option<Arc<dyn DatabaseClientTrait>>,
     pub workers: HashMap<IpAddr, TargetWorkerHandle>,
     current_role: CollectorRole,
     current_config: Option<SupervisorConfig>,
@@ -180,7 +181,7 @@ impl TaskSupervisor {
                     match update {
                         ClientUpdate::NewClient(client) => {
                             info!("TaskSupervisor received new database client.");
-                            self.db_client = Some(*client);
+                            self.db_client = Some(client);
                             // Trigger reconciliation with the current config (from cache or last received)
                             self.reconcile(self.current_config.clone()).await;
                         }
@@ -276,7 +277,7 @@ impl TaskSupervisor {
 
         // Add new workers
         for &target_ip in desired_targets.difference(&current_workers) {
-            if let Some(db_client) = &self.db_client {
+            if let Some(db_client) = self.db_client.clone() {
                 info!("TaskSupervisor: Adding worker for target {target_ip}");
                 let worker_result = if use_mock_ping_client {
                     // For tests, use MockPingClient
