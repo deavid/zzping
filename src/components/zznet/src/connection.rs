@@ -15,23 +15,24 @@ pub struct TlsCertAndKey {
 }
 
 impl TlsCertAndKey {
-    pub fn from_role(role: Role) -> Self {
+    pub fn from_role(role: Role, certs_dir: Option<&str>) -> Self {
+        let dir = certs_dir.unwrap_or("certs");
         match role {
             Role::Collector => TlsCertAndKey {
-                pem_path: "certs/collector.pem".into(),
-                key_path: "certs/collector.key".into(),
+                pem_path: format!("{}/collector.pem", dir).into(),
+                key_path: format!("{}/collector.key", dir).into(),
             },
             Role::Database => TlsCertAndKey {
-                pem_path: "certs/database.pem".into(),
-                key_path: "certs/database.key".into(),
+                pem_path: format!("{}/database.pem", dir).into(),
+                key_path: format!("{}/database.key", dir).into(),
             },
             Role::ClientRo => TlsCertAndKey {
-                pem_path: "certs/client-ro.pem".into(),
-                key_path: "certs/client-ro.key".into(),
+                pem_path: format!("{}/client-ro.pem", dir).into(),
+                key_path: format!("{}/client-ro.key", dir).into(),
             },
             Role::ClientAdmin => TlsCertAndKey {
-                pem_path: "certs/client-admin.pem".into(),
-                key_path: "certs/client-admin.key".into(),
+                pem_path: format!("{}/client-admin.pem", dir).into(),
+                key_path: format!("{}/client-admin.key", dir).into(),
             },
         }
     }
@@ -45,10 +46,10 @@ pub struct TlsCfg {
 }
 
 impl TlsCfg {
-    pub fn from_role(role: Role) -> Self {
+    pub fn from_role(role: Role, certs_dir: Option<&str>) -> Self {
         Self {
-            cert: TlsCertAndKey::from_role(role),
-            ca_cert_path: Some("certs/ca.pem".into()),
+            cert: TlsCertAndKey::from_role(role, certs_dir),
+            ca_cert_path: Some(format!("{}/ca.pem", certs_dir.unwrap_or("certs")).into()),
             add_native_ca_certs: false,
             common_name: "zzping".into(),
         }

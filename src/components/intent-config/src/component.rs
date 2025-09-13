@@ -148,22 +148,34 @@ mod tests {
     async fn test_full_e2e_update_and_broadcast() {
         let _ = env_logger::builder().is_test(true).try_init();
 
-        // 1. SETUP: Instantiate the REAL zznet stack in memory.
+        // 1. SETUP THE TEST ENVIRONMENT
+        // Find the workspace root relative to this test's manifest dir.
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let workspace_root = std::path::Path::new(manifest_dir).join("../../../");
+        let test_certs_dir = workspace_root.join("src/components/zznet/test_certs");
+
+        // Convert the path to a string to pass to our modified function
+        let test_certs_path_str = test_certs_dir.to_str().unwrap();
+
+        // 2. CONFIGURE USING THE TEST CERTS PATH
         let server_addr = "127.0.0.1:12345".parse().unwrap();
         let server_config = ServerConfig {
             socketaddr: vec![server_addr],
-            tls: Some(TlsCfg::from_role(Role::Database)),
+            tls: Some(TlsCfg::from_role(Role::Database, Some(test_certs_path_str))),
             role: Role::Database,
         };
         let client_admin_config = ClientConfig {
             socketaddr: vec![server_addr],
-            tls: Some(TlsCfg::from_role(Role::ClientAdmin)),
+            tls: Some(TlsCfg::from_role(
+                Role::ClientAdmin,
+                Some(test_certs_path_str),
+            )),
             role: Role::ClientAdmin,
             reconnect_delay: Duration::from_secs(1),
         };
         let client_ro_config = ClientConfig {
             socketaddr: vec![server_addr],
-            tls: Some(TlsCfg::from_role(Role::ClientRo)),
+            tls: Some(TlsCfg::from_role(Role::ClientRo, Some(test_certs_path_str))),
             role: Role::ClientRo,
             reconnect_delay: Duration::from_secs(1),
         };

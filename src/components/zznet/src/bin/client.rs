@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = ClientConfig {
         socketaddr: vec![addr],
-        tls: Some(TlsCfg::from_role(Role::Collector)),
+        tls: Some(TlsCfg::from_role(Role::Collector, None)),
         role: Role::Collector,
         reconnect_delay: Duration::from_secs(5),
     };

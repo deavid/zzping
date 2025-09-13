@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
 
     let config = ServerConfig {
         socketaddr: vec![addr],
-        tls: Some(TlsCfg::from_role(Role::Database)),
+        tls: Some(TlsCfg::from_role(Role::Database, None)),
         role: Role::Database,
     };
     let server = ServerRuntime::new(config);
