@@ -4,6 +4,7 @@ members = [
     "src/common/zzping-lib",
     "src/common/zzping-proto",
     "src/common/zznet-lib",
+    "src/common/zznet-api",
     "src/apps/zzping-database",
     "src/apps/zzping-collector",
     "src/apps/zzping-cli",

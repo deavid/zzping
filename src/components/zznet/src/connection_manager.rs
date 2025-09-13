@@ -1,11 +1,13 @@
 use crate::proto::messages::{ChannelId, DataMsg};
 use crate::traits::AsyncReadWrite;
 use anyhow::Result;
+use async_trait::async_trait;
 use log;
 use rmp_serde;
 use std::collections::HashMap;
 use tokio::io::{ReadHalf, WriteHalf, split};
 use tokio::sync::{mpsc, oneshot};
+use zznet_api::ZzChannel;
 
 pub enum ConnectionCommand {
     SendFrame(Vec<u8>),
@@ -36,7 +38,7 @@ pub struct Channel {
 
 impl Channel {
     /// Asynchronously sends a payload over the channel.
-    pub async fn send(&self, payload: Vec<u8>) -> Result<()> {
+    pub async fn send_actor_command(&self, payload: Vec<u8>) -> Result<()> {
         let data_msg = DataMsg {
             channel_id: self.id,
             payload,
@@ -45,6 +47,20 @@ impl Channel {
             .send(ConnectionCommand::SendData(data_msg))
             .await?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl ZzChannel for Channel {
+    async fn send(&self, payload: Vec<u8>) -> Result<()> {
+        self.send_actor_command(payload).await
+    }
+
+    async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
+        match self.rx.recv().await {
+            Some(data_msg) => Ok(Some(data_msg.payload)),
+            None => Ok(None),
+        }
     }
 }
 

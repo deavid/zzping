@@ -7,10 +7,11 @@ use tokio::sync::mpsc;
 use zznet::connection::ServerConfig;
 use zznet::connection_manager::{Channel, ConnectionCommand, ConnectionEvent};
 use zznet::runtime::server::ServerRuntime;
+use zznet_api::ZzChannel;
 
 pub(crate) fn start_runtime(
     config: ServerConfig,
-    listeners: Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Channel)>>>>,
+    listeners: Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Box<dyn ZzChannel>)>>>>,
     next_client_id: Arc<Mutex<u64>>,
 ) {
     tokio::spawn(async move {
@@ -40,7 +41,7 @@ fn handle_connection_events(
     client_id: u64,
     command_tx: mpsc::Sender<ConnectionCommand>,
     mut event_rx: mpsc::Receiver<ConnectionEvent>,
-    listeners: Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Channel)>>>>,
+    listeners: Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Box<dyn ZzChannel>)>>>>,
 ) {
     tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
@@ -57,7 +58,7 @@ fn handle_connection_events(
             };
 
             if let Some(listener_tx) = listener_tx {
-                if listener_tx.send((client_id, channel)).await.is_err() {
+                if listener_tx.send((client_id, Box::new(channel))).await.is_err() {
                     log::warn!(
                         "A listener for channel '{}' was dropped.",
                         name

@@ -5900,6 +5900,7 @@ version = "0.2.2-beta2"
 dependencies = [
  "anyhow",
  "async-stream",
+ "async-trait",
  "env_logger",
  "futures",
  "log",
@@ -5911,6 +5912,15 @@ dependencies = [
  "serde",
  "tokio",
  "tokio-rustls 0.26.2",
+ "zznet-api",
+]
+
+[[package]]
+name = "zznet-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
 ]
 
 [[package]]
@@ -5922,6 +5932,7 @@ dependencies = [
  "log",
  "tokio",
  "zznet",
+ "zznet-api",
 ]
 
 [[package]]

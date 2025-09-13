@@ -52,3 +52,32 @@ We explicitly considered the risk of using a "stale" channel handle after a reco
 *   **TLS/mTLS Policy:** If TLS is enabled, it is **always mutual TLS (mTLS)**.
 *   **Configurable Timing:** All time-based behaviors (e.g., reconnect delays) must be configurable.
 *   **Testability Strategy:** Logic will be kept pure where possible. It is acceptable for tests to rely on dedicated test files (e.g., certificates) in the repo.
+
+### 5. The Three-Crate Architecture for True Component Isolation
+
+To achieve the highest degree of component isolation and adhere strictly to the Dependency Inversion Principle, we have evolved the design into a three-crate system. This ensures that application components are completely decoupled from the networking implementation.
+
+*   **`zznet-api` (The Contract):** A new, minimal, foundational crate.
+    *   **Responsibility:** To define the abstract interface for communication.
+    *   **Contents:** It defines a public `ZzChannel` trait. This trait provides a generic, asynchronous interface for sending and receiving byte payloads (`async fn send`, `async fn recv`).
+    *   **Dependencies:** Has zero dependencies on other `zznet` crates. It is the root of the dependency graph.
+
+*   **`zznet` (The Engine):** The low-level implementation crate.
+    *   **Responsibility:** To handle all the complexities of the network protocol, including TLS, configuration, runtimes, and the connection actor model.
+    *   **Contents:** All networking details (`ClientConfig`, `ServerConfig`, `ConnectionActor`, etc.) remain here. Its internal, concrete `Channel` struct is modified to implement the `ZzChannel` trait from `zznet-api`.
+    *   **Dependencies:** Depends on `zznet-api`.
+
+*   **`zznet-lib` (The Factory/Facade):** The high-level crate that connects the application to the engine.
+    *   **Responsibility:** To act as a factory that constructs the networking engine and produces abstract channels for the application.
+    *   **Contents:** Contains the `ZzNet` struct and `ZzNetConfig` enum. Its public API (`listen_for_channel`, `request_channel`) returns trait objects (`Box<dyn ZzChannel>`), completely hiding the concrete `zznet::Channel` type from the consumer.
+    *   **Dependencies:** Depends on both `zznet` (to build the engine) and `zznet-api` (to return the trait objects).
+
+#### The Resulting Dependency Graph
+
+This structure ensures that application components have the cleanest possible dependency graph:
+
+*   `Application Component` -> `zznet-api`
+*   `zznet` (Engine) -> `zznet-api`
+*   `zznet-lib` (Factory) -> `zznet` -> `zznet-api`
+
+The "Composer" (the final application binary) is the only entity that depends on all three crates, using `zznet-lib` and `zznet` to configure and create the network, and then passing the abstract `Box<dyn ZzChannel>` objects to the application components, which only know about the `zznet-api` contract. This achieves perfect isolation.

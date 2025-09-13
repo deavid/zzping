@@ -4,11 +4,12 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
-use zznet::connection_manager::{Channel, Connection};
+use zznet::connection_manager::Connection;
+use zznet_api::ZzChannel;
 
 pub struct ZzNet {
     pub(crate) client_connection: Arc<Mutex<Option<Connection>>>,
-    pub(crate) server_listeners: Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Channel)>>>>,
+    pub(crate) server_listeners: Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Box<dyn ZzChannel>)>>>>,
     pub(crate) next_client_id: Arc<Mutex<u64>>,
 }
 
@@ -35,7 +36,7 @@ impl ZzNet {
         net
     }
 
-    pub async fn listen_for_channel(&self, name: &str) -> Result<mpsc::Receiver<(u64, Channel)>> {
+    pub async fn listen_for_channel(&self, name: &str) -> Result<mpsc::Receiver<(u64, Box<dyn ZzChannel>)>> {
         let (tx, rx) = mpsc::channel(32);
         self.server_listeners
             .lock()
@@ -44,9 +45,10 @@ impl ZzNet {
         Ok(rx)
     }
 
-    pub async fn request_channel(&self, name: String) -> Result<Channel> {
+    pub async fn request_channel(&self, name: String) -> Result<Box<dyn ZzChannel>> {
         if let Some(conn) = self.client_connection.lock().unwrap().as_ref() {
-            conn.request_channel(name).await
+            let channel = conn.request_channel(name).await?;
+            Ok(Box::new(channel))
         } else {
             Err(anyhow::anyhow!("No active connection"))
         }

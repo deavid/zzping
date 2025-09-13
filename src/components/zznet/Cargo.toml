@@ -21,6 +21,8 @@ env_logger = { workspace = true }
 log = { workspace = true }
 futures = "0.3"
 async-stream = "0.3"
+zznet-api = { path = "../../common/zznet-api" }
+async-trait = "0.1"
 
 [[bin]]
 name = "zznet-server"

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 zznet = { path = "../../components/zznet" }
+zznet-api = { path = "../zznet-api" }
 tokio = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
