@@ -17,11 +17,6 @@ fdq*.log.*
 zzping-capture/capture_logs/
 zzping-database/data/
 /data/
-ca.pem
-ca.key
-ca.srl
-server.key
-server.pem
 .cache/
 certs/
 .env
