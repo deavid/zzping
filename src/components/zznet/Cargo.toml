@@ -31,3 +31,7 @@ path = "src/bin/server.rs"
 [[bin]]
 name = "zznet-client"
 path = "src/bin/client.rs"
+
+[dev-dependencies]
+ntest = { workspace = true }
+bytes = { workspace = true }

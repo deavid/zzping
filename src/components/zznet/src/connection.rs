@@ -147,3 +147,73 @@ pub struct ServerConfig {
     pub tls: Option<TlsCfg>,
     pub role: Role,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ntest::timeout;
+
+    #[test]
+    #[timeout(100)]
+    fn test_tlscfg_from_role_default_dir() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let role = Role::Collector;
+        let tls_cfg = TlsCfg::from_role(role, None);
+
+        assert_eq!(
+            tls_cfg.cert.pem_path,
+            PathBuf::from("certs/collector.pem")
+        );
+        assert_eq!(
+            tls_cfg.cert.key_path,
+            PathBuf::from("certs/collector.key")
+        );
+        assert_eq!(tls_cfg.ca_cert_path, Some(PathBuf::from("certs/ca.pem")));
+    }
+
+    #[test]
+    #[timeout(100)]
+    fn test_tlscfg_from_role_custom_dir() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let role = Role::Database;
+        let tls_cfg = TlsCfg::from_role(role, Some("custom/certs"));
+
+        assert_eq!(
+            tls_cfg.cert.pem_path,
+            PathBuf::from("custom/certs/database.pem")
+        );
+        assert_eq!(
+            tls_cfg.cert.key_path,
+            PathBuf::from("custom/certs/database.key")
+        );
+        assert_eq!(
+            tls_cfg.ca_cert_path,
+            Some(PathBuf::from("custom/certs/ca.pem"))
+        );
+    }
+
+    #[test]
+    #[timeout(100)]
+    fn test_tlscertandkey_from_role() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let roles = [
+            Role::Collector,
+            Role::Database,
+            Role::ClientRo,
+            Role::ClientAdmin,
+        ];
+        let role_names = ["collector", "database", "client-ro", "client-admin"];
+
+        for (i, role) in roles.iter().enumerate() {
+            let cert_key = TlsCertAndKey::from_role(*role, Some("test_dir"));
+            assert_eq!(
+                cert_key.pem_path,
+                PathBuf::from(format!("test_dir/{}.pem", role_names[i]))
+            );
+            assert_eq!(
+                cert_key.key_path,
+                PathBuf::from(format!("test_dir/{}.key", role_names[i]))
+            );
+        }
+    }
+}

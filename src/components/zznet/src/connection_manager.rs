@@ -64,6 +64,392 @@ impl ZzChannel for Channel {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::proto::messages::{ControlMsg, Frame};
+    use log::info;
+    use ntest::timeout;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+    use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+    use tokio::sync::mpsc;
+
+    // A mock stream that allows a test to deterministically control I/O
+    struct MockStream {
+        // The test sends bytes here for the actor to "read"
+        rx_for_stream: mpsc::Receiver<Vec<u8>>,
+        // The actor sends bytes here for the test to "assert on"
+        tx_for_test: mpsc::Sender<Vec<u8>>,
+        // Internal buffer for partial reads
+        buffer: Vec<u8>,
+    }
+
+    impl AsyncRead for MockStream {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<std::io::Result<()>> {
+            // If we have leftover data, use it.
+            if !self.buffer.is_empty() {
+                let len = std::cmp::min(buf.remaining(), self.buffer.len());
+                buf.put_slice(&self.buffer[..len]);
+                self.buffer.drain(..len);
+                return Poll::Ready(Ok(()));
+            }
+
+            // Otherwise, try to get more data from the test.
+            match self.rx_for_stream.poll_recv(cx) {
+                Poll::Ready(Some(data)) => {
+                    // We got data. Put it in the buffer and then fill buf from it.
+                    self.buffer.extend_from_slice(&data);
+                    let len = std::cmp::min(buf.remaining(), self.buffer.len());
+                    buf.put_slice(&self.buffer[..len]);
+                    self.buffer.drain(..len);
+                    Poll::Ready(Ok(()))
+                }
+                Poll::Ready(None) => Poll::Ready(Ok(())), // Stream closed
+                Poll::Pending => Poll::Pending,
+            }
+        }
+    }
+
+    impl AsyncWrite for MockStream {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            // When the actor writes, send the data to the test
+            match self.tx_for_test.try_send(buf.to_vec()) {
+                Ok(_) => Poll::Ready(Ok(buf.len())),
+                Err(_) => Poll::Ready(Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "Test channel closed",
+                ))),
+            }
+        }
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_request_channel_sends_frame() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        info!("SETUP: test_request_channel_sends_frame");
+
+        // SETUP: Create the mpsc channels for our mock stream
+        let (_tx_to_stream, rx_for_stream) = mpsc::channel(32);
+        let (tx_for_test, mut rx_from_stream) = mpsc::channel(32);
+
+        let mock_stream = MockStream {
+            rx_for_stream,
+            tx_for_test,
+            buffer: Vec::new(),
+        };
+
+        // Create the connection with the mock stream
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let connection = Connection::new(Box::new(mock_stream), event_tx);
+
+        info!("ACT: Request a channel. This sends a command to the actor.");
+        // We don't await this future yet. It will complete when the actor responds.
+        // Here, we just want to trigger the actor to send a frame.
+        let command_tx = connection.command_sender();
+        let (response_tx, _response_rx) = oneshot::channel();
+        command_tx
+            .send(ConnectionCommand::RequestChannel {
+                name: "test".to_string(),
+                response_tx,
+            })
+            .await
+            .unwrap();
+
+        info!("ASSERT: Block and wait to receive the frame the actor wrote to the stream.");
+        // This is the synchronization point. No sleep needed.
+        // The actor's write_frame performs two writes, one for length and one for data.
+        let written_len = rx_from_stream
+            .recv()
+            .await
+            .expect("Actor did not write length to stream");
+        let written_data = rx_from_stream
+            .recv()
+            .await
+            .expect("Actor did not write data to stream");
+
+        // Verify the frame is correct
+        let expected_frame =
+            Frame::Control(ControlMsg::RequestChannel { name: "test".to_string() });
+        let expected_bytes = rmp_serde::to_vec(&expected_frame).unwrap();
+        assert_eq!(written_len, (expected_bytes.len() as u32).to_be_bytes());
+        assert_eq!(written_data, expected_bytes);
+    }
+
+    #[tokio::test]
+    #[timeout(200)]
+    async fn test_channel_opened_completes_request() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        info!("SETUP: test_channel_opened_completes_request");
+
+        let (tx_to_stream, rx_for_stream) = mpsc::channel(32);
+        let (tx_for_test, mut rx_from_stream) = mpsc::channel(32);
+
+        let mock_stream = MockStream {
+            rx_for_stream,
+            tx_for_test,
+            buffer: Vec::new(),
+        };
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let connection = Connection::new(Box::new(mock_stream), event_tx);
+        let command_tx = connection.command_sender();
+        let (response_tx, response_rx) = oneshot::channel(); // Manual oneshot
+        let channel_name = "test-channel".to_string();
+        let channel_id = 42;
+
+        info!("ACT 1: Send RequestChannel command");
+        command_tx
+            .send(ConnectionCommand::RequestChannel {
+                name: channel_name.clone(),
+                response_tx,
+            })
+            .await
+            .unwrap();
+
+        info!("SYNC 1: Wait for actor to send frame");
+        let _ = rx_from_stream.recv().await; // Drain length
+        let _ = rx_from_stream.recv().await; // Drain data
+
+        info!("ACT 2: Send ChannelOpened frame back");
+        let response_frame = Frame::Control(ControlMsg::ChannelOpened {
+            name: channel_name.clone(),
+            id: channel_id,
+        });
+        let response_bytes = rmp_serde::to_vec(&response_frame).unwrap();
+        let len_bytes = (response_bytes.len() as u32).to_be_bytes();
+        let mut framed_response = Vec::with_capacity(4 + response_bytes.len());
+        framed_response.extend_from_slice(&len_bytes);
+        framed_response.extend_from_slice(&response_bytes);
+        tx_to_stream.send(framed_response).await.unwrap();
+
+        info!("ASSERT: Await the oneshot receiver");
+        let channel = tokio::time::timeout(std::time::Duration::from_millis(150), response_rx)
+            .await
+            .expect("Test timed out")
+            .unwrap() // Unwrap result from oneshot
+            .unwrap(); // Unwrap result from actor
+
+        assert_eq!(channel.id, channel_id);
+    }
+
+    #[tokio::test]
+    #[timeout(200)]
+    async fn test_data_frame_forwards_to_channel() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        info!("SETUP: test_data_frame_forwards_to_channel");
+
+        let (tx_to_stream, rx_for_stream) = mpsc::channel(32);
+        let (tx_for_test, mut rx_from_stream) = mpsc::channel(32);
+        let mock_stream = MockStream {
+            rx_for_stream,
+            tx_for_test,
+            buffer: Vec::new(),
+        };
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let connection = Connection::new(Box::new(mock_stream), event_tx);
+        let command_tx = connection.command_sender();
+        let (response_tx, response_rx) = oneshot::channel();
+        let channel_name = "test-channel".to_string();
+        let channel_id = 42;
+
+        info!("ACT 1: Establish a channel");
+        command_tx
+            .send(ConnectionCommand::RequestChannel {
+                name: channel_name.clone(),
+                response_tx,
+            })
+            .await
+            .unwrap();
+        let _ = rx_from_stream.recv().await; // Drain length
+        let _ = rx_from_stream.recv().await; // Drain data
+        let open_frame = Frame::Control(ControlMsg::ChannelOpened {
+            name: channel_name.clone(),
+            id: channel_id,
+        });
+        let open_bytes = rmp_serde::to_vec(&open_frame).unwrap();
+        let len_bytes = (open_bytes.len() as u32).to_be_bytes();
+        let mut framed_open = Vec::with_capacity(4 + open_bytes.len());
+        framed_open.extend_from_slice(&len_bytes);
+        framed_open.extend_from_slice(&open_bytes);
+        tx_to_stream.send(framed_open).await.unwrap();
+        let mut channel = tokio::time::timeout(std::time::Duration::from_millis(150), response_rx)
+            .await
+            .expect("Channel open timed out")
+            .unwrap()
+            .unwrap();
+
+        info!("ACT 2: Send a Data frame to the actor");
+        let payload = vec![1, 2, 3, 4];
+        let data_frame = Frame::Data(crate::proto::messages::DataMsg {
+            channel_id,
+            payload: payload.clone(),
+        });
+        let data_bytes = rmp_serde::to_vec(&data_frame).unwrap();
+        let len_bytes = (data_bytes.len() as u32).to_be_bytes();
+        let mut framed_data = Vec::with_capacity(4 + data_bytes.len());
+        framed_data.extend_from_slice(&len_bytes);
+        framed_data.extend_from_slice(&data_bytes);
+        tx_to_stream.send(framed_data).await.unwrap();
+
+        info!("ASSERT: The channel's receiver gets the data");
+        let received_data =
+            tokio::time::timeout(std::time::Duration::from_millis(50), channel.rx.recv())
+                .await
+                .expect("Data receive timed out")
+                .unwrap();
+        assert_eq!(received_data.payload, payload);
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_data_for_unknown_channel_is_ignored() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (tx_to_stream, rx_for_stream) = mpsc::channel(32);
+        let (tx_for_test, _rx_from_stream) = mpsc::channel(32);
+        let mock_stream = MockStream {
+            rx_for_stream,
+            tx_for_test,
+            buffer: Vec::new(),
+        };
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let connection = Connection::new(Box::new(mock_stream), event_tx);
+
+        info!("ACT: Send a Data frame for a channel ID that doesn't exist");
+        let data_frame = Frame::Data(crate::proto::messages::DataMsg {
+            channel_id: 999, // Unknown ID
+            payload: vec![5, 6, 7, 8],
+        });
+        let data_bytes = rmp_serde::to_vec(&data_frame).unwrap();
+        let len_bytes = (data_bytes.len() as u32).to_be_bytes();
+        let mut framed_data = Vec::with_capacity(4 + data_bytes.len());
+        framed_data.extend_from_slice(&len_bytes);
+        framed_data.extend_from_slice(&data_bytes);
+        tx_to_stream.send(framed_data).await.unwrap();
+
+        info!("ASSERT: The actor does not crash and its command channel remains open");
+        // We can't easily inspect logs, but we can check the actor is still alive
+        // by verifying its command channel hasn't been closed.
+        assert!(!connection.command_tx.is_closed());
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_unsolicited_channel_opened_is_ignored() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (tx_to_stream, rx_for_stream) = mpsc::channel(32);
+        let (tx_for_test, _rx_from_stream) = mpsc::channel(32);
+        let mock_stream = MockStream {
+            rx_for_stream,
+            tx_for_test,
+            buffer: Vec::new(),
+        };
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let connection = Connection::new(Box::new(mock_stream), event_tx);
+
+        info!("ACT: Send a ChannelOpened frame for a request that was never made");
+        let frame = Frame::Control(ControlMsg::ChannelOpened {
+            name: "unsolicited-channel".to_string(),
+            id: 123,
+        });
+        let bytes = rmp_serde::to_vec(&frame).unwrap();
+        let len_bytes = (bytes.len() as u32).to_be_bytes();
+        let mut framed = Vec::new();
+        framed.extend_from_slice(&len_bytes);
+        framed.extend_from_slice(&bytes);
+        tx_to_stream.send(framed).await.unwrap();
+
+        info!("ASSERT: The actor does not crash and its command channel remains open");
+        assert!(!connection.command_tx.is_closed());
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_actor_terminates_on_read_error() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (tx_to_stream, rx_for_stream) = mpsc::channel(32);
+        let (tx_for_test, _rx_from_stream) = mpsc::channel(32);
+        let mock_stream = MockStream {
+            rx_for_stream,
+            tx_for_test,
+            buffer: Vec::new(),
+        };
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let connection = Connection::new(Box::new(mock_stream), event_tx);
+
+        info!("ACT: Close the stream from the test side");
+        drop(tx_to_stream);
+
+        info!("ASSERT: The actor's command channel is eventually closed");
+        // The actor should terminate, which will drop its command_tx clone.
+        // Once all clones are dropped (including the one in `connection`),
+        // the channel will be closed.
+        connection.command_tx.closed().await;
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_dropped_oneshot_receiver_does_not_panic() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (tx_to_stream, rx_for_stream) = mpsc::channel(32);
+        let (tx_for_test, mut rx_from_stream) = mpsc::channel(32);
+        let mock_stream = MockStream {
+            rx_for_stream,
+            tx_for_test,
+            buffer: Vec::new(),
+        };
+        let (event_tx, _event_rx) = mpsc::channel(32);
+        let connection = Connection::new(Box::new(mock_stream), event_tx);
+        let command_tx = connection.command_sender();
+        let (response_tx, response_rx) = oneshot::channel();
+
+        info!("ACT 1: Send request and drop receiver");
+        command_tx
+            .send(ConnectionCommand::RequestChannel {
+                name: "dropped-request".to_string(),
+                response_tx,
+            })
+            .await
+            .unwrap();
+        drop(response_rx); // This is the key part of the test
+
+        info!("SYNC: Drain the request frame from the actor");
+        let _ = rx_from_stream.recv().await;
+        let _ = rx_from_stream.recv().await;
+
+        info!("ACT 2: Simulate the peer opening the channel anyway");
+        let frame = Frame::Control(ControlMsg::ChannelOpened {
+            name: "dropped-request".to_string(),
+            id: 777,
+        });
+        let bytes = rmp_serde::to_vec(&frame).unwrap();
+        let len_bytes = (bytes.len() as u32).to_be_bytes();
+        let mut framed = Vec::new();
+        framed.extend_from_slice(&len_bytes);
+        framed.extend_from_slice(&bytes);
+        tx_to_stream.send(framed).await.unwrap();
+
+        info!("ASSERT: The actor does not crash");
+        // Give the actor a moment to process the ChannelOpened and the failed oneshot send
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        assert!(!connection.command_tx.is_closed());
+    }
+}
+
 /// Lightweight handle for interacting with an active connection. Its methods send commands to a background actor task that manages the actual connection state.
 pub struct Connection {
     command_tx: mpsc::Sender<ConnectionCommand>,

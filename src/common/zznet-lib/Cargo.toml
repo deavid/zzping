@@ -10,3 +10,8 @@ tokio = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 futures = { workspace = true }
+
+[dev-dependencies]
+ntest = { workspace = true }
+env_logger = { workspace = true }
+rmp-serde = { workspace = true }
