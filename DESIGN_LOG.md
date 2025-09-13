@@ -81,3 +81,19 @@ This structure ensures that application components have the cleanest possible de
 *   `zznet-lib` (Factory) -> `zznet` -> `zznet-api`
 
 The "Composer" (the final application binary) is the only entity that depends on all three crates, using `zznet-lib` and `zznet` to configure and create the network, and then passing the abstract `Box<dyn ZzChannel>` objects to the application components, which only know about the `zznet-api` contract. This achieves perfect isolation.
+
+### 6. The First Component: `IntentConfig` Proof of Concept
+
+To validate the entire three-crate architecture and establish a pattern for future components, we will build a Proof of Concept for the `IntentConfig` component.
+
+*   **Goal:** The PoC's primary goal is to serve as a full, end-to-end integration test for the entire `zznet` stack. It will demonstrate that a single, logical component can communicate with itself across the network, with its behavior determined by its assigned `Role`.
+*   **Single Component, Multiple Roles:** We will create a single `intent-config` crate. This component will be instantiable in one of three roles: `Server`, `ClientAdmin`, or `ClientRo`. This `Role` enum will be a core concept shared across the system.
+*   **Moving `Role` to the API:** The `Role` enum, previously in `zznet`, is a cross-cutting concern used for both network authentication and application-level authorization. It will be moved to the `zznet-api` crate to become part of the system's fundamental contract.
+*   **PoC Scope (In-Memory):** The PoC will focus on the communication pattern, not persistence. The `Server` will hold the configuration state in memory. The `ClientAdmin` will have a method to update this state. The `ClientRo` will have a method to subscribe to a stream of updates. Disk I/O (reading/writing `.ron` files) is out of scope for the PoC.
+*   **Internal Protocol:** The component will communicate with itself over a `ZzChannel` using a private, internal protocol (e.g., a `serde`-serializable enum) to differentiate between update, broadcast, and request messages. The component's public API will be action-oriented (e.g., `update_config`, `subscribe_to_changes`), completely hiding this internal protocol and its data structures.
+*   **The End-to-End Test:** The deliverable will be a single `#[tokio::test]` within the `intent-config` crate. This test will act as the "Composer":
+    1.  It will instantiate the *real* `zznet-lib` and `zznet` components to create an in-memory network.
+    2.  It will create one `Server`, one `ClientAdmin`, and one `ClientRo` instance of the `IntentConfig` component.
+    3.  It will wire them together using the `zznet-lib` facade.
+    4.  It will call the `update` method on the `ClientAdmin`.
+    5.  It will assert that the `ClientRo` receives the updated state, proving that the entire stack—from application logic, through the abstract API, down to the network engine, and back up—is functioning correctly.

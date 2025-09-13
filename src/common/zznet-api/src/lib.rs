@@ -1,5 +1,20 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
+
+/// Represents the role of a participant in the ZZPing network protocol.
+/// This enum defines the possible roles that can connect to the network.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+pub enum Role {
+    /// Collector role for gathering data.
+    Collector,
+    /// Database role for storing data.
+    Database,
+    /// Read-only client role.
+    ClientRo,
+    /// Administrative client role with full access.
+    ClientAdmin,
+}
 
 /// The abstract interface for a bidirectional communication channel.
 /// Application components will depend only on this trait.

@@ -9,6 +9,7 @@ use zznet::connection::{ClientConfig, TlsCfg};
 use zznet::proto;
 use zznet::proto::messages::{ControlMsg, Frame};
 use zznet::runtime::client::ClientRuntime;
+use zznet_api::Role;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -23,8 +24,8 @@ async fn main() -> anyhow::Result<()> {
 
     let config = ClientConfig {
         socketaddr: vec![addr],
-        tls: Some(TlsCfg::from_role(proto::hello::Role::Collector)),
-        role: proto::hello::Role::Collector,
+        tls: Some(TlsCfg::from_role(Role::Collector)),
+        role: Role::Collector,
         reconnect_delay: Duration::from_secs(5),
     };
     let client = ClientRuntime::new(config);
@@ -37,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
                 // tokio::spawn(connection.run()); // Now spawned in new
 
                 let hello = proto::hello::Hello {
-                    role: proto::hello::Role::Collector,
+                    role: Role::Collector,
                 };
                 let frame = Frame::Control(ControlMsg::Hello(hello));
                 let serialized_frame = encode::to_vec(&frame)

@@ -1,4 +1,3 @@
-use crate::proto::hello::Role;
 use anyhow::Result;
 use rustls;
 use rustls_native_certs;
@@ -8,6 +7,7 @@ use std::io::BufReader;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use zznet_api::Role;
 
 pub struct TlsCertAndKey {
     pub pem_path: PathBuf,

@@ -1,0 +1,18 @@
+[package]
+name = "intent-config"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+zznet-api = { path = "../../common/zznet-api" }
+tokio = { workspace = true, features = ["sync"] }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+futures = "0.3"
+
+[dev-dependencies]
+zznet-lib = { path = "../../common/zznet-lib" }
+zznet = { path = "../zznet" }
+env_logger = { workspace = true }

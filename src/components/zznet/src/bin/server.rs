@@ -4,6 +4,7 @@ use futures::StreamExt;
 use std::net::SocketAddr;
 use zznet::connection::{ServerConfig, TlsCfg};
 use zznet::runtime::server::ServerRuntime;
+use zznet_api::Role;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -18,8 +19,8 @@ async fn main() -> anyhow::Result<()> {
 
     let config = ServerConfig {
         socketaddr: vec![addr],
-        tls: Some(TlsCfg::from_role(zznet::proto::hello::Role::Database)),
-        role: zznet::proto::hello::Role::Database,
+        tls: Some(TlsCfg::from_role(Role::Database)),
+        role: Role::Database,
     };
     let server = ServerRuntime::new(config);
     let connection_stream = server.run().await?;

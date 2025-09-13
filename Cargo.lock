@@ -2176,6 +2176,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "intent-config"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "futures",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
+ "zznet",
+ "zznet-api",
+ "zznet-lib",
+]
+
+[[package]]
 name = "io-uring"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5921,6 +5937,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "serde",
 ]
 
 [[package]]
