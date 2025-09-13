@@ -1,6 +1,9 @@
-use crate::connection::ConnectionCfg;
+use crate::connection::ClientConfig;
+use crate::connection_manager::Connection;
 use crate::traits::AsyncReadWrite;
 use anyhow::Result;
+use async_stream::stream;
+use futures::Stream;
 use log;
 use rustls::pki_types::ServerName;
 use std::sync::Arc;
@@ -9,17 +12,38 @@ use tokio_rustls::TlsConnector;
 
 /// The primary state machine for a client's network connection. It holds the configuration and provides the interface to connect to the server.
 pub struct ClientRuntime {
-    config: ConnectionCfg,
+    config: ClientConfig,
 }
 
 impl ClientRuntime {
     /// Prepares the runtime with the necessary connection parameters.
-    pub fn new(config: ConnectionCfg) -> Self {
+    pub fn new(config: ClientConfig) -> Self {
         Self { config }
     }
 
-    /// The main entry point for initiating a connection. It abstracts the complexity of iterating through potential server addresses and performing the TCP connection, optionally with TLS handshake. The caller can await this method to get a ready-to-use stream.
-    pub async fn connect(&self) -> Result<Box<dyn AsyncReadWrite + Send + Unpin>> {
+    /// Returns a stream that perpetually tries to maintain a connection to the server.
+    /// Each time a connection is successfully established, a new `Connection` object is yielded by the stream.
+    /// If a connection is lost, the stream will internally try to reconnect and will yield a new `Connection` object once it succeeds.
+    pub fn connections(self) -> impl Stream<Item = Result<Connection>> {
+        stream! {
+            loop {
+                match self.try_connect().await {
+                    Ok(stream) => {
+                        yield Ok(Connection::new(stream));
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to connect: {}. Retrying in {:?}...", e, self.config.reconnect_delay);
+                    }
+                }
+                // Even if the connection was closed properly, we must wait before trying again to avoid exhausting resources.
+                tokio::time::sleep(self.config.reconnect_delay).await;
+            }
+        }
+    }
+
+    /// Attempts to establish a connection to the server by iterating through the configured socket addresses.
+    /// Performs TCP connection and optional TLS handshake. Returns the stream on success or an error if all addresses fail.
+    async fn try_connect(&self) -> Result<Box<dyn AsyncReadWrite + Send + Unpin>> {
         for addr in &self.config.socketaddr {
             match TcpStream::connect(addr).await {
                 Ok(stream) => {

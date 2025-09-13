@@ -5899,6 +5899,7 @@ name = "zznet"
 version = "0.2.2-beta2"
 dependencies = [
  "anyhow",
+ "async-stream",
  "env_logger",
  "futures",
  "log",

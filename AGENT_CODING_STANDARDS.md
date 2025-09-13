@@ -1,5 +1,7 @@
 # Agent Coding Standards and Project Conventions
 
+This document contains the global rules and conventions for all coding tasks in this project. These standards must be followed for any implementation task to ensure the codebase remains clean, consistent, and maintainable.
+
 ## 1. Introduction
 
 This document contains the global rules and conventions for all coding tasks in this project. These standards must be followed for any implementation task to ensure the codebase remains clean, consistent, and maintainable.
@@ -25,24 +27,6 @@ This is the most important section. The goal of documentation is to explain the 
 *   All public items (`structs`, `enums`, `functions`, `traits`, and public struct fields) **MUST** have a docstring.
 *   **DO NOT** describe the parameters or return values in a list format. The function signature already contains this information. Instead, explain what the function *achieves* and what its *contract* is with the caller.
 
-    *   **Bad Example:**
-        ```rust
-        /// Connects to the server.
-        ///
-        /// # Arguments
-        /// * `addr` - The address to connect to.
-        ///
-        /// # Returns
-        /// A `Result` containing the stream.
-        ```
-
-    *   **Good Example:**
-        ```rust
-        /// Attempts to establish a persistent, secure connection to the server.
-        /// This method will handle retries and the full TLS handshake, returning a
-        /// ready-to-use stream that abstracts away the underlying transport details.
-        ```
-
 ### Inline Comments (`//`)
 
 *   Use inline comments sparingly. The code should be as self-documenting as possible.
@@ -53,38 +37,24 @@ This is the most important section. The goal of documentation is to explain the 
 ### Single Responsibility Principle (SRP)
 
 *   **Rule:** A function or a struct should have one, and only one, reason to change.
-*   **Guidance:** If a function loads configuration, establishes a connection, *and* handles messages, it's doing too much and must be broken down. The `ServerRuntime` refactoring is a perfect example: we separate connection *handling* from connection *listening*.
+*   **Guidance:** If a function loads configuration, establishes a connection, *and* handles messages, it's doing too much and must be broken down.
 
 ### Fail-Fast with Guard Clauses
 
 *   **Rule:** Handle error conditions and simple cases at the very beginning of a function. This avoids nesting the main logic.
 *   **Guidance:** This pattern makes the "happy path" clearer by reducing indentation.
 
-    *   **Bad (Nested):**
-        ```rust
-        fn process_data(data: Option<i32>) {
-            if let Some(value) = data {
-                // ... 10 lines of main logic ...
-            }
-        }
-        ```
-
-    *   **Good (Fail-Fast):**
-        ```rust
-        fn process_data(data: Option<i32>) {
-            let Some(value) = data else {
-                return; // or return Err(...)
-            };
-            // ... 10 lines of main logic ...
-        }
-        ```
-
 ### Avoid Deep Nesting ("Arrow Code")
 
 *   **Rule:** Aim for a maximum of 2-3 levels of indentation within a single function.
-*   **Guidance:** Deeply nested code (an "arrow shape") is a clear sign that a function is doing too much. Immediately look for opportunities to extract logic into a private helper function.
+*   **Guidance:** Deeply nested code is a clear sign that a function is doing too much. Immediately look for opportunities to extract logic into a private helper function.
 
 ### Manage Task and Object Lifecycles
 
 *   **Rule:** The lifetime of spawned tasks must be explicitly managed and tied to the lifetime of the object or component that creates them.
-*   **Guidance:** Avoid "fire-and-forget" `tokio::spawn` calls for core components. If a struct spawns a long-running task, that task must terminate when the struct is dropped. The best way to achieve this is to have the main logic loop inside a method that takes ownership of the object (e.g., `pub async fn run(self)`). This makes the lifecycle explicit and prevents "zombie" tasks.
+*   **Guidance:** Avoid "fire-and-forget" `tokio::spawn` calls for core components. Use ownership (`run(self)`) to make lifecycles explicit and prevent "zombie" tasks.
+
+### Ensure Configurability for Testability
+
+*   **Rule:** Avoid hardcoding values that directly affect behavior, especially time, counts, or buffer sizes.
+*   **Guidance:** These values should be passed in via a configuration struct. This allows tests to use small, fast values (e.g., `Duration::from_micros(1)`) while production can use larger, more sensible values. A component should not dictate its own timing; it should be configured.

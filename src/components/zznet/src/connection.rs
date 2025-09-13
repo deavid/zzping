@@ -134,7 +134,14 @@ impl TlsCfg {
     }
 }
 
-pub struct ConnectionCfg {
+pub struct ClientConfig {
+    pub socketaddr: Vec<SocketAddr>,
+    pub tls: Option<TlsCfg>,
+    pub role: Role,
+    pub reconnect_delay: std::time::Duration,
+}
+
+pub struct ServerConfig {
     pub socketaddr: Vec<SocketAddr>,
     pub tls: Option<TlsCfg>,
     pub role: Role,

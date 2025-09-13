@@ -1,38 +1,62 @@
-use crate::connection::ConnectionCfg;
+use crate::connection::ServerConfig;
+use crate::connection_manager::Connection;
 use crate::traits::AsyncReadWrite;
 use anyhow::Result;
-use futures::future::join_all;
+use async_stream::stream;
+use futures::Stream;
 use log;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 
 /// The primary manager for the server's network listener. It holds the configuration and is responsible for the lifecycle of accepting new clients.
 pub struct ServerRuntime {
-    config: ConnectionCfg,
+    config: ServerConfig,
 }
 
 impl ServerRuntime {
     /// Prepares the runtime with the necessary connection parameters.
-    pub fn new(config: ConnectionCfg) -> Self {
+    pub fn new(config: ServerConfig) -> Self {
         Self { config }
     }
 
-    /// Starts the server and begins accepting client connections. This method takes ownership of the ServerRuntime and runs indefinitely, handling incoming connections and performing optional TLS handshakes. It does not return until the server is shut down, ensuring proper lifecycle management and preventing zombie tasks.
-    pub async fn run(self) -> Result<()> {
-        let acceptor_opt = self.build_tls_acceptor()?;
-        let mut handles = vec![];
+    /// Returns a stream that yields a new `Connection` object for each successfully accepted client.
+    pub async fn run(self) -> Result<impl Stream<Item = Result<Connection>>> {
+        let addrs = self.config.socketaddr.to_vec();
+        let config = self.config;
+        let (tx, rx) = mpsc::channel(32);
+        let acceptor_opt = Self::build_tls_acceptor(&config)?;
 
-        for addr in &self.config.socketaddr {
-            let listener = TcpListener::bind(addr).await?;
-            let acceptor_opt = acceptor_opt.clone();
-            let handle = tokio::spawn(Self::accept_loop(listener, acceptor_opt));
-            handles.push(handle);
+        let mut handles = vec![];
+        for addr in addrs {
+            match TcpListener::bind(&addr).await {
+                Ok(listener) => {
+                    let tx = tx.clone();
+                    let acceptor_opt = acceptor_opt.clone();
+                    let handle = tokio::spawn(async move {
+                        Self::accept_loop(listener, acceptor_opt, tx).await;
+                    });
+                    handles.push(handle);
+                }
+                Err(e) => {
+                    log::warn!("Failed to bind to {}: {}", addr, e);
+                }
+            }
         }
 
-        // Wait for all listener tasks to complete (which they never do, keeping the server running)
-        join_all(handles).await;
-        Ok(())
+        if handles.is_empty() {
+            return Err(anyhow::anyhow!(
+                "Failed to bind to any of the provided addresses"
+            ));
+        }
+
+        Ok(stream! {
+            let mut rx = rx;
+            while let Some(result) = rx.recv().await {
+                yield result;
+            }
+        })
     }
 
     /// Handles the TLS handshake for a single incoming connection, if TLS is configured, and returns a ready-to-use stream.
@@ -47,33 +71,41 @@ impl ServerRuntime {
         Ok(Box::new(tls_stream))
     }
 
-    /// Runs the accept loop for a single listener, spawning tasks for each incoming connection.
-    async fn accept_loop(listener: TcpListener, acceptor_opt: Option<TlsAcceptor>) {
+    /// Runs the accept loop for a single listener, sending accepted connections to the channel.
+    async fn accept_loop(
+        listener: TcpListener,
+        acceptor_opt: Option<TlsAcceptor>,
+        tx: mpsc::Sender<Result<Connection>>,
+    ) {
         loop {
             match listener.accept().await {
                 Ok((stream, addr)) => {
                     let acceptor_opt = acceptor_opt.clone();
+                    let tx = tx.clone();
                     tokio::spawn(async move {
                         match Self::handle_connection(stream, acceptor_opt).await {
                             Ok(stream) => {
                                 log::info!("New client connected from {}", addr);
-                                // The stream is assigned to a variable that is not used to avoid a warning.
-                                // It will be dropped at the end of this block, and the connection will be closed.
-                                // This is the correct behavior for now.
-                                let _ = stream;
+                                let _ = tx.send(Ok(Connection::new(stream))).await;
                             }
-                            Err(e) => log::warn!("Connection failed for {}: {}", addr, e),
+                            Err(e) => {
+                                log::warn!("Connection failed for {}: {}", addr, e);
+                                let _ = tx.send(Err(e)).await;
+                            }
                         }
                     });
                 }
-                Err(e) => log::warn!("Accept failed: {}", e),
+                Err(e) => {
+                    log::warn!("Accept failed: {}", e);
+                    let _ = tx.send(Err(anyhow::anyhow!("Accept failed: {}", e))).await;
+                }
             }
         }
     }
 
     /// Builds the optional TLS acceptor from the configuration.
-    fn build_tls_acceptor(&self) -> Result<Option<TlsAcceptor>> {
-        if let Some(tls_cfg) = &self.config.tls {
+    fn build_tls_acceptor(config: &ServerConfig) -> Result<Option<TlsAcceptor>> {
+        if let Some(tls_cfg) = &config.tls {
             let server_config = tls_cfg.build_server_config()?;
             Ok(Some(TlsAcceptor::from(Arc::new(server_config))))
         } else {
