@@ -27,8 +27,8 @@ async fn main() -> anyhow::Result<()> {
 
     while let Some(connection_result) = connection_stream.next().await {
         match connection_result {
-            Ok(connection) => {
-                tokio::spawn(connection.run());
+            Ok(_) => {
+                // Connection actor is already spawned in Connection::new
             }
             Err(e) => {
                 log::warn!("Connection error: {}", e);

@@ -24,3 +24,6 @@ server.key
 server.pem
 .cache/
 certs/
+.env
+jules*.md
+GEMINI_*md

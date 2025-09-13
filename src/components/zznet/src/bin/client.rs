@@ -34,8 +34,7 @@ async fn main() -> anyhow::Result<()> {
     while let Some(connection_result) = connection_stream.next().await {
         match connection_result {
             Ok(connection) => {
-                let sender = connection.sender();
-                tokio::spawn(connection.run());
+                // tokio::spawn(connection.run()); // Now spawned in new
 
                 let hello = proto::hello::Hello {
                     role: proto::hello::Role::Collector,
@@ -43,7 +42,7 @@ async fn main() -> anyhow::Result<()> {
                 let frame = Frame::Control(ControlMsg::Hello(hello));
                 let serialized_frame = encode::to_vec(&frame)
                     .map_err(|e| anyhow::anyhow!("Failed to serialize hello: {}", e))?;
-                if let Err(e) = sender.send(serialized_frame).await {
+                if let Err(e) = connection.send_frame(serialized_frame).await {
                     log::warn!("Failed to send hello: {}", e);
                 }
             }
