@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "src/common/zzping-lib",
     "src/common/zzping-proto",
+    "src/common/zznet-lib",
     "src/apps/zzping-database",
     "src/apps/zzping-collector",
     "src/apps/zzping-cli",

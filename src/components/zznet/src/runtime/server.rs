@@ -1,5 +1,5 @@
 use crate::connection::ServerConfig;
-use crate::connection_manager::Connection;
+use crate::connection_manager::{Connection, ConnectionEvent};
 use crate::traits::AsyncReadWrite;
 use anyhow::Result;
 use async_stream::stream;
@@ -22,7 +22,9 @@ impl ServerRuntime {
     }
 
     /// Returns a stream that yields a new `Connection` object for each successfully accepted client.
-    pub async fn run(self) -> Result<impl Stream<Item = Result<Connection>>> {
+    pub async fn run(
+        self,
+    ) -> Result<impl Stream<Item = Result<(Connection, mpsc::Receiver<ConnectionEvent>)>>> {
         let addrs = self.config.socketaddr.to_vec();
         let config = self.config;
         let (tx, rx) = mpsc::channel(32);
@@ -75,7 +77,7 @@ impl ServerRuntime {
     async fn accept_loop(
         listener: TcpListener,
         acceptor_opt: Option<TlsAcceptor>,
-        tx: mpsc::Sender<Result<Connection>>,
+        tx: mpsc::Sender<Result<(Connection, mpsc::Receiver<ConnectionEvent>)>>,
     ) {
         loop {
             match listener.accept().await {
@@ -86,7 +88,9 @@ impl ServerRuntime {
                         match Self::handle_connection(stream, acceptor_opt).await {
                             Ok(stream) => {
                                 log::info!("New client connected from {}", addr);
-                                let _ = tx.send(Ok(Connection::new(stream))).await;
+                                let (event_tx, event_rx) = mpsc::channel(32);
+                                let connection = Connection::new(stream, event_tx);
+                                let _ = tx.send(Ok((connection, event_rx))).await;
                             }
                             Err(e) => {
                                 log::warn!("Connection failed for {}: {}", addr, e);

@@ -8,6 +8,7 @@ use log;
 use rustls::pki_types::ServerName;
 use std::sync::Arc;
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector;
 
 /// The primary state machine for a client's network connection. It holds the configuration and provides the interface to connect to the server.
@@ -29,7 +30,14 @@ impl ClientRuntime {
             loop {
                 match self.try_connect().await {
                     Ok(stream) => {
-                        yield Ok(Connection::new(stream));
+                        // Create a dummy event channel that drops events, since the client binary doesn't use events
+                        let (event_tx, mut event_rx) = mpsc::channel(32);
+                        tokio::spawn(async move {
+                            while let Some(_) = event_rx.recv().await {
+                                // Drop the event
+                            }
+                        });
+                        yield Ok(Connection::new(stream, event_tx));
                     }
                     Err(e) => {
                         log::warn!("Failed to connect: {}. Retrying in {:?}...", e, self.config.reconnect_delay);

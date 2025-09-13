@@ -16,11 +16,21 @@ pub enum ConnectionCommand {
     SendData(DataMsg),
 }
 
+/// Represents events that the ConnectionActor sends upward to its manager.
+/// This allows the facade to receive notifications about channel openings.
+pub enum ConnectionEvent {
+    ChannelOpened {
+        name: String,
+        id: ChannelId,
+        receiver: mpsc::Receiver<DataMsg>,
+    },
+}
+
 /// Represents a single, logical communication channel. It provides an async method
 /// for sending application-level data and contains the receiver for incoming data.
 pub struct Channel {
     pub id: ChannelId,
-    command_tx: mpsc::Sender<ConnectionCommand>,
+    pub command_tx: mpsc::Sender<ConnectionCommand>,
     pub rx: mpsc::Receiver<DataMsg>,
 }
 
@@ -43,24 +53,13 @@ pub struct Connection {
     command_tx: mpsc::Sender<ConnectionCommand>,
 }
 
-/// Private, internal state machine for a connection. It runs in its own task and is not meant to be accessed directly.
-struct ConnectionActor {
-    reader: ReadHalf<Box<dyn AsyncReadWrite + Send + Unpin>>,
-    writer: WriteHalf<Box<dyn AsyncReadWrite + Send + Unpin>>,
-    channels_by_id: HashMap<ChannelId, mpsc::Sender<DataMsg>>,
-    // FIXME: On the client side, this map is populated but never used.
-    // When we implement channel closing, we'll need to decide if we want to close by name or by ID,
-    // which will determine if this map is needed on the client. For now, it's harmless.
-    channels_by_name: HashMap<String, ChannelId>,
-    next_channel_id: ChannelId,
-    command_rx: mpsc::Receiver<ConnectionCommand>,
-    command_tx: mpsc::Sender<ConnectionCommand>,
-    pending_requests: HashMap<String, oneshot::Sender<Result<Channel>>>,
-}
-
 impl Connection {
     /// Creates a new Connection instance with initialized channel management state.
-    pub fn new(stream: Box<dyn AsyncReadWrite + Send + Unpin>) -> Self {
+    /// The event_tx is used to send upward events like channel openings to the facade.
+    pub fn new(
+        stream: Box<dyn AsyncReadWrite + Send + Unpin>,
+        event_tx: mpsc::Sender<ConnectionEvent>,
+    ) -> Self {
         let (command_tx, command_rx) = mpsc::channel(32);
         let (reader, writer) = split(stream);
         let actor = ConnectionActor {
@@ -72,6 +71,7 @@ impl Connection {
             command_rx,
             command_tx: command_tx.clone(),
             pending_requests: HashMap::new(),
+            event_tx,
         };
         tokio::spawn(actor.run());
         Self { command_tx }
@@ -97,6 +97,26 @@ impl Connection {
             .await?;
         response_rx.await?
     }
+
+    pub fn command_sender(&self) -> mpsc::Sender<ConnectionCommand> {
+        self.command_tx.clone()
+    }
+}
+
+/// Private, internal state machine for a connection. It runs in its own task and is not meant to be accessed directly.
+struct ConnectionActor {
+    reader: ReadHalf<Box<dyn AsyncReadWrite + Send + Unpin>>,
+    writer: WriteHalf<Box<dyn AsyncReadWrite + Send + Unpin>>,
+    channels_by_id: HashMap<ChannelId, mpsc::Sender<DataMsg>>,
+    // FIXME: On the client side, this map is populated but never used.
+    // When we implement channel closing, we'll need to decide if we want to close by name or by ID,
+    // which will determine if this map is needed on the client. For now, it's harmless.
+    channels_by_name: HashMap<String, ChannelId>,
+    next_channel_id: ChannelId,
+    command_rx: mpsc::Receiver<ConnectionCommand>,
+    command_tx: mpsc::Sender<ConnectionCommand>,
+    pending_requests: HashMap<String, oneshot::Sender<Result<Channel>>>,
+    event_tx: mpsc::Sender<ConnectionEvent>,
 }
 
 impl ConnectionActor {
@@ -164,10 +184,15 @@ impl ConnectionActor {
                                             let (app_tx, app_rx) = mpsc::channel(32);
                                             self.channels_by_id.insert(id, app_tx);
                                             self.channels_by_name.insert(name.clone(), id);
-                                            // TODO: The ZzNet facade needs a way to receive newly opened channels from the server side.
-                                            // For now, we log and drop the receiver to complete the handshake.
-                                            log::info!("Channel '{}' opened with ID {}. Receiver is currently dropped.", name, id);
-                                            drop(app_rx);
+                                            // Send the channel opened event to the facade instead of dropping the receiver.
+                                            let event = ConnectionEvent::ChannelOpened {
+                                                name: name.clone(),
+                                                id,
+                                                receiver: app_rx,
+                                            };
+                                            if self.event_tx.send(event).await.is_err() {
+                                                log::warn!("Failed to send ChannelOpened event to manager; receiver dropped.");
+                                            }
                                             let response = crate::proto::messages::Frame::Control(
                                                 crate::proto::messages::ControlMsg::ChannelOpened {
                                                     name,
