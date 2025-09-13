@@ -26,12 +26,9 @@ async fn test_fsync_prune_deterministic_via_override_channel() {
     sender.send(hb.clone()).await.unwrap();
 
     // Create a DatabaseClient that points at the mock server.
-    let db_client = DatabaseClient::connect(
-        format!("http://{}", addr),
-        "test-token".to_string(),
-    )
-    .await
-    .expect("failed to create DatabaseClient");
+    let db_client = DatabaseClient::connect(format!("http://{}", addr), "test-token".to_string())
+        .await
+        .expect("failed to create DatabaseClient");
 
     // Call heartbeat RPC; it should return the override response we sent.
     let req = zzping_proto::zzping::HeartbeatRequest {

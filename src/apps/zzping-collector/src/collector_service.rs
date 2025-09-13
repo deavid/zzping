@@ -1,7 +1,7 @@
 use crate::{
+    client_holder::ClientHolder,
     config::Config,
     connection_manager::ConnectionManager,
-    client_holder::ClientHolder,
     database_client::DatabaseClientTrait,
     session_handler::SessionHandler,
     task_supervisor::{
@@ -46,9 +46,18 @@ pub struct CollectorService {
 
 impl CollectorService {
     /// Creates a new `CollectorService`.
-    pub fn new(config: Config, lock: TcpListener, cached_intent: Option<CachedIntent>) -> Result<Self> {
+    pub fn new(
+        config: Config,
+        lock: TcpListener,
+        cached_intent: Option<CachedIntent>,
+    ) -> Result<Self> {
         // Default health interval is 1000ms
-        let task_supervisor = TaskSupervisor::new_with_worker_count_tx(config.collector_uuid.clone(), 1000, cached_intent, None);
+        let task_supervisor = TaskSupervisor::new_with_worker_count_tx(
+            config.collector_uuid.clone(),
+            1000,
+            cached_intent,
+            None,
+        );
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -69,7 +78,12 @@ impl CollectorService {
     ) -> Result<Self> {
         // For tests use the standard default interval of 1000ms. Tests that need a faster
         // interval should call `new_for_test_with_interval` below.
-        let task_supervisor = TaskSupervisor::new_with_worker_count_tx(config.collector_uuid.clone(), 1000, cached_intent, None);
+        let task_supervisor = TaskSupervisor::new_with_worker_count_tx(
+            config.collector_uuid.clone(),
+            1000,
+            cached_intent,
+            None,
+        );
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -89,8 +103,12 @@ impl CollectorService {
         health_interval_ms: u64,
         cached_intent: Option<CachedIntent>,
     ) -> Result<Self> {
-        let task_supervisor =
-            TaskSupervisor::new_with_worker_count_tx(config.collector_uuid.clone(), health_interval_ms, cached_intent, None);
+        let task_supervisor = TaskSupervisor::new_with_worker_count_tx(
+            config.collector_uuid.clone(),
+            health_interval_ms,
+            cached_intent,
+            None,
+        );
         Ok(Self {
             config,
             task_supervisor: Some(task_supervisor),
@@ -228,12 +246,10 @@ impl CollectorService {
         }
         let reconnect_notify = Arc::new(Notify::new());
 
-    // Create a shared, updatable ClientHolder and keep a copy on self so
-    // tests or other components can access the current client if needed.
-    let client_holder = ClientHolder::new(None);
-    self.client_holder = Some(client_holder.clone());
-
-
+        // Create a shared, updatable ClientHolder and keep a copy on self so
+        // tests or other components can access the current client if needed.
+        let client_holder = ClientHolder::new(None);
+        self.client_holder = Some(client_holder.clone());
 
         // Persistence task
         tokio::spawn(async move {

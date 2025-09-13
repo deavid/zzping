@@ -1,0 +1,30 @@
+[package]
+name = "zznet"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[dependencies]
+rustls = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { workspace = true }
+anyhow = { workspace = true }
+rustls-pemfile = { workspace = true }
+rustls-native-certs = { workspace = true }
+rmp = { workspace = true }
+serde = { workspace = true }
+rmp-serde = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+futures = "0.3"
+
+[[bin]]
+name = "zznet-server"
+path = "src/bin/server.rs"
+
+[[bin]]
+name = "zznet-client"
+path = "src/bin/client.rs"

@@ -23,3 +23,4 @@ ca.srl
 server.key
 server.pem
 .cache/
+certs/

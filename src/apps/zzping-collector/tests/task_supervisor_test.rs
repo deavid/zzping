@@ -1,9 +1,9 @@
 use ntest::timeout;
 use std::{collections::HashSet, net::IpAddr, str::FromStr};
-use zzping_collector::target_worker::WorkerCommand;
-use zzping_collector::task_supervisor::{SupervisorConfig, TaskSupervisor, ClientUpdate};
-use zzping_proto::zzping::CollectorRole;
 use zzping_collector::database_client::DatabaseClient;
+use zzping_collector::target_worker::WorkerCommand;
+use zzping_collector::task_supervisor::{ClientUpdate, SupervisorConfig, TaskSupervisor};
+use zzping_proto::zzping::CollectorRole;
 
 mod common;
 use common::mock_worker_factory;
@@ -140,7 +140,8 @@ async fn test_supervisor_defers_and_then_creates_workers() {
     // Start a small mock server to provide a reachable DatabaseClient for the test.
     let mock = common::MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock).await;
-    let dummy_client = DatabaseClient::connect( // Returns Arc<dyn DatabaseClientTrait>
+    let dummy_client = DatabaseClient::connect(
+        // Returns Arc<dyn DatabaseClientTrait>
         format!("http://{server_addr}"),
         "test-token".to_string(),
     )
@@ -193,7 +194,8 @@ async fn test_supervisor_schedules_swap_and_applies_role() {
     // Bring up a mock DB client so worker creation proceeds
     let mock = common::MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock).await;
-        let dummy_client = DatabaseClient::connect( // Returns Arc<dyn DatabaseClientTrait>
+    let dummy_client = DatabaseClient::connect(
+        // Returns Arc<dyn DatabaseClientTrait>
         format!("http://{server_addr}"),
         "test-token".to_string(),
     )

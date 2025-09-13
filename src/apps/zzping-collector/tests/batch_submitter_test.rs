@@ -1,12 +1,12 @@
 use ntest::timeout;
 use std::net::IpAddr;
 use std::str::FromStr;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use zzping_collector::batch_submitter::BatchSubmitter;
 use zzping_collector::database_client::{DatabaseClient, DatabaseClientTrait}; // Added DatabaseClientTrait
-use zzping_collector::pinger::FinalizedPing;
-use std::sync::Arc; // Added Arc
+use zzping_collector::pinger::FinalizedPing; // Added Arc
 
 use common::MockIngestionService;
 use zzping_proto::zzping::{SendBatchResponse, send_batch_response};
@@ -35,9 +35,10 @@ fn setup_submitter(
 async fn test_ingestion_logic() {
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service).await;
-    let db_client = DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
-        .await
-        .unwrap();
+    let db_client =
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
+            .await
+            .unwrap();
     let mut submitter = setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
     let grace_period_ns = Duration::from_secs(60).as_nanos() as u64;
 
@@ -79,9 +80,10 @@ async fn test_send_batch_ok_and_embargo() {
     // 1. Setup
     let mock_service = MockIngestionService::new();
     let server_addr = common::spawn_mock_server(mock_service.clone()).await;
-    let db_client = DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
-        .await
-        .unwrap();
+    let db_client =
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
+            .await
+            .unwrap();
     let mut submitter = setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
 
     // 2. Ingest a record that is in the past (should be sent)
@@ -122,9 +124,10 @@ async fn test_send_batch_desync() {
         };
     }
     let server_addr = common::spawn_mock_server(mock_service.clone()).await;
-    let db_client = DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
-        .await
-        .unwrap();
+    let db_client =
+        DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
+            .await
+            .unwrap();
     let mut submitter = setup_submitter(db_client, 1_000_000, Duration::from_secs(24 * 3600));
 
     // 2. Ingest data that will be sent

@@ -1,7 +1,7 @@
 use crate::{
+    collector_service::CachedIntent,
     database_client::DatabaseClientTrait,
     target_worker::{TargetWorker, TargetWorkerHandle, WorkerCommand},
-    collector_service::CachedIntent,
 };
 use anyhow::Result;
 use futures::future::join_all;
@@ -63,7 +63,11 @@ pub struct TaskSupervisor {
 
 impl TaskSupervisor {
     /// Creates a new `TaskSupervisor`.
-    pub fn new(collector_uuid: String, health_interval_ms: u64, cached_intent: Option<CachedIntent>) -> Self {
+    pub fn new(
+        collector_uuid: String,
+        health_interval_ms: u64,
+        cached_intent: Option<CachedIntent>,
+    ) -> Self {
         Self::new_with_worker_count_tx(collector_uuid, health_interval_ms, cached_intent, None)
     }
 

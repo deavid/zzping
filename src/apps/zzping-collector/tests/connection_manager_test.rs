@@ -17,8 +17,8 @@ async fn test_connection_manager_connects_and_sends_client() {
         client_addr,
         "test-token".to_string(),
         client_tx,
-    notify.clone(),
-    None,
+        notify.clone(),
+        None,
     );
     tokio::spawn(manager.run());
 
@@ -41,8 +41,8 @@ async fn test_connection_manager_retries_on_failure() {
         client_addr,
         "test-token".to_string(),
         client_tx,
-    notify.clone(),
-    None,
+        notify.clone(),
+        None,
     );
     tokio::spawn(manager.run());
 

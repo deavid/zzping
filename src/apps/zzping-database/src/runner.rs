@@ -36,8 +36,8 @@ pub async fn run() -> Result<()> {
     let server = IngestionServer::new(ingestion_service);
 
     // These paths should be configurable in a real production environment.
-    let cert = tokio::fs::read("server.pem").await?;
-    let key = tokio::fs::read("server.key").await?;
+    let cert = tokio::fs::read("certs/server.pem").await?;
+    let key = tokio::fs::read("certs/server.key").await?;
     let identity = Identity::from_pem(cert, key);
     let tls_config = ServerTlsConfig::new().identity(identity);
 

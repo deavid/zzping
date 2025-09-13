@@ -1,19 +1,34 @@
 #!/bin/bash
 
-# Script to generate CA and server certificates for zzping-database
+# Script to generate CA and certificates for zzping components
 # Usage:
-#   ./generate_certs.sh --ca          # Generate CA certificate
-#   ./generate_certs.sh --server      # Generate server certificate (requires CA)
-#   ./generate_certs.sh --all         # Generate both CA and server certificates
+#   ./generate_certs.sh --ca              # Generate CA certificate
+#   ./generate_certs.sh --collector       # Generate collector certificate (requires CA)
+#   ./generate_certs.sh --database        # Generate database certificate (requires CA)
+#   ./generate_certs.sh --client-ro       # Generate client-ro certificate (requires CA)
+#   ./generate_certs.sh --client-admin    # Generate client-admin certificate (requires CA)
+#   ./generate_certs.sh --all             # Generate CA and all certificates
 
 set -e
 
-CA_KEY="ca.key"
-CA_CERT="ca.pem"
-SERVER_KEY="server.key"
-SERVER_CERT="server.pem"
-SERVER_CSR="server.csr"
-CA_SERIAL="ca.srl"
+# Create certs directory if it doesn't exist
+mkdir -p certs
+
+CA_KEY="certs/ca.key"
+CA_CERT="certs/ca.pem"
+COLLECTOR_KEY="certs/collector.key"
+COLLECTOR_CERT="certs/collector.pem"
+COLLECTOR_CSR="certs/collector.csr"
+DATABASE_KEY="certs/database.key"
+DATABASE_CERT="certs/database.pem"
+DATABASE_CSR="certs/database.csr"
+CLIENT_RO_KEY="certs/client-ro.key"
+CLIENT_RO_CERT="certs/client-ro.pem"
+CLIENT_RO_CSR="certs/client-ro.csr"
+CLIENT_ADMIN_KEY="certs/client-admin.key"
+CLIENT_ADMIN_CERT="certs/client-admin.pem"
+CLIENT_ADMIN_CSR="certs/client-admin.csr"
+CA_SERIAL="certs/ca.srl"
 
 # Function to generate CA
 generate_ca() {
@@ -27,35 +42,124 @@ generate_ca() {
     echo "CA certificate generated: $CA_CERT"
 }
 
-# Function to generate server certificate
-generate_server() {
+# Function to generate collector certificate
+generate_collector() {
     if [ ! -f "$CA_CERT" ]; then
         echo "CA certificate not found. Generating CA first..."
         generate_ca
     fi
 
-    echo "Generating server private key..."
-    openssl genrsa -out "$SERVER_KEY" 2048
+    echo "Generating collector private key..."
+    openssl genrsa -out "$COLLECTOR_KEY" 2048
 
-    echo "Generating server certificate signing request..."
-    openssl req -subj "/CN=zzping" -new -key "$SERVER_KEY" -out "$SERVER_CSR"
+    echo "Generating collector certificate signing request..."
+    openssl req -subj "/CN=zzping" -new -key "$COLLECTOR_KEY" -out "$COLLECTOR_CSR"
 
-    echo "Signing server certificate with CA..."
-    openssl x509 -req -days 365 -in "$SERVER_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
-        -out "$SERVER_CERT" -sha256 -CAcreateserial \
+    echo "Signing collector certificate with CA..."
+    openssl x509 -req -days 365 -in "$COLLECTOR_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
+        -out "$COLLECTOR_CERT" -sha256 -CAcreateserial \
         -extfile <(cat <<EOF
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
-extendedKeyUsage=serverAuth
-subjectAltName=DNS:zzping,IP:127.0.0.1,IP:192.168.0.200
+extendedKeyUsage=serverAuth,clientAuth
+subjectAltName=DNS:zzping,DNS:zzping-collector,IP:127.0.0.1
 EOF
 )
 
-    # Clean up temporary files
-    rm -f "$SERVER_CSR"
+    rm -f "$COLLECTOR_CSR"
 
-    echo "Server certificate generated: $SERVER_CERT"
-    echo "Server key generated: $SERVER_KEY"
+    echo "Collector certificate generated: $COLLECTOR_CERT"
+    echo "Collector key generated: $COLLECTOR_KEY"
+}
+
+# Function to generate database certificate
+generate_database() {
+    if [ ! -f "$CA_CERT" ]; then
+        echo "CA certificate not found. Generating CA first..."
+        generate_ca
+    fi
+
+    echo "Generating database private key..."
+    openssl genrsa -out "$DATABASE_KEY" 2048
+
+    echo "Generating database certificate signing request..."
+    openssl req -subj "/CN=zzping" -new -key "$DATABASE_KEY" -out "$DATABASE_CSR"
+
+    echo "Signing database certificate with CA..."
+    openssl x509 -req -days 365 -in "$DATABASE_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
+        -out "$DATABASE_CERT" -sha256 -CAcreateserial \
+        -extfile <(cat <<EOF
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth,clientAuth
+subjectAltName=DNS:zzping,DNS:zzping-database,IP:127.0.0.1
+EOF
+)
+
+    rm -f "$DATABASE_CSR"
+
+    echo "Database certificate generated: $DATABASE_CERT"
+    echo "Database key generated: $DATABASE_KEY"
+}
+
+# Function to generate client-ro certificate
+generate_client_ro() {
+    if [ ! -f "$CA_CERT" ]; then
+        echo "CA certificate not found. Generating CA first..."
+        generate_ca
+    fi
+
+    echo "Generating client-ro private key..."
+    openssl genrsa -out "$CLIENT_RO_KEY" 2048
+
+    echo "Generating client-ro certificate signing request..."
+    openssl req -subj "/CN=zzping" -new -key "$CLIENT_RO_KEY" -out "$CLIENT_RO_CSR"
+
+    echo "Signing client-ro certificate with CA..."
+    openssl x509 -req -days 365 -in "$CLIENT_RO_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
+        -out "$CLIENT_RO_CERT" -sha256 -CAcreateserial \
+        -extfile <(cat <<EOF
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=clientAuth
+subjectAltName=DNS:zzping,DNS:zzping-client-ro,IP:127.0.0.1
+EOF
+)
+
+    rm -f "$CLIENT_RO_CSR"
+
+    echo "Client-ro certificate generated: $CLIENT_RO_CERT"
+    echo "Client-ro key generated: $CLIENT_RO_KEY"
+}
+
+# Function to generate client-admin certificate
+generate_client_admin() {
+    if [ ! -f "$CA_CERT" ]; then
+        echo "CA certificate not found. Generating CA first..."
+        generate_ca
+    fi
+
+    echo "Generating client-admin private key..."
+    openssl genrsa -out "$CLIENT_ADMIN_KEY" 2048
+
+    echo "Generating client-admin certificate signing request..."
+    openssl req -subj "/CN=zzping" -new -key "$CLIENT_ADMIN_KEY" -out "$CLIENT_ADMIN_CSR"
+
+    echo "Signing client-admin certificate with CA..."
+    openssl x509 -req -days 365 -in "$CLIENT_ADMIN_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
+        -out "$CLIENT_ADMIN_CERT" -sha256 -CAcreateserial \
+        -extfile <(cat <<EOF
+basicConstraints=CA:FALSE
+keyUsage=digitalSignature,keyEncipherment
+extendedKeyUsage=clientAuth
+subjectAltName=DNS:zzping,DNS:zzping-client-admin,IP:127.0.0.1
+EOF
+)
+
+    rm -f "$CLIENT_ADMIN_CSR"
+
+    echo "Client-admin certificate generated: $CLIENT_ADMIN_CERT"
+    echo "Client-admin key generated: $CLIENT_ADMIN_KEY"
 }
 
 # Main logic
@@ -63,18 +167,33 @@ case "$1" in
     --ca)
         generate_ca
         ;;
-    --server)
-        generate_server
+    --collector)
+        generate_collector
+        ;;
+    --database)
+        generate_database
+        ;;
+    --client-ro)
+        generate_client_ro
+        ;;
+    --client-admin)
+        generate_client_admin
         ;;
     --all)
         generate_ca
-        generate_server
+        generate_collector
+        generate_database
+        generate_client_ro
+        generate_client_admin
         ;;
     *)
-        echo "Usage: $0 {--ca|--server|--all}"
-        echo "  --ca     Generate CA certificate"
-        echo "  --server Generate server certificate (will generate CA if missing)"
-        echo "  --all    Generate both CA and server certificates"
+        echo "Usage: $0 {--ca|--collector|--database|--client-ro|--client-admin|--all}"
+        echo "  --ca           Generate CA certificate"
+        echo "  --collector    Generate collector certificate (will generate CA if missing)"
+        echo "  --database     Generate database certificate (will generate CA if missing)"
+        echo "  --client-ro    Generate client-ro certificate (will generate CA if missing)"
+        echo "  --client-admin Generate client-admin certificate (will generate CA if missing)"
+        echo "  --all          Generate CA and all certificates"
         exit 1
         ;;
 esac

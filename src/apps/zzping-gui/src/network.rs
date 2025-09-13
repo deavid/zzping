@@ -26,7 +26,7 @@ pub async fn fetch_data_loop(tx: Sender<Vec<RawDataRecord>>) {
 }
 
 pub async fn try_fetch_data(tx: &Sender<Vec<RawDataRecord>>) -> Result<()> {
-    let ca_cert = tokio::fs::read("ca.pem").await?;
+    let ca_cert = tokio::fs::read("certs/ca.pem").await?;
     let ca = Certificate::from_pem(ca_cert);
     let tls_config = ClientTlsConfig::new()
         .domain_name("localhost")
