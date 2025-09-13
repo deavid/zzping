@@ -7,6 +7,7 @@ use std::net::SocketAddr;
 use tokio::time::Duration;
 use zznet::connection::{ClientConfig, TlsCfg};
 use zznet::proto;
+use zznet::proto::messages::{ControlMsg, Frame};
 use zznet::runtime::client::ClientRuntime;
 
 #[tokio::main]
@@ -22,8 +23,8 @@ async fn main() -> anyhow::Result<()> {
 
     let config = ClientConfig {
         socketaddr: vec![addr],
-        tls: Some(TlsCfg::from_role(proto::Role::Collector)),
-        role: proto::Role::Collector,
+        tls: Some(TlsCfg::from_role(proto::hello::Role::Collector)),
+        role: proto::hello::Role::Collector,
         reconnect_delay: Duration::from_secs(5),
     };
     let client = ClientRuntime::new(config);
@@ -36,12 +37,13 @@ async fn main() -> anyhow::Result<()> {
                 let sender = connection.sender();
                 tokio::spawn(connection.run());
 
-                let hello = proto::Hello {
-                    role: proto::Role::Collector,
+                let hello = proto::hello::Hello {
+                    role: proto::hello::Role::Collector,
                 };
-                let serialized_hello = encode::to_vec(&hello)
+                let frame = Frame::Control(ControlMsg::Hello(hello));
+                let serialized_frame = encode::to_vec(&frame)
                     .map_err(|e| anyhow::anyhow!("Failed to serialize hello: {}", e))?;
-                if let Err(e) = sender.send(serialized_hello).await {
+                if let Err(e) = sender.send(serialized_frame).await {
                     log::warn!("Failed to send hello: {}", e);
                 }
             }

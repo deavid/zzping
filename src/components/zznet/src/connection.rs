@@ -1,4 +1,4 @@
-use crate::proto::Role;
+use crate::proto::hello::Role;
 use anyhow::Result;
 use rustls;
 use rustls_native_certs;

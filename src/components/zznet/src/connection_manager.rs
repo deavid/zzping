@@ -1,5 +1,6 @@
 use crate::traits::AsyncReadWrite;
 use log;
+use rmp_serde;
 use tokio::io::{ReadHalf, WriteHalf, split};
 use tokio::sync::mpsc;
 use tokio::task;
@@ -42,8 +43,37 @@ impl Connection {
     async fn read_loop(mut reader: ReadHalf<Box<dyn AsyncReadWrite + Send + Unpin>>) {
         loop {
             match crate::proto::frame::read_frame(&mut reader).await {
-                Ok(frame) => {
-                    log::debug!("Received frame: {:?}", frame);
+                Ok(frame_bytes) => {
+                    match rmp_serde::decode::from_slice::<crate::proto::messages::Frame>(
+                        &frame_bytes,
+                    ) {
+                        Ok(frame) => match frame {
+                            crate::proto::messages::Frame::Control(ctrl) => match ctrl {
+                                crate::proto::messages::ControlMsg::Hello(_) => {
+                                    log::debug!("Hello message")
+                                }
+                                crate::proto::messages::ControlMsg::RequestChannel { name } => {
+                                    log::debug!("Request to open channel '{}'", name)
+                                }
+                                crate::proto::messages::ControlMsg::ChannelOpened { name, id } => {
+                                    log::debug!("Channel '{}' opened with ID {}", name, id)
+                                }
+                                crate::proto::messages::ControlMsg::CloseChannel { id } => {
+                                    log::debug!("Close channel {}", id)
+                                }
+                            },
+                            crate::proto::messages::Frame::Data(data) => {
+                                log::debug!("Received data for channel ID {}", data.channel_id)
+                            }
+                        },
+                        Err(e) => {
+                            log::warn!(
+                                "Fatal protocol error: failed to deserialize frame: {}. Dropping connection.",
+                                e
+                            );
+                            break; // Terminate the loop and the connection
+                        }
+                    }
                 }
                 Err(e) => {
                     log::debug!("Read error: {:?}", e);
