@@ -16,3 +16,5 @@ futures = "0.3"
 zznet-lib = { path = "../../common/zznet-lib" }
 zznet = { path = "../zznet" }
 env_logger = { workspace = true }
+ntest = { workspace = true }
+async-trait = { workspace = true }

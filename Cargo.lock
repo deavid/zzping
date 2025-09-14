@@ -2180,9 +2180,11 @@ name = "intent-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "env_logger",
  "futures",
  "log",
+ "ntest",
  "serde",
  "serde_json",
  "tokio",
@@ -5917,9 +5919,11 @@ dependencies = [
  "anyhow",
  "async-stream",
  "async-trait",
+ "bytes",
  "env_logger",
  "futures",
  "log",
+ "ntest",
  "rmp",
  "rmp-serde",
  "rustls 0.23.31",
@@ -5945,8 +5949,11 @@ name = "zznet-lib"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "env_logger",
  "futures",
  "log",
+ "ntest",
+ "rmp-serde",
  "tokio",
  "zznet",
  "zznet-api",

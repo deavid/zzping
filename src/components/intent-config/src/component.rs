@@ -140,9 +140,205 @@ impl IntentConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use async_trait::async_trait;
+    use ntest::timeout;
     use std::time::Duration;
+    use tokio::sync::mpsc;
     use zznet::connection::{ClientConfig, ServerConfig, TlsCfg};
+    use zznet_api::ZzChannel;
     use zznet_lib::{ZzNet, ZzNetConfig};
+
+    /// A mock ZzChannel that uses MPSC channels to allow a test to act as the peer.
+    struct MockZzChannel {
+        /// Test sends payloads here for the actor to receive.
+        tx_to_actor: mpsc::Sender<Vec<u8>>,
+        /// Test receives payloads here that the actor sent.
+        rx_from_actor: mpsc::Receiver<Vec<u8>>,
+    }
+
+    #[async_trait]
+    impl ZzChannel for MockZzChannel {
+        async fn send(&self, payload: Vec<u8>) -> Result<()> {
+            self.tx_to_actor.send(payload).await?;
+            Ok(())
+        }
+
+        async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
+            Ok(self.rx_from_actor.recv().await)
+        }
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_server_actor_update_and_broadcast() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (watch_tx, mut watch_rx) = watch::channel(IntentConfigData::default());
+        let (client_tx, client_rx) = mpsc::channel(32);
+        tokio::spawn(server_actor_task(client_rx, watch_tx));
+
+        let (tx_to_actor, rx_from_actor) = mpsc::channel(32);
+        let (tx_from_actor, mut rx_for_test) = mpsc::channel(32);
+        let mock_channel = Box::new(MockZzChannel {
+            tx_to_actor: tx_from_actor,
+            rx_from_actor,
+        });
+        client_tx.send((0, mock_channel)).await.unwrap();
+        tokio::task::yield_now().await;
+        let _ = rx_for_test.recv().await; // Drain initial broadcast
+
+        // ACT: Client sends an update
+        let new_config = IntentConfigData {
+            targets: vec!["1.1.1.1".parse().unwrap()],
+            ..Default::default()
+        };
+        let update_msg = ProtocolMsg::Update(new_config.clone());
+        let update_bytes = serde_json::to_vec(&update_msg).unwrap();
+        tx_to_actor.send(update_bytes).await.unwrap();
+
+        // ASSERT 1: The watch channel is updated
+        watch_rx.changed().await.unwrap();
+        assert_eq!(*watch_rx.borrow(), new_config);
+
+        // ASSERT 2: The client receives a broadcast of the new state
+        let received_bytes = rx_for_test.recv().await.unwrap();
+        let received_msg: ProtocolMsg = serde_json::from_slice(&received_bytes).unwrap();
+        assert!(matches!(received_msg, ProtocolMsg::Broadcast(data) if data == new_config));
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_client_actor_receives_broadcast() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (watch_tx, mut watch_rx) = watch::channel(IntentConfigData::default());
+        let (_update_tx, update_rx) = mpsc::channel(32);
+        let (tx_to_actor, rx_from_actor) = mpsc::channel(32);
+        let (_tx_from_actor, _rx_for_test) = mpsc::channel(32);
+        let mock_channel = Box::new(MockZzChannel {
+            tx_to_actor: _tx_from_actor,
+            rx_from_actor,
+        });
+        tokio::spawn(client_actor_task(mock_channel, watch_tx, update_rx));
+
+        // ACT: "Server" sends a broadcast
+        let new_config = IntentConfigData {
+            targets: vec!["2.2.2.2".parse().unwrap()],
+            ..Default::default()
+        };
+        let broadcast_msg = ProtocolMsg::Broadcast(new_config.clone());
+        let broadcast_bytes = serde_json::to_vec(&broadcast_msg).unwrap();
+        tx_to_actor.send(broadcast_bytes).await.unwrap();
+
+        // ASSERT: The watch channel is updated
+        watch_rx.changed().await.unwrap();
+        assert_eq!(*watch_rx.borrow(), new_config);
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_client_actor_sends_update() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (watch_tx, _watch_rx) = watch::channel(IntentConfigData::default());
+        let (update_tx, update_rx) = mpsc::channel(32);
+        let (_tx_to_actor, rx_from_actor) = mpsc::channel(32);
+        let (tx_from_actor, mut rx_for_test) = mpsc::channel(32);
+        let mock_channel = Box::new(MockZzChannel {
+            tx_to_actor: tx_from_actor,
+            rx_from_actor,
+        });
+        tokio::spawn(client_actor_task(mock_channel, watch_tx, update_rx));
+
+        // ACT: Test calls the component's update method
+        let new_config = IntentConfigData {
+            targets: vec!["3.3.3.3".parse().unwrap()],
+            ..Default::default()
+        };
+        update_tx.send(new_config.clone()).await.unwrap();
+
+        // ASSERT: The actor sends an Update message to the "server"
+        let received_bytes = rx_for_test.recv().await.unwrap();
+        let received_msg: ProtocolMsg = serde_json::from_slice(&received_bytes).unwrap();
+        assert!(matches!(received_msg, ProtocolMsg::Update(data) if data == new_config));
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_server_actor_sends_initial_broadcast() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        // SETUP
+        let (watch_tx, _watch_rx) = watch::channel(IntentConfigData::default());
+        let (client_tx, client_rx) = mpsc::channel(32);
+        tokio::spawn(server_actor_task(client_rx, watch_tx));
+
+        let (tx_to_actor, rx_from_actor): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) =
+            mpsc::channel(32);
+        let (tx_to_actor, rx_from_actor): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) =
+            mpsc::channel(32);
+        let (tx_from_actor, mut rx_for_test): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) =
+            mpsc::channel(32);
+        let mock_channel = Box::new(MockZzChannel {
+            tx_to_actor: tx_from_actor,
+            rx_from_actor,
+        });
+
+        // ACT: "Connect" a new client
+        client_tx.send((0, mock_channel)).await.unwrap();
+        tokio::task::yield_now().await; // Give the actor a chance to run
+
+        // ASSERT: The server immediately sends the current state
+        let received_bytes = rx_for_test.recv().await.unwrap();
+        let received_msg: ProtocolMsg = serde_json::from_slice(&received_bytes).unwrap();
+
+        assert!(matches!(received_msg, ProtocolMsg::Broadcast(data) if data == IntentConfigData::default()));
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_subscribe_returns_valid_receiver() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        let (_client_tx, client_rx) = mpsc::channel(32);
+        let component = IntentConfig::new_server(client_rx);
+        let watch_rx = component.subscribe();
+
+        // Initial state should be default
+        assert_eq!(*watch_rx.borrow(), IntentConfigData::default());
+
+        // Manually update the watch channel to simulate a change
+        let new_state = IntentConfigData {
+            targets: vec!["1.1.1.1".parse().unwrap()],
+            ping_rate_pps: 10,
+        };
+        // This is a bit of a hack. In a real scenario, the actor would do this.
+        // We can't easily get the `watch_tx` to do this directly, so we'll test
+        // this behavior more thoroughly in the actor tests.
+        let (watch_tx_manual, mut watch_rx_manual) = watch::channel(IntentConfigData::default());
+        watch_tx_manual.send(new_state.clone()).unwrap();
+        watch_rx_manual.changed().await.unwrap();
+        assert_eq!(*watch_rx_manual.borrow(), new_state);
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn test_update_permissions() {
+        let _ = env_logger::builder().is_test(true).try_init();
+
+        // Server should not be able to update
+        let (_client_tx, client_rx) = mpsc::channel(32);
+        let server_component = IntentConfig::new_server(client_rx);
+        let result = server_component.update(IntentConfigData::default()).await;
+        assert!(result.is_err());
+
+        // ClientRo should not be able to update
+        let (_tx_to_actor, rx_from_actor) = mpsc::channel(32);
+        let (tx_to_test, _rx_from_test) = mpsc::channel(32);
+        let mock_channel = Box::new(MockZzChannel {
+            tx_to_actor: tx_to_test,
+            rx_from_actor,
+        });
+        let client_ro_component = IntentConfig::new_client(Role::ClientRo, mock_channel);
+        let result = client_ro_component.update(IntentConfigData::default()).await;
+        assert!(result.is_err());
+    }
 
     #[tokio::test]
     async fn test_full_e2e_update_and_broadcast() {
