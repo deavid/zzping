@@ -33,7 +33,7 @@ impl ClientRuntime {
                         // Create a dummy event channel that drops events, since the client binary doesn't use events
                         let (event_tx, mut event_rx) = mpsc::channel(32);
                         tokio::spawn(async move {
-                            while let Some(_) = event_rx.recv().await {
+                            while (event_rx.recv().await).is_some() {
                                 // Drop the event
                             }
                         });

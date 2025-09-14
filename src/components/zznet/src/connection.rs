@@ -160,14 +160,8 @@ mod tests {
         let role = Role::Collector;
         let tls_cfg = TlsCfg::from_role(role, None);
 
-        assert_eq!(
-            tls_cfg.cert.pem_path,
-            PathBuf::from("certs/collector.pem")
-        );
-        assert_eq!(
-            tls_cfg.cert.key_path,
-            PathBuf::from("certs/collector.key")
-        );
+        assert_eq!(tls_cfg.cert.pem_path, PathBuf::from("certs/collector.pem"));
+        assert_eq!(tls_cfg.cert.key_path, PathBuf::from("certs/collector.key"));
         assert_eq!(tls_cfg.ca_cert_path, Some(PathBuf::from("certs/ca.pem")));
     }
 

@@ -57,11 +57,12 @@ fn handle_connection_events(
             };
 
             if let Some(listener_tx) = listener_tx {
-                if listener_tx.send((client_id, Box::new(channel))).await.is_err() {
-                    log::warn!(
-                        "A listener for channel '{}' was dropped.",
-                        name
-                    );
+                if listener_tx
+                    .send((client_id, Box::new(channel)))
+                    .await
+                    .is_err()
+                {
+                    log::warn!("A listener for channel '{}' was dropped.", name);
                 }
             }
         }

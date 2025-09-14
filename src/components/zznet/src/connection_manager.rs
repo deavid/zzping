@@ -237,7 +237,7 @@ impl ConnectionActor {
                                                     command_tx: self.command_tx.clone(),
                                                     rx: app_rx,
                                                 };
-                                                if let Err(_) = response_tx.send(Ok(channel)) {
+                                                if response_tx.send(Ok(channel)).is_err() {
                                                     log::warn!("Failed to send channel to application");
                                                 }
                                             } else {
@@ -407,8 +407,9 @@ mod tests {
             .expect("Actor did not write data to stream");
 
         // Verify the frame is correct
-        let expected_frame =
-            Frame::Control(ControlMsg::RequestChannel { name: "test".to_string() });
+        let expected_frame = Frame::Control(ControlMsg::RequestChannel {
+            name: "test".to_string(),
+        });
         let expected_bytes = rmp_serde::to_vec(&expected_frame).unwrap();
         assert_eq!(written_len, (expected_bytes.len() as u32).to_be_bytes());
         assert_eq!(written_data, expected_bytes);

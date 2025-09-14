@@ -270,9 +270,7 @@ mod tests {
         let (client_tx, client_rx) = mpsc::channel(32);
         tokio::spawn(server_actor_task(client_rx, watch_tx));
 
-        let (tx_to_actor, rx_from_actor): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) =
-            mpsc::channel(32);
-        let (tx_to_actor, rx_from_actor): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) =
+        let (_tx_to_actor, rx_from_actor): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) =
             mpsc::channel(32);
         let (tx_from_actor, mut rx_for_test): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) =
             mpsc::channel(32);
@@ -289,7 +287,9 @@ mod tests {
         let received_bytes = rx_for_test.recv().await.unwrap();
         let received_msg: ProtocolMsg = serde_json::from_slice(&received_bytes).unwrap();
 
-        assert!(matches!(received_msg, ProtocolMsg::Broadcast(data) if data == IntentConfigData::default()));
+        assert!(
+            matches!(received_msg, ProtocolMsg::Broadcast(data) if data == IntentConfigData::default())
+        );
     }
 
     #[tokio::test]
@@ -336,7 +336,9 @@ mod tests {
             rx_from_actor,
         });
         let client_ro_component = IntentConfig::new_client(Role::ClientRo, mock_channel);
-        let result = client_ro_component.update(IntentConfigData::default()).await;
+        let result = client_ro_component
+            .update(IntentConfigData::default())
+            .await;
         assert!(result.is_err());
     }
 

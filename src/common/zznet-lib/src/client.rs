@@ -5,10 +5,7 @@ use zznet::connection::ClientConfig;
 use zznet::connection_manager::Connection;
 use zznet::runtime::client::ClientRuntime;
 
-pub(crate) fn start_runtime(
-    config: ClientConfig,
-    connection: Arc<Mutex<Option<Connection>>>,
-) {
+pub(crate) fn start_runtime(config: ClientConfig, connection: Arc<Mutex<Option<Connection>>>) {
     tokio::spawn(async move {
         let client_runtime = ClientRuntime::new(config);
         let mut connection_stream = Box::pin(client_runtime.connections());

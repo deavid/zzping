@@ -9,7 +9,8 @@ use zznet_api::ZzChannel;
 
 pub struct ZzNet {
     pub(crate) client_connection: Arc<Mutex<Option<Connection>>>,
-    pub(crate) server_listeners: Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Box<dyn ZzChannel>)>>>>,
+    pub(crate) server_listeners:
+        Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Box<dyn ZzChannel>)>>>>,
     pub(crate) next_client_id: Arc<Mutex<u64>>,
 }
 
@@ -36,7 +37,10 @@ impl ZzNet {
         net
     }
 
-    pub async fn listen_for_channel(&self, name: &str) -> Result<mpsc::Receiver<(u64, Box<dyn ZzChannel>)>> {
+    pub async fn listen_for_channel(
+        &self,
+        name: &str,
+    ) -> Result<mpsc::Receiver<(u64, Box<dyn ZzChannel>)>> {
         let (tx, rx) = mpsc::channel(32);
         self.server_listeners
             .lock()
@@ -160,11 +164,19 @@ mod tests {
 
         // Listen for the first time
         let receiver1 = zznet.listen_for_channel(channel_name).await.unwrap();
-        assert!(zznet.server_listeners.lock().unwrap().contains_key(channel_name));
+        assert!(zznet
+            .server_listeners
+            .lock()
+            .unwrap()
+            .contains_key(channel_name));
 
         // Listen again with the same name, should overwrite
         let receiver2 = zznet.listen_for_channel(channel_name).await.unwrap();
-        assert!(zznet.server_listeners.lock().unwrap().contains_key(channel_name));
+        assert!(zznet
+            .server_listeners
+            .lock()
+            .unwrap()
+            .contains_key(channel_name));
 
         // Ensure the receivers are different
         assert_ne!(
