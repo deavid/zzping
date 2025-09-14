@@ -65,6 +65,7 @@ impl ZzChannel for Channel {
 }
 
 /// Lightweight handle for interacting with an active connection. Its methods send commands to a background actor task that manages the actual connection state.
+#[derive(Debug, Clone)]
 pub struct Connection {
     command_tx: mpsc::Sender<ConnectionCommand>,
 }

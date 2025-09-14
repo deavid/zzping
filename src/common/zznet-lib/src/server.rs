@@ -1,16 +1,15 @@
 // server.rs
+use crate::ListenerMap;
 use futures::StreamExt;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 use zznet::connection::ServerConfig;
 use zznet::connection_manager::{Channel, ConnectionCommand, ConnectionEvent};
 use zznet::runtime::server::ServerRuntime;
-use zznet_api::ZzChannel;
 
 pub(crate) fn start_runtime(
     config: ServerConfig,
-    listeners: Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Box<dyn ZzChannel>)>>>>,
+    listeners: Arc<Mutex<ListenerMap>>,
     next_client_id: Arc<Mutex<u64>>,
 ) {
     tokio::spawn(async move {
@@ -40,7 +39,7 @@ fn handle_connection_events(
     client_id: u64,
     command_tx: mpsc::Sender<ConnectionCommand>,
     mut event_rx: mpsc::Receiver<ConnectionEvent>,
-    listeners: Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Box<dyn ZzChannel>)>>>>,
+    listeners: Arc<Mutex<ListenerMap>>,
 ) {
     tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {

@@ -1,5 +1,5 @@
 // facade.rs
-use crate::{client, config::ZzNetConfig, server};
+use crate::{client, config::ZzNetConfig, server, ListenerMap};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -9,8 +9,7 @@ use zznet_api::ZzChannel;
 
 pub struct ZzNet {
     pub(crate) client_connection: Arc<Mutex<Option<Connection>>>,
-    pub(crate) server_listeners:
-        Arc<Mutex<HashMap<String, mpsc::Sender<(u64, Box<dyn ZzChannel>)>>>>,
+    pub(crate) server_listeners: Arc<Mutex<ListenerMap>>,
     pub(crate) next_client_id: Arc<Mutex<u64>>,
 }
 
@@ -50,7 +49,9 @@ impl ZzNet {
     }
 
     pub async fn request_channel(&self, name: String) -> Result<Box<dyn ZzChannel>> {
-        if let Some(conn) = self.client_connection.lock().unwrap().as_ref() {
+        // To avoid locking across an await, we clone the connection - that is a TX channel, so we end sending to the same endpoint
+        let opt_conn = self.client_connection.lock().unwrap().clone();
+        if let Some(conn) = opt_conn {
             let channel = conn.request_channel(name).await?;
             Ok(Box::new(channel))
         } else {
