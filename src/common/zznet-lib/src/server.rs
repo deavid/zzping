@@ -1,6 +1,5 @@
 // server.rs
 use futures::StreamExt;
-use log;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
