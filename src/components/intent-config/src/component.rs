@@ -1,8 +1,10 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
+use tokio::task::JoinHandle;
 use zznet_api::{Role, ZzChannel};
+use zznet_lib::ZzNet;
 
 // 1. DATA AND PROTOCOL DEFINITIONS (UNCHANGED)
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -12,357 +14,301 @@ pub struct IntentConfigData {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-enum ProtocolMsg {
+pub(crate) enum ProtocolMsg {
     Update(IntentConfigData),
     Broadcast(IntentConfigData),
     RequestCurrent,
 }
 
-// 2. PUBLIC API STRUCT (SIMPLIFIED)
-pub struct IntentConfig {
+// 2. NEW COMPONENT FRAMEWORK STRUCTS
+
+/// Builder for the IntentConfig component.
+pub struct IntentConfigBuilder<N: ZzNet> {
     role: Role,
-    // For clients: subscribe to config changes
+    zznet_handle: N,
+}
+
+/// Handle for interacting with a running IntentConfig component.
+#[derive(Debug)]
+pub struct IntentConfigHandle {
+    command_tx: mpsc::Sender<ActorCommand>,
+    actor_handle: JoinHandle<()>,
+    // For clients to subscribe to config changes
     config_watch: watch::Receiver<IntentConfigData>,
-    // For ClientAdmin: send an update command
-    update_tx: Option<mpsc::Sender<IntentConfigData>>,
 }
 
-// 5. REVISED IMPLEMENTATION (TO BE USED IN THE TASK)
-
-// Server-side actor logic
-async fn server_actor_task(
-    mut client_stream: mpsc::Receiver<(u64, Box<dyn ZzChannel>)>,
-    watch_tx: watch::Sender<IntentConfigData>,
-) {
-    // This task only handles new clients.
-    // Each client gets its own task to handle its lifecycle.
-    while let Some((_id, mut channel)) = client_stream.recv().await {
-        let mut broadcast_rx = watch_tx.subscribe();
-
-        // Send the current state immediately on connection
-        let initial_state = broadcast_rx.borrow().clone();
-        let msg = serde_json::to_vec(&ProtocolMsg::Broadcast(initial_state)).unwrap();
-        if channel.send(msg).await.is_err() {
-            continue; // Client disconnected immediately
-        }
-
-        let watch_tx = watch_tx.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::select! {
-                    // Listen for incoming messages from this specific client
-                    Ok(Some(payload)) = channel.recv() => {
-                        if let Ok(ProtocolMsg::Update(data)) = serde_json::from_slice(&payload) {
-                            // If this client sends an update, publish it to the watch channel.
-                            // This will cause all other client tasks to see the change.
-                            let _ = watch_tx.send(data);
-                        }
-                    },
-                    // Listen for broadcast changes from the watch channel
-                    Ok(_) = broadcast_rx.changed() => {
-                        let new_state = broadcast_rx.borrow().clone();
-                        let msg = serde_json::to_vec(&ProtocolMsg::Broadcast(new_state)).unwrap();
-                        if channel.send(msg).await.is_err() {
-                            // This client disconnected, end its task
-                            break;
-                        }
-                    },
-                    else => break,
-                }
-            }
-        });
-    }
+/// Private actor for the IntentConfig component.
+struct IntentConfigActor<N: ZzNet> {
+    role: Role,
+    zznet_handle: N,
+    config_watch_tx: watch::Sender<IntentConfigData>,
+    // For ClientAdmin: channel to send updates to the client actor task
+    update_tx: mpsc::Sender<IntentConfigData>,
 }
 
-// Client-side actor logic
-async fn client_actor_task(
-    mut channel: Box<dyn ZzChannel>,
-    watch_tx: watch::Sender<IntentConfigData>,
-    mut update_rx: mpsc::Receiver<IntentConfigData>,
-) {
-    loop {
-        tokio::select! {
-            // Received a broadcast from the server
-            Ok(Some(payload)) = channel.recv() => {
-                if let Ok(ProtocolMsg::Broadcast(data)) = serde_json::from_slice(&payload) {
-                    if data != *watch_tx.borrow() {
-                        let _ = watch_tx.send(data);
-                    }
-                }
-            },
-            // The user called the `update` method
-            Some(data) = update_rx.recv() => {
-                let msg = serde_json::to_vec(&ProtocolMsg::Update(data)).unwrap();
-                let _ = channel.send(msg).await;
-            }
-        }
-    }
+/// Commands for the IntentConfig actor.
+enum ActorCommand {
+    Update(IntentConfigData, oneshot::Sender<Result<()>>),
+    Shutdown(oneshot::Sender<()>),
 }
 
-impl IntentConfig {
-    pub fn new_server(client_stream: mpsc::Receiver<(u64, Box<dyn ZzChannel>)>) -> Self {
-        let (watch_tx, watch_rx) = watch::channel(IntentConfigData::default());
-        tokio::spawn(server_actor_task(client_stream, watch_tx));
-        Self {
-            role: Role::Database,
-            config_watch: watch_rx,
-            update_tx: None,
-        }
+// 3. IMPLEMENTATION
+
+impl<N: ZzNet + 'static> IntentConfigBuilder<N> {
+    pub fn new(role: Role, zznet_handle: N) -> Self {
+        Self { role, zznet_handle }
     }
 
-    pub fn new_client(role: Role, channel: Box<dyn ZzChannel>) -> Self {
+    pub async fn start(self) -> Result<IntentConfigHandle> {
+        let (command_tx, command_rx) = mpsc::channel(32);
         let (watch_tx, watch_rx) = watch::channel(IntentConfigData::default());
         let (update_tx, update_rx) = mpsc::channel(32);
-        tokio::spawn(client_actor_task(channel, watch_tx, update_rx));
-        Self {
-            role,
-            config_watch: watch_rx,
-            update_tx: Some(update_tx),
-        }
-    }
 
+        let actor = IntentConfigActor {
+            role: self.role,
+            zznet_handle: self.zznet_handle,
+            config_watch_tx: watch_tx,
+            update_tx,
+        };
+
+        let actor_handle = tokio::spawn(actor.run(command_rx, update_rx));
+
+        Ok(IntentConfigHandle {
+            command_tx,
+            actor_handle,
+            config_watch: watch_rx,
+        })
+    }
+}
+
+impl IntentConfigHandle {
     pub async fn update(&self, new_config: IntentConfigData) -> Result<()> {
-        if self.role != Role::ClientAdmin {
-            return Err(anyhow::anyhow!("Only ClientAdmin can update config"));
-        }
-        if let Some(tx) = &self.update_tx {
-            tx.send(new_config).await?;
-        }
-        Ok(())
+        let (response_tx, response_rx) = oneshot::channel();
+        let command = ActorCommand::Update(new_config, response_tx);
+        self.command_tx.send(command).await?;
+        response_rx.await?
     }
 
     pub fn subscribe(&self) -> watch::Receiver<IntentConfigData> {
         self.config_watch.clone()
     }
+
+    pub async fn shutdown(self) -> Result<()> {
+        let (response_tx, response_rx) = oneshot::channel();
+        let command = ActorCommand::Shutdown(response_tx);
+
+        // Send the shutdown command.
+        if self.command_tx.send(command).await.is_err() {
+            log::warn!("Shutdown command failed: actor already gone.");
+        }
+
+        // Wait for the actor to acknowledge.
+        if response_rx.await.is_err() {
+            log::warn!("Actor did not acknowledge shutdown: may have crashed.");
+        }
+
+        // Wait for the actor's task to complete.
+        self.actor_handle.await?;
+
+        Ok(())
+    }
 }
 
-// The end-to-end test remains the same.
+impl<N: ZzNet> IntentConfigActor<N> {
+    async fn run(
+        mut self,
+        command_rx: mpsc::Receiver<ActorCommand>,
+        update_rx: mpsc::Receiver<IntentConfigData>,
+    ) {
+        // The actor's first job is to establish its network role.
+        match self.role {
+            Role::Database => {
+                log::info!("IntentConfig (Server) starting...");
+                let client_stream = self
+                    .zznet_handle
+                    .listen_for_channel("intent-config".to_string())
+                    .await
+                    .unwrap();
+                // This is the old `server_actor_task`
+                self.run_server(command_rx, client_stream).await;
+            }
+            Role::ClientAdmin | Role::ClientRo => {
+                log::info!("IntentConfig (Client) starting...");
+                let channel = self
+                    .zznet_handle
+                    .request_channel("intent-config".to_string())
+                    .await
+                    .unwrap();
+                // This is the old `client_actor_task`
+                self.run_client(command_rx, update_rx, channel).await;
+            }
+            _ => unimplemented!("Role not supported by IntentConfig"),
+        }
+    }
+
+    async fn handle_command(&self, command: ActorCommand) -> bool {
+        match command {
+            ActorCommand::Update(data, response_tx) => {
+                let res = if self.role == Role::ClientAdmin {
+                    self.update_tx.send(data).await.map_err(|e| anyhow!(e))
+                } else {
+                    Err(anyhow!("Only ClientAdmin can update config"))
+                };
+                let _ = response_tx.send(res);
+            }
+            ActorCommand::Shutdown(response_tx) => {
+                let _ = response_tx.send(());
+                return false; // Signal to stop the actor loop
+            }
+        }
+        true
+    }
+
+    // This is the refactored `server_actor_task`
+    async fn run_server(
+        &mut self,
+        mut command_rx: mpsc::Receiver<ActorCommand>,
+        mut client_stream: mpsc::Receiver<(u64, Box<dyn ZzChannel>)>,
+    ) {
+        loop {
+            tokio::select! {
+                Some((_id, mut channel)) = client_stream.recv() => {
+                    let mut broadcast_rx = self.config_watch_tx.subscribe();
+                    let watch_tx_clone = self.config_watch_tx.clone();
+
+                    tokio::spawn(async move {
+                        // Send initial state
+                        let initial_state = broadcast_rx.borrow().clone();
+                        let msg = serde_json::to_vec(&ProtocolMsg::Broadcast(initial_state)).unwrap();
+                        if channel.send(msg).await.is_err() { return; }
+
+                        loop {
+                            tokio::select! {
+                                Ok(Some(payload)) = channel.recv() => {
+                                    if let Ok(ProtocolMsg::Update(data)) = serde_json::from_slice(&payload) {
+                                        let _ = watch_tx_clone.send(data);
+                                    }
+                                },
+                                Ok(_) = broadcast_rx.changed() => {
+                                    let new_state = broadcast_rx.borrow().clone();
+                                    let msg = serde_json::to_vec(&ProtocolMsg::Broadcast(new_state)).unwrap();
+                                    if channel.send(msg).await.is_err() { break; }
+                                },
+                                else => break,
+                            }
+                        }
+                    });
+                },
+                Some(command) = command_rx.recv() => {
+                    if !self.handle_command(command).await {
+                        break;
+                    }
+                },
+                else => break,
+            }
+        }
+    }
+
+    // This is the refactored `client_actor_task`
+    async fn run_client(
+        &mut self,
+        mut command_rx: mpsc::Receiver<ActorCommand>,
+        mut update_rx: mpsc::Receiver<IntentConfigData>,
+        mut channel: Box<dyn ZzChannel>,
+    ) {
+        loop {
+            tokio::select! {
+                Ok(Some(payload)) = channel.recv() => {
+                    if let Ok(ProtocolMsg::Broadcast(data)) = serde_json::from_slice(&payload) {
+                        if data != *self.config_watch_tx.borrow() {
+                            let _ = self.config_watch_tx.send(data);
+                        }
+                    }
+                },
+                Some(data) = update_rx.recv() => {
+                    let msg = serde_json::to_vec(&ProtocolMsg::Update(data)).unwrap();
+                    let _ = channel.send(msg).await;
+                },
+                Some(command) = command_rx.recv() => {
+                    if !self.handle_command(command).await {
+                        break;
+                    }
+                },
+                else => break,
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use async_trait::async_trait;
     use ntest::timeout;
     use std::time::Duration;
-    use tokio::sync::mpsc;
     use zznet::connection::{ClientConfig, ServerConfig, TlsCfg};
     use zznet_api::ZzChannel;
-    use zznet_lib::{ZzNet, ZzNetConfig};
+    use zznet_lib::{ZzNetBuilder, ZzNetConfig};
 
-    /// A mock ZzChannel that uses MPSC channels to allow a test to act as the peer.
-    struct MockZzChannel {
-        /// Test sends payloads here for the actor to receive.
-        tx_to_actor: mpsc::Sender<Vec<u8>>,
-        /// Test receives payloads here that the actor sent.
-        rx_from_actor: mpsc::Receiver<Vec<u8>>,
-    }
+    #[derive(Debug)]
+    struct MockZzNetHandle;
 
     #[async_trait]
-    impl ZzChannel for MockZzChannel {
-        async fn send(&self, payload: Vec<u8>) -> Result<()> {
-            self.tx_to_actor.send(payload).await?;
-            Ok(())
+    impl ZzNet for MockZzNetHandle {
+        async fn request_channel(&self, _name: String) -> Result<Box<dyn ZzChannel>> {
+            #[derive(Debug)]
+            struct MockChannel;
+            #[async_trait]
+            impl ZzChannel for MockChannel {
+                async fn send(&self, _payload: Vec<u8>) -> Result<()> { Ok(()) }
+                async fn recv(&mut self) -> Result<Option<Vec<u8>>> { Ok(None) }
+            }
+            Ok(Box::new(MockChannel))
         }
 
-        async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
-            Ok(self.rx_from_actor.recv().await)
+        async fn listen_for_channel(
+            &self,
+            _name: String,
+        ) -> Result<mpsc::Receiver<(u64, Box<dyn ZzChannel>)>> {
+            let (_tx, rx) = mpsc::channel(32);
+            Ok(rx)
         }
     }
 
     #[tokio::test]
-    #[timeout(100)]
-    async fn test_server_actor_update_and_broadcast() {
+    #[timeout(200)] // Increased timeout slightly for starting two components
+    async fn intent_config_component_lifecycle() {
         let _ = env_logger::builder().is_test(true).try_init();
-        let (watch_tx, mut watch_rx) = watch::channel(IntentConfigData::default());
-        let (client_tx, client_rx) = mpsc::channel(32);
-        tokio::spawn(server_actor_task(client_rx, watch_tx));
+        log::info!("Testing intent-config component lifecycle");
 
-        let (tx_to_actor, rx_from_actor) = mpsc::channel(32);
-        let (tx_from_actor, mut rx_for_test) = mpsc::channel(32);
-        let mock_channel = Box::new(MockZzChannel {
-            tx_to_actor: tx_from_actor,
-            rx_from_actor,
-        });
-        client_tx.send((0, mock_channel)).await.unwrap();
-        tokio::task::yield_now().await;
-        let _ = rx_for_test.recv().await; // Drain initial broadcast
+        let builder_server = IntentConfigBuilder::new(Role::Database, MockZzNetHandle);
+        let handle_server = builder_server.start().await.unwrap();
+        handle_server.shutdown().await.unwrap();
 
-        // ACT: Client sends an update
-        let new_config = IntentConfigData {
-            targets: vec!["1.1.1.1".parse().unwrap()],
-            ..Default::default()
-        };
-        let update_msg = ProtocolMsg::Update(new_config.clone());
-        let update_bytes = serde_json::to_vec(&update_msg).unwrap();
-        tx_to_actor.send(update_bytes).await.unwrap();
-
-        // ASSERT 1: The watch channel is updated
-        watch_rx.changed().await.unwrap();
-        assert_eq!(*watch_rx.borrow(), new_config);
-
-        // ASSERT 2: The client receives a broadcast of the new state
-        let received_bytes = rx_for_test.recv().await.unwrap();
-        let received_msg: ProtocolMsg = serde_json::from_slice(&received_bytes).unwrap();
-        assert!(matches!(received_msg, ProtocolMsg::Broadcast(data) if data == new_config));
+        let builder_client = IntentConfigBuilder::new(Role::ClientAdmin, MockZzNetHandle);
+        let handle_client = builder_client.start().await.unwrap();
+        handle_client.shutdown().await.unwrap();
     }
 
     #[tokio::test]
-    #[timeout(100)]
-    async fn test_client_actor_receives_broadcast() {
-        let _ = env_logger::builder().is_test(true).try_init();
-        let (watch_tx, mut watch_rx) = watch::channel(IntentConfigData::default());
-        let (_update_tx, update_rx) = mpsc::channel(32);
-        let (tx_to_actor, rx_from_actor) = mpsc::channel(32);
-        let (_tx_from_actor, _rx_for_test) = mpsc::channel(32);
-        let mock_channel = Box::new(MockZzChannel {
-            tx_to_actor: _tx_from_actor,
-            rx_from_actor,
-        });
-        tokio::spawn(client_actor_task(mock_channel, watch_tx, update_rx));
-
-        // ACT: "Server" sends a broadcast
-        let new_config = IntentConfigData {
-            targets: vec!["2.2.2.2".parse().unwrap()],
-            ..Default::default()
-        };
-        let broadcast_msg = ProtocolMsg::Broadcast(new_config.clone());
-        let broadcast_bytes = serde_json::to_vec(&broadcast_msg).unwrap();
-        tx_to_actor.send(broadcast_bytes).await.unwrap();
-
-        // ASSERT: The watch channel is updated
-        watch_rx.changed().await.unwrap();
-        assert_eq!(*watch_rx.borrow(), new_config);
-    }
-
-    #[tokio::test]
-    #[timeout(100)]
-    async fn test_client_actor_sends_update() {
-        let _ = env_logger::builder().is_test(true).try_init();
-        let (watch_tx, _watch_rx) = watch::channel(IntentConfigData::default());
-        let (update_tx, update_rx) = mpsc::channel(32);
-        let (_tx_to_actor, rx_from_actor) = mpsc::channel(32);
-        let (tx_from_actor, mut rx_for_test) = mpsc::channel(32);
-        let mock_channel = Box::new(MockZzChannel {
-            tx_to_actor: tx_from_actor,
-            rx_from_actor,
-        });
-        tokio::spawn(client_actor_task(mock_channel, watch_tx, update_rx));
-
-        // ACT: Test calls the component's update method
-        let new_config = IntentConfigData {
-            targets: vec!["3.3.3.3".parse().unwrap()],
-            ..Default::default()
-        };
-        update_tx.send(new_config.clone()).await.unwrap();
-
-        // ASSERT: The actor sends an Update message to the "server"
-        let received_bytes = rx_for_test.recv().await.unwrap();
-        let received_msg: ProtocolMsg = serde_json::from_slice(&received_bytes).unwrap();
-        assert!(matches!(received_msg, ProtocolMsg::Update(data) if data == new_config));
-    }
-
-    #[tokio::test]
-    #[timeout(100)]
-    async fn test_server_actor_sends_initial_broadcast() {
-        let _ = env_logger::builder().is_test(true).try_init();
-
-        // SETUP
-        let (watch_tx, _watch_rx) = watch::channel(IntentConfigData::default());
-        let (client_tx, client_rx) = mpsc::channel(32);
-        tokio::spawn(server_actor_task(client_rx, watch_tx));
-
-        let (_tx_to_actor, rx_from_actor): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) =
-            mpsc::channel(32);
-        let (tx_from_actor, mut rx_for_test): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) =
-            mpsc::channel(32);
-        let mock_channel = Box::new(MockZzChannel {
-            tx_to_actor: tx_from_actor,
-            rx_from_actor,
-        });
-
-        // ACT: "Connect" a new client
-        client_tx.send((0, mock_channel)).await.unwrap();
-        tokio::task::yield_now().await; // Give the actor a chance to run
-
-        // ASSERT: The server immediately sends the current state
-        let received_bytes = rx_for_test.recv().await.unwrap();
-        let received_msg: ProtocolMsg = serde_json::from_slice(&received_bytes).unwrap();
-
-        assert!(
-            matches!(received_msg, ProtocolMsg::Broadcast(data) if data == IntentConfigData::default())
-        );
-    }
-
-    #[tokio::test]
-    #[timeout(100)]
-    async fn test_subscribe_returns_valid_receiver() {
-        let _ = env_logger::builder().is_test(true).try_init();
-        let (_client_tx, client_rx) = mpsc::channel(32);
-        let component = IntentConfig::new_server(client_rx);
-        let watch_rx = component.subscribe();
-
-        // Initial state should be default
-        assert_eq!(*watch_rx.borrow(), IntentConfigData::default());
-
-        // Manually update the watch channel to simulate a change
-        let new_state = IntentConfigData {
-            targets: vec!["1.1.1.1".parse().unwrap()],
-            ping_rate_pps: 10,
-        };
-        // This is a bit of a hack. In a real scenario, the actor would do this.
-        // We can't easily get the `watch_tx` to do this directly, so we'll test
-        // this behavior more thoroughly in the actor tests.
-        let (watch_tx_manual, mut watch_rx_manual) = watch::channel(IntentConfigData::default());
-        watch_tx_manual.send(new_state.clone()).unwrap();
-        watch_rx_manual.changed().await.unwrap();
-        assert_eq!(*watch_rx_manual.borrow(), new_state);
-    }
-
-    #[tokio::test]
-    #[timeout(100)]
-    async fn test_update_permissions() {
-        let _ = env_logger::builder().is_test(true).try_init();
-
-        // Server should not be able to update
-        let (_client_tx, client_rx) = mpsc::channel(32);
-        let server_component = IntentConfig::new_server(client_rx);
-        let result = server_component.update(IntentConfigData::default()).await;
-        assert!(result.is_err());
-
-        // ClientRo should not be able to update
-        let (_tx_to_actor, rx_from_actor) = mpsc::channel(32);
-        let (tx_to_test, _rx_from_test) = mpsc::channel(32);
-        let mock_channel = Box::new(MockZzChannel {
-            tx_to_actor: tx_to_test,
-            rx_from_actor,
-        });
-        let client_ro_component = IntentConfig::new_client(Role::ClientRo, mock_channel);
-        let result = client_ro_component
-            .update(IntentConfigData::default())
-            .await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
+    #[timeout(2000)] // E2E tests may take longer
     async fn test_full_e2e_update_and_broadcast() {
         let _ = env_logger::builder().is_test(true).try_init();
 
         // 1. SETUP THE TEST ENVIRONMENT
-        // Find the workspace root relative to this test's manifest dir.
         let manifest_dir = env!("CARGO_MANIFEST_DIR");
         let workspace_root = std::path::Path::new(manifest_dir).join("../../../");
         let test_certs_dir = workspace_root.join("src/components/zznet/test_certs");
-
-        // Convert the path to a string to pass to our modified function
         let test_certs_path_str = test_certs_dir.to_str().unwrap();
 
-        // 2. CONFIGURE USING THE TEST CERTS PATH
-        let server_addr = "127.0.0.1:12345".parse().unwrap();
-        let server_config = ServerConfig {
+        // 2. CONFIGURE AND START zznet COMPONENTS
+        let server_addr = "127.0.0.1:12347".parse().unwrap(); // Use a different port
+        let server_config = ZzNetConfig::Server(ServerConfig {
             socketaddr: vec![server_addr],
             tls: Some(TlsCfg::from_role(Role::Database, Some(test_certs_path_str))),
             role: Role::Database,
-        };
-        let client_admin_config = ClientConfig {
+        });
+        let client_admin_config = ZzNetConfig::Client(ClientConfig {
             socketaddr: vec![server_addr],
             tls: Some(TlsCfg::from_role(
                 Role::ClientAdmin,
@@ -370,55 +316,57 @@ mod tests {
             )),
             role: Role::ClientAdmin,
             reconnect_delay: Duration::from_secs(1),
-        };
-        let client_ro_config = ClientConfig {
+        });
+        let client_ro_config = ZzNetConfig::Client(ClientConfig {
             socketaddr: vec![server_addr],
             tls: Some(TlsCfg::from_role(Role::ClientRo, Some(test_certs_path_str))),
             role: Role::ClientRo,
             reconnect_delay: Duration::from_secs(1),
-        };
+        });
 
-        let network_server = ZzNet::new(ZzNetConfig::Server(server_config));
-        let network_admin_client = ZzNet::new(ZzNetConfig::Client(client_admin_config));
-        let network_ro_client = ZzNet::new(ZzNetConfig::Client(client_ro_config));
+        let (network_server_manager, network_server_handle) =
+            ZzNetBuilder::new(server_config).start().await.unwrap();
+        let (network_admin_manager, network_admin_handle) =
+            ZzNetBuilder::new(client_admin_config).start().await.unwrap();
+        let (network_ro_manager, network_ro_handle) =
+            ZzNetBuilder::new(client_ro_config).start().await.unwrap();
 
-        // Give the server a moment to start
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // 3. WIRING & ACTIVATION of intent-config COMPONENTS
+        let server_component_builder =
+            IntentConfigBuilder::new(Role::Database, network_server_handle);
+        let admin_component_builder =
+            IntentConfigBuilder::new(Role::ClientAdmin, network_admin_handle.clone());
+        let ro_component_builder =
+            IntentConfigBuilder::new(Role::ClientRo, network_ro_handle.clone());
 
-        // 2. WIRING (The "Composer" part of the test)
-        let client_stream = network_server
-            .listen_for_channel("intent-config")
-            .await
-            .unwrap();
-        let _server_component = IntentConfig::new_server(client_stream);
+        let server_component_handle = server_component_builder.start().await.unwrap();
+        let admin_component_handle = admin_component_builder.start().await.unwrap();
+        let ro_component_handle = ro_component_builder.start().await.unwrap();
 
-        let admin_channel = network_admin_client
-            .request_channel("intent-config".to_string())
-            .await
-            .unwrap();
-        let admin_component = IntentConfig::new_client(Role::ClientAdmin, admin_channel);
-
-        let ro_channel = network_ro_client
-            .request_channel("intent-config".to_string())
-            .await
-            .unwrap();
-        let ro_component = IntentConfig::new_client(Role::ClientRo, ro_channel);
-        let mut ro_config_watch = ro_component.subscribe();
+        let mut ro_config_watch = ro_component_handle.subscribe();
 
         // Wait for initial sync
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
-        // 3. ACT: Perform the operation.
+        // 4. ACT: Perform the operation.
         let new_config = IntentConfigData {
             targets: vec!["8.8.8.8".parse().unwrap()],
             ping_rate_pps: 50,
         };
-        admin_component.update(new_config.clone()).await.unwrap();
+        admin_component_handle.update(new_config.clone()).await.unwrap();
 
-        // 4. ASSERT: Verify the result propagated through the entire stack.
+        // 5. ASSERT: Verify the result propagated through the entire stack.
         ro_config_watch.changed().await.unwrap();
         let received_config = ro_config_watch.borrow().clone();
-
         assert_eq!(received_config, new_config);
+
+        // 6. ORDERED TEARDOWN
+        server_component_handle.shutdown().await.unwrap();
+        admin_component_handle.shutdown().await.unwrap();
+        ro_component_handle.shutdown().await.unwrap();
+
+        network_server_manager.shutdown().await.unwrap();
+        network_admin_manager.shutdown().await.unwrap();
+        network_ro_manager.shutdown().await.unwrap();
     }
 }

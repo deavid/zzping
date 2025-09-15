@@ -20,6 +20,7 @@ pub enum ConnectionCommand {
 
 /// Represents events that the ConnectionActor sends upward to its manager.
 /// This allows the facade to receive notifications about channel openings.
+#[derive(Debug)]
 pub enum ConnectionEvent {
     ChannelOpened {
         name: String,
@@ -30,6 +31,7 @@ pub enum ConnectionEvent {
 
 /// Represents a single, logical communication channel. It provides an async method
 /// for sending application-level data and contains the receiver for incoming data.
+#[derive(Debug)]
 pub struct Channel {
     pub id: ChannelId,
     pub command_tx: mpsc::Sender<ConnectionCommand>,

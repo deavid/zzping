@@ -11,10 +11,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 futures = "0.3"
+async-trait = { workspace = true }
+zznet-lib = { path = "../../common/zznet-lib" }
 
 [dev-dependencies]
 zznet-lib = { path = "../../common/zznet-lib" }
 zznet = { path = "../zznet" }
 env_logger = { workspace = true }
 ntest = { workspace = true }
-async-trait = { workspace = true }
