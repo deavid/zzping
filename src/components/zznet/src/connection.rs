@@ -19,20 +19,20 @@ impl TlsCertAndKey {
         let dir = certs_dir.unwrap_or("certs");
         match role {
             Role::Collector => TlsCertAndKey {
-                pem_path: format!("{}/collector.pem", dir).into(),
-                key_path: format!("{}/collector.key", dir).into(),
+                pem_path: format!("{dir}/collector.pem").into(),
+                key_path: format!("{dir}/collector.key").into(),
             },
             Role::Database => TlsCertAndKey {
-                pem_path: format!("{}/database.pem", dir).into(),
-                key_path: format!("{}/database.key", dir).into(),
+                pem_path: format!("{dir}/database.pem").into(),
+                key_path: format!("{dir}/database.key").into(),
             },
             Role::ClientRo => TlsCertAndKey {
-                pem_path: format!("{}/client-ro.pem", dir).into(),
-                key_path: format!("{}/client-ro.key", dir).into(),
+                pem_path: format!("{dir}/client-ro.pem").into(),
+                key_path: format!("{dir}/client-ro.key").into(),
             },
             Role::ClientAdmin => TlsCertAndKey {
-                pem_path: format!("{}/client-admin.pem", dir).into(),
-                key_path: format!("{}/client-admin.key", dir).into(),
+                pem_path: format!("{dir}/client-admin.pem").into(),
+                key_path: format!("{dir}/client-admin.key").into(),
             },
         }
     }

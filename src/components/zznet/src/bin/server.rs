@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
                 // Connection actor is already spawned in Connection::new
             }
             Err(e) => {
-                log::warn!("Connection error: {}", e);
+                log::warn!("Connection error: {e}");
             }
         }
     }

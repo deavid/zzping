@@ -5949,6 +5949,7 @@ name = "zznet-lib"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "env_logger",
  "futures",
  "log",
@@ -6021,6 +6022,7 @@ dependencies = [
  "env_logger",
  "futures-core",
  "log",
+ "ntest",
  "ron",
  "serde",
  "serde_json",

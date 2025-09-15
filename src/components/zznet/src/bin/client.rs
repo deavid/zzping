@@ -42,13 +42,13 @@ async fn main() -> anyhow::Result<()> {
                 };
                 let frame = Frame::Control(ControlMsg::Hello(hello));
                 let serialized_frame = encode::to_vec(&frame)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize hello: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Failed to serialize hello: {e}"))?;
                 if let Err(e) = connection.send_frame(serialized_frame).await {
-                    log::warn!("Failed to send hello: {}", e);
+                    log::warn!("Failed to send hello: {e}");
                 }
             }
             Err(e) => {
-                log::warn!("Connection error: {}", e);
+                log::warn!("Connection error: {e}");
             }
         }
     }

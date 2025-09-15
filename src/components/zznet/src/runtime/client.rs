@@ -64,17 +64,17 @@ impl ClientRuntime {
                                 match connector.connect(domain, stream).await {
                                     Ok(tls_stream) => return Ok(Box::new(tls_stream)),
                                     Err(e) => {
-                                        log::warn!("TLS handshake failed for {}: {}", addr, e)
+                                        log::warn!("TLS handshake failed for {addr}: {e}")
                                     }
                                 }
                             }
-                            Err(e) => log::warn!("Failed to build TLS config for {}: {}", addr, e),
+                            Err(e) => log::warn!("Failed to build TLS config for {addr}: {e}"),
                         }
                     } else {
                         return Ok(Box::new(stream));
                     }
                 }
-                Err(e) => log::warn!("TCP connection failed for {}: {}", addr, e),
+                Err(e) => log::warn!("TCP connection failed for {addr}: {e}"),
             }
         }
         Err(anyhow::anyhow!("Failed to connect to any server address"))

@@ -19,8 +19,10 @@ use common::{MockIngestionService, VectorLogger};
 /// 1. Start up and connect to the database.
 /// 2. Survive a database connection failure.
 /// 3. Actively attempt to reconnect after the failure.
+use ntest::timeout;
+
 #[tokio::test]
-// Removed #[timeout(2000)]
+#[timeout(4000)]
 async fn test_collector_survives_disconnect_and_reconnects() {
     // 1. Setup a logger to capture output.
     let log_messages = Arc::new(Mutex::new(Vec::new()));

@@ -2,9 +2,11 @@ use zzping_proto::zzping::{CollectorRole, HeartbeatResponse};
 
 mod common;
 use common::{MockIngestionService, spawn_mock_server};
+use ntest::timeout;
 use zzping_collector::database_client::DatabaseClient;
 
 #[tokio::test]
+#[timeout(1000)]
 async fn test_fsync_prune_deterministic_via_override_channel() {
     // Spawn the mock ingestion service and get its address.
     let mock = MockIngestionService::with_ping_rate(0);

@@ -7,12 +7,14 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use zzping_collector::task_supervisor::SupervisorShutdown;
 
+use ntest::timeout;
+
 // Import the common test utilities
 mod common;
 use common::MockIngestionService;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-// Removed #[timeout(5000)]
+#[timeout(5000)]
 async fn test_graceful_shutdown_flushes_buffer() -> Result<()> {
     let _ = env_logger::builder()
         .is_test(true)
@@ -26,7 +28,7 @@ async fn test_graceful_shutdown_flushes_buffer() -> Result<()> {
     // Create a temporary config file
     info!("Process: Create a temporary config file");
     let mut config = zzping_collector::config::Config::load("tests/test-configs/valid-config.ron")?;
-    config.database_addr = format!("http://{}", addr);
+    config.database_addr = format!("http://{addr}");
     let temp_dir = tempfile::tempdir()?;
     let temp_config_path = temp_dir.path().join("config.ron");
     let config_str = ron::to_string(&config)?;

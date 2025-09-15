@@ -10,11 +10,14 @@ use zzping_collector::{
 };
 use zzping_proto::zzping::{CollectorRole, GetRecentDataResponse};
 
+use ntest::timeout;
+
 // Import the common test utilities
 mod common;
 use common::MockIngestionService;
 
 #[tokio::test]
+#[timeout(1000)]
 async fn test_target_worker_primary_supervised_role_sends_init_command() -> Result<()> {
     // 1. Setup
     let mock_service = MockIngestionService::new();

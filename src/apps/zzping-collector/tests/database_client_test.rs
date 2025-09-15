@@ -2,10 +2,13 @@ use zzping_collector::database_client::DatabaseClient;
 use zzping_proto::zzping::{CollectorRole, HeartbeatRequest};
 
 // Import the common test utilities
+use ntest::timeout;
+
 mod common;
 use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]
+#[timeout(1000)]
 async fn test_database_client_connect_and_heartbeat() {
     let _ = env_logger::builder()
         .is_test(true)

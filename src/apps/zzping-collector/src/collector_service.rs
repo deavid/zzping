@@ -175,7 +175,7 @@ impl CollectorService {
         if let Some(handle) = self.supervisor_handle.take() {
             info!("Awaiting TaskSupervisor completion...");
             if let Err(e) = handle.await? {
-                warn!("TaskSupervisor exited with an error: {}", e);
+                warn!("TaskSupervisor exited with an error: {e}");
             }
         }
 
@@ -313,7 +313,7 @@ impl CollectorService {
                         let session_handle = tokio::spawn(session_handler.run());
 
                         if let Err(e) = session_handle.await {
-                            warn!("Session ended with an error: {:?}", e);
+                            warn!("Session ended with an error: {e:?}");
                         }
 
                         client_update_tx.send(ClientUpdate::ClientLost).await.ok();
@@ -329,8 +329,8 @@ impl CollectorService {
             res = supervisor_handle => {
                 match res {
                     Ok(Ok(_)) => info!("TaskSupervisor exited gracefully."),
-                    Ok(Err(e)) => warn!("TaskSupervisor exited with an error: {}", e),
-                    Err(e) => warn!("TaskSupervisor task panicked: {}", e),
+                    Ok(Err(e)) => warn!("TaskSupervisor exited with an error: {e}"),
+                    Err(e) => warn!("TaskSupervisor task panicked: {e}"),
                 }
             }
         }

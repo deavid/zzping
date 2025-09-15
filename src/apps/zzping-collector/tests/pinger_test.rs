@@ -15,6 +15,7 @@ mod common;
 use common::MockIngestionService;
 
 #[tokio::test]
+#[timeout(2000)]
 async fn test_pinger_loop() {
     let target: IpAddr = "127.0.0.1".parse().unwrap();
     let ping_rate_pps = 100;
