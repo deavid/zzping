@@ -24,8 +24,8 @@ pub(crate) fn spawn_listener(
                 Box::pin(stream)
             }
             Err(e) => {
-                log::error!("Server runtime failed to start: {}", e);
-                let _ = ready_tx.send(Err(anyhow!("Server runtime failed: {}", e)));
+                    log::error!("Server runtime failed to start: {e}");
+                    let _ = ready_tx.send(Err(anyhow!("Server runtime failed: {e}")));
                 return;
             }
         };
@@ -35,7 +35,7 @@ pub(crate) fn spawn_listener(
             let client_id = next_client_id;
             next_client_id += 1;
 
-            log::info!("New server connection from client {}", client_id);
+            log::info!("New server connection from client {client_id}");
             let event = InternalEvent::NewServerConnection {
                 client_id,
                 connection,
@@ -63,12 +63,11 @@ pub(crate) fn spawn_per_client_event_handler(
             let internal_event = InternalEvent::ClientEvent { client_id, event };
             if internal_tx.send(internal_event).await.is_err() {
                 log::warn!(
-                    "Actor has disappeared, shutting down event handler for client {}.",
-                    client_id
+                    "Actor has disappeared, shutting down event handler for client {client_id}."
                 );
                 break;
             }
         }
-        log::info!("Event handler for client {} shutting down.", client_id);
+        log::info!("Event handler for client {client_id} shutting down.");
     });
 }

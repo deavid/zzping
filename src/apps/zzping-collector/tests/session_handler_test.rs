@@ -101,7 +101,7 @@ async fn test_session_handler_exits_on_connection_failure() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    info!("Starting mock server on {}", addr);
+    info!("Starting mock server on {addr}");
 
     let server_handle = tokio::spawn(async move {
         tonic::transport::Server::builder()
@@ -123,7 +123,7 @@ async fn test_session_handler_exits_on_connection_failure() {
     let client = DatabaseClient::connect(format!("http://{addr}"), "test-token".to_string())
         .await
         .unwrap();
-    info!("Database client connected to {}", addr);
+    info!("Database client connected to {addr}");
 
     let (fsync_tx, _fsync_rx) = mpsc::channel::<u64>(10);
     let handler = SessionHandler::new(
@@ -171,11 +171,11 @@ async fn test_session_handler_exits_on_connection_failure() {
                             info!("SessionHandler exited successfully as expected");
                         }
                         Err(e) => {
-                            info!("SessionHandler exited with error (also acceptable): {}", e);
+                            info!("SessionHandler exited with error (also acceptable): {e}");
                         }
                     }
                 }
-                Err(join_error) => panic!("Handler task panicked: {}", join_error),
+                Err(join_error) => panic!("Handler task panicked: {join_error}"),
             }
         }
         Err(_) => {

@@ -23,11 +23,10 @@ fn setup_test_environment(
     let collector_config_content = format!(
         r#"(
     collector_uuid: "cached-intent-test-uuid",
-    database_addr: "{}",
+    database_addr: "{db_addr}",
     auth_token: "test-token",
 )
-"#,
-        db_addr
+"#
     );
 
     let collector_config_path = dir_path.join("collector.ron");
@@ -44,8 +43,9 @@ fn setup_test_environment(
     ))
 }
 
+use ntest::timeout;
 #[tokio::test]
-// Removed #[timeout(5000)]
+#[timeout(1000)]
 #[serial_test::serial]
 async fn startup_with_cache_and_unavailable_db() -> Result<()> {
     // Collector has a cached intent but DB is unreachable -> supervisor should defer worker creation
@@ -86,7 +86,7 @@ async fn startup_with_cache_and_unavailable_db() -> Result<()> {
 }
 
 #[tokio::test]
-// Removed #[timeout(8000)]
+#[timeout(5000)]
 #[serial_test::serial]
 async fn startup_with_cache_and_successful_connection() -> Result<()> {
     // Deterministic: use mock ingestion service and heartbeat override to cause the collector to
@@ -117,7 +117,7 @@ async fn startup_with_cache_and_successful_connection() -> Result<()> {
 )
 "#,
         ),
-        &format!("http://{}", addr),
+        &format!("http://{addr}"),
     )?;
 
     let (shutdown_sender_tx, mut shutdown_sender_rx) = tokio::sync::mpsc::channel(1);
@@ -125,7 +125,7 @@ async fn startup_with_cache_and_successful_connection() -> Result<()> {
         config_path,
         shutdown_sender_tx,
         None,
-        format!("http://{}", addr),
+        format!("http://{addr}"),
     )?;
 
     let svc_handle = tokio::spawn(async move { service.run().await });
@@ -182,7 +182,7 @@ async fn startup_with_cache_and_successful_connection() -> Result<()> {
 }
 
 #[tokio::test]
-// Removed #[timeout(5000)]
+#[timeout(1000)]
 #[serial_test::serial]
 async fn startup_without_cache_and_unavailable_db() -> Result<()> {
     // When no cache exists and DB is unreachable, the collector should not spawn workers

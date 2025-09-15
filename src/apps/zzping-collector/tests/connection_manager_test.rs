@@ -3,10 +3,13 @@ use tokio::sync::{Notify, mpsc};
 use zzping_collector::connection_manager::ConnectionManager;
 use zzping_collector::database_client::DatabaseClientTrait;
 
+use ntest::timeout;
+
 mod common;
 use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]
+#[timeout(2000)]
 async fn test_connection_manager_connects_and_sends_client() {
     let addr = spawn_mock_server(MockIngestionService::default()).await;
     let client_addr = format!("http://{addr}");
@@ -31,6 +34,7 @@ async fn test_connection_manager_connects_and_sends_client() {
 }
 
 #[tokio::test]
+#[timeout(2000)]
 async fn test_connection_manager_retries_on_failure() {
     // Don't spawn a server, so connection will fail.
     let client_addr = "http://127.0.0.1:0".to_string();

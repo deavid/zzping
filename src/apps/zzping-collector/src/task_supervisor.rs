@@ -203,7 +203,7 @@ impl TaskSupervisor {
                     break;
                 }
                 Some(fsync_nanos) = fsync_rx.recv() => {
-                    info!("TaskSupervisor received fsync notification: {}", fsync_nanos);
+                    info!("TaskSupervisor received fsync notification: {fsync_nanos}");
                     // Broadcast prune to all workers. Each worker will forward to its BatchSubmitter.
                     for worker_handle in self.workers.values() {
                         if worker_handle
@@ -217,7 +217,7 @@ impl TaskSupervisor {
                 }
                 // Received a scheduled swap notification: apply role change now.
                 Some(swap_role) = swap_notify_rx.recv() => {
-                    info!("Scheduled swap triggered: applying role {:?}", swap_role);
+                    info!("Scheduled swap triggered: applying role {swap_role:?}");
                     self.current_role = swap_role;
                     // Update self.current_config with the new role before reconciling
                     if let Some(ref mut config) = self.current_config {
@@ -362,8 +362,7 @@ impl TaskSupervisor {
                 shutdown_handles.push(async move {
                     if let Err(e) = worker_handle.task_handle.await {
                         warn!(
-                            "Worker task for target {} panicked during shutdown: {:?}",
-                            target_ip, e
+                            "Worker task for target {target_ip} panicked during shutdown: {e:?}"
                         );
                     }
                 });

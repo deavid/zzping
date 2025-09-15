@@ -33,8 +33,10 @@ impl Clone for ClientHolder {
 mod tests {
     use super::*;
     use crate::database_client::MockDatabaseClientTrait;
+    use ntest::timeout;
 
     #[tokio::test]
+    #[timeout(100)]
     async fn test_holder_get_set_clone() {
         let holder = ClientHolder::new(None);
         assert!(holder.get().await.is_none());

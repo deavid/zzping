@@ -4,7 +4,7 @@ use ntest::timeout;
 use tokio::sync::mpsc;
 use zznet::connection::ServerConfig;
 use zznet_api::{Role, ZzChannel};
-use zznet_lib::{ActorCommand, ZzNet, ZzNetBuilder, ZzNetConfig, ZzNetHandle, ZzNetManager};
+use zznet_lib::{ActorCommand, ZzNet, ZzNetBuilder, ZzNetConfig, ZzNetHandle};
 
 #[derive(Debug)]
 struct MockChannel;
@@ -22,6 +22,7 @@ impl ZzChannel for MockChannel {
 #[tokio::test]
 #[timeout(100)]
 async fn zznet_lib_actor_lifecycle() {
+    use zznet_lib::ZzNetManager;
     let _ = env_logger::builder().is_test(true).try_init();
     log::info!("Testing actor lifecycle: start and shutdown");
 

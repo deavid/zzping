@@ -146,7 +146,7 @@ impl ConnectionActor {
                     match command {
                         ConnectionCommand::SendFrame(frame) => {
                             if let Err(e) = crate::proto::frame::write_frame(&mut self.writer, &frame).await {
-                                log::debug!("Write error: {}. Terminating connection.", e);
+                                log::debug!("Write error: {e}. Terminating connection.");
                                 break;
                             }
                         }
@@ -158,12 +158,11 @@ impl ConnectionActor {
                             match rmp_serde::encode::to_vec(&request) {
                                 Ok(serialized) => {
                                     if let Err(e) = crate::proto::frame::write_frame(&mut self.writer, &serialized).await {
-                                        log::warn!("Failed to send channel request: {}", e);
+                                        log::warn!("Failed to send channel request: {e}");
                                     }
                                 }
                                 Err(e) => log::warn!(
-                                    "Failed to serialize channel request: {}",
-                                    e
+                                    "Failed to serialize channel request: {e}"
                                 ),
                             }
                         }
@@ -172,12 +171,11 @@ impl ConnectionActor {
                             match rmp_serde::encode::to_vec(&frame) {
                                 Ok(serialized) => {
                                     if let Err(e) = crate::proto::frame::write_frame(&mut self.writer, &serialized).await {
-                                        log::warn!("Failed to send data: {}", e);
+                                        log::warn!("Failed to send data: {e}");
                                     }
                                 }
                                 Err(e) => log::warn!(
-                                    "Failed to serialize data frame: {}",
-                                    e
+                                    "Failed to serialize data frame: {e}"
                                 ),
                             }
                         }
@@ -221,12 +219,11 @@ impl ConnectionActor {
                                             match rmp_serde::encode::to_vec(&response) {
                                                 Ok(serialized) => {
                                                     if let Err(e) = crate::proto::frame::write_frame(&mut self.writer, &serialized).await {
-                                                        log::warn!("Failed to send channel opened: {}", e);
+                                                        log::warn!("Failed to send channel opened: {e}");
                                                     }
                                                 }
                                                 Err(e) => log::warn!(
-                                                    "Failed to serialize channel opened response: {}",
-                                                    e
+                                                    "Failed to serialize channel opened response: {e}"
                                                 ),
                                             }
                                         }
@@ -244,11 +241,11 @@ impl ConnectionActor {
                                                     log::warn!("Failed to send channel to application");
                                                 }
                                             } else {
-                                                log::warn!("Received ChannelOpened for unknown request: {}", name);
+                                                log::warn!("Received ChannelOpened for unknown request: {name}");
                                             }
                                         }
                                         crate::proto::messages::ControlMsg::CloseChannel { id } => {
-                                            log::debug!("Close channel {}", id)
+                                            log::debug!("Close channel {id}")
                                         }
                                     },
                                     crate::proto::messages::Frame::Data(data) => {
@@ -257,30 +254,26 @@ impl ConnectionActor {
                                         if let Some(sender) = sender {
                                             if let Err(e) = sender.send(data).await {
                                                 log::warn!(
-                                                    "Failed to send data to channel {}: {}",
-                                                    channel_id,
-                                                    e
+                                                    "Failed to send data to channel {channel_id}: {e}"
                                                 );
                                             }
                                         } else {
                                             log::warn!(
-                                                "Received data for unknown channel ID {}",
-                                                channel_id
+                                                "Received data for unknown channel ID {channel_id}"
                                             );
                                         }
                                     }
                                 },
                                 Err(e) => {
                                     log::warn!(
-                                        "Fatal protocol error: failed to deserialize frame: {}. Dropping connection.",
-                                        e
+                                        "Fatal protocol error: failed to deserialize frame: {e}. Dropping connection."
                                     );
                                     break;
                                 }
                             }
                         }
                         Err(e) => {
-                            log::debug!("Read error: {}. Terminating connection.", e);
+                            log::debug!("Read error: {e}. Terminating connection.");
                             break;
                         }
                     }

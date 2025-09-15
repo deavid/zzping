@@ -84,7 +84,7 @@ mod tests {
         // the tonic server can bind to the same address without double-bind.
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let addr = listener.local_addr()?;
-        info!("Reserved test server address {}", addr);
+        info!("Reserved test server address {addr}");
         // Drop the listener to free the port for tonic's Server to bind.
         drop(listener);
         let (tx, _) = mpsc::channel(1);
@@ -97,14 +97,14 @@ mod tests {
         let server = IngestionServer::with_interceptor(service, check_auth);
 
         let handle = tokio::spawn(async move {
-            info!("Starting tonic server on {}", addr);
+            info!("Starting tonic server on {addr}");
             if let Err(e) = tonic::transport::Server::builder()
                 .add_service(server)
                 .serve(addr)
                 .await
             {
                 // Log errors from the server task so test logs include them.
-                log::error!("Test server failed: {}", e);
+                log::error!("Test server failed: {e}");
             }
         });
 
@@ -124,9 +124,9 @@ mod tests {
         }
 
         if !ready {
-            log::error!("Test server at {} did not become ready", addr);
+            log::error!("Test server at {addr} did not become ready");
         } else {
-            info!("Test server ready at {}", addr);
+            info!("Test server ready at {addr}");
         }
 
         Ok((addr, handle))
@@ -139,12 +139,12 @@ mod tests {
 
         let res = tokio::time::timeout(Duration::from_secs(5), async {
             let (server_addr, server_handle) = spawn_test_server().await?;
-            info!("Test server listening at {}", server_addr);
+            info!("Test server listening at {server_addr}");
             let (tx, rx) = crossbeam_channel::unbounded();
 
             // This test doesn't use TLS, so we can just connect directly.
             // The `try_fetch_data` function is what handles TLS.
-            info!("Connecting client to http://{}", server_addr);
+            info!("Connecting client to http://{server_addr}");
             let mut client = IngestionClient::connect(format!("http://{server_addr}")).await?;
 
             let token = generate_test_token("test-gui", &["reader"]);

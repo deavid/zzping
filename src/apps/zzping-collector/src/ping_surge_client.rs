@@ -90,10 +90,12 @@ async fn ping_task(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ntest::timeout;
     use std::time::Duration;
     use tokio::sync::mpsc;
 
     #[tokio::test]
+    #[timeout(1000)]
     async fn test_ping_surge_client_new() {
         // Test with a valid IP address
         let target = "127.0.0.1".parse().unwrap();
@@ -125,7 +127,7 @@ mod tests {
     }
 
     #[tokio::test]
-    // Removed #[ntest::timeout(100)]
+    #[timeout(100)]
     async fn test_ping_task_timeout_handling() {
         let (tx, mut rx) = mpsc::channel(10);
 
@@ -148,7 +150,7 @@ mod tests {
     }
 
     #[tokio::test]
-    // Removed #[ntest::timeout(100)]
+    #[timeout(100)]
     async fn test_ping_task_channel_closed() {
         let (tx, rx) = mpsc::channel(10);
 

@@ -68,7 +68,7 @@ async fn test_batch_submitter_prune_by_fsync_via_command() {
     // newer key = 2000 + 10_000_000 = 10_002_000
     // Choose fsync between those values to prune only the older record.
     let fsync_cutoff = 10_000_800u64;
-    info!("Pruning by fsync cutoff {}", fsync_cutoff);
+    info!("Pruning by fsync cutoff {fsync_cutoff}");
     submitter.prune_by_fsync(fsync_cutoff);
     info!("Buffer length after prune: {}", submitter.buffer_len());
     debug!(

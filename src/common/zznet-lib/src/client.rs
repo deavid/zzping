@@ -32,10 +32,9 @@ pub(crate) fn spawn_connection_manager(
                     }
                 }
                 Err(e) => {
-                    log::error!("Client failed to establish initial connection: {}", e);
+                    log::error!("Client failed to establish initial connection: {e}");
                     let _ = ready_tx.send(Err(anyhow!(
-                        "Client failed to establish initial connection: {}",
-                        e
+                        "Client failed to establish initial connection: {e}"
                     )));
                     return; // Failed to start up.
                 }
@@ -57,7 +56,7 @@ pub(crate) fn spawn_connection_manager(
                     }
                 }
                 Err(e) => {
-                    log::warn!("Client connection error during reconnect: {}", e);
+                    log::warn!("Client connection error during reconnect: {e}");
                     // We don't shut down here, as the runtime will keep trying.
                 }
             }

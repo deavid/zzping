@@ -43,7 +43,7 @@ impl Log for VectorLogger {
                 || msg.contains("TaskSupervisor: Adding worker")
             {
                 // Also print to stderr for test debugging visibility (keeps stdout clean)
-                eprintln!("[zzping-test] {}", msg);
+                eprintln!("[zzping-test] {msg}");
                 let guard = GLOBAL_LOG_MESSAGES
                     .lock()
                     .unwrap_or_else(|e| e.into_inner());

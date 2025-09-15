@@ -91,6 +91,7 @@ async fn test_supervisor_sends_shutdown_to_removed_workers() {
 }
 
 #[tokio::test]
+#[timeout(2000)]
 async fn test_supervisor_defers_and_then_creates_workers() {
     use std::net::IpAddr;
     use zzping_collector::task_supervisor::SupervisorConfig;

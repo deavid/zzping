@@ -42,7 +42,7 @@ impl ServerRuntime {
                     handles.push(handle);
                 }
                 Err(e) => {
-                    log::warn!("Failed to bind to {}: {}", addr, e);
+                    log::warn!("Failed to bind to {addr}: {e}");
                 }
             }
         }
@@ -87,21 +87,21 @@ impl ServerRuntime {
                     tokio::spawn(async move {
                         match Self::handle_connection(stream, acceptor_opt).await {
                             Ok(stream) => {
-                                log::info!("New client connected from {}", addr);
+                                log::info!("New client connected from {addr}");
                                 let (event_tx, event_rx) = mpsc::channel(32);
                                 let connection = Connection::new(stream, event_tx);
                                 let _ = tx.send(Ok((connection, event_rx))).await;
                             }
                             Err(e) => {
-                                log::warn!("Connection failed for {}: {}", addr, e);
+                                log::warn!("Connection failed for {addr}: {e}");
                                 let _ = tx.send(Err(e)).await;
                             }
                         }
                     });
                 }
                 Err(e) => {
-                    log::warn!("Accept failed: {}", e);
-                    let _ = tx.send(Err(anyhow::anyhow!("Accept failed: {}", e))).await;
+                    log::warn!("Accept failed: {e}");
+                    let _ = tx.send(Err(anyhow::anyhow!("Accept failed: {e}"))).await;
                 }
             }
         }

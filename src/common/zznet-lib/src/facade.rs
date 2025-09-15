@@ -11,6 +11,12 @@ use tokio::task::JoinHandle;
 use zznet::connection_manager::{Channel, Connection, ConnectionEvent};
 use zznet_api::ZzChannel;
 
+// Type aliases to simplify complex types
+type ClientChannelData = (u64, Box<dyn ZzChannel>);
+type ClientChannelSender = mpsc::Sender<ClientChannelData>;
+type ClientChannelReceiver = mpsc::Receiver<ClientChannelData>;
+type ListenForChannelResponse = oneshot::Sender<Result<ClientChannelReceiver>>;
+
 // Step 1.1: Introduce ZzNetBuilder
 pub struct ZzNetBuilder {
     pub config: ZzNetConfig,
@@ -62,7 +68,7 @@ pub(crate) enum InternalEvent {
 struct ZzNetActor {
     client_connection: Option<Connection>,
     server_connections: HashMap<u64, Connection>,
-    listeners: HashMap<String, mpsc::Sender<(u64, Box<dyn ZzChannel>)>>,
+    listeners: HashMap<String, ClientChannelSender>,
     internal_tx: mpsc::Sender<InternalEvent>,
 }
 
@@ -74,7 +80,7 @@ pub enum ActorCommand {
     },
     ListenForChannel {
         name: String,
-        response: oneshot::Sender<Result<mpsc::Receiver<(u64, Box<dyn ZzChannel>)>>>,
+        response: ListenForChannelResponse,
     },
     Shutdown {
         response: oneshot::Sender<()>,
@@ -169,7 +175,7 @@ impl ZzNetActor {
     }
 
     async fn handle_internal_event(&mut self, event: InternalEvent) {
-        log::debug!("Received internal event: {:?}", event);
+        log::debug!("Received internal event: {event:?}");
         match event {
             InternalEvent::NewClientConnection(conn) => {
                 self.client_connection = Some(conn);
@@ -192,7 +198,7 @@ impl ZzNetActor {
                     };
                     if let Some(listener_tx) = self.listeners.get(&name) {
                         if listener_tx.send((client_id, Box::new(channel))).await.is_err() {
-                            log::warn!("A listener for channel '{}' was dropped.", name);
+                            log::warn!("A listener for channel '{name}' was dropped.");
                         }
                     }
                 }
