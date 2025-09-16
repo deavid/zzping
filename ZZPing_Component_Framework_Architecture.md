@@ -432,3 +432,79 @@ But wouldn't it be better if we could even add them dynamically at runtime and c
 
 A single component panicking takes down the whole process: Yes, and that is the point. This is similar to Mutex poisoning. It is a very hard task to recover from something like that, once a component panics, the app no longer knows in which status is. Recovering from it, trying to restart a component, would enter us into the dynamic addition and removal of components, and we already defined how bad it is. Instead, if a part of a program is deemed to be risky and crash-like, these components should be moved to their own process/service and communicate via zznet. That way, the processes are isolated, and the communication via zznet does indeed expect dynamic addition or removal of peers.
 
+### **Appendix C: Implementation Status & Future Work (As of Sept 16, 2025)**
+
+This appendix provides a snapshot of the project's progress in implementing the architectural vision outlined in this document. It serves to track what has been accomplished, what remains, and to provide a more detailed exploration of the open design questions from Chapter 5.
+
+#### **C.1. The Journey: From "Snowflakes" to a Framework Kernel**
+
+The architectural vision presented in this document was born from an analysis of a prototype implementation. To validate this new vision, a **Phase 1 MVP** was executed with the goal of refactoring the original `zznet-lib` and `intent-config` components to a new, shared set of architectural patterns.
+
+This initial phase was a resounding success. The work produced a new crate, **`ZzChorale`**, which now contains the kernel of our component framework. The refactored components proved that the **Three-Phase Lifecycle (`Builder -> Wire -> Start -> Handle`)** is a viable and robust foundation.
+
+The primary outcome of this MVP is a significant de-risking of the project. The most fundamental and difficult architectural questions have been answered not just in theory, but with working, tested code. We have successfully moved from a collection of "snowflake" components to the beginning of a uniform, predictable framework.
+
+#### **C.2. Implementation Status Summary**
+
+The following table summarizes the current status of each major architectural concept against the design laid out in this document.
+
+| Feature / Concept | Status | Notes |
+| :--- | :--- | :--- |
+| **Core Framework (`ZzChorale`)** | | |
+| **`Builder -> Wire -> Start -> Handle` Lifecycle** | ✅ **Implemented** | The core pattern is now a reusable crate with the `create_actor` helper, `Actor` trait, and generic `ComponentHandle`. |
+| **`zznet` Component** | | |
+| **"Session Provisioning" Pattern** | ✅ **Implemented** | The `ZzNetComponent` actor correctly acts as a session provisioner, providing `DataSlot`s to consumers. |
+| **Stable Service Identity (`StableId`, `Nonce`)** | ❌ **Pending** | `zznet` still uses an ephemeral `u64` `ClientId`. Implementing identity from mTLS certs is a critical next step. |
+| **`zzping-collector` Service Logic** | | |
+| **Handoff Protocol (`AwaitingLock`)** | ❌ **Pending** | Requires Stable Service Identity to be implemented first. The framework now provides the necessary primitives to build this logic. |
+| **Framework Ergonomics & Features** | | |
+| **`ServiceCommsBus` (Auto-wiring)** | ❌ **Conceptual** | Correctly deferred. The MVP uses manual dependency injection. |
+| **"View into the Component" API Pattern** | ❌ **Conceptual** | The `ComponentHandle` is the prerequisite, but the "Push-based View Model" pattern is not yet implemented. |
+| **"Shard Supervisor" Pattern** | ❌ **Conceptual** | No generic tooling for sharding exists yet in `ZzChorale`. |
+| **Framework-Managed Serialization** | ❌ **Conceptual** | Components currently handle their own `serde` logic for network communication. |
+
+#### **C.3. Deep Dive: The Road Ahead (Remaining Design & Implementation)**
+
+The MVP has provided the foundational layer. The next phase of work will involve building upon this foundation by tackling the open design questions from Chapter 5 and implementing the remaining core features from Chapter 4.
+
+##### **C.3.1. Critical Next Step: Stable Service Identity**
+
+The highest-priority task is the implementation of **Stable Service Identity** as defined in Section 4.3. Without this, no meaningful cross-Service orchestration (like the `zzping-collector` handoff) is possible.
+
+*   **Required Work:**
+    1.  Modify the `zznet` `ConnectionActor`'s handshake protocol. After the TLS handshake is complete, it must inspect the peer's certificate to extract the Subject Common Name (CN) as the `StableId`.
+    2.  The initial `Hello` message from a client must be updated to include a randomly generated `ConnectionNonce` (`u64`).
+    3.  The `ClientId` type, currently a `u64`, must be changed throughout the `zznet` component to be the `(StableId, ConnectionNonce)` tuple.
+    4.  The `listen_for_channel` method's signature will change to provide this new, richer `ClientId` to the consuming component.
+
+##### **C.3.2. Open Question: The "Shard Supervisor" Pattern**
+
+The current framework requires sharded components to implement all their own multiplexing and shard-management logic. To make the framework more powerful, we must design and implement generic tooling for the "Shard Supervisor" pattern.
+
+*   **Problem:** Avoid a central supervisor bottleneck for high-frequency data by enabling direct shard-to-shard communication.
+*   **Proposed Solution Sketch:**
+    1.  **Introduce a `ShardMap<K, V>` handle:** This would likely be a type alias for `Arc<DashMap<K, mpsc::Sender<V>>>`. It's a clonable, thread-safe directory of running shards.
+    2.  **Refine the Wiring Phase:** Instead of passing a simple `mpsc::Sender`, the `ServiceCommsBus` (or manual wiring) would pass a `ShardMap` handle from a "provider" component (like `MemDBComponent`) to a "consumer" component (like `PingerComponent`).
+    3.  **Define a Control Protocol:** The supervisors would need a way to communicate. The `PingerComponent` supervisor would send a message to the `MemDBComponent` supervisor like `EnsureShardExists(shard_key)`. The `MemDBComponent` supervisor would then create the shard if needed and ensure its `Sender` is published in the shared `ShardMap`.
+*   **Challenges:** This introduces the need for a request/response mechanism between component supervisors on the control plane, which must be designed carefully.
+
+##### **C.3.3. Open Question: The "View into the Component" API**
+
+This is critical for building UIs or any external system that needs to read a Component's state.
+
+*   **Problem:** Provide a safe, non-blocking, and performant way for an external, synchronous context (like `eframe`) to query the state of an internal, asynchronous actor.
+*   **Proposed Solution Sketch:**
+    1.  **Formalize the "View Model" pattern:** The `ZzChorale` framework could provide a generic `ViewProvider` struct that encapsulates the logic.
+    2.  A component author would give the `ViewProvider` a `Arc`-wrapped reference to its state and a query function `(State, ViewSpec) -> ViewModel`.
+    3.  The `ViewProvider` would manage the internal task that re-runs the query and publishes to the `watch` channel.
+    4.  The `ComponentHandle` would expose a `subscribe_view(&self, spec: ViewSpec) -> watch::Receiver<ViewModel>` method.
+*   **Challenges:** Requires careful design of the generic types (`ViewSpec`, `ViewModel`) and the communication between the component's main actor and its view-generating sub-task.
+
+##### **C.3.4. Open Question: The `ServiceCommsBus`**
+
+*   **Problem:** Manual wiring of components is explicit but becomes tedious and error-prone as the number of components in a Service grows.
+*   **Proposed Solution Sketch:**
+    1.  **Trait-based Discovery:** Components would declare their dependencies and provisions via traits. For example: `impl Provides<MemDBChannel>` and `impl Requires<MemDBChannel>`.
+    2.  **The Bus as a Typed Registry:** The `ServiceCommsBus` would have methods like `register<T: Provides<...>>(&self, provider: T)` and `wire_all(&self)`.
+    3.  During the `wire_all` call, the bus would iterate through all registered components, match the `Requires` traits to the `Provides` traits, create the necessary channels, and perform the dependency injection.
+*   **Challenges:** This requires a sophisticated design using Rust's trait and type systems. It's a significant piece of work but would be the final step in creating a truly ergonomic and safe component framework.
