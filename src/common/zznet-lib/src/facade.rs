@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
-use zzchorale::{create_actor, Actor, ActorContext, ComponentHandle};
+use zzchorale::{create_channel, spawn_actor, Actor, ActorContext, ComponentHandle};
 use zznet::connection_manager::{Connection, ConnectionEvent};
 use zznet_api::ZzChannel;
 
@@ -74,7 +74,8 @@ impl ZzNetBuilder {
             internal_rx,
         };
 
-        let (handle, readiness) = create_actor(actor);
+        let (command_tx, command_rx) = create_channel();
+        let (handle, readiness) = spawn_actor(actor, command_tx, command_rx);
 
         match self.config {
             ZzNetConfig::Client(config) => {

@@ -12,6 +12,7 @@ members = [
     "src/components/zznet",
     "src/components/intent-config",
     "src/components/zzchorale",
+    "src/components/zzchorale-examples/pingpong",
 ]
 
 [workspace.package]
