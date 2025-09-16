@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
-use zzchorale::{create_actor, Actor, ActorContext, ComponentHandle};
+use zzchorale::{create_channel, spawn_actor, Actor, ActorContext, ComponentHandle};
 use zznet_api::{Role, ZzChannel};
 use zznet_lib::ZzNetApi;
 
@@ -57,7 +57,8 @@ impl<N: ZzNetApi + Clone + Send + Sync + 'static> IntentConfigBuilder<N> {
             config_watch_tx: watch_tx,
         };
 
-        let (handle, readiness) = create_actor(actor);
+        let (command_tx, command_rx) = create_channel();
+        let (handle, readiness) = spawn_actor(actor, command_tx, command_rx);
         readiness.await?;
         Ok(handle)
     }

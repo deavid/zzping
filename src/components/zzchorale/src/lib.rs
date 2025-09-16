@@ -40,14 +40,21 @@ impl<C> Clone for ComponentHandle<C> {
     }
 }
 
-/// Creates and spawns an actor, returning a cloneable handle and a readiness future.
-pub fn create_actor<A: Actor>(
+/// Creates a new channel for component communication.
+/// This is a central place to manage channel creation for the framework.
+pub fn create_channel<C>() -> (mpsc::Sender<C>, mpsc::Receiver<C>) {
+    mpsc::channel(32)
+}
+
+/// Spawns an actor on the tokio runtime with a given command channel.
+pub fn spawn_actor<A: Actor>(
     actor: A,
+    command_tx: mpsc::Sender<A::Command>,
+    command_rx: mpsc::Receiver<A::Command>,
 ) -> (
     ComponentHandle<A::Command>,
     impl Future<Output = Result<()>> + Send,
 ) {
-    let (command_tx, command_rx) = mpsc::channel(32);
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (ready_tx, ready_rx) = oneshot::channel();
 
@@ -99,6 +106,7 @@ mod tests {
     use ntest::timeout;
 
     // A dummy actor for testing purposes.
+    #[derive(Default)]
     struct TestActor;
 
     // A dummy command enum for the test actor.
@@ -143,7 +151,8 @@ mod tests {
         log::info!("Test starting: framework_actor_lifecycle");
 
         let actor = TestActor;
-        let (handle, readiness) = create_actor(actor);
+        let (command_tx, command_rx) = create_channel::<TestCommand>();
+        let (handle, readiness) = spawn_actor(actor, command_tx, command_rx);
         readiness.await.expect("Actor should become ready");
         log::info!("Actor is ready.");
 

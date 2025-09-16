@@ -1,9 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use ntest::timeout;
-use zzchorale::{create_actor, Actor, ActorContext};
+use zzchorale::{create_channel, spawn_actor, Actor, ActorContext};
 
 // A dummy actor for testing purposes.
+#[derive(Default)]
 struct TestActor;
 
 // A dummy command enum for the test actor.
@@ -53,8 +54,9 @@ async fn framework_actor_lifecycle() {
     let actor = TestActor;
 
     // 2. Simulate a builder's .start() method.
-    log::info!("Step 2: Calling create_actor to get handle and readiness future...");
-    let (handle, readiness) = create_actor(actor);
+    log::info!("Step 2: Calling create_channel and spawn_actor...");
+    let (command_tx, command_rx) = create_channel::<TestCommand>();
+    let (handle, readiness) = spawn_actor(actor, command_tx, command_rx);
 
     // 3. Await the readiness future.
     log::info!("Step 3: Awaiting actor readiness...");
