@@ -2188,6 +2188,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "zzchorale",
  "zznet",
  "zznet-api",
  "zznet-lib",
@@ -5913,6 +5914,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "zzchorale"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "env_logger",
+ "futures",
+ "log",
+ "ntest",
+ "tokio",
+]
+
+[[package]]
 name = "zznet"
 version = "0.2.2-beta2"
 dependencies = [
@@ -5956,6 +5970,7 @@ dependencies = [
  "ntest",
  "rmp-serde",
  "tokio",
+ "zzchorale",
  "zznet",
  "zznet-api",
 ]

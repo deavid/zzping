@@ -1,0 +1,15 @@
+[package]
+name = "zzchorale"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { workspace = true, features = ["sync", "rt-multi-thread", "macros"] }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+futures = "0.3"
+log = { workspace = true }
+
+[dev-dependencies]
+ntest = { workspace = true }
+env_logger = { workspace = true }

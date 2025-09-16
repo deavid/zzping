@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+zzchorale = { path = "../zzchorale" }
 zznet-api = { path = "../../common/zznet-api" }
 tokio = { workspace = true, features = ["sync"] }
 anyhow = { workspace = true }

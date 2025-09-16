@@ -1,30 +1,15 @@
-use anyhow::Result;
-use async_trait::async_trait;
 use ntest::timeout;
-use tokio::sync::mpsc;
-use zznet::connection::ServerConfig;
-use zznet_api::{Role, ZzChannel};
-use zznet_lib::{ActorCommand, ZzNet, ZzNetBuilder, ZzNetConfig, ZzNetHandle};
-
-#[derive(Debug)]
-struct MockChannel;
-
-#[async_trait]
-impl ZzChannel for MockChannel {
-    async fn send(&self, _payload: Vec<u8>) -> Result<()> {
-        Ok(())
-    }
-    async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
-        Ok(None)
-    }
-}
+use zznet::connection::{ClientConfig, ServerConfig};
+use zznet_api::Role;
+use zznet_lib::{ZzNetApi, ZzNetBuilder, ZzNetConfig};
 
 #[tokio::test]
-#[timeout(100)]
-async fn zznet_lib_actor_lifecycle() {
+#[timeout(200)]
+async fn zznet_lib_actor_lifecycle_and_shutdown() {
     let _ = env_logger::builder().is_test(true).try_init();
-    log::info!("Testing actor lifecycle: start and shutdown");
+    log::info!("Test starting: zznet_lib_actor_lifecycle_and_shutdown");
 
+    log::info!("Step 1: Setting up server configuration");
     let server_config = ServerConfig {
         socketaddr: vec!["127.0.0.1:0".parse().unwrap()],
         tls: None,
@@ -33,40 +18,61 @@ async fn zznet_lib_actor_lifecycle() {
     let config = ZzNetConfig::Server(server_config);
     let builder = ZzNetBuilder::new(config);
 
-    // builder.start() now returns a tuple
-    let (manager, _handle) = builder.start().await.unwrap();
-    // shutdown is called on the manager
-    manager.shutdown().await.unwrap();
+    log::info!("Step 2: Starting the component");
+    let handle = builder
+        .start()
+        .await
+        .expect("Component should start successfully");
+    log::info!("Component started, handle acquired.");
+
+    log::info!("Step 3: Shutting down the component");
+    handle
+        .shutdown()
+        .await
+        .expect("Component should shut down cleanly");
+    log::info!("Component shutdown complete.");
+    log::info!("Test finished: zznet_lib_actor_lifecycle_and_shutdown");
 }
 
 #[tokio::test]
-#[timeout(100)]
-async fn zznet_lib_handle_api_request_response() {
+#[timeout(200)]
+async fn zznet_lib_client_api_fails_when_not_connected() {
     let _ = env_logger::builder().is_test(true).try_init();
-    log::info!("Testing handle API request/response");
+    log::info!("Test starting: zznet_lib_client_api_fails_when_not_connected");
 
-    let (command_tx, mut command_rx) = mpsc::channel(32);
+    log::info!("Step 1: Setting up client configuration");
+    let client_config = ClientConfig {
+        socketaddr: vec!["127.0.0.1:1".parse().unwrap()],
+        tls: None,
+        role: Role::Collector,
+        reconnect_delay: std::time::Duration::from_secs(10),
+    };
+    let config = ZzNetConfig::Client(client_config);
+    let builder = ZzNetBuilder::new(config);
 
-    // Use the test-only constructor for the handle.
-    let handle = ZzNetHandle::new(command_tx);
+    log::info!("Step 2: Starting the component");
+    let handle = builder
+        .start()
+        .await
+        .expect("Component should start even if it cannot connect");
+    log::info!("Component started, handle acquired.");
 
-    // Spawn a task to simulate the actor.
-    tokio::spawn(async move {
-        let received_command = command_rx.recv().await.unwrap();
-        if let ActorCommand::RequestChannel { name, response } = received_command {
-            assert_eq!(name, "test");
-            let dummy_channel = MockChannel;
-            let response_result: Result<Box<dyn ZzChannel>> = Ok(Box::new(dummy_channel));
-            response.send(response_result).unwrap();
-        } else {
-            panic!("Received unexpected command");
-        }
-    });
-
-    // In the main test task, call the handle's API.
+    log::info!("Step 3: Calling request_channel, expecting a failure");
+    // The API is now on the handle itself.
     let result = handle.request_channel("test".to_string()).await;
+    assert!(result.is_err(), "request_channel should fail if not connected");
+    let err = result.unwrap_err();
+    assert!(
+        err.to_string().contains("Not connected"),
+        "Error message should indicate not connected"
+    );
+    log::info!("Received expected error: {err}");
 
-    assert!(result.is_ok());
-    let channel = result.unwrap();
-    assert!(channel.send(vec![]).await.is_ok());
+    log::info!("Step 4: Shutting down the component");
+    handle
+        .shutdown()
+        .await
+        .expect("Component should shut down cleanly");
+    log::info!("Component shutdown complete.");
+    log::info!("Test finished: zznet_lib_client_api_fails_when_not_connected");
 }

@@ -5,4 +5,4 @@ mod facade;
 mod server;
 
 pub use config::ZzNetConfig;
-pub use facade::{ActorCommand, ZzNet, ZzNetBuilder, ZzNetHandle, ZzNetManager};
+pub use facade::{ActorCommand, ZzNetApi, ZzNetBuilder};

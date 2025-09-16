@@ -1,3 +1,3 @@
 mod component;
 
-pub use component::{IntentConfigBuilder, IntentConfigData, IntentConfigHandle};
+pub use component::{IntentConfigApi, IntentConfigBuilder, IntentConfigData};

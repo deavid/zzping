@@ -11,6 +11,7 @@ members = [
     "src/apps/zzping-gui",
     "src/components/zznet",
     "src/components/intent-config",
+    "src/components/zzchorale",
 ]
 
 [workspace.package]
