@@ -23,7 +23,7 @@ async fn test_target_worker_primary_supervised_role_sends_init_command() -> Resu
     let mock_service = MockIngestionService::new();
     let addr = common::spawn_mock_server(mock_service.clone()).await;
     let db_client =
-        DatabaseClient::connect(format!("http://{}", addr), "test-token".to_string()).await?; // connect now returns Arc<dyn DatabaseClientTrait>
+        DatabaseClient::connect(format!("http://{addr}"), "test-token".to_string()).await?; // connect now returns Arc<dyn DatabaseClientTrait>
 
     // Configure the mock response for GetRecentData
     let expected_ack_nanos = 1234567890;

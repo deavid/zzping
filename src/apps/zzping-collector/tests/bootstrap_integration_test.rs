@@ -47,11 +47,10 @@ async fn test_collector_survives_disconnect_and_reconnects() {
         r#"
 (
     collector_uuid: "integ-test-uuid",
-    database_addr: "http://{}",
+    database_addr: "http://{addr}",
     auth_token: "test-token",
 )
-"#,
-        addr
+"#
     );
     let mut config_file = NamedTempFile::new().unwrap();
     config_file.write_all(config_content.as_bytes()).unwrap();

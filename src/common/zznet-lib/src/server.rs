@@ -1,31 +1,26 @@
-// server.rs
 use crate::facade::InternalEvent;
-use anyhow::{anyhow, Result};
 use futures::StreamExt;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use zznet::connection::ServerConfig;
 use zznet::connection_manager::ConnectionEvent;
 use zznet::runtime::server::ServerRuntime;
 
+// The listener no longer signals readiness. The actor does.
 pub(crate) fn spawn_listener(
     config: ServerConfig,
     internal_tx: mpsc::Sender<InternalEvent>,
-    ready_tx: oneshot::Sender<Result<()>>,
 ) {
     tokio::spawn(async move {
         let server_runtime = ServerRuntime::new(config);
         let mut connection_stream = match server_runtime.run().await {
             Ok(stream) => {
-                // Successfully bound to port, signal readiness.
-                if ready_tx.send(Ok(())).is_err() {
-                    log::error!("Actor disappeared before listener could signal readiness.");
-                    return;
-                }
+                log::info!("Server listener started successfully.");
                 Box::pin(stream)
             }
             Err(e) => {
-                    log::error!("Server runtime failed to start: {e}");
-                    let _ = ready_tx.send(Err(anyhow!("Server runtime failed: {e}")));
+                // If the server fails to bind, we just log and terminate the task.
+                // The actor itself will still be running and can be interacted with.
+                log::error!("Server runtime failed to start, cannot accept connections: {e}");
                 return;
             }
         };

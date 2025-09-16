@@ -27,17 +27,17 @@ async fn test_fsync_prunes_batch_submitter_via_supervisor_broadcast() {
     let mock = MockIngestionService::with_ping_rate(0);
     debug!("Spawning mock ingestion server");
     let server_addr = spawn_mock_server(mock.clone()).await;
-    debug!("Mock ingestion server listening on {}", server_addr);
-    info!("spawned mock ingestion server at {}", server_addr);
+    debug!("Mock ingestion server listening on {server_addr}");
+    info!("spawned mock ingestion server at {server_addr}");
 
     // Construct a DatabaseClient that points at the mock server.
-    debug!("Connecting DatabaseClient to {}", server_addr);
+    debug!("Connecting DatabaseClient to {server_addr}");
     let db_client =
         DatabaseClient::connect(format!("http://{server_addr}"), "test-token".to_string())
             .await
             .expect("failed to create DatabaseClient");
-    debug!("DatabaseClient connected to {}", server_addr);
-    info!("created DatabaseClient pointing at {}", server_addr);
+    debug!("DatabaseClient connected to {server_addr}");
+    info!("created DatabaseClient pointing at {server_addr}");
 
     let target_ip: IpAddr = IpAddr::from_str("127.0.0.1").unwrap();
 
@@ -104,7 +104,7 @@ async fn test_fsync_prunes_batch_submitter_via_supervisor_broadcast() {
         let mut elapsed = 0u64;
         while elapsed < timeout_ms {
             let (tx, rx) = tokio::sync::oneshot::channel();
-            debug!("Requesting worker health (expected={})", expected);
+            debug!("Requesting worker health (expected={expected})");
             if handle
                 .command_tx
                 .send(WorkerCommand::GetHealth(tx))
@@ -121,7 +121,7 @@ async fn test_fsync_prunes_batch_submitter_via_supervisor_broadcast() {
                 );
                 info!("health: buffer_size={}", health.buffer_size);
                 if health.buffer_size == expected {
-                    debug!("Worker reported expected buffer size {}", expected);
+                    debug!("Worker reported expected buffer size {expected}");
                     return Some(health.buffer_size);
                 }
             }
@@ -141,15 +141,15 @@ async fn test_fsync_prunes_batch_submitter_via_supervisor_broadcast() {
     // BatchSubmitter.
     // Choose fsync_nanos between older and newer so prune removes older only.
     let fsync_nanos = now_ns.saturating_sub(1_000_000_000);
-    debug!("Issuing PruneByFsync({}) to worker", fsync_nanos);
+    debug!("Issuing PruneByFsync({fsync_nanos}) to worker");
     handles
         .handle
         .command_tx
         .send(WorkerCommand::PruneByFsync(fsync_nanos))
         .await
         .expect("failed to send PruneByFsync to worker");
-    debug!("PruneByFsync({}) sent to worker", fsync_nanos);
-    info!("sent PruneByFsync({}) to worker", fsync_nanos);
+    debug!("PruneByFsync({fsync_nanos}) sent to worker");
+    info!("sent PruneByFsync({fsync_nanos}) to worker");
 
     // Wait until prune has taken effect
     let _got2 = wait_for_buffer_size(&handles.handle, 1, 500).await;
