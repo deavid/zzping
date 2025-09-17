@@ -1,0 +1,8 @@
+error[E0599]: no method named `start` found for struct `PingBuilder<PingBuilderUnwired>` in the current scope
+ --> tests/compile_fail/01-start-unwired.rs:8:40
+  |
+8 |     let _handle = ping_builder_unwired.start().await;
+  |                                        ^^^^^ method not found in `PingBuilder<PingBuilderUnwired>`
+  |
+  = note: the method was found for
+          - `PingBuilder<PingBuilderWired>`

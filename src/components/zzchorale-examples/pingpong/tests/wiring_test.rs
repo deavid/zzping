@@ -14,17 +14,18 @@ async fn ping_pong_wiring_test() -> Result<()> {
 
     // Phase 1 (Instantiation): Create the builders for each component.
     info!("Phase 1: Instantiating Builders...");
-    let mut ping_builder = PingBuilder::new();
-    let pong_builder = PongBuilder::new();
+    let ping_builder_unwired = PingBuilder::new();
+    let pong_builder = PongBuilder::new(); // Already <Wired>
 
     // Phase 2 (Wiring): Manually connect the components by sharing the command sender.
+    // Note the consumption of the unwired builder and creation of a new wired builder.
     info!("Phase 2: Wiring Components...");
     let pong_cmd_tx = pong_builder.get_command_sender();
-    ping_builder.connect_to_pong(pong_cmd_tx);
+    let ping_builder_wired = ping_builder_unwired.connect_to_pong(pong_cmd_tx);
 
     // Phase 3 (Activation): Start both components.
     info!("Phase 3: Activating Components...");
-    let ping_handle = ping_builder.start().await?;
+    let ping_handle = ping_builder_wired.start().await?;
     let pong_handle = pong_builder.start().await?;
 
     // Action & Assertion: Use the public API of the Ping component to trigger the interaction.

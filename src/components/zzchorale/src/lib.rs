@@ -1,6 +1,11 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
+
+/// A marker type representing a component builder that has not yet been fully wired.
+pub struct Unwired;
+/// A marker type representing a component builder that has been fully wired and is ready to start.
+pub struct Wired;
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
