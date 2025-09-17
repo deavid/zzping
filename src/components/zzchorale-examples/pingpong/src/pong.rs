@@ -1,9 +1,8 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use log::info;
-use std::marker::PhantomData;
 use tokio::sync::{mpsc, oneshot};
-use zzchorale::{create_channel, spawn_component, Component, ComponentHandle, Wired};
+use zzchorale::{create_channel, spawn_component, Component, ComponentHandle};
 
 /// The command type for the Pong component.
 /// It's a tuple containing the message string and a oneshot sender for the response.
@@ -28,29 +27,24 @@ impl Component for PongComponent {
 }
 
 /// Builder for the PongComponent.
-pub struct PongBuilder<State> {
+pub struct PongBuilder {
     command_tx: mpsc::Sender<PongCommand>,
     command_rx: Option<mpsc::Receiver<PongCommand>>,
-    _state: PhantomData<State>,
 }
 
-impl<State> PongBuilder<State> {
-    /// Returns a clone of the command sender, allowing other components to communicate with the PongComponent.
-    pub fn get_command_sender(&self) -> mpsc::Sender<PongCommand> {
-        self.command_tx.clone()
-    }
-}
-
-impl PongBuilder<Wired> {
+impl PongBuilder {
     /// Creates a new PongBuilder, internally creating the command channel.
-    /// Since Pong has no dependencies, it's considered "Wired" from the start.
     pub fn new() -> Self {
         let (command_tx, command_rx) = create_channel();
         Self {
             command_tx,
             command_rx: Some(command_rx),
-            _state: PhantomData,
         }
+    }
+
+    /// Returns a clone of the command sender, allowing other components to communicate with the PongComponent.
+    pub fn get_command_sender(&self) -> mpsc::Sender<PongCommand> {
+        self.command_tx.clone()
     }
 
     /// Consumes the builder to start the component.
@@ -66,7 +60,7 @@ impl PongBuilder<Wired> {
     }
 }
 
-impl Default for PongBuilder<Wired> {
+impl Default for PongBuilder {
     fn default() -> Self {
         Self::new()
     }
