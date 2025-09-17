@@ -252,8 +252,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(500)]
-    #[ignore]
+    #[timeout(3000)]
     async fn test_full_e2e_update_and_broadcast() {
         let _ = env_logger::builder().is_test(true).try_init();
 

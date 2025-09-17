@@ -33,7 +33,6 @@ env_logger = { workspace = true, optional = true }
 
 [dev-dependencies]
 criterion = { version = "0.7", features = ["html_reports"] }
-ntest = { workspace = true }
 
 [[bench]]
 name = "chunked_v1_benches"

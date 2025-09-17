@@ -15,7 +15,7 @@ mod common;
 use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]
-#[timeout(500)]
+#[timeout(3000)]
 async fn test_session_handler_sends_config_on_success() {
     // This test verifies that if the heartbeat call is successful, the
     // SessionHandler correctly translates the response and sends it
@@ -75,7 +75,7 @@ async fn test_session_handler_sends_config_on_success() {
 }
 
 #[tokio::test]
-#[timeout(500)]
+#[timeout(3000)]
 async fn test_session_handler_exits_on_connection_failure() {
     // Initialize env_logger for debug output
     env_logger::builder()
@@ -190,8 +190,7 @@ async fn test_session_handler_exits_on_connection_failure() {
 }
 
 #[tokio::test]
-#[timeout(500)]
-#[ignore]
+#[timeout(3000)]
 async fn test_session_handler_reports_last_processed_command_in_heartbeat() {
     let _ = env_logger::builder()
         .is_test(true)

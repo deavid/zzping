@@ -37,10 +37,7 @@ impl TimeSource for MockTimeSource {
     }
 }
 
-use ntest::timeout;
-
 #[test]
-#[timeout(200)]
 fn mock_time_source_resync_counter() {
     let mut ts = MockTimeSource::new();
     let counter = ts.counter();

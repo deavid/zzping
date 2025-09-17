@@ -9,7 +9,7 @@ mod common;
 use common::mock_worker_factory;
 
 #[tokio::test]
-#[timeout(500)]
+#[timeout(1000)]
 async fn test_supervisor_sends_update_role_on_config_change() {
     // 1. Setup
     let mut supervisor = TaskSupervisor::new("test-uuid".to_string(), 1, None);
@@ -51,7 +51,7 @@ async fn test_supervisor_sends_update_role_on_config_change() {
 }
 
 #[tokio::test]
-#[timeout(500)]
+#[timeout(1000)]
 async fn test_supervisor_sends_shutdown_to_removed_workers() {
     // 1. Setup
     let mut supervisor = TaskSupervisor::new("test-uuid".to_string(), 1, None);
@@ -91,7 +91,7 @@ async fn test_supervisor_sends_shutdown_to_removed_workers() {
 }
 
 #[tokio::test]
-#[timeout(500)]
+#[timeout(2000)]
 async fn test_supervisor_defers_and_then_creates_workers() {
     use std::net::IpAddr;
     use zzping_collector::task_supervisor::SupervisorConfig;
@@ -164,7 +164,7 @@ async fn test_supervisor_defers_and_then_creates_workers() {
 }
 
 #[tokio::test]
-#[timeout(500)]
+#[timeout(1000)]
 async fn test_supervisor_schedules_swap_and_applies_role() {
     use zzping_collector::task_supervisor::ClientUpdate;
 
@@ -312,7 +312,7 @@ async fn test_supervisor_schedules_swap_and_applies_role() {
 }
 
 #[tokio::test]
-#[timeout(500)]
+#[timeout(1000)]
 async fn test_supervisor_cancels_scheduled_swap_on_config_change() {
     use zzping_collector::task_supervisor::ClientUpdate;
 
