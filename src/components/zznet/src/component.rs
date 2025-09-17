@@ -14,14 +14,9 @@ use zznet_api::{ClientId, ZzRoom};
 pub use crate::connection::TlsCfg;
 
 /// Top-level configuration for the `ZzNet` component.
-///
-/// This enum determines whether the component will run as a server, accepting
-/// incoming connections, or as a client, connecting to a remote server.
 #[derive(Clone, Debug)]
 pub enum ZzNetConfig {
-    /// Server configuration.
     Server(ServerConfig),
-    /// Client configuration.
     Client(ClientConfig),
 }
 
@@ -32,17 +27,14 @@ type GetRoomResponseTx = oneshot::Sender<Result<Box<dyn ZzRoom>>>;
 /// Commands that can be sent to the `ZzNetComponent`.
 #[derive(Debug)]
 pub enum ZzNetCommand {
-    /// A request from an application component to listen for a "Room".
     ListenForRoom {
         room_name: String,
         response_tx: ListenForRoomResponseTx,
     },
-    /// A request from an application component to get a handle to a "Room".
     GetRoom {
         name: String,
         response_tx: GetRoomResponseTx,
     },
-    /// An internal command to process an event from a specific connection.
     ProcessConnectionEvent(ClientId, ConnectionEvent),
 }
 
@@ -55,9 +47,6 @@ pub trait ZzNetServerApi {
 // The API for CLIENT components
 #[async_trait]
 pub trait ZzNetClientApi {
-    /// Asks the local ZzNet component for a handle to a specific room.
-    /// This future will resolve only when the network connection is up
-    /// and the requested room has been successfully opened.
     async fn get_room(&self, name: &str) -> Result<Box<dyn ZzRoom>>;
 }
 
@@ -97,9 +86,6 @@ impl ZzNetClientApi for ComponentHandle<ZzNetCommand> {
 }
 
 /// A builder for the `ZzNetComponent`.
-///
-/// This builder is "wired" by default, as `ZzNet` is a boundary component
-/// and does not have any intra-process component dependencies.
 pub struct ZzNetBuilder {
     config: ZzNetConfig,
 }
@@ -118,7 +104,6 @@ impl ZzNetBuilder {
         let handle = ComponentHandle {
             command_tx: command_tx.clone(),
             shutdown_tx: Arc::new(Mutex::new(Some(shutdown_tx))),
-            // The JoinHandle is created after spawning the task
             actor_handle: Arc::new(Mutex::new(None)),
         };
 
@@ -135,7 +120,6 @@ impl ZzNetBuilder {
             result
         });
 
-        // Now that we have the JoinHandle, put it in the handle
         *handle.actor_handle.lock().await = Some(actor_task);
 
         Ok(handle)
@@ -146,11 +130,6 @@ type ConnectionStream =
     Pin<Box<dyn Stream<Item = Result<(Connection, mpsc::Receiver<ConnectionEvent>)>> + Send>>;
 
 /// The core actor for the `ZzNet` boundary component.
-///
-/// This component is responsible for managing the network connections (either as
-/// a client or a server) and provisioning `ZzRoom` instances to application
-/// components that request them. It operates on a single-actor model, handling
-/// all connection and event logic within its `run` loop.
 pub struct ZzNetComponent {
     config: ZzNetConfig,
     command_rx: mpsc::Receiver<ZzNetCommand>,
@@ -159,7 +138,7 @@ pub struct ZzNetComponent {
     listeners: HashMap<String, RoomListenerTx>,
     connections: HashMap<ClientId, Connection>,
     next_client_id: ClientId,
-    open_rooms: HashMap<String, Box<dyn ZzRoom>>,
+    open_rooms: HashMap<String, Channel>,
     pending_requests: HashMap<String, Vec<GetRoomResponseTx>>,
 }
 
@@ -184,11 +163,9 @@ impl ZzNetComponent {
         }
     }
 
-    /// Initializes the component, primarily by creating the network runtime
-    /// (server or client) and establishing the stream of incoming connections.
     pub async fn on_start(&mut self) -> Result<()> {
         if self.connection_stream.is_some() {
-            return Ok(()); // Stream was injected for testing
+            return Ok(());
         }
 
         let stream: ConnectionStream = match self.config.clone() {
@@ -205,12 +182,10 @@ impl ZzNetComponent {
         Ok(())
     }
 
-    /// Called just before the component's task terminates.
     pub async fn on_shutdown(&mut self) -> Result<()> {
         Ok(())
     }
 
-    /// Handles a single command sent to the component.
     async fn handle_command(&mut self, command: ZzNetCommand) -> Result<()> {
         match command {
             ZzNetCommand::ListenForRoom {
@@ -222,15 +197,8 @@ impl ZzNetComponent {
                 let _ = response_tx.send(Ok(rx));
             }
             ZzNetCommand::GetRoom { name, response_tx } => {
-                if self.open_rooms.contains_key(&name) {
-                    // This is tricky. `Box<dyn ZzRoom>` is not `Clone`.
-                    // The prompt says "clones the handle (if cloneable, or creates a new one)".
-                    // A `ZzRoom` is a `Channel`, which has an `mpsc::Receiver`. Receivers are not clonable.
-                    // This means I can't give the same room to multiple callers of `get_room`.
-                    // For now, I will assume only one caller per room.
-                    // I will remove the room from the map and send it.
-                    let room = self.open_rooms.remove(&name).unwrap();
-                    let _ = response_tx.send(Ok(room));
+                if let Some(room) = self.open_rooms.get(&name) {
+                    let _ = response_tx.send(Ok(Box::new(room.clone())));
                 } else {
                     self.pending_requests
                         .entry(name)
@@ -246,41 +214,25 @@ impl ZzNetComponent {
                             // This is a dummy writer task for now
                         }
                     });
-                    let room = Channel {
-                        id,
-                        command_tx,
-                        rx: receiver,
-                    };
-                    let room: Box<dyn ZzRoom> = Box::new(room);
+                    let room = Channel::new(id, command_tx, receiver);
 
-                    // Fulfill pending requests for clients
                     if let Some(waiters) = self.pending_requests.remove(&name) {
-                        // Same issue here with cloning the room.
-                        // For now, I'll just send to the first waiter.
-                        let mut waiters = waiters;
-                        if let Some(waiter) = waiters.pop() {
-                            // I need to be able to re-insert the room if sending fails.
-                            // And what about the other waiters?
-                            // This suggests the `Box<dyn ZzRoom>` needs to be cloneable.
-                            // Or the thing I store is a `Arc<Mutex<Box<dyn ZzRoom>>>`.
-                            // Or maybe the `ZzRoom` itself should be a handle that is cloneable.
-                            // The `Channel` struct is not cloneable.
-
-                            // Let's go with the simplest thing that could work. Assume one waiter.
-                            let _ = waiter.send(Ok(room));
+                        for waiter in waiters {
+                            let _ = waiter.send(Ok(Box::new(room.clone())));
                         }
                     }
-                    // Fulfill listeners for servers
-                    else if let Some(listener) = self.listeners.get(&name) {
-                        let _ = listener.send((client_id, room)).await;
+
+                    if let Some(listener) = self.listeners.get(&name) {
+                        let _ = listener.send((client_id, Box::new(room.clone()))).await;
                     }
+
+                    self.open_rooms.insert(name, room);
                 }
             },
         }
         Ok(())
     }
 
-    /// The main event loop for the component.
     pub async fn run(&mut self, mut shutdown_rx: oneshot::Receiver<()>) -> Result<()> {
         let mut connection_stream = self.connection_stream.take().unwrap();
 

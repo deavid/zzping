@@ -2,8 +2,9 @@ use crate::proto::{ControlMsg, Frame};
 use crate::traits::AsyncReadWrite;
 use anyhow::Result;
 use async_trait::async_trait;
+use std::sync::Arc;
 use tokio::io::{split, AsyncWriteExt, WriteHalf};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use zznet_api::ZzRoom;
 
 type ChannelId = u16;
@@ -17,11 +18,25 @@ pub enum ConnectionEvent {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Channel {
     pub id: ChannelId,
-    pub command_tx: mpsc::Sender<Vec<u8>>,
-    pub rx: mpsc::Receiver<Vec<u8>>,
+    command_tx: mpsc::Sender<Vec<u8>>,
+    rx: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
+}
+
+impl Channel {
+    pub fn new(
+        id: ChannelId,
+        command_tx: mpsc::Sender<Vec<u8>>,
+        rx: mpsc::Receiver<Vec<u8>>,
+    ) -> Self {
+        Self {
+            id,
+            command_tx,
+            rx: Arc::new(Mutex::new(rx)),
+        }
+    }
 }
 
 #[async_trait]
@@ -32,7 +47,8 @@ impl ZzRoom for Channel {
     }
 
     async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
-        Ok(self.rx.recv().await)
+        let mut guard = self.rx.lock().await;
+        Ok(guard.recv().await)
     }
 }
 

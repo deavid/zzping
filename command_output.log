@@ -1,400 +1,400 @@
-[2025-09-17 17:36:54]    Compiling zzchorale v0.1.0 (/app/src/components/zzchorale)
-[2025-09-17 17:36:54]    Compiling zznet-api v0.1.0 (/app/src/common/zznet-api)
-[2025-09-17 17:36:54]    Compiling zznet v0.2.2-beta2 (/app/src/components/zznet)
-[2025-09-17 17:36:54]    Compiling pingpong v0.1.0 (/app/src/components/zzchorale-examples/pingpong)
-[2025-09-17 17:36:56]    Compiling intent-config v0.1.0 (/app/src/components/intent-config)
-[2025-09-17 17:37:31]     Finished `test` profile [optimized + debuginfo] target(s) in 38.53s
-[2025-09-17 17:37:32]      Running unittests src/lib.rs (target/debug/deps/intent_config-69c72cbd23490ef0)
-[2025-09-17 17:37:32]
-[2025-09-17 17:37:32] running 2 tests
-[2025-09-17 17:37:32] test component::tests::test_full_e2e_update_and_broadcast ... ignored
-[2025-09-17 17:37:32] test component::tests::intent_config_component_lifecycle ... ok
-[2025-09-17 17:37:32]
-[2025-09-17 17:37:32] test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:32]
-[2025-09-17 17:37:32]      Running unittests src/lib.rs (target/debug/deps/pingpong-7fcf51bafa655793)
-[2025-09-17 17:37:32]
-[2025-09-17 17:37:32] running 0 tests
-[2025-09-17 17:37:32]
-[2025-09-17 17:37:32] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:32]
-[2025-09-17 17:37:32]      Running tests/compile_fail_tests.rs (target/debug/deps/compile_fail_tests-2ff152a8261a7620)
-[2025-09-17 17:37:32]
-[2025-09-17 17:37:32] running 1 test
-[2025-09-17 17:37:32]     Checking zzchorale v0.1.0 (/app/src/components/zzchorale)
-[2025-09-17 17:37:32]     Checking pingpong v0.1.0 (/app/src/components/zzchorale-examples/pingpong)
-[2025-09-17 17:37:32]     Checking pingpong-tests v0.0.0 (/app/target/tests/trybuild/pingpong)
-[2025-09-17 17:37:32]     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.66s
-[2025-09-17 17:37:32]
-[2025-09-17 17:37:32]
-[2025-09-17 17:37:33] test [0m[1mtests/compile_fail/01-start-unwired.rs[0m ... [0m[32mok
-[2025-09-17 17:37:33] [0m
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test compile_fail_tests ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.01s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/wiring_test.rs (target/debug/deps/wiring_test-591fb7f81b3521b2)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 1 test
-[2025-09-17 17:37:33] test ping_pong_wiring_test ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running unittests src/lib.rs (target/debug/deps/zzchorale-36352b959b4e525c)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 0 tests
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/framework_test.rs (target/debug/deps/framework_test-70b3a6d45cb2b6a5)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 1 test
-[2025-09-17 17:37:33] test component_lifecycle_test ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running unittests src/lib.rs (target/debug/deps/zznet-7d8b7528430cc120)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 3 tests
-[2025-09-17 17:37:33] test connection::tests::test_tlscfg_from_role_custom_dir ... ok
-[2025-09-17 17:37:33] test connection::tests::test_tlscfg_from_role_default_dir ... ok
-[2025-09-17 17:37:33] test connection::tests::test_tlscertandkey_from_role ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running unittests src/bin/client.rs (target/debug/deps/zznet_client-dde9f429cdc3f013)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 0 tests
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running unittests src/bin/server.rs (target/debug/deps/zznet_server-f5702061db577411)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 0 tests
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/component_lifecycle.rs (target/debug/deps/component_lifecycle-8792981177e2bb61)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 2 tests
-[2025-09-17 17:37:33] test test_get_room_receives_room_from_mock_connection ... ok
-[2025-09-17 17:37:33] test zznet_component_starts_and_shuts_down ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running unittests src/lib.rs (target/debug/deps/zznet_api-e4e9550b5656ca16)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 0 tests
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running unittests src/main.rs (target/debug/deps/zzping_cli-038433e67609fa5d)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 0 tests
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running unittests src/lib.rs (target/debug/deps/zzping_collector-3c319ba6461fb7dc)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 13 tests
-[2025-09-17 17:37:33] test config::tests::test_load_nonexistent_file ... ok
-[2025-09-17 17:37:33] test config::tests::test_load_valid_config ... ok
-[2025-09-17 17:37:33] test config::tests::test_load_invalid_config ... ok
-[2025-09-17 17:37:33] test ping_surge_client::tests::test_ping_reply_structure ... ok
-[2025-09-17 17:37:33] test ping_surge_client::tests::test_ping_surge_client_new ... ok
-[2025-09-17 17:37:33] test ping_mock_client::tests::test_ping_mock_client_records_ping_and_sends_result ... ok
-[2025-09-17 17:37:33] test client_holder::tests::test_holder_get_set_clone ... ok
-[2025-09-17 17:37:33] test collector_service::tests::test_collector_service_new ... ok
-[2025-09-17 17:37:33] test ping_surge_client::tests::test_ping_surge_client_target ... ok
-[2025-09-17 17:37:33] test pinger::tests::test_monotonic_source_handles_backward_jump ... ok
-[2025-09-17 17:37:33] test ping_surge_client::tests::test_ping_task_timeout_handling ... ok
-[2025-09-17 17:37:33] test ping_surge_client::tests::test_ping_task_channel_closed ... ok
-[2025-09-17 17:37:33] test pinger::tests::test_monotonic_timestamp_generation ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running unittests src/main.rs (target/debug/deps/zzping_collector-879c44b6b1dcf2a8)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 0 tests
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/batch_submitter_fsync_test.rs (target/debug/deps/batch_submitter_fsync_test-d376976fb884126d)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 1 test
-[2025-09-17 17:37:33] test test_batch_submitter_prune_by_fsync_via_command ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/batch_submitter_test.rs (target/debug/deps/batch_submitter_test-1bffde7f1605e8dd)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 7 tests
-[2025-09-17 17:37:33] test test_prune_by_time_retention ... ignored
-[2025-09-17 17:37:33] test test_ingestion_logic ... ok
-[2025-09-17 17:37:33] test test_prune_by_fsync ... ok
-[2025-09-17 17:37:33] test test_pruning_precedence ... ok
-[2025-09-17 17:37:33] test test_prune_by_buffer_limit ... ok
-[2025-09-17 17:37:33] test test_send_batch_ok_and_embargo ... ok
-[2025-09-17 17:37:33] test test_send_batch_desync ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.04s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/bootstrap_integration_test.rs (target/debug/deps/bootstrap_integration_test-2196680e4bbbaeee)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 1 test
-[2025-09-17 17:37:33] test test_collector_survives_disconnect_and_reconnects ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/cached_intent_startup_test.rs (target/debug/deps/cached_intent_startup_test-50c4778ac047fefe)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 3 tests
-[2025-09-17 17:37:33] test startup_with_cache_and_successful_connection ... ok
-[2025-09-17 17:37:33] test startup_without_cache_and_unavailable_db ... ok
-[2025-09-17 17:37:33] test startup_with_cache_and_unavailable_db ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.45s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/connection_manager_test.rs (target/debug/deps/connection_manager_test-f303f4570d101d9a)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 2 tests
-[2025-09-17 17:37:33] test test_connection_manager_retries_on_failure ... ignored
-[2025-09-17 17:37:33] test test_connection_manager_connects_and_sends_client ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/database_client_test.rs (target/debug/deps/database_client_test-46991fac8e5c149e)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 1 test
-[2025-09-17 17:37:33] test test_database_client_connect_and_heartbeat ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/fsync_prune_integration_deterministic_test.rs (target/debug/deps/fsync_prune_integration_deterministic_test-3a071c50188f482c)
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] running 1 test
-[2025-09-17 17:37:33] test test_fsync_prune_deterministic_via_override_channel ... ok
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
-[2025-09-17 17:37:33]
-[2025-09-17 17:37:33]      Running tests/fsync_prune_integration_test.rs (target/debug/deps/fsync_prune_integration_test-465496ebaafba0e7)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 1 test
-[2025-09-17 17:37:34] test test_fsync_prunes_batch_submitter_via_supervisor_broadcast ... ignored
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running tests/graceful_shutdown_test.rs (target/debug/deps/graceful_shutdown_test-555d259349934175)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 1 test
-[2025-09-17 17:37:34] test test_graceful_shutdown_flushes_buffer ... ok
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running tests/heartbeat_integration_test.rs (target/debug/deps/heartbeat_integration_test-5fbfc7404a781c62)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 1 test
-[2025-09-17 17:37:34] test test_collector_gets_config_via_heartbeat ... ok
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running tests/pinger_test.rs (target/debug/deps/pinger_test-45e0952ac03a1218)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 4 tests
-[2025-09-17 17:37:34] test test_monotonic_time_source_resync_updates_reference ... ok
-[2025-09-17 17:37:34] test test_pinger_loop ... ok
-[2025-09-17 17:37:34] test test_pinger_handles_lost_packets ... ok
-[2025-09-17 17:37:34] test test_pinger_pauses_and_resumes ... ok
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running tests/session_handler_test.rs (target/debug/deps/session_handler_test-2a3ea6bfdfa086be)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 3 tests
-[2025-09-17 17:37:34] test test_session_handler_reports_last_processed_command_in_heartbeat ... ignored
-[2025-09-17 17:37:34] test test_session_handler_sends_config_on_success ... ok
-[2025-09-17 17:37:34] test test_session_handler_exits_on_connection_failure ... ok
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running tests/startup_lock_test.rs (target/debug/deps/startup_lock_test-f287a85a64d95697)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 1 test
-[2025-09-17 17:37:34] test test_port_lock_prevents_second_instance ... ok
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running tests/target_worker_test.rs (target/debug/deps/target_worker_test-e69a223409098278)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 1 test
-[2025-09-17 17:37:34] test test_target_worker_primary_supervised_role_sends_init_command ... ok
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running tests/task_supervisor_test.rs (target/debug/deps/task_supervisor_test-c9273a2e644ed59b)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 5 tests
-[2025-09-17 17:37:34] test test_supervisor_sends_shutdown_to_removed_workers ... ok
-[2025-09-17 17:37:34] test test_supervisor_sends_update_role_on_config_change ... ok
-[2025-09-17 17:37:34] test test_supervisor_cancels_scheduled_swap_on_config_change ... ok
-[2025-09-17 17:37:34] test test_supervisor_defers_and_then_creates_workers ... ok
-[2025-09-17 17:37:34] test test_supervisor_schedules_swap_and_applies_role ... ok
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running tests/time_source_tests.rs (target/debug/deps/time_source_tests-f791977ae2d87d28)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 1 test
-[2025-09-17 17:37:34] test mock_time_source_resync_counter ... ok
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running unittests src/lib.rs (target/debug/deps/zzping_database-b1ac14f1459faaf2)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 19 tests
-[2025-09-17 17:37:34] test config::tests::test_load_intent_config_file_not_found ... ok
-[2025-09-17 17:37:34] test config::tests::test_load_intent_config_invalid_ron ... ok
-[2025-09-17 17:37:34] test config::tests::test_load_intent_config ... ok
-[2025-09-17 17:37:34] test finalization::tests::test_finalize_file ... ok
-[2025-09-17 17:37:34] test grpc_server::tests::test_check_auth ... ok
-[2025-09-17 17:37:34] test grpc_server::tests::test_sendbatch_accepts_good_data ... ok
-[2025-09-17 17:37:34] test grpc_server::tests::test_sendbatch_rejects_desync_data ... ok
-[2025-09-17 17:37:34] test query::tests::test_find_latest_in_empty_dir ... ok
-[2025-09-17 17:37:34] test query::tests::test_get_last_hour_records ... ok
-[2025-09-17 17:37:34] test query::tests::test_get_last_hour_records_empty_dir ... ok
-[2025-09-17 17:37:34] test scheduler::tests::test_first_instance_is_primary ... ok
-[2025-09-17 17:37:34] test scheduler::tests::test_graceful_handoff_flow ... ok
-[2025-09-17 17:37:34] test scheduler::tests::test_second_instance_is_standby_and_triggers_handoff ... ok
-[2025-09-17 17:37:34] test scheduler::tests::test_stale_standby_is_pruned ... ok
-[2025-09-17 17:37:34] test scheduler::tests::test_standby_is_promoted_when_primary_goes_stale ... ok
-[2025-09-17 17:37:34] test storage_engine::tests::test_write_records_to_disk_empty ... ok
-[2025-09-17 17:37:34] test grpc_server::tests::test_query_data_permission ... ok
-[2025-09-17 17:37:34] test grpc_server::tests::test_heartbeat_rpc_permission ... ok
-[2025-09-17 17:37:34] test query::tests::test_find_latest_zzp1_file ... ok
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running unittests src/main.rs (target/debug/deps/zzping_database-03f2a695cc18ec41)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 0 tests
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34]      Running tests/full_ingestion_pipeline.rs (target/debug/deps/full_ingestion_pipeline-a9447e3bddcb4ffd)
-[2025-09-17 17:37:34]
-[2025-09-17 17:37:34] running 1 test
-[2025-09-17 17:37:34] [2025-09-17T17:37:34Z INFO  zzping_database::grpc_server] Loaded intent config: IntentConfig { ping_rate_pps: 1, targets: [] }
-[2025-09-17 17:37:34] [2025-09-17T17:37:34Z INFO  zzping_database::storage_engine] Storage task started.
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::grpc_server] [DEBUG 1/4] send_batch received with 2 records for collector 'test-collector'
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::grpc_server] [DEBUG 2/4] Constructed IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 60000000100, rtt_nanos: 50 } }
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::grpc_server] [DEBUG 2/4] Constructed IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 60000000200, rtt_nanos: 60 } }
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::storage_engine] [DEBUG 3/4] storage_task received IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 60000000100, rtt_nanos: 50 } }
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::storage_engine] [DEBUG 3/4] storage_task received IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 60000000200, rtt_nanos: 60 } }
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::grpc_server] [DEBUG 1/4] send_batch received with 1 records for collector 'test-collector'
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::grpc_server] [DEBUG 2/4] Constructed IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 120000000000, rtt_nanos: 70 } }
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::storage_engine] [DEBUG 3/4] storage_task received IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 120000000000, rtt_nanos: 70 } }
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::storage_engine] New record for minute 2 triggers finalization of 1 previous minute(s) for key ("test-collector", 1.1.1.1)
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::storage_engine] [DEBUG 4/4] write_records_to_disk called with 2 records for test-collector - 1.1.1.1
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::storage_engine] Creating new daily file: /tmp/.tmpMZRVfe/test-collector-1.1.1.1-20250917.zzp1
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::storage_engine] Appended 81 bytes (2 records) to /tmp/.tmpMZRVfe/test-collector-1.1.1.1-20250917.zzp1
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  zzping_database::storage_engine] Successfully wrote 2 records to /tmp/.tmpMZRVfe/test-collector-1.1.1.1-20250917.zzp1
-[2025-09-17 17:37:35] [2025-09-17T17:37:35Z INFO  full_ingestion_pipeline] Read 65617 bytes from file "/tmp/.tmpMZRVfe/test-collector-1.1.1.1-20250917.zzp1"
-[2025-09-17 17:37:35] test test_full_ingestion_pipeline ... ok
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]      Running unittests src/main.rs (target/debug/deps/zzping_gui-023d2d7f848dd8a5)
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] running 4 tests
-[2025-09-17 17:37:35] test data_processing::tests::test_records_to_points_empty ... ok
-[2025-09-17 17:37:35] test data_processing::tests::test_records_to_points_conversion ... ok
-[2025-09-17 17:37:35] test network::tests::test_try_fetch_data_connection_error ... ok
-[2025-09-17 17:37:35] test network::tests::test_try_fetch_data ... ok
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]      Running unittests src/lib.rs (target/debug/deps/zzping_lib-28579259f1ce8912)
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] running 17 tests
-[2025-09-17 17:37:35] test chunked_v1::tests::test_chunked_header_serialized_size_analysis ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_comprehensive_serialized_sizes ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_basic_compression_roundtrip ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_header_layout_calculations ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_model_with_all_packets_lost ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_model_with_exactly_one_packet_lost ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_dummy_symbol_frequency_analysis ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_serialization_round_trip_preserves_size ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_constant_rate_compression_efficiency ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_simple_model_creation ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_simple_variable_rate ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_decompression_of_partial_unfinalized_file ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_multi_chunk_variable_rate ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_single_symbol_model_creation ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_size_calculations_are_correct ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_size_calculation_edge_cases ... ok
-[2025-09-17 17:37:35] test chunked_v1::tests::test_variable_rate_compression_efficiency ... ok
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]      Running unittests src/lib.rs (target/debug/deps/zzping_proto-34f561973edf8177)
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] running 0 tests
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]    Doc-tests intent_config
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] running 0 tests
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]    Doc-tests pingpong
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] running 0 tests
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]    Doc-tests zzchorale
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] running 0 tests
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]    Doc-tests zznet
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] running 0 tests
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]    Doc-tests zznet_api
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] running 0 tests
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]    Doc-tests zzping_collector
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] running 0 tests
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:35]
-[2025-09-17 17:37:35]    Doc-tests zzping_database
-[2025-09-17 17:37:38]
-[2025-09-17 17:37:38] running 1 test
-[2025-09-17 17:37:38] test src/apps/zzping-database/src/auth.rs - auth::UserIdentity::has_role (line 30) ... ok
-[2025-09-17 17:37:38]
-[2025-09-17 17:37:38] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:38]
-[2025-09-17 17:37:38]    Doc-tests zzping_lib
-[2025-09-17 17:37:38]
-[2025-09-17 17:37:38] running 0 tests
-[2025-09-17 17:37:38]
-[2025-09-17 17:37:38] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:38]
-[2025-09-17 17:37:38]    Doc-tests zzping_proto
-[2025-09-17 17:37:38]
-[2025-09-17 17:37:38] running 0 tests
-[2025-09-17 17:37:38]
-[2025-09-17 17:37:38] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
-[2025-09-17 17:37:38]
+[2025-09-17 17:59:32]    Compiling zzchorale v0.1.0 (/app/src/components/zzchorale)
+[2025-09-17 17:59:32]    Compiling zznet-api v0.1.0 (/app/src/common/zznet-api)
+[2025-09-17 17:59:32]    Compiling zznet v0.2.2-beta2 (/app/src/components/zznet)
+[2025-09-17 17:59:33]    Compiling pingpong v0.1.0 (/app/src/components/zzchorale-examples/pingpong)
+[2025-09-17 17:59:38]    Compiling intent-config v0.1.0 (/app/src/components/intent-config)
+[2025-09-17 18:00:12]     Finished `test` profile [optimized + debuginfo] target(s) in 40.69s
+[2025-09-17 18:00:12]      Running unittests src/lib.rs (target/debug/deps/intent_config-69c72cbd23490ef0)
+[2025-09-17 18:00:12]
+[2025-09-17 18:00:12] running 2 tests
+[2025-09-17 18:00:12] test component::tests::test_full_e2e_update_and_broadcast ... ignored
+[2025-09-17 18:00:12] test component::tests::intent_config_component_lifecycle ... ok
+[2025-09-17 18:00:12]
+[2025-09-17 18:00:12] test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:12]
+[2025-09-17 18:00:12]      Running unittests src/lib.rs (target/debug/deps/pingpong-7fcf51bafa655793)
+[2025-09-17 18:00:12]
+[2025-09-17 18:00:12] running 0 tests
+[2025-09-17 18:00:12]
+[2025-09-17 18:00:12] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:12]
+[2025-09-17 18:00:12]      Running tests/compile_fail_tests.rs (target/debug/deps/compile_fail_tests-2ff152a8261a7620)
+[2025-09-17 18:00:12]
+[2025-09-17 18:00:12] running 1 test
+[2025-09-17 18:00:12]     Checking zzchorale v0.1.0 (/app/src/components/zzchorale)
+[2025-09-17 18:00:13]     Checking pingpong v0.1.0 (/app/src/components/zzchorale-examples/pingpong)
+[2025-09-17 18:00:13]     Checking pingpong-tests v0.0.0 (/app/target/tests/trybuild/pingpong)
+[2025-09-17 18:00:13]     Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.69s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test [0m[1mtests/compile_fail/01-start-unwired.rs[0m ... [0m[32mok
+[2025-09-17 18:00:13] [0m
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test compile_fail_tests ... ok
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.04s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running tests/wiring_test.rs (target/debug/deps/wiring_test-591fb7f81b3521b2)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 1 test
+[2025-09-17 18:00:13] test ping_pong_wiring_test ... ok
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running unittests src/lib.rs (target/debug/deps/zzchorale-36352b959b4e525c)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 0 tests
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running tests/framework_test.rs (target/debug/deps/framework_test-70b3a6d45cb2b6a5)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 1 test
+[2025-09-17 18:00:13] test component_lifecycle_test ... ok
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running unittests src/lib.rs (target/debug/deps/zznet-7d8b7528430cc120)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 3 tests
+[2025-09-17 18:00:13] test connection::tests::test_tlscertandkey_from_role ... ok
+[2025-09-17 18:00:13] test connection::tests::test_tlscfg_from_role_default_dir ... ok
+[2025-09-17 18:00:13] test connection::tests::test_tlscfg_from_role_custom_dir ... ok
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running unittests src/bin/client.rs (target/debug/deps/zznet_client-dde9f429cdc3f013)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 0 tests
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running unittests src/bin/server.rs (target/debug/deps/zznet_server-f5702061db577411)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 0 tests
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running tests/component_lifecycle.rs (target/debug/deps/component_lifecycle-8792981177e2bb61)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 2 tests
+[2025-09-17 18:00:13] test zznet_component_starts_and_shuts_down ... ok
+[2025-09-17 18:00:13] test test_get_room_receives_room_from_mock_connection ... ok
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running unittests src/lib.rs (target/debug/deps/zznet_api-e4e9550b5656ca16)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 0 tests
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running unittests src/main.rs (target/debug/deps/zzping_cli-038433e67609fa5d)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 0 tests
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running unittests src/lib.rs (target/debug/deps/zzping_collector-3c319ba6461fb7dc)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 13 tests
+[2025-09-17 18:00:13] test config::tests::test_load_nonexistent_file ... ok
+[2025-09-17 18:00:13] test config::tests::test_load_valid_config ... ok
+[2025-09-17 18:00:13] test config::tests::test_load_invalid_config ... ok
+[2025-09-17 18:00:13] test ping_surge_client::tests::test_ping_reply_structure ... ok
+[2025-09-17 18:00:13] test ping_mock_client::tests::test_ping_mock_client_records_ping_and_sends_result ... ok
+[2025-09-17 18:00:13] test collector_service::tests::test_collector_service_new ... ok
+[2025-09-17 18:00:13] test client_holder::tests::test_holder_get_set_clone ... ok
+[2025-09-17 18:00:13] test ping_surge_client::tests::test_ping_surge_client_new ... ok
+[2025-09-17 18:00:13] test ping_surge_client::tests::test_ping_surge_client_target ... ok
+[2025-09-17 18:00:13] test pinger::tests::test_monotonic_source_handles_backward_jump ... ok
+[2025-09-17 18:00:13] test ping_surge_client::tests::test_ping_task_channel_closed ... ok
+[2025-09-17 18:00:13] test ping_surge_client::tests::test_ping_task_timeout_handling ... ok
+[2025-09-17 18:00:13] test pinger::tests::test_monotonic_timestamp_generation ... ok
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running unittests src/main.rs (target/debug/deps/zzping_collector-879c44b6b1dcf2a8)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 0 tests
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running tests/batch_submitter_fsync_test.rs (target/debug/deps/batch_submitter_fsync_test-d376976fb884126d)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 1 test
+[2025-09-17 18:00:13] test test_batch_submitter_prune_by_fsync_via_command ... ok
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running tests/batch_submitter_test.rs (target/debug/deps/batch_submitter_test-1bffde7f1605e8dd)
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] running 7 tests
+[2025-09-17 18:00:13] test test_prune_by_time_retention ... ignored
+[2025-09-17 18:00:13] test test_prune_by_buffer_limit ... ok
+[2025-09-17 18:00:13] test test_ingestion_logic ... ok
+[2025-09-17 18:00:13] test test_pruning_precedence ... ok
+[2025-09-17 18:00:13] test test_prune_by_fsync ... ok
+[2025-09-17 18:00:13] test test_send_batch_ok_and_embargo ... ok
+[2025-09-17 18:00:13] test test_send_batch_desync ... ok
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13] test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.04s
+[2025-09-17 18:00:13]
+[2025-09-17 18:00:13]      Running tests/bootstrap_integration_test.rs (target/debug/deps/bootstrap_integration_test-2196680e4bbbaeee)
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] running 1 test
+[2025-09-17 18:00:14] test test_collector_survives_disconnect_and_reconnects ... ok
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14]      Running tests/cached_intent_startup_test.rs (target/debug/deps/cached_intent_startup_test-50c4778ac047fefe)
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] running 3 tests
+[2025-09-17 18:00:14] test startup_without_cache_and_unavailable_db ... ok
+[2025-09-17 18:00:14] test startup_with_cache_and_unavailable_db ... ok
+[2025-09-17 18:00:14] test startup_with_cache_and_successful_connection ... ok
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.43s
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14]      Running tests/connection_manager_test.rs (target/debug/deps/connection_manager_test-f303f4570d101d9a)
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] running 2 tests
+[2025-09-17 18:00:14] test test_connection_manager_retries_on_failure ... ignored
+[2025-09-17 18:00:14] test test_connection_manager_connects_and_sends_client ... ok
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.02s
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14]      Running tests/database_client_test.rs (target/debug/deps/database_client_test-46991fac8e5c149e)
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] running 1 test
+[2025-09-17 18:00:14] test test_database_client_connect_and_heartbeat ... ok
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14]      Running tests/fsync_prune_integration_deterministic_test.rs (target/debug/deps/fsync_prune_integration_deterministic_test-3a071c50188f482c)
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] running 1 test
+[2025-09-17 18:00:14] test test_fsync_prune_deterministic_via_override_channel ... ok
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14]      Running tests/fsync_prune_integration_test.rs (target/debug/deps/fsync_prune_integration_test-465496ebaafba0e7)
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] running 1 test
+[2025-09-17 18:00:14] test test_fsync_prunes_batch_submitter_via_supervisor_broadcast ... ignored
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14]      Running tests/graceful_shutdown_test.rs (target/debug/deps/graceful_shutdown_test-555d259349934175)
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] running 1 test
+[2025-09-17 18:00:14] test test_graceful_shutdown_flushes_buffer ... ok
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14]      Running tests/heartbeat_integration_test.rs (target/debug/deps/heartbeat_integration_test-5fbfc7404a781c62)
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] running 1 test
+[2025-09-17 18:00:14] test test_collector_gets_config_via_heartbeat ... ok
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14]      Running tests/pinger_test.rs (target/debug/deps/pinger_test-45e0952ac03a1218)
+[2025-09-17 18:00:14]
+[2025-09-17 18:00:14] running 4 tests
+[2025-09-17 18:00:14] test test_monotonic_time_source_resync_updates_reference ... ok
+[2025-09-17 18:00:15] test test_pinger_loop ... ok
+[2025-09-17 18:00:15] test test_pinger_handles_lost_packets ... ok
+[2025-09-17 18:00:15] test test_pinger_pauses_and_resumes ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running tests/session_handler_test.rs (target/debug/deps/session_handler_test-2a3ea6bfdfa086be)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 3 tests
+[2025-09-17 18:00:15] test test_session_handler_reports_last_processed_command_in_heartbeat ... ignored
+[2025-09-17 18:00:15] test test_session_handler_sends_config_on_success ... ok
+[2025-09-17 18:00:15] test test_session_handler_exits_on_connection_failure ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.12s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running tests/startup_lock_test.rs (target/debug/deps/startup_lock_test-f287a85a64d95697)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 1 test
+[2025-09-17 18:00:15] test test_port_lock_prevents_second_instance ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running tests/target_worker_test.rs (target/debug/deps/target_worker_test-e69a223409098278)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 1 test
+[2025-09-17 18:00:15] test test_target_worker_primary_supervised_role_sends_init_command ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running tests/task_supervisor_test.rs (target/debug/deps/task_supervisor_test-c9273a2e644ed59b)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 5 tests
+[2025-09-17 18:00:15] test test_supervisor_sends_shutdown_to_removed_workers ... ok
+[2025-09-17 18:00:15] test test_supervisor_sends_update_role_on_config_change ... ok
+[2025-09-17 18:00:15] test test_supervisor_cancels_scheduled_swap_on_config_change ... ok
+[2025-09-17 18:00:15] test test_supervisor_defers_and_then_creates_workers ... ok
+[2025-09-17 18:00:15] test test_supervisor_schedules_swap_and_applies_role ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running tests/time_source_tests.rs (target/debug/deps/time_source_tests-f791977ae2d87d28)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 1 test
+[2025-09-17 18:00:15] test mock_time_source_resync_counter ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running unittests src/lib.rs (target/debug/deps/zzping_database-b1ac14f1459faaf2)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 19 tests
+[2025-09-17 18:00:15] test config::tests::test_load_intent_config_file_not_found ... ok
+[2025-09-17 18:00:15] test config::tests::test_load_intent_config ... ok
+[2025-09-17 18:00:15] test config::tests::test_load_intent_config_invalid_ron ... ok
+[2025-09-17 18:00:15] test finalization::tests::test_finalize_file ... ok
+[2025-09-17 18:00:15] test grpc_server::tests::test_check_auth ... ok
+[2025-09-17 18:00:15] test grpc_server::tests::test_sendbatch_accepts_good_data ... ok
+[2025-09-17 18:00:15] test grpc_server::tests::test_sendbatch_rejects_desync_data ... ok
+[2025-09-17 18:00:15] test query::tests::test_find_latest_in_empty_dir ... ok
+[2025-09-17 18:00:15] test query::tests::test_get_last_hour_records ... ok
+[2025-09-17 18:00:15] test query::tests::test_get_last_hour_records_empty_dir ... ok
+[2025-09-17 18:00:15] test scheduler::tests::test_first_instance_is_primary ... ok
+[2025-09-17 18:00:15] test scheduler::tests::test_graceful_handoff_flow ... ok
+[2025-09-17 18:00:15] test scheduler::tests::test_second_instance_is_standby_and_triggers_handoff ... ok
+[2025-09-17 18:00:15] test scheduler::tests::test_stale_standby_is_pruned ... ok
+[2025-09-17 18:00:15] test scheduler::tests::test_standby_is_promoted_when_primary_goes_stale ... ok
+[2025-09-17 18:00:15] test storage_engine::tests::test_write_records_to_disk_empty ... ok
+[2025-09-17 18:00:15] test grpc_server::tests::test_query_data_permission ... ok
+[2025-09-17 18:00:15] test grpc_server::tests::test_heartbeat_rpc_permission ... ok
+[2025-09-17 18:00:15] test query::tests::test_find_latest_zzp1_file ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running unittests src/main.rs (target/debug/deps/zzping_database-03f2a695cc18ec41)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 0 tests
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running tests/full_ingestion_pipeline.rs (target/debug/deps/full_ingestion_pipeline-a9447e3bddcb4ffd)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 1 test
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::grpc_server] Loaded intent config: IntentConfig { ping_rate_pps: 1, targets: [] }
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::storage_engine] Storage task started.
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::grpc_server] [DEBUG 1/4] send_batch received with 2 records for collector 'test-collector'
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::grpc_server] [DEBUG 2/4] Constructed IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 60000000100, rtt_nanos: 50 } }
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::grpc_server] [DEBUG 2/4] Constructed IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 60000000200, rtt_nanos: 60 } }
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::storage_engine] [DEBUG 3/4] storage_task received IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 60000000100, rtt_nanos: 50 } }
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::storage_engine] [DEBUG 3/4] storage_task received IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 60000000200, rtt_nanos: 60 } }
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::grpc_server] [DEBUG 1/4] send_batch received with 1 records for collector 'test-collector'
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::grpc_server] [DEBUG 2/4] Constructed IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 120000000000, rtt_nanos: 70 } }
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::storage_engine] [DEBUG 3/4] storage_task received IngestionItem: IngestionItem { source_hostname: "test-collector", target: 1.1.1.1, record: RawDataRecord { sent_nanos: 120000000000, rtt_nanos: 70 } }
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::storage_engine] New record for minute 2 triggers finalization of 1 previous minute(s) for key ("test-collector", 1.1.1.1)
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::storage_engine] [DEBUG 4/4] write_records_to_disk called with 2 records for test-collector - 1.1.1.1
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::storage_engine] Creating new daily file: /tmp/.tmpvTEmg2/test-collector-1.1.1.1-20250917.zzp1
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::storage_engine] Appended 81 bytes (2 records) to /tmp/.tmpvTEmg2/test-collector-1.1.1.1-20250917.zzp1
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  zzping_database::storage_engine] Successfully wrote 2 records to /tmp/.tmpvTEmg2/test-collector-1.1.1.1-20250917.zzp1
+[2025-09-17 18:00:15] [2025-09-17T18:00:15Z INFO  full_ingestion_pipeline] Read 65617 bytes from file "/tmp/.tmpvTEmg2/test-collector-1.1.1.1-20250917.zzp1"
+[2025-09-17 18:00:15] test test_full_ingestion_pipeline ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running unittests src/main.rs (target/debug/deps/zzping_gui-023d2d7f848dd8a5)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 4 tests
+[2025-09-17 18:00:15] test data_processing::tests::test_records_to_points_empty ... ok
+[2025-09-17 18:00:15] test data_processing::tests::test_records_to_points_conversion ... ok
+[2025-09-17 18:00:15] test network::tests::test_try_fetch_data_connection_error ... ok
+[2025-09-17 18:00:15] test network::tests::test_try_fetch_data ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running unittests src/lib.rs (target/debug/deps/zzping_lib-28579259f1ce8912)
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] running 17 tests
+[2025-09-17 18:00:15] test chunked_v1::tests::test_chunked_header_serialized_size_analysis ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_comprehensive_serialized_sizes ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_dummy_symbol_frequency_analysis ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_basic_compression_roundtrip ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_constant_rate_compression_efficiency ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_header_layout_calculations ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_model_with_exactly_one_packet_lost ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_model_with_all_packets_lost ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_serialization_round_trip_preserves_size ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_simple_model_creation ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_multi_chunk_variable_rate ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_single_symbol_model_creation ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_size_calculation_edge_cases ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_size_calculations_are_correct ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_simple_variable_rate ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_decompression_of_partial_unfinalized_file ... ok
+[2025-09-17 18:00:15] test chunked_v1::tests::test_variable_rate_compression_efficiency ... ok
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15] test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+[2025-09-17 18:00:15]
+[2025-09-17 18:00:15]      Running unittests src/lib.rs (target/debug/deps/zzping_proto-34f561973edf8177)
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] running 0 tests
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16]    Doc-tests intent_config
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] running 0 tests
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16]    Doc-tests pingpong
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] running 0 tests
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16]    Doc-tests zzchorale
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] running 0 tests
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16]    Doc-tests zznet
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] running 0 tests
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16]    Doc-tests zznet_api
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] running 0 tests
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16]    Doc-tests zzping_collector
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] running 0 tests
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:16]
+[2025-09-17 18:00:16]    Doc-tests zzping_database
+[2025-09-17 18:00:18]
+[2025-09-17 18:00:18] running 1 test
+[2025-09-17 18:00:18] test src/apps/zzping-database/src/auth.rs - auth::UserIdentity::has_role (line 30) ... ok
+[2025-09-17 18:00:18]
+[2025-09-17 18:00:18] test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:18]
+[2025-09-17 18:00:18]    Doc-tests zzping_lib
+[2025-09-17 18:00:19]
+[2025-09-17 18:00:19] running 0 tests
+[2025-09-17 18:00:19]
+[2025-09-17 18:00:19] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:19]
+[2025-09-17 18:00:19]    Doc-tests zzping_proto
+[2025-09-17 18:00:19]
+[2025-09-17 18:00:19] running 0 tests
+[2025-09-17 18:00:19]
+[2025-09-17 18:00:19] test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+[2025-09-17 18:00:19]
