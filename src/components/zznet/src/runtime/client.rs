@@ -11,20 +11,18 @@ use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector;
 
-/// The primary state machine for a client's network connection. It holds the configuration and provides the interface to connect to the server.
+/// Manages resilient client connections with automatic reconnection.
 pub struct ClientRuntime {
     config: ClientConfig,
 }
 
 impl ClientRuntime {
-    /// Prepares the runtime with the necessary connection parameters.
+    /// Creates a new client runtime ready for resilient connections.
     pub fn new(config: ClientConfig) -> Self {
         Self { config }
     }
 
-    /// Returns a stream that perpetually tries to maintain a connection to the server.
-    /// Each time a connection is successfully established, a new `Connection` object is yielded by the stream.
-    /// If a connection is lost, the stream will internally try to reconnect and will yield a new `Connection` object once it succeeds.
+    /// Provides a stream of connections with automatic reconnection on failure.
     pub fn connections(self) -> impl Stream<Item = Result<Connection>> {
         stream! {
             loop {
@@ -49,8 +47,7 @@ impl ClientRuntime {
         }
     }
 
-    /// Attempts to establish a connection to the server by iterating through the configured socket addresses.
-    /// Performs TCP connection and optional TLS handshake. Returns the stream on success or an error if all addresses fail.
+    /// Attempts connection to any configured server with fallback addresses.
     async fn try_connect(&self) -> Result<Box<dyn AsyncReadWrite + Send + Unpin>> {
         for addr in &self.config.socketaddr {
             match TcpStream::connect(addr).await {

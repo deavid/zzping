@@ -9,12 +9,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use zznet_api::Role;
 
+/// Certificate and private key paths for a specific component role.
+///
+/// Simplifies certificate management by using role-based naming conventions,
+/// ensuring each zzping component uses its designated security credentials.
 pub struct TlsCertAndKey {
     pub pem_path: PathBuf,
     pub key_path: PathBuf,
 }
 
 impl TlsCertAndKey {
+    /// Derives certificate paths from role, enforcing zzping's security conventions.
     pub fn from_role(role: Role, certs_dir: Option<&str>) -> Self {
         let dir = certs_dir.unwrap_or("certs");
         match role {
@@ -38,6 +43,10 @@ impl TlsCertAndKey {
     }
 }
 
+/// Complete TLS configuration for rustls connections.
+///
+/// Centralizes all TLS parameters to ensure consistent, secure communication
+/// across all zzping components with mutual TLS authentication.
 pub struct TlsCfg {
     pub cert: TlsCertAndKey,
     pub ca_cert_path: Option<PathBuf>,
@@ -46,6 +55,7 @@ pub struct TlsCfg {
 }
 
 impl TlsCfg {
+    /// Pre-configures TLS for a role, using zzping's security conventions.
     pub fn from_role(role: Role, certs_dir: Option<&str>) -> Self {
         Self {
             cert: TlsCertAndKey::from_role(role, certs_dir),
@@ -55,7 +65,7 @@ impl TlsCfg {
         }
     }
 
-    /// Builds a rustls ClientConfig from this TLS configuration, handling certificate loading, root store setup, and client authentication.
+    /// Builds a rustls ClientConfig with mutual TLS authentication.
     pub fn build_client_config(&self) -> Result<rustls::ClientConfig> {
         let root_store = self.build_root_store()?;
         let (certs, private_key) = self.load_cert_and_key()?;
@@ -67,7 +77,7 @@ impl TlsCfg {
         Ok(config)
     }
 
-    /// Builds a rustls ServerConfig from this TLS configuration, handling certificate loading and optional mutual TLS verification.
+    /// Builds a rustls ServerConfig with mutual TLS verification.
     pub fn build_server_config(&self) -> Result<rustls::ServerConfig> {
         let (certs, key) = self.load_cert_and_key()?;
         let root_store = self.build_root_store()?;
@@ -81,7 +91,7 @@ impl TlsCfg {
         Ok(config)
     }
 
-    /// Loads the certificate and private key pair from the configured paths, returning them ready for use in TLS configuration.
+    /// Loads certificate and key pair for TLS configuration.
     fn load_cert_and_key(
         &self,
     ) -> Result<(
@@ -93,7 +103,7 @@ impl TlsCfg {
         Ok((certs, private_key))
     }
 
-    /// Builds a root certificate store from CA certificates and optionally native system certificates.
+    /// Builds root certificate store with CA and optionally system certificates.
     fn build_root_store(&self) -> Result<rustls::RootCertStore> {
         let mut root_store = rustls::RootCertStore::empty();
 
@@ -135,6 +145,10 @@ impl TlsCfg {
     }
 }
 
+/// Client configuration for resilient zznet connections.
+///
+/// Enables automatic reconnection with configurable delay to maintain
+/// persistent connectivity despite network failures.
 pub struct ClientConfig {
     pub socketaddr: Vec<SocketAddr>,
     pub tls: Option<TlsCfg>,
@@ -142,6 +156,10 @@ pub struct ClientConfig {
     pub reconnect_delay: std::time::Duration,
 }
 
+/// Server configuration for accepting zznet connections.
+///
+/// Supports binding to multiple addresses for high availability
+/// and role-based security with mutual TLS authentication.
 pub struct ServerConfig {
     pub socketaddr: Vec<SocketAddr>,
     pub tls: Option<TlsCfg>,

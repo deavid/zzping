@@ -6,6 +6,9 @@ use zznet::connection::{ServerConfig, TlsCfg};
 use zznet::runtime::server::ServerRuntime;
 use zznet_api::Role;
 
+/// Demonstrates zznet server accepting client connections.
+///
+/// Usage: `cargo run --bin zznet-server -- <listen_address>`
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::builder()

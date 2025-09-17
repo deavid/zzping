@@ -10,18 +10,18 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
 
-/// The primary manager for the server's network listener. It holds the configuration and is responsible for the lifecycle of accepting new clients.
+/// Manages server listeners and client connection acceptance.
 pub struct ServerRuntime {
     config: ServerConfig,
 }
 
 impl ServerRuntime {
-    /// Prepares the runtime with the necessary connection parameters.
+    /// Creates a new server runtime ready to accept connections.
     pub fn new(config: ServerConfig) -> Self {
         Self { config }
     }
 
-    /// Returns a stream that yields a new `Connection` object for each successfully accepted client.
+    /// Provides a stream of accepted client connections with TLS support.
     pub async fn run(
         self,
     ) -> Result<impl Stream<Item = Result<(Connection, mpsc::Receiver<ConnectionEvent>)>>> {
@@ -61,7 +61,7 @@ impl ServerRuntime {
         })
     }
 
-    /// Handles the TLS handshake for a single incoming connection, if TLS is configured, and returns a ready-to-use stream.
+    /// Handles optional TLS handshake for incoming connections.
     async fn handle_connection(
         stream: tokio::net::TcpStream,
         acceptor: Option<TlsAcceptor>,
@@ -73,7 +73,7 @@ impl ServerRuntime {
         Ok(Box::new(tls_stream))
     }
 
-    /// Runs the accept loop for a single listener, sending accepted connections to the channel.
+    /// Continuously accepts and processes new client connections.
     async fn accept_loop(
         listener: TcpListener,
         acceptor_opt: Option<TlsAcceptor>,
@@ -107,7 +107,7 @@ impl ServerRuntime {
         }
     }
 
-    /// Builds the optional TLS acceptor from the configuration.
+    /// Builds TLS acceptor if configured, enabling secure client connections.
     fn build_tls_acceptor(config: &ServerConfig) -> Result<Option<TlsAcceptor>> {
         if let Some(tls_cfg) = &config.tls {
             let server_config = tls_cfg.build_server_config()?;

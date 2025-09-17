@@ -11,6 +11,9 @@ use zznet::proto::messages::{ControlMsg, Frame};
 use zznet::runtime::client::ClientRuntime;
 use zznet_api::Role;
 
+/// Demonstrates resilient zznet client connections and basic messaging.
+///
+/// Usage: `cargo run --bin zznet-client -- <server_address>`
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::builder()
