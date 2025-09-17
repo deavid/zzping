@@ -2,11 +2,10 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
-use zzchorale::{create_channel, spawn_component, Component, ComponentHandle};
-use zznet_api::{Role, ZzChannel};
-use zznet_lib::ZzNetApi;
+use zzchorale::{create_channel, spawn_component, ComponentHandle};
+use zznet::component::{ZzNetClientApi, ZzNetServerApi};
+use zznet_api::{ClientId, Role, ZzRoom};
 
 // 1. DATA AND PROTOCOL DEFINITIONS
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -23,12 +22,12 @@ pub(crate) enum ProtocolMsg {
 
 // 2. COMPONENT FRAMEWORK STRUCTS
 
-pub struct IntentConfigBuilder<N: ZzNetApi + Clone> {
+pub struct IntentConfigBuilder<N: ZzNetServerApi + ZzNetClientApi + Clone> {
     role: Role,
     zznet_handle: N,
 }
 
-struct IntentConfigComponent<N: ZzNetApi> {
+struct IntentConfigComponent<N: ZzNetServerApi + ZzNetClientApi + Clone> {
     role: Role,
     zznet_handle: N,
     config_watch_tx: watch::Sender<IntentConfigData>,
@@ -43,7 +42,7 @@ pub enum IntentConfigCommand {
 
 // 3. IMPLEMENTATION
 
-impl<N: ZzNetApi + Clone + Send + Sync + 'static> IntentConfigBuilder<N> {
+impl<N: ZzNetServerApi + ZzNetClientApi + Clone + Send + Sync + 'static> IntentConfigBuilder<N> {
     pub fn new(role: Role, zznet_handle: N) -> Self {
         Self { role, zznet_handle }
     }
@@ -68,7 +67,9 @@ impl<N: ZzNetApi + Clone + Send + Sync + 'static> IntentConfigBuilder<N> {
 }
 
 #[async_trait]
-impl<N: ZzNetApi + Clone + Send + Sync + 'static> Component for IntentConfigComponent<N> {
+impl<N: ZzNetServerApi + ZzNetClientApi + Clone + Send + Sync + 'static> zzchorale::Component
+    for IntentConfigComponent<N>
+{
     type Command = IntentConfigCommand;
 
     async fn on_start(&mut self) -> Result<()> {
@@ -78,7 +79,7 @@ impl<N: ZzNetApi + Clone + Send + Sync + 'static> Component for IntentConfigComp
                 log::info!("IntentConfig (Server) starting network task...");
                 let client_stream = self
                     .zznet_handle
-                    .listen_for_channel("intent-config".to_string())
+                    .listen_for_room("intent-config".to_string())
                     .await?;
                 let watch_tx = self.config_watch_tx.clone();
                 tokio::spawn(server_network_task(watch_tx, client_stream));
@@ -88,15 +89,7 @@ impl<N: ZzNetApi + Clone + Send + Sync + 'static> Component for IntentConfigComp
                 let zznet_handle = self.zznet_handle.clone();
                 let watch_tx = self.config_watch_tx.clone();
                 tokio::spawn(async move {
-                    let channel = loop {
-                        match zznet_handle.request_channel("intent-config".to_string()).await {
-                            Ok(channel) => break channel,
-                            Err(e) => {
-                                log::warn!("Failed to get intent-config channel, retrying in 1s: {e}");
-                                tokio::time::sleep(Duration::from_secs(1)).await;
-                            }
-                        }
-                    };
+                    let channel = zznet_handle.get_room("intent-config").await.unwrap();
                     client_network_task(watch_tx, update_rx, channel).await;
                 });
             }
@@ -125,7 +118,7 @@ impl<N: ZzNetApi + Clone + Send + Sync + 'static> Component for IntentConfigComp
 
 async fn server_network_task(
     watch_tx: watch::Sender<IntentConfigData>,
-    mut client_stream: mpsc::Receiver<(u64, Box<dyn ZzChannel>)>,
+    mut client_stream: mpsc::Receiver<(ClientId, Box<dyn ZzRoom>)>,
 ) {
     while let Some((_id, mut channel)) = client_stream.recv().await {
         let mut broadcast_rx = watch_tx.subscribe();
@@ -134,7 +127,9 @@ async fn server_network_task(
         tokio::spawn(async move {
             let initial_state = broadcast_rx.borrow().clone();
             let msg = serde_json::to_vec(&ProtocolMsg::Broadcast(initial_state)).unwrap();
-            if channel.send(msg).await.is_err() { return; }
+            if channel.send(msg).await.is_err() {
+                return;
+            }
 
             loop {
                 tokio::select! {
@@ -158,7 +153,7 @@ async fn server_network_task(
 async fn client_network_task(
     watch_tx: watch::Sender<IntentConfigData>,
     mut update_rx: mpsc::Receiver<IntentConfigData>,
-    mut channel: Box<dyn ZzChannel>,
+    mut channel: Box<dyn ZzRoom>,
 ) {
     loop {
         tokio::select! {
@@ -206,33 +201,41 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use ntest::timeout;
+    use std::time::Duration;
     use tokio::sync::mpsc;
-    use zznet::connection::{ClientConfig, ServerConfig, TlsCfg};
-    use zznet_lib::ZzNetBuilder;
+    use zznet::component::{ZzNetBuilder, ZzNetConfig};
+    use zznet::connection::{ClientConfig, ServerConfig};
 
     #[derive(Clone)]
     struct MockZzNetApi;
 
     #[async_trait]
-    impl ZzNetApi for MockZzNetApi {
-        async fn request_channel(&self, _name: String) -> Result<Box<dyn ZzChannel>> {
-            #[derive(Debug)]
-            struct MockChannel;
-            #[async_trait]
-            impl ZzChannel for MockChannel {
-                async fn send(&self, _payload: Vec<u8>) -> Result<()> { Ok(()) }
-                async fn recv(&mut self) -> Result<Option<Vec<u8>>> { Ok(None) }
-            }
-            Ok(Box::new(MockChannel))
-        }
-
-        async fn listen_for_channel(
+    impl ZzNetServerApi for MockZzNetApi {
+        async fn listen_for_room(
             &self,
             _name: String,
-        ) -> Result<mpsc::Receiver<(u64, Box<dyn ZzChannel>)>> {
+        ) -> Result<mpsc::Receiver<(ClientId, Box<dyn ZzRoom>)>> {
             let (tx, rx) = mpsc::channel(1);
             drop(tx);
             Ok(rx)
+        }
+    }
+
+    #[async_trait]
+    impl ZzNetClientApi for MockZzNetApi {
+        async fn get_room(&self, _name: &str) -> Result<Box<dyn ZzRoom>> {
+            #[derive(Debug)]
+            struct MockChannel;
+            #[async_trait]
+            impl ZzRoom for MockChannel {
+                async fn send(&self, _payload: Vec<u8>) -> Result<()> {
+                    Ok(())
+                }
+                async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
+                    Ok(None)
+                }
+            }
+            Ok(Box::new(MockChannel))
         }
     }
 
@@ -263,25 +266,33 @@ mod tests {
         let test_certs_path_str = test_certs_dir.to_str().unwrap();
 
         let server_addr = "127.0.0.1:12351".parse().unwrap();
-        let server_config = zznet_lib::ZzNetConfig::Server(ServerConfig {
+        let server_config = ZzNetConfig::Server(ServerConfig {
             socketaddr: vec![server_addr],
-            tls: Some(TlsCfg::from_role(Role::Database, Some(test_certs_path_str))),
+            tls: Some(zznet::connection::TlsCfg::from_role(
+                Role::Database,
+                Some(test_certs_path_str),
+            )),
             role: Role::Database,
         });
-        let client_admin_config = zznet_lib::ZzNetConfig::Client(ClientConfig {
+        let client_admin_config = ZzNetConfig::Client(ClientConfig {
             socketaddr: vec![server_addr],
-            tls: Some(TlsCfg::from_role(
+            tls: Some(zznet::connection::TlsCfg::from_role(
                 Role::ClientAdmin,
                 Some(test_certs_path_str),
             )),
             role: Role::ClientAdmin,
             reconnect_delay: Duration::from_secs(1),
+            rooms_to_open: vec!["intent-config".to_string()],
         });
-        let client_ro_config = zznet_lib::ZzNetConfig::Client(ClientConfig {
+        let client_ro_config = ZzNetConfig::Client(ClientConfig {
             socketaddr: vec![server_addr],
-            tls: Some(TlsCfg::from_role(Role::ClientRo, Some(test_certs_path_str))),
+            tls: Some(zznet::connection::TlsCfg::from_role(
+                Role::ClientRo,
+                Some(test_certs_path_str),
+            )),
             role: Role::ClientRo,
             reconnect_delay: Duration::from_secs(1),
+            rooms_to_open: vec!["intent-config".to_string()],
         });
 
         let network_server_handle = ZzNetBuilder::new(server_config).start().await.unwrap();

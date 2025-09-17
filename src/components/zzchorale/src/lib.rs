@@ -1,6 +1,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// A marker type representing a component builder that has not yet been fully wired.
 pub struct Unwired;
@@ -35,8 +36,8 @@ pub struct ComponentHandle<C> {
     pub command_tx: mpsc::Sender<C>,
     // The shutdown sender and task handle are wrapped to allow the handle to be cloneable
     // while ensuring the shutdown logic can only be executed once.
-    shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
-    actor_handle: Arc<Mutex<Option<JoinHandle<Result<()>>>>>,
+    pub shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
+    pub actor_handle: Arc<Mutex<Option<JoinHandle<Result<()>>>>>,
 }
 
 // Manual clone implementation to avoid placing an unnecessary `Clone` bound on `C`.
@@ -101,11 +102,11 @@ pub fn spawn_component<C: Component>(
 
 impl<C> ComponentHandle<C> {
     pub async fn shutdown(&self) -> Result<()> {
-        if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
+        if let Some(tx) = self.shutdown_tx.lock().await.take() {
             let _ = tx.send(());
         }
 
-        let handle = self.actor_handle.lock().unwrap().take();
+        let handle = self.actor_handle.lock().await.take();
 
         if let Some(handle) = handle {
             match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {

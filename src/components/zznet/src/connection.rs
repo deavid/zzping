@@ -13,6 +13,7 @@ use zznet_api::Role;
 ///
 /// Simplifies certificate management by using role-based naming conventions,
 /// ensuring each zzping component uses its designated security credentials.
+#[derive(Clone, Debug)]
 pub struct TlsCertAndKey {
     pub pem_path: PathBuf,
     pub key_path: PathBuf,
@@ -47,6 +48,7 @@ impl TlsCertAndKey {
 ///
 /// Centralizes all TLS parameters to ensure consistent, secure communication
 /// across all zzping components with mutual TLS authentication.
+#[derive(Clone, Debug)]
 pub struct TlsCfg {
     pub cert: TlsCertAndKey,
     pub ca_cert_path: Option<PathBuf>,
@@ -149,17 +151,20 @@ impl TlsCfg {
 ///
 /// Enables automatic reconnection with configurable delay to maintain
 /// persistent connectivity despite network failures.
+#[derive(Clone, Debug)]
 pub struct ClientConfig {
     pub socketaddr: Vec<SocketAddr>,
     pub tls: Option<TlsCfg>,
     pub role: Role,
     pub reconnect_delay: std::time::Duration,
+    pub rooms_to_open: Vec<String>,
 }
 
 /// Server configuration for accepting zznet connections.
 ///
 /// Supports binding to multiple addresses for high availability
 /// and role-based security with mutual TLS authentication.
+#[derive(Clone, Debug)]
 pub struct ServerConfig {
     pub socketaddr: Vec<SocketAddr>,
     pub tls: Option<TlsCfg>,

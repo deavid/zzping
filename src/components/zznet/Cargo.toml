@@ -22,6 +22,7 @@ log = { workspace = true }
 futures = "0.3"
 async-stream = "0.3"
 zznet-api = { path = "../../common/zznet-api" }
+zzchorale = { path = "../zzchorale" }
 async-trait = "0.1"
 
 [[bin]]

@@ -1,14 +1,11 @@
-// Minimal server example using ServerRuntime for accepting connections.
+// Minimal server example demonstrating the ZzNet server component.
+// Usage: cargo run --bin zznet-server -- <listen_addr>
 
-use futures::StreamExt;
 use std::net::SocketAddr;
-use zznet::connection::{ServerConfig, TlsCfg};
-use zznet::runtime::server::ServerRuntime;
+use zznet::component::{ZzNetBuilder, ZzNetConfig, ZzNetServerApi};
+use zznet::connection::ServerConfig;
 use zznet_api::Role;
 
-/// Demonstrates zznet server accepting client connections.
-///
-/// Usage: `cargo run --bin zznet-server -- <listen_address>`
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::builder()
@@ -20,25 +17,32 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "127.0.0.1:8443".to_string());
     let addr: SocketAddr = addr_str.parse()?;
 
-    let config = ServerConfig {
+    let config = ZzNetConfig::Server(ServerConfig {
         socketaddr: vec![addr],
-        tls: Some(TlsCfg::from_role(Role::Database, None)),
+        tls: None, // TLS is not set up for this example
         role: Role::Database,
-    };
-    let server = ServerRuntime::new(config);
-    let connection_stream = server.run().await?;
-    tokio::pin!(connection_stream);
+    });
 
-    while let Some(connection_result) = connection_stream.next().await {
-        match connection_result {
-            Ok(_) => {
-                // Connection actor is already spawned in Connection::new
+    let handle = ZzNetBuilder::new(config).start().await?;
+
+    log::info!("Server component started. Listening for 'test-room'...");
+
+    let mut room_listener = handle.listen_for_room("test-room".to_string()).await?;
+
+    while let Some((client_id, mut room)) = room_listener.recv().await {
+        log::info!("Client {client_id} connected and opened 'test-room'");
+        tokio::spawn(async move {
+            while let Ok(Some(msg)) = room.recv().await {
+                log::info!(
+                    "Client {client_id} sent: {}",
+                    String::from_utf8_lossy(&msg)
+                );
+                room.send(msg).await.unwrap(); // Echo back
             }
-            Err(e) => {
-                log::warn!("Connection error: {e}");
-            }
-        }
+            log::info!("Client {client_id} disconnected.");
+        });
     }
 
+    handle.shutdown().await?;
     Ok(())
 }
