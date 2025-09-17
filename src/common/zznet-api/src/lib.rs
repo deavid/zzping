@@ -16,10 +16,12 @@ pub enum Role {
     ClientAdmin,
 }
 
+pub type ClientId = u64;
+
 /// The abstract interface for a bidirectional communication channel.
 /// Application components will depend only on this trait.
 #[async_trait]
-pub trait ZzChannel: Send + Sync + std::fmt::Debug {
+pub trait ZzRoom: Send + Sync + std::fmt::Debug {
     /// Sends a payload of bytes over the channel.
     async fn send(&self, payload: Vec<u8>) -> Result<()>;
     /// Receives a payload of bytes from the channel.
