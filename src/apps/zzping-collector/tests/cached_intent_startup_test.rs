@@ -45,7 +45,7 @@ fn setup_test_environment(
 
 use ntest::timeout;
 #[tokio::test]
-#[timeout(1000)]
+#[timeout(500)]
 #[serial_test::serial]
 async fn startup_with_cache_and_unavailable_db() -> Result<()> {
     // Collector has a cached intent but DB is unreachable -> supervisor should defer worker creation
@@ -86,7 +86,7 @@ async fn startup_with_cache_and_unavailable_db() -> Result<()> {
 }
 
 #[tokio::test]
-#[timeout(5000)]
+#[timeout(500)]
 #[serial_test::serial]
 async fn startup_with_cache_and_successful_connection() -> Result<()> {
     // Deterministic: use mock ingestion service and heartbeat override to cause the collector to
@@ -182,7 +182,7 @@ async fn startup_with_cache_and_successful_connection() -> Result<()> {
 }
 
 #[tokio::test]
-#[timeout(1000)]
+#[timeout(500)]
 #[serial_test::serial]
 async fn startup_without_cache_and_unavailable_db() -> Result<()> {
     // When no cache exists and DB is unreachable, the collector should not spawn workers

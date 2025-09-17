@@ -2,11 +2,11 @@ use super::*;
 use crate::protocol::RawDataRecord;
 
 // Compile-time verification that our size calculations are correct
-// Removed use ntest::timeout;
+use ntest::timeout;
 
 // Compile-time verification that our size calculations are correct
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_size_calculations_are_correct() {
     // Verify FileHeader size calculation
     let dummy_header = format::FileHeader {
@@ -49,7 +49,7 @@ fn test_size_calculations_are_correct() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_comprehensive_serialized_sizes() {
     // Test FileHeader with various values to ensure size is consistent
 
@@ -57,7 +57,7 @@ fn test_comprehensive_serialized_sizes() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_chunked_header_serialized_size_analysis() {
     // ChunkHeader doesn't have a serialized_size() method because it's variable-sized
     // (optional send_time_stats), but let's verify our understanding of its size
@@ -66,7 +66,7 @@ fn test_chunked_header_serialized_size_analysis() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_header_layout_calculations() {
     // Test that our offset calculations work correctly with real data
 
@@ -74,7 +74,7 @@ fn test_header_layout_calculations() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_serialization_round_trip_preserves_size() {
     // Test that serialization -> deserialization -> serialization produces identical byte counts
 
@@ -82,7 +82,7 @@ fn test_serialization_round_trip_preserves_size() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_size_calculation_edge_cases() {
     // Test that size calculations work correctly in boundary conditions
 
@@ -90,7 +90,7 @@ fn test_size_calculation_edge_cases() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_simple_model_creation() {
     let stats = format::AggregateEntry {
         p00_symbol: 100,
@@ -112,7 +112,7 @@ fn test_simple_model_creation() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_single_symbol_model_creation() {
     let stats = format::AggregateEntry {
         p00_symbol: 100,
@@ -133,7 +133,7 @@ fn test_single_symbol_model_creation() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_model_with_exactly_one_packet_lost() {
     // Test the critical edge case: exactly 1 packet lost out of total packets
     // This tests the packet loss frequency calculation with minimal loss
@@ -142,7 +142,7 @@ fn test_model_with_exactly_one_packet_lost() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_model_with_all_packets_lost() {
     // Test edge case: 100% packet loss
 
@@ -203,7 +203,7 @@ fn create_finalized_file_for_test(records: &[RawDataRecord]) -> Vec<u8> {
 }
 
 #[test]
-// Removed #[timeout(1000)]
+#[timeout(500)]
 fn test_basic_compression_roundtrip() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};
@@ -237,7 +237,7 @@ fn test_basic_compression_roundtrip() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_simple_variable_rate() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};
@@ -266,7 +266,7 @@ fn test_simple_variable_rate() {
 }
 
 #[test]
-// Removed #[timeout(1000)]
+#[timeout(500)]
 fn test_multi_chunk_variable_rate() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};
@@ -304,7 +304,7 @@ fn test_multi_chunk_variable_rate() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_dummy_symbol_frequency_analysis() {
     // Test scenarios that might trigger the single symbol case and analyze dummy symbol frequency
 
@@ -312,7 +312,7 @@ fn test_dummy_symbol_frequency_analysis() {
 }
 
 #[test]
-// Removed #[timeout(1000)]
+#[timeout(500)]
 fn test_constant_rate_compression_efficiency() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};
@@ -385,7 +385,7 @@ fn test_constant_rate_compression_efficiency() {
 }
 
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_variable_rate_compression_efficiency() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};
@@ -484,7 +484,7 @@ fn test_variable_rate_compression_efficiency() {
 }
 
 #[test]
-// Removed #[timeout(1000)]
+#[timeout(500)]
 fn test_decompression_of_partial_unfinalized_file() {
     use crate::protocol::RawDataRecord;
     use chrono::{TimeZone, Utc};

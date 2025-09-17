@@ -13,7 +13,7 @@ mod common;
 use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]
-#[timeout(1000)]
+#[timeout(500)]
 async fn test_batch_submitter_prune_by_fsync_via_command() {
     // Enable test logger so info!/debug! are captured in test output.
     let _ = env_logger::builder()

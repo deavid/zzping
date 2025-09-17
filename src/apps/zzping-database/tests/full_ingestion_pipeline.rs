@@ -11,7 +11,7 @@ use ntest::timeout;
 const NANOS_PER_MINUTE: u64 = 60 * 1_000_000_000;
 
 #[tokio::test]
-#[timeout(5000)]
+#[timeout(500)]
 async fn test_full_ingestion_pipeline() -> Result<()> {
     let _ = env_logger::builder()
         .filter_level(log::LevelFilter::Info)

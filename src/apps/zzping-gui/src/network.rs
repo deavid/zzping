@@ -133,7 +133,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(1000)]
+    #[timeout(500)]
     async fn test_try_fetch_data() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
 
@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[timeout(1000)]
+    #[timeout(500)]
     async fn test_try_fetch_data_connection_error() -> Result<()> {
         let _ = env_logger::builder().is_test(true).try_init();
         // This test now needs to create a dummy ca.pem to avoid panicking.

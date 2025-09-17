@@ -17,7 +17,7 @@ mod common;
 use common::MockIngestionService;
 
 #[tokio::test]
-#[timeout(1000)]
+#[timeout(500)]
 async fn test_target_worker_primary_supervised_role_sends_init_command() -> Result<()> {
     // 1. Setup
     let mock_service = MockIngestionService::new();

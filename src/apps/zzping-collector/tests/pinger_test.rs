@@ -15,7 +15,7 @@ mod common;
 use common::MockIngestionService;
 
 #[tokio::test]
-#[timeout(2000)]
+#[timeout(500)]
 async fn test_pinger_loop() {
     let target: IpAddr = "127.0.0.1".parse().unwrap();
     let ping_rate_pps = 100;
@@ -90,7 +90,7 @@ fn test_monotonic_time_source_resync_updates_reference() {
 }
 
 #[tokio::test]
-#[timeout(1000)]
+#[timeout(500)]
 async fn test_pinger_handles_lost_packets() {
     let target: IpAddr = "127.0.0.1".parse().unwrap();
     let grace_period = Duration::from_millis(50);
@@ -143,7 +143,7 @@ async fn test_pinger_handles_lost_packets() {
 }
 
 #[tokio::test]
-#[timeout(1000)]
+#[timeout(500)]
 async fn test_pinger_pauses_and_resumes() {
     let target: IpAddr = "127.0.0.1".parse().unwrap();
     let (ping_event_tx, mut ping_event_rx) = mpsc::channel(100);
