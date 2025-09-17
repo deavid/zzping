@@ -1,28 +1,23 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use std::future::Future;
 use std::sync::{Arc, Mutex};
 use tokio::{
     sync::{mpsc, oneshot},
     task::JoinHandle,
 };
 
-/// The core trait for a component.
+/// The execution context for an actor, providing channels for commands and shutdown.
+pub struct ActorContext<C> {
+    pub command_rx: mpsc::Receiver<C>,
+    pub shutdown_rx: oneshot::Receiver<()>,
+}
+
+/// The core trait for a component actor.
 #[async_trait]
-pub trait Component: Sized + Send + 'static {
+pub trait Actor: Send + 'static {
     type Command: Send + 'static;
-
-    /// Called once, when the component's task is started.
-    async fn on_start(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    /// Called for each command received. This is the component's primary business logic.
-    async fn handle_command(&mut self, command: Self::Command) -> Result<()>;
-
-    /// Called once, just before the component's task is terminated.
-    async fn on_shutdown(&mut self) -> Result<()> {
-        Ok(())
-    }
+    async fn run(self, context: ActorContext<Self::Command>) -> Result<()>;
 }
 
 /// A cloneable handle to a running component actor.
@@ -51,36 +46,26 @@ pub fn create_channel<C>() -> (mpsc::Sender<C>, mpsc::Receiver<C>) {
     mpsc::channel(32)
 }
 
-use std::future::Future;
-
-pub fn spawn_component<C: Component>(
-    mut component: C,
-    command_tx: mpsc::Sender<C::Command>,
-    mut command_rx: mpsc::Receiver<C::Command>,
-) -> (ComponentHandle<C::Command>, impl Future<Output = Result<()>> + Send) {
+/// Spawns an actor on the tokio runtime with a given command channel.
+pub fn spawn_actor<A: Actor>(
+    actor: A,
+    command_tx: mpsc::Sender<A::Command>,
+    command_rx: mpsc::Receiver<A::Command>,
+) -> (
+    ComponentHandle<A::Command>,
+    impl Future<Output = Result<()>> + Send,
+) {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
     let (ready_tx, ready_rx) = oneshot::channel();
 
+    let context = ActorContext {
+        command_rx,
+        shutdown_rx,
+    };
     let actor_task = tokio::spawn(async move {
-        if component.on_start().await.is_err() {
-            return Err(anyhow::anyhow!("Component on_start failed"));
-        }
+        // Signal readiness right before the loop starts
         ready_tx.send(()).ok();
-
-        let mut shutdown_rx = shutdown_rx;
-        loop {
-            tokio::select! {
-                Some(cmd) = command_rx.recv() => {
-                    if component.handle_command(cmd).await.is_err() {
-                        log::error!("Component handle_command failed; shutting down.");
-                        break;
-                    }
-                },
-                _ = &mut shutdown_rx => break,
-                else => break,
-            }
-        }
-        component.on_shutdown().await
+        actor.run(context).await
     });
 
     let handle = ComponentHandle {
@@ -95,22 +80,91 @@ pub fn spawn_component<C: Component>(
 }
 
 impl<C> ComponentHandle<C> {
+    /// Initiates a graceful shutdown of the actor.
+    /// This method can be called on any cloned handle, but it will only execute once.
     pub async fn shutdown(&self) -> Result<()> {
+        // Take the shutdown sender, ensuring this can only happen once.
         if let Some(tx) = self.shutdown_tx.lock().unwrap().take() {
+            // The receiver dropping is a valid shutdown signal, so we don't care if the send fails.
             let _ = tx.send(());
         }
 
-        let handle = self.actor_handle.lock().unwrap().take();
-
-        if let Some(handle) = handle {
-            match tokio::time::timeout(std::time::Duration::from_secs(5), handle).await {
-                Ok(Ok(Ok(_))) => Ok(()), // Task joined and returned Ok
-                Ok(Ok(Err(e))) => Err(e), // Task joined and returned an Err
-                Ok(Err(e)) => Err(e.into()), // Task panicked
-                Err(_) => Err(anyhow::anyhow!("Component shutdown timed out after 5 seconds")),
-            }
-        } else {
-            Ok(()) // Already shut down
+        // Take the actor handle, ensuring it can only be awaited once.
+        let handle_to_await = self.actor_handle.lock().unwrap().take();
+        if let Some(handle) = handle_to_await {
+            // Await the actor's task handle and propagate any panics or errors.
+            handle.await??;
         }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ntest::timeout;
+
+    // A dummy actor for testing purposes.
+    #[derive(Default)]
+    struct TestActor;
+
+    // A dummy command enum for the test actor.
+    #[derive(Debug)]
+    #[allow(dead_code)] // This is a dummy for testing, so not all variants will be used.
+    enum TestCommand {
+        DoNothing,
+    }
+
+    #[async_trait]
+    impl Actor for TestActor {
+        type Command = TestCommand;
+
+        async fn run(self, mut context: ActorContext<Self::Command>) -> Result<()> {
+            log::info!("TestActor started and running.");
+            loop {
+                tokio::select! {
+                    // Handle commands
+                    Some(cmd) = context.command_rx.recv() => {
+                        log::info!("TestActor received command: {cmd:?}");
+                    },
+                    // Handle shutdown signal
+                    _ = &mut context.shutdown_rx => {
+                        log::info!("TestActor received shutdown signal. Terminating.");
+                        break;
+                    },
+                    // Handle channel closure
+                    else => {
+                        log::info!("TestActor command channel closed. Terminating.");
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    #[timeout(100)]
+    async fn framework_actor_lifecycle() {
+        let _ = env_logger::builder().is_test(true).try_init();
+        log::info!("Test starting: framework_actor_lifecycle");
+
+        let actor = TestActor;
+        let (command_tx, command_rx) = create_channel::<TestCommand>();
+        let (handle, readiness) = spawn_actor(actor, command_tx, command_rx);
+        readiness.await.expect("Actor should become ready");
+        log::info!("Actor is ready.");
+
+        // Test that the handle is cloneable
+        let handle_clone = handle.clone();
+
+        // Shut down using the original handle
+        handle.shutdown().await.expect("Actor should shut down cleanly");
+        log::info!("Actor shutdown complete.");
+
+        // Subsequent shutdowns on cloned handles should be no-ops and not panic.
+        handle_clone.shutdown().await.expect("Cloned handle shutdown should be a no-op");
+        log::info!("Second shutdown call completed without error.");
     }
 }

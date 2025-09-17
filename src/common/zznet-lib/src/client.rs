@@ -1,4 +1,4 @@
-use crate::facade::{ActorCommand, InternalEvent};
+use crate::facade::InternalEvent;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use zznet::connection::ClientConfig;
@@ -7,7 +7,7 @@ use zznet::runtime::client::ClientRuntime;
 // The connection manager no longer signals readiness. The actor does.
 pub(crate) fn spawn_connection_manager(
     config: ClientConfig,
-    command_tx: mpsc::Sender<ActorCommand>,
+    internal_tx: mpsc::Sender<InternalEvent>,
 ) {
     tokio::spawn(async move {
         let client_runtime = ClientRuntime::new(config);
@@ -21,8 +21,7 @@ pub(crate) fn spawn_connection_manager(
                 Ok(conn) => {
                     log::info!("Client connection established or re-established.");
                     // Send the new connection to the actor.
-                    let event = InternalEvent::NewClientConnection(conn);
-                    if command_tx.send(ActorCommand::Internal(event)).await.is_err() {
+                    if internal_tx.send(InternalEvent::NewClientConnection(conn)).await.is_err() {
                         log::error!("Actor receiver dropped. Shutting down connection manager.");
                         break; // Actor is gone, no point in continuing.
                     }

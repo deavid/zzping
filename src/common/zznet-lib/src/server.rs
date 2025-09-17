@@ -1,4 +1,4 @@
-use crate::facade::{ActorCommand, InternalEvent};
+use crate::facade::InternalEvent;
 use futures::StreamExt;
 use tokio::sync::mpsc;
 use zznet::connection::ServerConfig;
@@ -8,7 +8,7 @@ use zznet::runtime::server::ServerRuntime;
 // The listener no longer signals readiness. The actor does.
 pub(crate) fn spawn_listener(
     config: ServerConfig,
-    command_tx: mpsc::Sender<ActorCommand>,
+    internal_tx: mpsc::Sender<InternalEvent>,
 ) {
     tokio::spawn(async move {
         let server_runtime = ServerRuntime::new(config);
@@ -37,7 +37,7 @@ pub(crate) fn spawn_listener(
                 event_rx,
             };
 
-            if command_tx.send(ActorCommand::Internal(event)).await.is_err() {
+            if internal_tx.send(event).await.is_err() {
                 log::error!("Actor has disappeared, shutting down listener task.");
                 break;
             }
@@ -46,17 +46,17 @@ pub(crate) fn spawn_listener(
     });
 }
 
-/// This function is spawned by the ZzNetComponent for each new client connection.
-/// It is responsible for forwarding all events from that connection to the component.
+/// This function is spawned by the ZzNetActor for each new client connection.
+/// It is responsible for forwarding all events from that connection to the actor.
 pub(crate) fn spawn_per_client_event_handler(
     client_id: u64,
     mut event_rx: mpsc::Receiver<ConnectionEvent>,
-    command_tx: mpsc::Sender<ActorCommand>,
+    internal_tx: mpsc::Sender<InternalEvent>,
 ) {
     tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             let internal_event = InternalEvent::ClientEvent { client_id, event };
-            if command_tx.send(ActorCommand::Internal(internal_event)).await.is_err() {
+            if internal_tx.send(internal_event).await.is_err() {
                 log::warn!(
                     "Actor has disappeared, shutting down event handler for client {client_id}."
                 );

@@ -5,7 +5,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
-use zzchorale::{create_channel, spawn_component, Component, ComponentHandle};
+use zzchorale::{create_channel, spawn_actor, Actor, ActorContext, ComponentHandle};
 use zznet::connection_manager::{Connection, ConnectionEvent};
 use zznet_api::ZzChannel;
 
@@ -20,7 +20,7 @@ pub struct ZzNetBuilder {
     pub config: ZzNetConfig,
 }
 
-// Actor-specific commands, now including internal events
+// Actor-specific commands
 #[derive(Debug)]
 pub enum ActorCommand {
     RequestChannel {
@@ -31,12 +31,11 @@ pub enum ActorCommand {
         name: String,
         response: ListenForChannelResponse,
     },
-    Internal(InternalEvent), // Encapsulated internal event
 }
 
 // Internal events for communication between connection managers and the actor
 #[derive(Debug)]
-pub enum InternalEvent {
+pub(crate) enum InternalEvent {
     NewClientConnection(Connection),
     NewServerConnection {
         client_id: u64,
@@ -49,12 +48,13 @@ pub enum InternalEvent {
     },
 }
 
-// The component struct
-pub(crate) struct ZzNetComponent {
+// The actor struct
+pub(crate) struct ZzNetActor {
     client_connection: Option<Connection>,
     server_connections: HashMap<u64, Connection>,
     listeners: HashMap<String, ClientChannelSender>,
-    command_tx: mpsc::Sender<ActorCommand>, // For spawning per-client handlers
+    internal_tx: mpsc::Sender<InternalEvent>,
+    internal_rx: mpsc::Receiver<InternalEvent>,
 }
 
 impl ZzNetBuilder {
@@ -62,24 +62,27 @@ impl ZzNetBuilder {
         Self { config }
     }
 
+    // The start method now returns a single, cloneable ComponentHandle.
     pub async fn start(self) -> Result<ComponentHandle<ActorCommand>> {
-        let (command_tx, command_rx) = create_channel();
+        let (internal_tx, internal_rx) = mpsc::channel(32);
 
-        let component = ZzNetComponent {
+        let actor = ZzNetActor {
             client_connection: None,
             server_connections: HashMap::new(),
             listeners: HashMap::new(),
-            command_tx: command_tx.clone(),
+            internal_tx: internal_tx.clone(),
+            internal_rx,
         };
 
-        let (handle, readiness) = spawn_component(component, command_tx.clone(), command_rx);
+        let (command_tx, command_rx) = create_channel();
+        let (handle, readiness) = spawn_actor(actor, command_tx, command_rx);
 
         match self.config {
             ZzNetConfig::Client(config) => {
-                client::spawn_connection_manager(config, command_tx);
+                client::spawn_connection_manager(config, internal_tx);
             }
             ZzNetConfig::Server(config) => {
-                server::spawn_listener(config, command_tx);
+                server::spawn_listener(config, internal_tx);
             }
         }
 
@@ -91,10 +94,35 @@ impl ZzNetBuilder {
 }
 
 #[async_trait]
-impl Component for ZzNetComponent {
+impl Actor for ZzNetActor {
     type Command = ActorCommand;
 
-    async fn handle_command(&mut self, command: Self::Command) -> Result<()> {
+    async fn run(mut self, mut context: ActorContext<Self::Command>) -> Result<()> {
+        loop {
+            tokio::select! {
+                Some(command) = context.command_rx.recv() => {
+                    self.handle_command(command).await;
+                }
+                Some(event) = self.internal_rx.recv() => {
+                    self.handle_internal_event(event).await;
+                }
+                _ = &mut context.shutdown_rx => {
+                    log::info!("ZzNetActor received shutdown signal. Terminating.");
+                    break;
+                }
+                else => {
+                    log::info!("ZzNetActor command and event channels closed. Terminating.");
+                    break;
+                }
+            }
+        }
+        log::info!("ZzNetActor has shut down.");
+        Ok(())
+    }
+}
+
+impl ZzNetActor {
+    async fn handle_command(&mut self, command: ActorCommand) {
         match command {
             ActorCommand::RequestChannel { name, response } => {
                 let result = match &self.client_connection {
@@ -112,15 +140,9 @@ impl Component for ZzNetComponent {
                     log::error!("Failed to send ListenForChannel response: receiver dropped.");
                 }
             }
-            ActorCommand::Internal(event) => {
-                self.handle_internal_event(event).await;
-            }
         }
-        Ok(())
     }
-}
 
-impl ZzNetComponent {
     async fn handle_internal_event(&mut self, event: InternalEvent) {
         log::debug!("Received internal event: {event:?}");
         match event {
@@ -132,7 +154,7 @@ impl ZzNetComponent {
                 server::spawn_per_client_event_handler(
                     client_id,
                     event_rx,
-                    self.command_tx.clone(),
+                    self.internal_tx.clone(),
                 );
             }
             InternalEvent::ClientEvent { client_id, event } => {

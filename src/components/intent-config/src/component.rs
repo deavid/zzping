@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, watch};
-use zzchorale::{create_channel, spawn_component, Component, ComponentHandle};
+use zzchorale::{create_channel, spawn_actor, Actor, ActorContext, ComponentHandle};
 use zznet_api::{Role, ZzChannel};
 use zznet_lib::ZzNetApi;
 
@@ -23,17 +23,17 @@ pub(crate) enum ProtocolMsg {
 
 // 2. COMPONENT FRAMEWORK STRUCTS
 
+// Builder is generic over any cloneable type that implements the ZzNetApi trait.
+// In practice, this will be the zzchorale::ComponentHandle from zznet-lib.
 pub struct IntentConfigBuilder<N: ZzNetApi + Clone> {
     role: Role,
     zznet_handle: N,
 }
 
-struct IntentConfigComponent<N: ZzNetApi> {
+struct IntentConfigActor<N: ZzNetApi> {
     role: Role,
     zznet_handle: N,
     config_watch_tx: watch::Sender<IntentConfigData>,
-    update_tx: mpsc::Sender<IntentConfigData>,
-    update_rx: Option<mpsc::Receiver<IntentConfigData>>, // To be consumed in on_start
 }
 
 pub enum IntentConfigCommand {
@@ -50,29 +50,27 @@ impl<N: ZzNetApi + Clone + Send + Sync + 'static> IntentConfigBuilder<N> {
 
     pub async fn start(self) -> Result<ComponentHandle<IntentConfigCommand>> {
         let (watch_tx, _) = watch::channel(IntentConfigData::default());
-        let (update_tx, update_rx) = mpsc::channel(32);
 
-        let component = IntentConfigComponent {
+        let actor = IntentConfigActor {
             role: self.role,
             zznet_handle: self.zznet_handle,
             config_watch_tx: watch_tx,
-            update_tx,
-            update_rx: Some(update_rx), // Pass receiver to the component
         };
 
         let (command_tx, command_rx) = create_channel();
-        let (handle, readiness) = spawn_component(component, command_tx, command_rx);
+        let (handle, readiness) = spawn_actor(actor, command_tx, command_rx);
         readiness.await?;
         Ok(handle)
     }
 }
 
 #[async_trait]
-impl<N: ZzNetApi + Clone + Send + Sync + 'static> Component for IntentConfigComponent<N> {
+impl<N: ZzNetApi + Clone + Send + Sync + 'static> Actor for IntentConfigActor<N> {
     type Command = IntentConfigCommand;
 
-    async fn on_start(&mut self) -> Result<()> {
-        let update_rx = self.update_rx.take().expect("on_start called only once");
+    async fn run(mut self, mut context: ActorContext<Self::Command>) -> Result<()> {
+        let (update_tx, update_rx) = mpsc::channel(32);
+
         match self.role {
             Role::Database => {
                 log::info!("IntentConfig (Server) starting network task...");
@@ -102,21 +100,32 @@ impl<N: ZzNetApi + Clone + Send + Sync + 'static> Component for IntentConfigComp
             }
             _ => return Err(anyhow!("Role not supported by IntentConfig")),
         };
-        Ok(())
-    }
 
-    async fn handle_command(&mut self, command: Self::Command) -> Result<()> {
-        match command {
-            IntentConfigCommand::Update(data, response_tx) => {
-                let res = if self.role == Role::ClientAdmin {
-                    self.update_tx.send(data).await.map_err(|e| anyhow!(e))
-                } else {
-                    Err(anyhow!("Only ClientAdmin can update config"))
-                };
-                let _ = response_tx.send(res);
-            }
-            IntentConfigCommand::Subscribe(response_tx) => {
-                let _ = response_tx.send(self.config_watch_tx.subscribe());
+        loop {
+            tokio::select! {
+                Some(command) = context.command_rx.recv() => {
+                    match command {
+                        IntentConfigCommand::Update(data, response_tx) => {
+                            let res = if self.role == Role::ClientAdmin {
+                                update_tx.send(data).await.map_err(|e| anyhow!(e))
+                            } else {
+                                Err(anyhow!("Only ClientAdmin can update config"))
+                            };
+                            let _ = response_tx.send(res);
+                        }
+                        IntentConfigCommand::Subscribe(response_tx) => {
+                            let _ = response_tx.send(self.config_watch_tx.subscribe());
+                        }
+                    }
+                },
+                _ = &mut context.shutdown_rx => {
+                    log::info!("IntentConfig actor received shutdown signal. Terminating.");
+                    break;
+                },
+                else => {
+                    log::info!("IntentConfig actor channels closed. Terminating.");
+                    break;
+                }
             }
         }
         Ok(())

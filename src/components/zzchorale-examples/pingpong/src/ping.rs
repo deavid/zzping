@@ -3,45 +3,57 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use log::info;
 use tokio::sync::{mpsc, oneshot};
-use zzchorale::{create_channel, spawn_component, Component, ComponentHandle};
+use zzchorale::{spawn_actor, Actor, ActorContext, ComponentHandle};
 
 /// Command enum for the Ping component.
 pub enum PingCommand {
     Ping(oneshot::Sender<Result<String>>),
 }
 
-/// The Ping component. It sends "ping" messages to the Pong component and forwards the response.
-pub struct PingComponent {
+/// The Ping actor. It sends "ping" messages to the Pong actor and forwards the response.
+pub struct PingActor {
     pong_cmd_tx: mpsc::Sender<PongCommand>,
 }
 
 #[async_trait]
-impl Component for PingComponent {
+impl Actor for PingActor {
     type Command = PingCommand;
 
-    async fn handle_command(&mut self, command: Self::Command) -> Result<()> {
-        match command {
-            PingCommand::Ping(response_tx) => {
-                info!("PingComponent received Ping command.");
-                let (pong_response_tx, pong_response_rx) = oneshot::channel();
-                let pong_command = ("ping".to_string(), pong_response_tx);
+    async fn run(self, mut context: ActorContext<Self::Command>) -> Result<()> {
+        info!("PingActor starting.");
+        loop {
+            tokio::select! {
+                Some(command) = context.command_rx.recv() => {
+                    match command {
+                        PingCommand::Ping(response_tx) => {
+                            info!("PingActor received Ping command.");
+                            let (pong_response_tx, pong_response_rx) = oneshot::channel();
+                            let pong_command = ("ping".to_string(), pong_response_tx);
 
-                if self.pong_cmd_tx.send(pong_command).await.is_err() {
-                    let _ = response_tx.send(Err(anyhow!("Failed to send command to PongComponent")));
-                    return Ok(());
+                            if self.pong_cmd_tx.send(pong_command).await.is_err() {
+                                let _ = response_tx.send(Err(anyhow!("Failed to send command to PongActor")));
+                                continue;
+                            }
+
+                            match pong_response_rx.await {
+                                Ok(response) => {
+                                    info!("PingActor received response: '{response}'");
+                                    let _ = response_tx.send(Ok(response));
+                                }
+                                Err(_) => {
+                                    let _ = response_tx.send(Err(anyhow!("PongActor dropped response channel")));
+                                }
+                            }
+                        }
+                    }
                 }
-
-                match pong_response_rx.await {
-                    Ok(response) => {
-                        info!("PingComponent received response: '{response}'");
-                        let _ = response_tx.send(Ok(response));
-                    }
-                    Err(_) => {
-                        let _ = response_tx.send(Err(anyhow!("PongComponent dropped response channel")));
-                    }
+                _ = &mut context.shutdown_rx => {
+                    info!("PingActor received shutdown signal.");
+                    break;
                 }
             }
         }
+        info!("PingActor shutting down.");
         Ok(())
     }
 }
@@ -62,16 +74,18 @@ impl PingBuilder {
         self.pong_cmd_tx = Some(pong_cmd_tx);
     }
 
-    /// Spawns the PingComponent and returns a handle to it.
+    /// Spawns the PingActor and returns a handle to it.
     /// Panics if `connect_to_pong` has not been called.
-    pub async fn start(mut self) -> Result<ComponentHandle<PingCommand>> {
+    pub async fn start(self) -> Result<ComponentHandle<PingCommand>> {
         let pong_cmd_tx = self
             .pong_cmd_tx
-            .take()
-            .expect("PingBuilder must be wired");
-        let component = PingComponent { pong_cmd_tx }; // Explicit dependency injection
-        let (command_tx, command_rx) = create_channel();
-        let (handle, readiness) = spawn_component(component, command_tx, command_rx);
+            .expect("PingBuilder must be connected to Pong before starting.");
+
+        let actor = PingActor { pong_cmd_tx };
+
+        // We need a channel for the PingActor itself.
+        let (command_tx, command_rx) = zzchorale::create_channel();
+        let (handle, readiness) = spawn_actor(actor, command_tx, command_rx);
         readiness.await?;
         Ok(handle)
     }
