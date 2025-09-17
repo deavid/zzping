@@ -1,5 +1,5 @@
 use crate::connection::ClientConfig;
-use crate::connection_manager::{Connection, ConnectionEvent};
+use crate::connection_manager::Connection;
 use crate::traits::AsyncReadWrite;
 use anyhow::Result;
 use async_stream::stream;
@@ -23,15 +23,19 @@ impl ClientRuntime {
     }
 
     /// Provides a stream of connections with automatic reconnection on failure.
-    pub fn connections(
-        self,
-    ) -> impl Stream<Item = Result<(Connection, mpsc::Receiver<ConnectionEvent>)>> {
+    pub fn connections(self) -> impl Stream<Item = Result<Connection>> {
         stream! {
             loop {
                 match self.try_connect().await {
                     Ok(stream) => {
-                        let (event_tx, event_rx) = mpsc::channel(32);
-                        yield Ok((Connection::new(stream, event_tx), event_rx));
+                        // Create a dummy event channel that drops events, since the client binary doesn't use events
+                        let (event_tx, mut event_rx) = mpsc::channel(32);
+                        tokio::spawn(async move {
+                            while (event_rx.recv().await).is_some() {
+                                // Drop the event
+                            }
+                        });
+                        yield Ok(Connection::new(stream, event_tx));
                     }
                     Err(e) => {
                         log::warn!("Failed to connect: {}. Retrying in {:?}...", e, self.config.reconnect_delay);

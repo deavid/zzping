@@ -6,7 +6,6 @@ edition = "2021"
 [dependencies]
 zzchorale = { path = "../zzchorale" }
 zznet-api = { path = "../../common/zznet-api" }
-zznet = { path = "../zznet" }
 tokio = { workspace = true, features = ["sync"] }
 anyhow = { workspace = true }
 serde = { workspace = true }
@@ -14,8 +13,10 @@ serde_json = { workspace = true }
 log = { workspace = true }
 futures = "0.3"
 async-trait = { workspace = true }
+zznet-lib = { path = "../../common/zznet-lib" }
 
 [dev-dependencies]
+zznet-lib = { path = "../../common/zznet-lib" }
 zznet = { path = "../zznet" }
 env_logger = { workspace = true }
 ntest = { workspace = true }
