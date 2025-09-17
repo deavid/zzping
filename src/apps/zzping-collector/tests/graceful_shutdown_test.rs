@@ -14,7 +14,7 @@ mod common;
 use common::MockIngestionService;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-#[timeout(5000)]
+#[timeout(500)]
 async fn test_graceful_shutdown_flushes_buffer() -> Result<()> {
     let _ = env_logger::builder()
         .is_test(true)

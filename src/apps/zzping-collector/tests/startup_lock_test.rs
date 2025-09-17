@@ -18,8 +18,10 @@ fn create_mock_config() -> (NamedTempFile, String) {
     (config_file, config_path)
 }
 
+use ntest::timeout;
+
 #[test]
-// Removed #[timeout(100)]
+#[timeout(200)]
 fn test_port_lock_prevents_second_instance() {
     // 1. Setup mock config.
     let (_temp_file, config_path) = create_mock_config();

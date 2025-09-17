@@ -6135,6 +6135,7 @@ dependencies = [
  "egui",
  "env_logger 0.11.8",
  "log",
+ "ntest",
  "rand 0.9.2",
  "serde",
  "serde_json",
