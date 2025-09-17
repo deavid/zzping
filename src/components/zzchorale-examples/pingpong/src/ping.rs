@@ -27,7 +27,8 @@ impl Component for PingComponent {
                 let pong_command = ("ping".to_string(), pong_response_tx);
 
                 if self.pong_cmd_tx.send(pong_command).await.is_err() {
-                    let _ = response_tx.send(Err(anyhow!("Failed to send command to PongComponent")));
+                    let _ =
+                        response_tx.send(Err(anyhow!("Failed to send command to PongComponent")));
                     return Ok(());
                 }
 
@@ -37,7 +38,8 @@ impl Component for PingComponent {
                         let _ = response_tx.send(Ok(response));
                     }
                     Err(_) => {
-                        let _ = response_tx.send(Err(anyhow!("PongComponent dropped response channel")));
+                        let _ =
+                            response_tx.send(Err(anyhow!("PongComponent dropped response channel")));
                     }
                 }
             }
@@ -46,30 +48,53 @@ impl Component for PingComponent {
     }
 }
 
-/// Builder for the PingComponent.
-#[derive(Default)]
-pub struct PingBuilder {
-    pong_cmd_tx: Option<mpsc::Sender<PongCommand>>,
+// --- Builder Typestate Implementation ---
+
+/// Holds the builder's state-specific data.
+pub struct PingBuilder<State> {
+    state: State,
 }
 
-impl PingBuilder {
+/// State data for an unwired PingBuilder.
+pub struct PingBuilderUnwired;
+
+/// State data for a wired PingBuilder.
+pub struct PingBuilderWired {
+    pong_cmd_tx: mpsc::Sender<PongCommand>,
+}
+
+impl PingBuilder<PingBuilderUnwired> {
+    /// Creates a new, unwired PingBuilder.
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            state: PingBuilderUnwired,
+        }
     }
 
-    /// Connects the Ping component to the Pong component.
-    pub fn connect_to_pong(&mut self, pong_cmd_tx: mpsc::Sender<PongCommand>) {
-        self.pong_cmd_tx = Some(pong_cmd_tx);
+    /// Connects the Ping component to the Pong component, transitioning the builder to the `Wired` state.
+    pub fn connect_to_pong(
+        self,
+        pong_cmd_tx: mpsc::Sender<PongCommand>,
+    ) -> PingBuilder<PingBuilderWired> {
+        PingBuilder {
+            state: PingBuilderWired { pong_cmd_tx },
+        }
     }
+}
 
+impl Default for PingBuilder<PingBuilderUnwired> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PingBuilder<PingBuilderWired> {
     /// Spawns the PingComponent and returns a handle to it.
-    /// Panics if `connect_to_pong` has not been called.
-    pub async fn start(mut self) -> Result<ComponentHandle<PingCommand>> {
-        let pong_cmd_tx = self
-            .pong_cmd_tx
-            .take()
-            .expect("PingBuilder must be wired");
-        let component = PingComponent { pong_cmd_tx }; // Explicit dependency injection
+    /// This method is only available on a `Wired` builder, ensuring `pong_cmd_tx` is present.
+    pub async fn start(self) -> Result<ComponentHandle<PingCommand>> {
+        let component = PingComponent {
+            pong_cmd_tx: self.state.pong_cmd_tx,
+        };
         let (command_tx, command_rx) = create_channel();
         let (handle, readiness) = spawn_component(component, command_tx, command_rx);
         readiness.await?;
