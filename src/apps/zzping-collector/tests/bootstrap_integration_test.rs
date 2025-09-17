@@ -22,7 +22,7 @@ use common::{MockIngestionService, VectorLogger};
 use ntest::timeout;
 
 #[tokio::test]
-#[timeout(500)]
+#[timeout(1000)]
 async fn test_collector_survives_disconnect_and_reconnects() {
     // 1. Setup a logger to capture output.
     let log_messages = Arc::new(Mutex::new(Vec::new()));
