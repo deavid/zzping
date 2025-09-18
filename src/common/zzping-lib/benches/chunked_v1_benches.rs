@@ -164,7 +164,7 @@ fn criterion_benchmark(c: &mut Criterion) {
 
     let burst_pattern = |i: usize| {
         // Alternating between 10ms bursts and 200ms gaps for higher frequency
-        if (i / 10) % 2 == 0 {
+        if (i / 10).is_multiple_of(2) {
             10_000_000 // 10ms
         } else {
             200_000_000 // 200ms
