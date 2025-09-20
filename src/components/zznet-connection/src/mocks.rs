@@ -4,11 +4,38 @@
 //! interaction with the connection layer without needing to run a real
 //! transport or connection manager.
 
-use crate::actor::{ConnectionTerminated, DummyTransportActor, ZzNetConnActor};
+use crate::actor::{ConnectionTerminated, FrameForTransport, TransportTerminated, ZzNetConnActor};
 use crate::bus::{RoomIsActive, SubscribeToRoom};
 use actix::prelude::*;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use tokio::sync::oneshot;
+
+/// A mock transport actor that captures sent frames for testing.
+#[derive(Default)]
+pub struct MockTransportActor {
+    pub sent_frames: Vec<Vec<u8>>,
+}
+
+impl Actor for MockTransportActor {
+    type Context = Context<Self>;
+}
+
+impl Handler<FrameForTransport> for MockTransportActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: FrameForTransport, _ctx: &mut Context<Self>) {
+        self.sent_frames.push(msg.0);
+    }
+}
+
+impl Handler<TransportTerminated> for MockTransportActor {
+    type Result = ();
+
+    fn handle(&mut self, _msg: TransportTerminated, _ctx: &mut Context<Self>) {
+        // Simulate termination
+    }
+}
 
 /// A command sent from a test to the MockConnectionManager to drive its behavior.
 #[derive(Message, Debug)]
@@ -42,6 +69,7 @@ impl MockConnectionManagerHarness {
 #[derive(Default)]
 pub struct MockConnectionManager {
     subscribers: HashMap<String, Recipient<RoomIsActive>>,
+    active_rooms: HashSet<String>,
 }
 
 impl Actor for MockConnectionManager {
@@ -53,12 +81,31 @@ impl Actor for MockConnectionManager {
 impl Handler<SubscribeToRoom> for MockConnectionManager {
     type Result = ();
 
-    fn handle(&mut self, msg: SubscribeToRoom, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: SubscribeToRoom, ctx: &mut Context<Self>) {
         log::debug!(
             "MockConnectionManager received subscription for room '{}'",
             msg.room_name
         );
-        self.subscribers.insert(msg.room_name, msg.subscriber);
+        self.subscribers
+            .insert(msg.room_name.clone(), msg.room_is_active_recipient.clone());
+        // If the room is already active, immediately send RoomIsActive
+        if self.active_rooms.contains(&msg.room_name) {
+            // Create a dummy connection actor
+            let dummy_transport = MockTransportActor::default().start();
+            let dummy_conn_actor = ZzNetConnActor::new(
+                dummy_transport.recipient(),
+                HashMap::new(),
+                "1.0".to_string(),
+                "client".to_string(),
+                vec![],
+                ctx.address().recipient(),
+            )
+            .start();
+            msg.room_is_active_recipient.do_send(RoomIsActive {
+                room_name: msg.room_name,
+                connection_actor: dummy_conn_actor,
+            });
+        }
     }
 }
 
@@ -69,6 +116,7 @@ impl Handler<MockBusCommand> for MockConnectionManager {
     fn handle(&mut self, msg: MockBusCommand, ctx: &mut Context<Self>) {
         match msg {
             MockBusCommand::SimulateRoomIsActive(room_name) => {
+                self.active_rooms.insert(room_name.clone());
                 if let Some(subscriber) = self.subscribers.get(&room_name) {
                     log::debug!(
                         "MockConnectionManager simulating RoomIsActive for '{}'",
@@ -76,9 +124,9 @@ impl Handler<MockBusCommand> for MockConnectionManager {
                     );
                     // In a test, we don't have a real connection actor, so we spawn a dummy
                     // one to provide a valid handle.
-                    let dummy_transport = DummyTransportActor.start();
+                    let dummy_transport = MockTransportActor::default().start();
                     let dummy_conn_actor = ZzNetConnActor::new(
-                        dummy_transport,
+                        dummy_transport.recipient(),
                         HashMap::new(),
                         "1.0".to_string(),
                         "client".to_string(),

@@ -4,10 +4,9 @@
 //! from RoomManagers and spawns ephemeral ZzNetConnActors for each new
 //! underlying transport connection.
 
-use crate::actor::ConnectionTerminated;
-use crate::actor::DummyTransportActor;
 use crate::actor::ZzNetConnActor;
-use crate::bus::{RoomIsActive, SubscribeToRoom, UnsubscribeFromRoom};
+use crate::actor::{ConnectionTerminated, FrameForTransport};
+use crate::bus::{RoomSubscribers, SubscribeToRoom, UnsubscribeFromRoom};
 use actix::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -20,7 +19,7 @@ use std::collections::HashSet;
 #[rtype(result = "()")]
 pub struct NewTransportConnection {
     // This handle would also be defined in the transport crate.
-    pub transport_handle: Addr<DummyTransportActor>,
+    pub transport_handle: Recipient<FrameForTransport>,
 }
 
 /// A message to register an offered room.
@@ -28,14 +27,16 @@ pub struct NewTransportConnection {
 #[rtype(result = "()")]
 pub struct RegisterOfferedRoom(pub String);
 
+// --- Subscriber Info ---
+
+// Moved to bus.rs
+
 // --- The Manager Actor Implementation ---
 
 #[derive(Default)]
 pub struct ZzNetConnManager {
-    /// Maps a room name to the list of subscribers interested in it.
-    /// For now, we'll simplify and assume one subscriber per room. A real
-    /// implementation might use a Vec<Recipient<...>>.
-    subscribers: HashMap<String, Recipient<RoomIsActive>>,
+    /// Maps a room name to the subscribers interested in it.
+    subscribers: HashMap<String, RoomSubscribers>,
     /// The set of rooms we are offering.
     offered_rooms: HashSet<String>,
     /// The active connection actors.
@@ -66,9 +67,19 @@ impl Handler<SubscribeToRoom> for ZzNetConnManager {
 
     fn handle(&mut self, msg: SubscribeToRoom, _ctx: &mut Context<Self>) {
         log::info!("Manager received subscription for room '{}'", msg.room_name);
-        self.subscribers
-            .insert(msg.room_name.clone(), msg.subscriber);
+        let room_subs = RoomSubscribers {
+            room_is_active: msg.room_is_active_recipient,
+            data: msg.data_recipient,
+            termination: msg.termination_recipient,
+        };
+        self.subscribers.insert(msg.room_name.clone(), room_subs);
         self.offered_rooms.insert(msg.room_name);
+        // Trigger re-publication to all active connections.
+        for actor in &self.active_connections {
+            actor.do_send(crate::actor::RepublishRooms {
+                subscribers: self.subscribers.clone(),
+            });
+        }
     }
 }
 
@@ -125,7 +136,9 @@ impl Handler<RegisterOfferedRoom> for ZzNetConnManager {
         self.offered_rooms.insert(msg.0);
         // Trigger re-publication to all active connections.
         for actor in &self.active_connections {
-            actor.do_send(crate::actor::RepublishRooms);
+            actor.do_send(crate::actor::RepublishRooms {
+                subscribers: self.subscribers.clone(),
+            });
         }
     }
 }

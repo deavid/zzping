@@ -1,13 +1,29 @@
 use actix::prelude::*;
 use std::time::Duration;
-use zznet_connection::actor::{FrameFromTransport, ZzNetConnActor};
-use zznet_connection::bus::RoomIsActive;
+use tokio::sync::mpsc;
+use zznet_connection::actor::{FrameFromTransport, TransportTerminated, ZzNetConnActor};
+use zznet_connection::bus::{DataForRoom, RoomIsActive, RoomTerminated};
 use zznet_connection::mocks::start_mock_connection_manager;
 use zznet_connection::protocol::{Frame, HandshakeFrame, RoomFrame, serialize};
 
+#[derive(Clone, Debug)]
+enum TestMessage {
+    RoomIsActive(RoomIsActive),
+    DataForRoom(DataForRoom),
+    RoomTerminated(RoomTerminated),
+}
+
 #[derive(Default)]
 struct MockRoomManager {
-    received: Vec<RoomIsActive>,
+    sender: Option<mpsc::UnboundedSender<TestMessage>>,
+}
+
+impl MockRoomManager {
+    fn new(sender: mpsc::UnboundedSender<TestMessage>) -> Self {
+        Self {
+            sender: Some(sender),
+        }
+    }
 }
 
 impl Actor for MockRoomManager {
@@ -18,7 +34,29 @@ impl Handler<RoomIsActive> for MockRoomManager {
     type Result = ();
 
     fn handle(&mut self, msg: RoomIsActive, _ctx: &mut Context<Self>) {
-        self.received.push(msg);
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(TestMessage::RoomIsActive(msg));
+        }
+    }
+}
+
+impl Handler<DataForRoom> for MockRoomManager {
+    type Result = ();
+
+    fn handle(&mut self, msg: DataForRoom, _ctx: &mut Context<Self>) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(TestMessage::DataForRoom(msg));
+        }
+    }
+}
+
+impl Handler<RoomTerminated> for MockRoomManager {
+    type Result = ();
+
+    fn handle(&mut self, msg: RoomTerminated, _ctx: &mut Context<Self>) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(TestMessage::RoomTerminated(msg));
+        }
     }
 }
 
@@ -31,18 +69,24 @@ async fn test_full_handshake_and_notification() {
     // Subscribe to "intent-config"
     mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
         room_name: "intent-config".to_string(),
-        subscriber: room_mgr.clone().recipient(),
+        room_is_active_recipient: room_mgr.clone().recipient(),
+        data_recipient: room_mgr.clone().recipient(), // Mock doesn't handle, but for test
+        termination_recipient: room_mgr.clone().recipient(), // Mock doesn't handle
     });
 
     // Start the actor manually
-    let transport = zznet_connection::actor::DummyTransportActor.start();
+    let transport = zznet_connection::mocks::MockTransportActor::default().start();
     let mut subscribers = std::collections::HashMap::new();
     subscribers.insert(
         "intent-config".to_string(),
-        room_mgr.clone().recipient::<RoomIsActive>(),
+        zznet_connection::bus::RoomSubscribers {
+            room_is_active: room_mgr.clone().recipient::<RoomIsActive>(),
+            data: room_mgr.clone().recipient(), // Not used in this test
+            termination: room_mgr.clone().recipient(), // Not used
+        },
     );
     let actor = ZzNetConnActor::new(
-        transport,
+        transport.recipient(),
         subscribers,
         "1.0".to_string(),
         "client".to_string(),
@@ -79,10 +123,10 @@ async fn test_late_subscriber() {
     let (mock_mgr_addr, _harness) = start_mock_connection_manager();
 
     // Start actor first
-    let transport = zznet_connection::actor::DummyTransportActor.start();
+    let transport = zznet_connection::mocks::MockTransportActor::default().start();
     let subscribers = std::collections::HashMap::new();
     let actor = ZzNetConnActor::new(
-        transport,
+        transport.recipient(),
         subscribers,
         "1.0".to_string(),
         "client".to_string(),
@@ -115,7 +159,9 @@ async fn test_late_subscriber() {
         .clone()
         .do_send(zznet_connection::bus::SubscribeToRoom {
             room_name: "intent-config".to_string(),
-            subscriber: room_mgr.clone().recipient(),
+            room_is_active_recipient: room_mgr.clone().recipient(),
+            data_recipient: room_mgr.clone().recipient(),
+            termination_recipient: room_mgr.clone().recipient(),
         });
 
     // Wait
@@ -128,4 +174,222 @@ async fn test_late_subscriber() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Check
+}
+
+#[actix::test]
+#[ntest::timeout(1000)]
+async fn test_data_round_trip() {
+    let (mock_mgr_addr, _harness) = start_mock_connection_manager();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let room_mgr = MockRoomManager::new(tx).start();
+
+    // Subscribe to "room-a"
+    mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
+        room_name: "room-a".to_string(),
+        room_is_active_recipient: room_mgr.clone().recipient(),
+        data_recipient: room_mgr.clone().recipient(),
+        termination_recipient: room_mgr.clone().recipient(),
+    });
+
+    // Start the actor
+    let transport = zznet_connection::mocks::MockTransportActor::default().start();
+    let mut subscribers = std::collections::HashMap::new();
+    subscribers.insert(
+        "room-a".to_string(),
+        zznet_connection::bus::RoomSubscribers {
+            room_is_active: room_mgr.clone().recipient::<RoomIsActive>(),
+            data: room_mgr.clone().recipient::<DataForRoom>(),
+            termination: room_mgr.clone().recipient::<RoomTerminated>(),
+        },
+    );
+    let actor = ZzNetConnActor::new(
+        transport.recipient(),
+        subscribers,
+        "1.0".to_string(),
+        "client".to_string(),
+        vec!["room-a".to_string()],
+        mock_mgr_addr.clone().recipient(),
+    );
+    let actor_addr = actor.start();
+
+    // Send Hello from peer
+    let hello_frame = Frame::Handshake(HandshakeFrame::Hello {
+        protocol_version: "1.0".to_string(),
+        auth_role: "server".to_string(),
+        offered_rooms: vec!["room-a".to_string()],
+    });
+    let hello_data = serialize(&hello_frame).unwrap();
+    actor_addr.do_send(FrameFromTransport(hello_data));
+
+    // Send PublishRooms from peer
+    let publish_frame = Frame::Room(RoomFrame::PublishRooms {
+        offered_rooms: vec!["room-a".to_string()],
+    });
+    let publish_data = serialize(&publish_frame).unwrap();
+    actor_addr.do_send(FrameFromTransport(publish_data));
+
+    // Wait for handshake to complete
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Collect received messages
+    let mut received_room_is_active = Vec::new();
+    let mut received_data = Vec::new();
+    while let Ok(msg) = rx.try_recv() {
+        match msg {
+            TestMessage::RoomIsActive(m) => received_room_is_active.push(m),
+            TestMessage::DataForRoom(m) => received_data.push(m),
+            TestMessage::RoomTerminated(_) => {}
+        }
+    }
+
+    // Assert subscriber received RoomIsActive
+    assert_eq!(received_room_is_active.len(), 1);
+    assert_eq!(received_room_is_active[0].room_name, "room-a");
+
+    // Now test data reception: send a MessageForRoom frame to the actor
+    let test_data = b"Hello from peer!".to_vec();
+    let message_frame = Frame::Room(RoomFrame::MessageForRoom {
+        room: "room-a".to_string(),
+        data: test_data.clone(),
+    });
+    let message_data = serialize(&message_frame).unwrap();
+    actor_addr.do_send(FrameFromTransport(message_data));
+
+    // Wait
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Collect again
+    while let Ok(msg) = rx.try_recv() {
+        match msg {
+            TestMessage::RoomIsActive(_) => {}
+            TestMessage::DataForRoom(m) => received_data.push(m),
+            TestMessage::RoomTerminated(_) => {}
+        }
+    }
+
+    // Assert the MockRoomManager received DataForRoom
+    assert_eq!(received_data.len(), 1);
+    assert_eq!(received_data[0].room_name, "room-a");
+    assert_eq!(received_data[0].data, test_data);
+}
+
+#[actix::test]
+#[ntest::timeout(1000)]
+async fn test_late_subscriber_republication() {
+    // Test 2: Late Subscriber (Re-Publication)
+    let (mock_mgr_addr, _harness) = start_mock_connection_manager();
+
+    // Subscribe first
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let room_mgr = MockRoomManager::new(tx).start();
+    mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
+        room_name: "room-a".to_string(),
+        room_is_active_recipient: room_mgr.clone().recipient(),
+        data_recipient: room_mgr.clone().recipient(),
+        termination_recipient: room_mgr.clone().recipient(),
+    });
+
+    // Simulate the room becoming active
+    mock_mgr_addr.do_send(
+        zznet_connection::mocks::MockBusCommand::SimulateRoomIsActive("room-a".to_string()),
+    );
+
+    // Now, subscribe a new MockRoomManager.
+    let (tx2, mut rx2) = mpsc::unbounded_channel();
+    let room_mgr2 = MockRoomManager::new(tx2).start();
+    mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
+        room_name: "room-a".to_string(),
+        room_is_active_recipient: room_mgr2.clone().recipient(),
+        data_recipient: room_mgr2.clone().recipient(),
+        termination_recipient: room_mgr2.clone().recipient(),
+    });
+
+    // Wait
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Collect messages for room_mgr2
+    let mut received_room_is_active = Vec::new();
+    while let Ok(msg) = rx2.try_recv() {
+        if let TestMessage::RoomIsActive(m) = msg {
+            received_room_is_active.push(m);
+        }
+    }
+
+    // Assert: The subscriber should receive RoomIsActive after subscribing
+    assert_eq!(received_room_is_active.len(), 1);
+    assert_eq!(received_room_is_active[0].room_name, "room-a");
+}
+
+#[actix::test]
+#[ntest::timeout(1000)]
+async fn test_shutdown_cascade() {
+    // Test 3: Shutdown Cascade
+    let (mock_mgr_addr, _harness) = start_mock_connection_manager();
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let room_mgr = MockRoomManager::new(tx).start();
+
+    // Subscribe to "room-a"
+    mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
+        room_name: "room-a".to_string(),
+        room_is_active_recipient: room_mgr.clone().recipient(),
+        data_recipient: room_mgr.clone().recipient(),
+        termination_recipient: room_mgr.clone().recipient(),
+    });
+
+    // Start the actor
+    let transport = zznet_connection::mocks::MockTransportActor::default().start();
+    let mut subscribers = std::collections::HashMap::new();
+    subscribers.insert(
+        "room-a".to_string(),
+        zznet_connection::bus::RoomSubscribers {
+            room_is_active: room_mgr.clone().recipient::<RoomIsActive>(),
+            data: room_mgr.clone().recipient::<DataForRoom>(),
+            termination: room_mgr.clone().recipient::<RoomTerminated>(),
+        },
+    );
+    let actor = ZzNetConnActor::new(
+        transport.recipient(),
+        subscribers,
+        "1.0".to_string(),
+        "client".to_string(),
+        vec!["room-a".to_string()],
+        mock_mgr_addr.clone().recipient(),
+    );
+    let actor_addr = actor.start();
+
+    // Complete handshake
+    let hello_frame = Frame::Handshake(HandshakeFrame::Hello {
+        protocol_version: "1.0".to_string(),
+        auth_role: "server".to_string(),
+        offered_rooms: vec!["room-a".to_string()],
+    });
+    let hello_data = serialize(&hello_frame).unwrap();
+    actor_addr.do_send(FrameFromTransport(hello_data));
+
+    let publish_frame = Frame::Room(RoomFrame::PublishRooms {
+        offered_rooms: vec!["room-a".to_string()],
+    });
+    let publish_data = serialize(&publish_frame).unwrap();
+    actor_addr.do_send(FrameFromTransport(publish_data));
+
+    // Wait
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Simulate transport termination
+    actor_addr.do_send(TransportTerminated);
+
+    // Wait
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Collect messages
+    let mut received_termination = Vec::new();
+    while let Ok(msg) = rx.try_recv() {
+        if let TestMessage::RoomTerminated(m) = msg {
+            received_termination.push(m);
+        }
+    }
+
+    // Assert: The mock subscriber actor receives a RoomTerminated message.
+    assert_eq!(received_termination.len(), 1);
+    assert_eq!(received_termination[0].room_name, "room-a");
 }

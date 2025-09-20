@@ -3,29 +3,34 @@
 //! This actor manages the `zznet` protocol for a single, underlying transport connection.
 //! Its lifetime is tied to that connection.
 
-use crate::bus::RoomIsActive;
+use crate::bus::{DataForRoom, RoomIsActive, RoomSubscribers, RoomTerminated, SendDataToRoom};
 use crate::protocol::{Frame, Handshake, deserialize, serialize};
 use actix::prelude::*;
 use std::collections::HashMap;
 
 // A placeholder for now.
-type TransportConnectionHandle = Addr<DummyTransportActor>;
+type TransportConnectionHandle = Recipient<FrameForTransport>;
 
-// A dummy actor to make the code compile.
-#[derive(Default)]
-pub struct DummyTransportActor;
-impl Actor for DummyTransportActor {
-    type Context = Context<Self>;
-}
-
-impl Handler<FrameForTransport> for DummyTransportActor {
-    type Result = ();
-    fn handle(&mut self, _msg: FrameForTransport, _ctx: &mut Context<Self>) {}
-}
-
-impl Handler<TransportTerminated> for DummyTransportActor {
-    type Result = ();
-    fn handle(&mut self, _msg: TransportTerminated, _ctx: &mut Context<Self>) {}
+pub struct ZzNetConnActor {
+    /// A handle to the underlying transport actor for this connection.
+    transport: TransportConnectionHandle,
+    /// The current state of the handshake protocol.
+    handshake: Handshake,
+    /// A map of Room Names to the subscribers interested in them.
+    /// This is provided by the manager when the actor is created.
+    subscribers: HashMap<String, RoomSubscribers>,
+    /// The current state of the actor.
+    state: ActorState,
+    /// Protocol version to use.
+    protocol_version: String,
+    /// Auth role.
+    auth_role: String,
+    /// Offered rooms.
+    offered_rooms: Vec<String>,
+    /// Active rooms after negotiation.
+    active_rooms: Vec<String>,
+    /// Manager to notify on termination.
+    manager: Recipient<ConnectionTerminated>,
 }
 
 /// A message sent from the transport layer TO this actor with an incoming frame.
@@ -43,13 +48,6 @@ pub struct FrameForTransport(pub Vec<u8>);
 #[rtype(result = "()")]
 pub struct TransportTerminated;
 
-/// A message sent to rooms when the connection terminates.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct RoomTerminated {
-    pub room_name: String,
-}
-
 /// A message sent to the manager when the connection terminates.
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -60,7 +58,9 @@ pub struct ConnectionTerminated {
 /// A message sent from the manager to the actor to re-publish rooms.
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct RepublishRooms;
+pub struct RepublishRooms {
+    pub subscribers: HashMap<String, RoomSubscribers>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActorState {
@@ -69,32 +69,10 @@ pub enum ActorState {
     Active,
 }
 
-pub struct ZzNetConnActor {
-    /// A handle to the underlying transport actor for this connection.
-    transport: TransportConnectionHandle,
-    /// The current state of the handshake protocol.
-    handshake: Handshake,
-    /// A map of Room Names to the subscribers interested in them.
-    /// This is provided by the manager when the actor is created.
-    subscribers: HashMap<String, Recipient<RoomIsActive>>,
-    /// The current state of the actor.
-    state: ActorState,
-    /// Protocol version to use.
-    protocol_version: String,
-    /// Auth role.
-    auth_role: String,
-    /// Offered rooms.
-    offered_rooms: Vec<String>,
-    /// Active rooms after negotiation.
-    active_rooms: Vec<String>,
-    /// Manager to notify on termination.
-    manager: Recipient<ConnectionTerminated>,
-}
-
 impl ZzNetConnActor {
     pub fn new(
         transport: TransportConnectionHandle,
-        subscribers: HashMap<String, Recipient<RoomIsActive>>,
+        subscribers: HashMap<String, RoomSubscribers>,
         protocol_version: String,
         auth_role: String,
         offered_rooms: Vec<String>,
@@ -199,7 +177,7 @@ impl Handler<FrameFromTransport> for ZzNetConnActor {
                         log::info!("Active rooms: {:?}", intersection);
                         for room_name in intersection {
                             if let Some(subscriber) = self.subscribers.get(&room_name) {
-                                subscriber.do_send(RoomIsActive {
+                                subscriber.room_is_active.do_send(RoomIsActive {
                                     room_name: room_name.clone(),
                                     connection_actor: ctx.address(),
                                 });
@@ -223,10 +201,12 @@ impl Handler<FrameFromTransport> for ZzNetConnActor {
                 };
                 match frame {
                     Frame::Room(crate::protocol::RoomFrame::MessageForRoom { room, data }) => {
-                        if let Some(_subscriber) = self.subscribers.get(&room) {
-                            // Assuming subscribers can handle data messages, but for now, just log.
+                        if let Some(subscriber) = self.subscribers.get(&room) {
                             log::debug!("Forwarding data for room {}: {} bytes", room, data.len());
-                            // TODO: Define and send DataForRoom message.
+                            subscriber.data.do_send(DataForRoom {
+                                room_name: room,
+                                data,
+                            });
                         }
                     }
                     _ => {
@@ -245,7 +225,7 @@ impl Handler<FrameForTransport> for ZzNetConnActor {
     fn handle(&mut self, msg: FrameForTransport, _ctx: &mut Context<Self>) {
         if self.state == ActorState::Active {
             log::debug!("ZzNetConnActor sending frame to transport.");
-            self.transport.do_send(FrameForTransport(msg.0));
+            self.transport.do_send(msg);
         } else {
             log::warn!("FrameForTransport received before Active state. Frame dropped.");
         }
@@ -261,12 +241,11 @@ impl Handler<TransportTerminated> for ZzNetConnActor {
         // Notify all active rooms.
         for room_name in &self.active_rooms {
             log::info!("Notifying room {} of termination", room_name);
-            // TODO: Send RoomTerminated to the room actor.
-            // if let Some(subscriber) = self.subscribers.get(room_name) {
-            //     subscriber.do_send(RoomTerminated {
-            //         room_name: room_name.clone(),
-            //     });
-            // }
+            if let Some(subscriber) = self.subscribers.get(room_name) {
+                subscriber.termination.do_send(RoomTerminated {
+                    room_name: room_name.clone(),
+                });
+            }
         }
         // Notify the manager.
         self.manager.do_send(ConnectionTerminated {
@@ -280,7 +259,18 @@ impl Handler<TransportTerminated> for ZzNetConnActor {
 impl Handler<RepublishRooms> for ZzNetConnActor {
     type Result = ();
 
-    fn handle(&mut self, _msg: RepublishRooms, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: RepublishRooms, _ctx: &mut Context<Self>) {
+        // Update subscribers
+        self.subscribers = msg.subscribers;
+        // Send RoomIsActive for all active rooms to the new subscribers
+        for room_name in &self.active_rooms {
+            if let Some(subscriber) = self.subscribers.get(room_name) {
+                subscriber.room_is_active.do_send(RoomIsActive {
+                    room_name: room_name.clone(),
+                    connection_actor: _ctx.address(),
+                });
+            }
+        }
         if self.handshake.is_complete() {
             log::info!("Re-publishing rooms.");
             let publish_frame = Frame::Room(crate::protocol::RoomFrame::PublishRooms {
@@ -288,6 +278,29 @@ impl Handler<RepublishRooms> for ZzNetConnActor {
             });
             let serialized = serialize(&publish_frame).unwrap();
             self.transport.do_send(FrameForTransport(serialized));
+        }
+    }
+}
+
+/// Handles data sending requests from room actors.
+impl Handler<SendDataToRoom> for ZzNetConnActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: SendDataToRoom, _ctx: &mut Context<Self>) {
+        if self.state == ActorState::Active && self.active_rooms.contains(&msg.room_name) {
+            log::debug!(
+                "Sending data to room {}: {} bytes",
+                msg.room_name,
+                msg.data.len()
+            );
+            let frame = Frame::Room(crate::protocol::RoomFrame::MessageForRoom {
+                room: msg.room_name,
+                data: msg.data,
+            });
+            let serialized = serialize(&frame).unwrap();
+            self.transport.do_send(FrameForTransport(serialized));
+        } else {
+            log::warn!("Attempted to send data to inactive room: {}", msg.room_name);
         }
     }
 }
