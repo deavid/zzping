@@ -13,6 +13,7 @@ members = [
     "src/components/intent-config",
     "src/components/zzchorale",
     "src/components/zzchorale-examples/pingpong",
+    "src/actors/zzintent-config",
 ]
 
 [workspace.package]
@@ -77,6 +78,7 @@ tokio-rustls = "0.26.2"
 rustls-pemfile = "2.2"
 rustls-native-certs = "0.8"
 rmp-serde = "1.3"
+actix = "0.13"
 
 # Dependencies for specific crates that haven't been centralized yet
 rerun = "0.24"
