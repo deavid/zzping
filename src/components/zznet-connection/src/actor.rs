@@ -1,0 +1,293 @@
+//! Contains the implementation of the ephemeral ZzNetConnActor.
+//!
+//! This actor manages the `zznet` protocol for a single, underlying transport connection.
+//! Its lifetime is tied to that connection.
+
+use crate::bus::RoomIsActive;
+use crate::protocol::{Frame, Handshake, deserialize, serialize};
+use actix::prelude::*;
+use std::collections::HashMap;
+
+// A placeholder for now.
+type TransportConnectionHandle = Addr<DummyTransportActor>;
+
+// A dummy actor to make the code compile.
+#[derive(Default)]
+pub struct DummyTransportActor;
+impl Actor for DummyTransportActor {
+    type Context = Context<Self>;
+}
+
+impl Handler<FrameForTransport> for DummyTransportActor {
+    type Result = ();
+    fn handle(&mut self, _msg: FrameForTransport, _ctx: &mut Context<Self>) {}
+}
+
+impl Handler<TransportTerminated> for DummyTransportActor {
+    type Result = ();
+    fn handle(&mut self, _msg: TransportTerminated, _ctx: &mut Context<Self>) {}
+}
+
+/// A message sent from the transport layer TO this actor with an incoming frame.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct FrameFromTransport(pub Vec<u8>);
+
+/// A message sent TO this actor from a Room, containing a frame to be sent out.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct FrameForTransport(pub Vec<u8>);
+
+/// A message sent from the transport to indicate termination.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct TransportTerminated;
+
+/// A message sent to rooms when the connection terminates.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct RoomTerminated {
+    pub room_name: String,
+}
+
+/// A message sent to the manager when the connection terminates.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct ConnectionTerminated {
+    pub connection_actor: Addr<ZzNetConnActor>,
+}
+
+/// A message sent from the manager to the actor to re-publish rooms.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct RepublishRooms;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActorState {
+    AwaitingHandshake,
+    AwaitingRooms,
+    Active,
+}
+
+pub struct ZzNetConnActor {
+    /// A handle to the underlying transport actor for this connection.
+    transport: TransportConnectionHandle,
+    /// The current state of the handshake protocol.
+    handshake: Handshake,
+    /// A map of Room Names to the subscribers interested in them.
+    /// This is provided by the manager when the actor is created.
+    subscribers: HashMap<String, Recipient<RoomIsActive>>,
+    /// The current state of the actor.
+    state: ActorState,
+    /// Protocol version to use.
+    protocol_version: String,
+    /// Auth role.
+    auth_role: String,
+    /// Offered rooms.
+    offered_rooms: Vec<String>,
+    /// Active rooms after negotiation.
+    active_rooms: Vec<String>,
+    /// Manager to notify on termination.
+    manager: Recipient<ConnectionTerminated>,
+}
+
+impl ZzNetConnActor {
+    pub fn new(
+        transport: TransportConnectionHandle,
+        subscribers: HashMap<String, Recipient<RoomIsActive>>,
+        protocol_version: String,
+        auth_role: String,
+        offered_rooms: Vec<String>,
+        manager: Recipient<ConnectionTerminated>,
+    ) -> Self {
+        Self {
+            transport,
+            handshake: Handshake::new(), // The handshake starts in an initial state
+            subscribers,
+            state: ActorState::AwaitingHandshake,
+            protocol_version,
+            auth_role,
+            offered_rooms: offered_rooms.clone(),
+            active_rooms: Vec::new(),
+            manager,
+        }
+    }
+}
+
+impl Actor for ZzNetConnActor {
+    type Context = Context<Self>;
+
+    fn started(&mut self, _ctx: &mut Context<Self>) {
+        log::info!("ZzNetConnActor started. Beginning handshake.");
+        // In a real implementation, we might need to tell the transport
+        // that we are ready to receive frames. For now, we assume it starts sending.
+
+        // Kick off the handshake by sending the first Hello message.
+        let hello_frame = self
+            .handshake
+            .create_hello_frame(
+                self.protocol_version.clone(),
+                self.auth_role.clone(),
+                self.offered_rooms.clone(),
+            )
+            .unwrap();
+        self.transport.do_send(FrameForTransport(hello_frame));
+    }
+
+    fn stopped(&mut self, _ctx: &mut Context<Self>) {
+        log::info!("ZzNetConnActor stopped.");
+        // TODO: Notify the manager that this connection has died.
+    }
+}
+
+/// Handles raw frames coming UP from the transport layer.
+impl Handler<FrameFromTransport> for ZzNetConnActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: FrameFromTransport, ctx: &mut Context<Self>) {
+        log::debug!("ZzNetConnActor received a frame from transport.");
+
+        match self.state {
+            ActorState::AwaitingHandshake => {
+                if !self.handshake.is_complete() {
+                    // The handshake logic will mutate its own state and may produce an outgoing frame.
+                    let response_frame_option = self.handshake.process_frame(msg.0);
+                    match response_frame_option {
+                        Ok(Some(response_frame)) => {
+                            self.transport.do_send(FrameForTransport(response_frame));
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            log::error!("Handshake error: {}", e);
+                            ctx.stop();
+                            return;
+                        }
+                    }
+
+                    // If the handshake just completed, send PublishRooms and transition.
+                    if self.handshake.is_complete() {
+                        log::info!("Handshake complete. Sending PublishRooms.");
+                        let publish_frame = Frame::Room(crate::protocol::RoomFrame::PublishRooms {
+                            offered_rooms: self.offered_rooms.clone(),
+                        });
+                        let serialized = serialize(&publish_frame).unwrap();
+                        self.transport.do_send(FrameForTransport(serialized));
+                        self.state = ActorState::AwaitingRooms;
+                    }
+                }
+            }
+            ActorState::AwaitingRooms => {
+                let frame = match deserialize(&msg.0) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        log::error!("Failed to deserialize frame: {}", e);
+                        ctx.stop();
+                        return;
+                    }
+                };
+                match frame {
+                    Frame::Room(crate::protocol::RoomFrame::PublishRooms {
+                        offered_rooms: peer_offered,
+                    }) => {
+                        let intersection: Vec<String> = self
+                            .offered_rooms
+                            .iter()
+                            .filter(|&room| peer_offered.contains(room))
+                            .cloned()
+                            .collect();
+                        self.active_rooms = intersection.clone();
+                        log::info!("Active rooms: {:?}", intersection);
+                        for room_name in intersection {
+                            if let Some(subscriber) = self.subscribers.get(&room_name) {
+                                subscriber.do_send(RoomIsActive {
+                                    room_name: room_name.clone(),
+                                    connection_actor: ctx.address(),
+                                });
+                            }
+                        }
+                        self.state = ActorState::Active;
+                    }
+                    _ => {
+                        log::error!("Expected PublishRooms frame in AwaitingRooms state");
+                        ctx.stop();
+                    }
+                }
+            }
+            ActorState::Active => {
+                let frame = match deserialize(&msg.0) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        log::error!("Failed to deserialize frame: {}", e);
+                        return;
+                    }
+                };
+                match frame {
+                    Frame::Room(crate::protocol::RoomFrame::MessageForRoom { room, data }) => {
+                        if let Some(_subscriber) = self.subscribers.get(&room) {
+                            // Assuming subscribers can handle data messages, but for now, just log.
+                            log::debug!("Forwarding data for room {}: {} bytes", room, data.len());
+                            // TODO: Define and send DataForRoom message.
+                        }
+                    }
+                    _ => {
+                        log::warn!("Unexpected frame in Active state: {:?}", frame);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Handles frames coming DOWN from Room actors, to be sent to the transport.
+impl Handler<FrameForTransport> for ZzNetConnActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: FrameForTransport, _ctx: &mut Context<Self>) {
+        if self.state == ActorState::Active {
+            log::debug!("ZzNetConnActor sending frame to transport.");
+            self.transport.do_send(FrameForTransport(msg.0));
+        } else {
+            log::warn!("FrameForTransport received before Active state. Frame dropped.");
+        }
+    }
+}
+
+/// Handles transport termination.
+impl Handler<TransportTerminated> for ZzNetConnActor {
+    type Result = ();
+
+    fn handle(&mut self, _msg: TransportTerminated, ctx: &mut Context<Self>) {
+        log::info!("Transport terminated. Shutting down connection actor.");
+        // Notify all active rooms.
+        for room_name in &self.active_rooms {
+            log::info!("Notifying room {} of termination", room_name);
+            // TODO: Send RoomTerminated to the room actor.
+            // if let Some(subscriber) = self.subscribers.get(room_name) {
+            //     subscriber.do_send(RoomTerminated {
+            //         room_name: room_name.clone(),
+            //     });
+            // }
+        }
+        // Notify the manager.
+        self.manager.do_send(ConnectionTerminated {
+            connection_actor: ctx.address(),
+        });
+        ctx.stop();
+    }
+}
+
+/// Handles re-publish rooms command from manager.
+impl Handler<RepublishRooms> for ZzNetConnActor {
+    type Result = ();
+
+    fn handle(&mut self, _msg: RepublishRooms, _ctx: &mut Context<Self>) {
+        if self.handshake.is_complete() {
+            log::info!("Re-publishing rooms.");
+            let publish_frame = Frame::Room(crate::protocol::RoomFrame::PublishRooms {
+                offered_rooms: self.offered_rooms.clone(),
+            });
+            let serialized = serialize(&publish_frame).unwrap();
+            self.transport.do_send(FrameForTransport(serialized));
+        }
+    }
+}

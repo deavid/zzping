@@ -1,6 +1,4 @@
-use crate::{
-    client, config::ZzNetConfig, server,
-};
+use crate::{client, config::ZzNetConfig, server};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -126,7 +124,10 @@ impl ZzNetActor {
         match command {
             ActorCommand::RequestChannel { name, response } => {
                 let result = match &self.client_connection {
-                    Some(conn) => conn.request_channel(name).await.map(|c| Box::new(c) as Box<dyn ZzChannel>),
+                    Some(conn) => conn
+                        .request_channel(name)
+                        .await
+                        .map(|c| Box::new(c) as Box<dyn ZzChannel>),
                     None => Err(anyhow!("Not connected (client mode)")),
                 };
                 if response.send(result).is_err() {
@@ -149,7 +150,11 @@ impl ZzNetActor {
             InternalEvent::NewClientConnection(conn) => {
                 self.client_connection = Some(conn);
             }
-            InternalEvent::NewServerConnection { client_id, connection, event_rx } => {
+            InternalEvent::NewServerConnection {
+                client_id,
+                connection,
+                event_rx,
+            } => {
                 self.server_connections.insert(client_id, connection);
                 server::spawn_per_client_event_handler(
                     client_id,
@@ -166,7 +171,11 @@ impl ZzNetActor {
                         rx: receiver,
                     };
                     if let Some(listener_tx) = self.listeners.get(&name) {
-                        if listener_tx.send((client_id, Box::new(channel) as Box<dyn ZzChannel>)).await.is_err() {
+                        if listener_tx
+                            .send((client_id, Box::new(channel) as Box<dyn ZzChannel>))
+                            .await
+                            .is_err()
+                        {
                             log::warn!("A listener for channel '{name}' was dropped.");
                         }
                     }
@@ -190,8 +199,7 @@ pub trait ZzNetApi {
 impl ZzNetApi for ComponentHandle<ActorCommand> {
     async fn request_channel(&self, name: String) -> Result<Box<dyn ZzChannel>> {
         let (response_tx, response_rx) = oneshot::channel();
-        self
-            .command_tx
+        self.command_tx
             .send(ActorCommand::RequestChannel {
                 name,
                 response: response_tx,
@@ -205,8 +213,7 @@ impl ZzNetApi for ComponentHandle<ActorCommand> {
         name: String,
     ) -> Result<mpsc::Receiver<(u64, Box<dyn ZzChannel>)>> {
         let (response_tx, response_rx) = oneshot::channel();
-        self
-            .command_tx
+        self.command_tx
             .send(ActorCommand::ListenForChannel {
                 name,
                 response: response_tx,

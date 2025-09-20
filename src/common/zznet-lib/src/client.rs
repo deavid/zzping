@@ -21,7 +21,11 @@ pub(crate) fn spawn_connection_manager(
                 Ok(conn) => {
                     log::info!("Client connection established or re-established.");
                     // Send the new connection to the actor.
-                    if internal_tx.send(InternalEvent::NewClientConnection(conn)).await.is_err() {
+                    if internal_tx
+                        .send(InternalEvent::NewClientConnection(conn))
+                        .await
+                        .is_err()
+                    {
                         log::error!("Actor receiver dropped. Shutting down connection manager.");
                         break; // Actor is gone, no point in continuing.
                     }

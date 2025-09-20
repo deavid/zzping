@@ -6,10 +6,7 @@ use zznet::connection_manager::ConnectionEvent;
 use zznet::runtime::server::ServerRuntime;
 
 // The listener no longer signals readiness. The actor does.
-pub(crate) fn spawn_listener(
-    config: ServerConfig,
-    internal_tx: mpsc::Sender<InternalEvent>,
-) {
+pub(crate) fn spawn_listener(config: ServerConfig, internal_tx: mpsc::Sender<InternalEvent>) {
     tokio::spawn(async move {
         let server_runtime = ServerRuntime::new(config);
         let mut connection_stream = match server_runtime.run().await {

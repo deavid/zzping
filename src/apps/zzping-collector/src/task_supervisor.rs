@@ -361,9 +361,7 @@ impl TaskSupervisor {
                 // Collect the handle to await it later.
                 shutdown_handles.push(async move {
                     if let Err(e) = worker_handle.task_handle.await {
-                        warn!(
-                            "Worker task for target {target_ip} panicked during shutdown: {e:?}"
-                        );
+                        warn!("Worker task for target {target_ip} panicked during shutdown: {e:?}");
                     }
                 });
             }

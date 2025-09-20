@@ -60,7 +60,10 @@ async fn zznet_lib_client_api_fails_when_not_connected() {
     log::info!("Step 3: Calling request_channel, expecting a failure");
     // The API is now on the handle itself.
     let result = handle.request_channel("test".to_string()).await;
-    assert!(result.is_err(), "request_channel should fail if not connected");
+    assert!(
+        result.is_err(),
+        "request_channel should fail if not connected"
+    );
     let err = result.unwrap_err();
     assert!(
         err.to_string().contains("Not connected"),

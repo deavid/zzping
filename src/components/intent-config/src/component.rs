@@ -87,10 +87,15 @@ impl<N: ZzNetApi + Clone + Send + Sync + 'static> Actor for IntentConfigActor<N>
                 let watch_tx = self.config_watch_tx.clone();
                 tokio::spawn(async move {
                     let channel = loop {
-                        match zznet_handle.request_channel("intent-config".to_string()).await {
+                        match zznet_handle
+                            .request_channel("intent-config".to_string())
+                            .await
+                        {
                             Ok(channel) => break channel,
                             Err(e) => {
-                                log::warn!("Failed to get intent-config channel, retrying in 1s: {e}");
+                                log::warn!(
+                                    "Failed to get intent-config channel, retrying in 1s: {e}"
+                                );
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                             }
                         }
@@ -143,7 +148,9 @@ async fn server_network_task(
         tokio::spawn(async move {
             let initial_state = broadcast_rx.borrow().clone();
             let msg = serde_json::to_vec(&ProtocolMsg::Broadcast(initial_state)).unwrap();
-            if channel.send(msg).await.is_err() { return; }
+            if channel.send(msg).await.is_err() {
+                return;
+            }
 
             loop {
                 tokio::select! {
@@ -229,8 +236,12 @@ mod tests {
             struct MockChannel;
             #[async_trait]
             impl ZzChannel for MockChannel {
-                async fn send(&self, _payload: Vec<u8>) -> Result<()> { Ok(()) }
-                async fn recv(&mut self) -> Result<Option<Vec<u8>>> { Ok(None) }
+                async fn send(&self, _payload: Vec<u8>) -> Result<()> {
+                    Ok(())
+                }
+                async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
+                    Ok(None)
+                }
             }
             Ok(Box::new(MockChannel))
         }
@@ -293,7 +304,10 @@ mod tests {
         });
 
         let network_server_handle = ZzNetBuilder::new(server_config).start().await.unwrap();
-        let network_admin_handle = ZzNetBuilder::new(client_admin_config).start().await.unwrap();
+        let network_admin_handle = ZzNetBuilder::new(client_admin_config)
+            .start()
+            .await
+            .unwrap();
         let network_ro_handle = ZzNetBuilder::new(client_ro_config).start().await.unwrap();
 
         let server_component_builder =
@@ -315,7 +329,10 @@ mod tests {
             targets: vec!["8.8.8.8".parse().unwrap()],
             ping_rate_pps: 50,
         };
-        admin_component_handle.update(new_config.clone()).await.unwrap();
+        admin_component_handle
+            .update(new_config.clone())
+            .await
+            .unwrap();
 
         ro_config_watch.changed().await.unwrap();
         let received_config = ro_config_watch.borrow().clone();

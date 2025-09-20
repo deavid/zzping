@@ -398,9 +398,9 @@ pub async fn spawn_test_server(data_dir: String) -> (std::net::SocketAddr, JoinH
 
 #[cfg(test)]
 mod tests {
-    use ntest::timeout;
     use super::*;
     use crate::auth::generate_test_token;
+    use ntest::timeout;
     use std::io::Write;
     use tempfile::tempdir;
     use zzping_proto::zzping::{RawDataRecord, ingestion_client::IngestionClient};

@@ -1,9 +1,9 @@
-// File: tests/integration.rs
+#![cfg(test)]
+
 // To run: cargo test --test integration -- --nocapture
 
 use actix::prelude::*;
 use std::collections::HashMap;
-use std::time::Duration;
 
 // =========================================================================
 // 1. CONTRACTS (Normally in `zznet-bus` and `zznet-protocol`)
@@ -255,6 +255,7 @@ impl Handler<Data> for IntentConfigSessionActor {
 
 #[actix::test]
 async fn test_full_lifecycle_proof_of_concept() {
+    use std::time::Duration;
     let _ = env_logger::builder().is_test(true).try_init();
 
     // ARRANGE: Start all the actors

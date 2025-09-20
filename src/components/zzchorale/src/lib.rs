@@ -160,11 +160,17 @@ mod tests {
         let handle_clone = handle.clone();
 
         // Shut down using the original handle
-        handle.shutdown().await.expect("Actor should shut down cleanly");
+        handle
+            .shutdown()
+            .await
+            .expect("Actor should shut down cleanly");
         log::info!("Actor shutdown complete.");
 
         // Subsequent shutdowns on cloned handles should be no-ops and not panic.
-        handle_clone.shutdown().await.expect("Cloned handle shutdown should be a no-op");
+        handle_clone
+            .shutdown()
+            .await
+            .expect("Cloned handle shutdown should be a no-op");
         log::info!("Second shutdown call completed without error.");
     }
 }

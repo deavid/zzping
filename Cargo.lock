@@ -6073,6 +6073,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "zznet-connection"
+version = "0.2.2-beta2"
+dependencies = [
+ "actix",
+ "anyhow",
+ "bincode",
+ "env_logger 0.11.8",
+ "log",
+ "ntest",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "zznet-lib"
 version = "0.1.0"
 dependencies = [
