@@ -3,17 +3,14 @@ resolver = "2"
 members = [
     "src/common/zzping-lib",
     "src/common/zzping-proto",
-    "src/common/zznet-lib",
     "src/common/zznet-api",
     "src/apps/zzping-database",
     "src/apps/zzping-collector",
     "src/apps/zzping-cli",
     "src/apps/zzping-gui",
     "src/components/zznet",
-    "src/components/intent-config",
-    "src/components/zzchorale",
-    "src/components/zzchorale-examples/pingpong",
-    "src/actors/zzintent-config", "src/components/zznet-connection",
+    "src/actors/zzintent-config",
+    "src/components/zznet-connection",
 ]
 
 [workspace.package]
