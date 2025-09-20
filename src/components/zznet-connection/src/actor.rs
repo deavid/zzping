@@ -20,7 +20,7 @@ pub struct ZzNetConnActor {
     /// This is provided by the manager when the actor is created.
     subscribers: HashMap<String, RoomSubscribers>,
     /// The current state of the actor.
-    state: ActorState,
+    state: ConnActorState,
     /// Protocol version to use.
     protocol_version: String,
     /// Auth role.
@@ -63,7 +63,7 @@ pub struct RepublishRooms {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ActorState {
+pub enum ConnActorState {
     AwaitingHandshake,
     AwaitingRooms,
     Active,
@@ -82,7 +82,7 @@ impl ZzNetConnActor {
             transport,
             handshake: Handshake::new(), // The handshake starts in an initial state
             subscribers,
-            state: ActorState::AwaitingHandshake,
+            state: ConnActorState::AwaitingHandshake,
             protocol_version,
             auth_role,
             offered_rooms: offered_rooms.clone(),
@@ -126,7 +126,7 @@ impl Handler<FrameFromTransport> for ZzNetConnActor {
         log::debug!("ZzNetConnActor received a frame from transport.");
 
         match self.state {
-            ActorState::AwaitingHandshake => {
+            ConnActorState::AwaitingHandshake => {
                 if !self.handshake.is_complete() {
                     // The handshake logic will mutate its own state and may produce an outgoing frame.
                     let response_frame_option = self.handshake.process_frame(msg.0);
@@ -150,11 +150,11 @@ impl Handler<FrameFromTransport> for ZzNetConnActor {
                         });
                         let serialized = serialize(&publish_frame).unwrap();
                         self.transport.do_send(FrameForTransport(serialized));
-                        self.state = ActorState::AwaitingRooms;
+                        self.state = ConnActorState::AwaitingRooms;
                     }
                 }
             }
-            ActorState::AwaitingRooms => {
+            ConnActorState::AwaitingRooms => {
                 let frame = match deserialize(&msg.0) {
                     Ok(f) => f,
                     Err(e) => {
@@ -183,7 +183,7 @@ impl Handler<FrameFromTransport> for ZzNetConnActor {
                                 });
                             }
                         }
-                        self.state = ActorState::Active;
+                        self.state = ConnActorState::Active;
                     }
                     _ => {
                         log::error!("Expected PublishRooms frame in AwaitingRooms state");
@@ -191,7 +191,7 @@ impl Handler<FrameFromTransport> for ZzNetConnActor {
                     }
                 }
             }
-            ActorState::Active => {
+            ConnActorState::Active => {
                 let frame = match deserialize(&msg.0) {
                     Ok(f) => f,
                     Err(e) => {
@@ -223,7 +223,7 @@ impl Handler<FrameForTransport> for ZzNetConnActor {
     type Result = ();
 
     fn handle(&mut self, msg: FrameForTransport, _ctx: &mut Context<Self>) {
-        if self.state == ActorState::Active {
+        if self.state == ConnActorState::Active {
             log::debug!("ZzNetConnActor sending frame to transport.");
             self.transport.do_send(msg);
         } else {
@@ -287,7 +287,7 @@ impl Handler<SendDataToRoom> for ZzNetConnActor {
     type Result = ();
 
     fn handle(&mut self, msg: SendDataToRoom, _ctx: &mut Context<Self>) {
-        if self.state == ActorState::Active && self.active_rooms.contains(&msg.room_name) {
+        if self.state == ConnActorState::Active && self.active_rooms.contains(&msg.room_name) {
             log::debug!(
                 "Sending data to room {}: {} bytes",
                 msg.room_name,
