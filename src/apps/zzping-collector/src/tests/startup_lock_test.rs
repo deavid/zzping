@@ -1,7 +1,7 @@
 use std::io::Write;
 use tempfile::NamedTempFile;
 // This function doesn't exist yet, so this won't compile until I refactor lib.rs
-use zzping_collector::bootstrap_collector_with_port;
+use crate::bootstrap_collector_with_port;
 
 // Helper function to create a temporary config file for tests.
 fn create_mock_config() -> (NamedTempFile, String) {

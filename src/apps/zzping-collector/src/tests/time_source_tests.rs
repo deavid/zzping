@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use zzping_collector::pinger::TimeSource;
+use crate::pinger::TimeSource;
 
 /// A minimal mock TimeSource that counts resync() calls and provides
 /// monotonically increasing timestamps.

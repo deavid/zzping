@@ -13,6 +13,9 @@ pub mod runner;
 pub mod scheduler;
 pub mod storage_engine;
 
+#[cfg(test)]
+pub mod tests;
+
 pub const INGESTION_ADDR: &str = "127.0.0.1:7878";
 pub const DATA_DIR: &str = "data";
 

@@ -1,11 +1,11 @@
+use crate::connection_manager::ConnectionManager;
+use crate::database_client::DatabaseClientTrait;
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Notify, mpsc};
-use zzping_collector::connection_manager::ConnectionManager;
-use zzping_collector::database_client::DatabaseClientTrait;
 
 use ntest::timeout;
 
-mod common;
+use super::common;
 use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]

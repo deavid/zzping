@@ -1,17 +1,17 @@
-use log::info;
-use ntest::timeout;
-use std::time::Duration;
-use tokio::sync::{mpsc, watch};
-use zzping_collector::{
+use crate::{
     collector_service::CachedIntent,
     database_client::DatabaseClient,
     session_handler::SessionHandler,
     task_supervisor::{HealthReport, SupervisorConfig},
 };
+use log::info;
+use ntest::timeout;
+use std::time::Duration;
+use tokio::sync::{mpsc, watch};
 use zzping_proto::zzping::CollectorRole;
 // Arc not needed in this test file
 
-mod common;
+use super::common;
 use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]
@@ -20,10 +20,7 @@ async fn test_session_handler_sends_config_on_success() {
     // This test verifies that if the heartbeat call is successful, the
     // SessionHandler correctly translates the response and sends it
     // over the watch channel.
-    let _ = env_logger::builder()
-        .is_test(true)
-        .filter_level(log::LevelFilter::Debug)
-        .try_init();
+    common::setup_logger();
     // 1. Setup
     let (config_tx, mut config_rx) = watch::channel::<Option<SupervisorConfig>>(None);
     let (health_tx, health_rx) = watch::channel(HealthReport {
@@ -54,6 +51,7 @@ async fn test_session_handler_sends_config_on_success() {
         persistence_tx,
         fsync_tx,
         true, // Use mock client in tests
+        None, // No cache file in tests for hermeticity
     );
 
     // 2. Run the handler in a separate task
@@ -78,11 +76,7 @@ async fn test_session_handler_sends_config_on_success() {
 #[timeout(3000)]
 async fn test_session_handler_exits_on_connection_failure() {
     // Initialize env_logger for debug output
-    env_logger::builder()
-        .filter_level(log::LevelFilter::Info)
-        .is_test(true)
-        .try_init()
-        .ok();
+    common::setup_logger();
 
     info!("Starting test_session_handler_exits_on_connection_failure");
 
@@ -134,6 +128,7 @@ async fn test_session_handler_exits_on_connection_failure() {
         persistence_tx,
         fsync_tx,
         true, // Use mock client in tests
+        None, // No cache file in tests for hermeticity
     );
     let handler_handle = tokio::spawn(handler.run());
     info!("SessionHandler started");
@@ -192,6 +187,7 @@ async fn test_session_handler_exits_on_connection_failure() {
 #[tokio::test]
 #[timeout(3000)]
 async fn test_session_handler_reports_last_processed_command_in_heartbeat() {
+    common::setup_logger();
     let _ = env_logger::builder()
         .is_test(true)
         .filter_level(log::LevelFilter::Debug)
@@ -209,7 +205,14 @@ async fn test_session_handler_reports_last_processed_command_in_heartbeat() {
         fatal_errors: vec![],
     });
 
-    let (persistence_tx, _persistence_rx) = mpsc::channel::<CachedIntent>(1);
+    let (persistence_tx, mut persistence_rx) = mpsc::channel::<CachedIntent>(1);
+
+    // Keep the persistence receiver alive to prevent the state manager from hanging
+    tokio::spawn(async move {
+        while let Some(_intent) = persistence_rx.recv().await {
+            // Just consume and discard persistence messages
+        }
+    });
 
     // Prepare mock server with ability to push a command
     let mock = MockIngestionService::with_ping_rate(0);
@@ -227,13 +230,27 @@ async fn test_session_handler_reports_last_processed_command_in_heartbeat() {
         persistence_tx,
         fsync_tx,
         true,
+        None, // No cache file in tests for hermeticity
     );
 
     // Run handler
     tokio::spawn(handler.run());
 
-    // Wait a bit for subscription to establish
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // Wait for subscription to establish - poll until command_stream_tx is available
+    let mut max_attempts = 50; // 50 attempts * 10ms = 500ms max wait
+    while max_attempts > 0 {
+        if mock.command_stream_tx.lock().unwrap().is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        max_attempts -= 1;
+    }
+
+    // Ensure command stream is available
+    assert!(
+        mock.command_stream_tx.lock().unwrap().is_some(),
+        "Command stream subscription not established within 500ms"
+    );
 
     // Send a command on the mock command stream with id 42
     if let Some(tx) = &*mock.command_stream_tx.lock().unwrap() {
@@ -243,12 +260,19 @@ async fn test_session_handler_reports_last_processed_command_in_heartbeat() {
                 zzping_proto::zzping::CollectorRole::Primary as i32,
             )),
         };
-        tx.clone().try_send(Ok(cmd)).ok();
+        let send_result = tx.clone().try_send(Ok(cmd));
+        assert!(
+            send_result.is_ok(),
+            "Failed to send command: {:?}",
+            send_result
+        );
+        println!("✓ Command sent successfully");
+    } else {
+        panic!("Command stream not available");
     }
 
-    // Wait for the heartbeat to be sent and recorded by the mock server
-    // (longer sleep to avoid flakiness on slower CI or local machines)
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    // Wait for the command to be processed and heartbeat to be sent
+    tokio::time::sleep(Duration::from_millis(200)).await;
 
     let received = mock.received_heartbeats.lock().unwrap().clone();
     assert!(
@@ -256,7 +280,32 @@ async fn test_session_handler_reports_last_processed_command_in_heartbeat() {
         "No heartbeats received by mock server"
     );
 
+    println!("✓ Received {} heartbeats", received.len());
+
     // The last heartbeat should include last_processed_command_id == 42
     let last = received.last().unwrap();
-    assert_eq!(last.last_processed_command_id, 42);
+    println!(
+        "Last heartbeat: last_processed_command_id = {}",
+        last.last_processed_command_id
+    );
+
+    // Wait longer to ensure command is processed
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
+    // Check again for more heartbeats
+    let received = mock.received_heartbeats.lock().unwrap().clone();
+    println!(
+        "✓ Total received {} heartbeats after waiting",
+        received.len()
+    );
+
+    if let Some(latest) = received.last() {
+        println!(
+            "Latest heartbeat: last_processed_command_id = {}",
+            latest.last_processed_command_id
+        );
+        assert_eq!(latest.last_processed_command_id, 42);
+    } else {
+        panic!("No heartbeats received");
+    }
 }

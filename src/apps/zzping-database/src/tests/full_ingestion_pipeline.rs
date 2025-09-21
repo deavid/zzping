@@ -1,6 +1,5 @@
 use anyhow::Result;
 use log::info;
-// Removed use ntest::timeout;
 use std::time::Duration;
 use tempfile::tempdir;
 use tokio::sync::mpsc;

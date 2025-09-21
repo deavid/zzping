@@ -56,3 +56,6 @@ pub mod bus;
 pub mod manager;
 pub mod mocks;
 pub mod protocol;
+
+#[cfg(test)]
+pub mod tests;

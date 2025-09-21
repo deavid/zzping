@@ -8,12 +8,9 @@ use crate::protocol::{Frame, Handshake, deserialize, serialize};
 use actix::prelude::*;
 use std::collections::HashMap;
 
-// A placeholder for now.
-type TransportConnectionHandle = Recipient<FrameForTransport>;
-
 pub struct ZzNetConnActor {
     /// A handle to the underlying transport actor for this connection.
-    transport: TransportConnectionHandle,
+    transport: Recipient<FrameForTransport>,
     /// The current state of the handshake protocol.
     handshake: Handshake,
     /// A map of Room Names to the subscribers interested in them.
@@ -71,7 +68,7 @@ pub enum ConnActorState {
 
 impl ZzNetConnActor {
     pub fn new(
-        transport: TransportConnectionHandle,
+        transport: Recipient<FrameForTransport>,
         subscribers: HashMap<String, RoomSubscribers>,
         protocol_version: String,
         auth_role: String,

@@ -6,10 +6,10 @@ use log::{debug, info};
 use ntest::timeout;
 use tokio::sync::mpsc;
 
-use zzping_collector::database_client::DatabaseClient;
-use zzping_collector::pinger::FinalizedPing;
+use crate::database_client::DatabaseClient;
+use crate::pinger::FinalizedPing;
 
-mod common;
+use super::common;
 use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]
@@ -33,7 +33,7 @@ async fn test_batch_submitter_prune_by_fsync_via_command() {
     // Create a BatchSubmitter directly (no async run loop) and exercise its
     // ingest/prune methods to avoid concurrent scheduling races in tests.
     let (_cmd_tx, cmd_rx) = mpsc::channel(10);
-    let mut submitter = zzping_collector::batch_submitter::BatchSubmitter::new(
+    let mut submitter = crate::batch_submitter::BatchSubmitter::new(
         "test-uuid".to_string(),
         IpAddr::from_str("127.0.0.1").unwrap(),
         Duration::from_secs(60),

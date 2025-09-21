@@ -3,13 +3,13 @@ use std::str::FromStr;
 // Arc unused here
 use std::time::Duration;
 
+use crate::database_client::DatabaseClient;
+use crate::target_worker::TargetWorker;
+use crate::target_worker::WorkerCommand;
 use log::{debug, info};
 use ntest::timeout;
-use zzping_collector::database_client::DatabaseClient;
-use zzping_collector::target_worker::TargetWorker;
-use zzping_collector::target_worker::WorkerCommand;
 
-mod common;
+use super::common;
 use common::{MockIngestionService, spawn_mock_server};
 
 // This integration test is currently flaky under CI/local timing and
@@ -47,16 +47,14 @@ async fn test_fsync_prunes_batch_submitter_via_supervisor_broadcast() {
         target_ip,
         0, // ping_rate_pps 0 -> pinger will not generate real traffic
         db_client.clone(),
-        std::sync::Arc::new(zzping_collector::ping_client::MockPingClient::new(
-            target_ip,
-        )),
+        std::sync::Arc::new(crate::ping_client::MockPingClient::new(target_ip)),
     )
     .expect("failed to create TargetWorker");
     info!("created TargetWorker (uuid=test-uuid) and handles ready");
 
     // Inject two finalized pings into the worker's data channel.
     // Choose sent_nanos so one record is <= fsync_nanos and the other > fsync_nanos.
-    use zzping_collector::pinger::FinalizedPing;
+    use crate::pinger::FinalizedPing;
 
     // Use real epoch-based nanos so the submitter's time-based pruning doesn't
     // immediately drop our synthetic records. Choose values relative to now.
@@ -97,7 +95,7 @@ async fn test_fsync_prunes_batch_submitter_via_supervisor_broadcast() {
 
     // Wait until the worker reports buffer size == 2 or timeout
     async fn wait_for_buffer_size(
-        handle: &zzping_collector::target_worker::TargetWorkerHandle,
+        handle: &crate::target_worker::TargetWorkerHandle,
         expected: usize,
         timeout_ms: u64,
     ) -> Option<usize> {

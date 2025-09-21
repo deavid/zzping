@@ -1,19 +1,19 @@
 // tests/target_worker_test.rs
 
-use anyhow::Result;
-use std::{net::IpAddr, sync::Arc};
-use tokio::sync::mpsc;
-use zzping_collector::{
+use crate::{
     database_client::DatabaseClient,
     ping_mock_client::PingMockClient,
     target_worker::{TargetWorker, WorkerCommand},
 };
+use anyhow::Result;
+use std::{net::IpAddr, sync::Arc};
+use tokio::sync::mpsc;
 use zzping_proto::zzping::{CollectorRole, GetRecentDataResponse};
 
 use ntest::timeout;
 
 // Import the common test utilities
-mod common;
+use super::common;
 use common::MockIngestionService;
 
 #[tokio::test]

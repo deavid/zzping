@@ -1,10 +1,10 @@
+use crate::actor::{FrameFromTransport, TransportTerminated, ZzNetConnActor};
+use crate::bus::{DataForRoom, RoomIsActive, RoomTerminated};
+use crate::mocks::start_mock_connection_manager;
+use crate::protocol::{Frame, HandshakeFrame, RoomFrame, serialize};
 use actix::prelude::*;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use zznet_connection::actor::{FrameFromTransport, TransportTerminated, ZzNetConnActor};
-use zznet_connection::bus::{DataForRoom, RoomIsActive, RoomTerminated};
-use zznet_connection::mocks::start_mock_connection_manager;
-use zznet_connection::protocol::{Frame, HandshakeFrame, RoomFrame, serialize};
 
 #[derive(Clone, Debug)]
 enum TestMessage {
@@ -67,7 +67,7 @@ async fn test_full_handshake_and_notification() {
     let room_mgr = MockRoomManager::default().start();
 
     // Subscribe to "intent-config"
-    mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
+    mock_mgr_addr.do_send(crate::bus::SubscribeToRoom {
         room_name: "intent-config".to_string(),
         room_is_active_recipient: room_mgr.clone().recipient(),
         data_recipient: room_mgr.clone().recipient(), // Mock doesn't handle, but for test
@@ -75,11 +75,11 @@ async fn test_full_handshake_and_notification() {
     });
 
     // Start the actor manually
-    let transport = zznet_connection::mocks::MockTransportActor::default().start();
+    let transport = crate::mocks::MockTransportActor::default().start();
     let mut subscribers = std::collections::HashMap::new();
     subscribers.insert(
         "intent-config".to_string(),
-        zznet_connection::bus::RoomSubscribers {
+        crate::bus::RoomSubscribers {
             room_is_active: room_mgr.clone().recipient::<RoomIsActive>(),
             data: room_mgr.clone().recipient(), // Not used in this test
             termination: room_mgr.clone().recipient(), // Not used
@@ -123,7 +123,7 @@ async fn test_late_subscriber() {
     let (mock_mgr_addr, _harness) = start_mock_connection_manager();
 
     // Start actor first
-    let transport = zznet_connection::mocks::MockTransportActor::default().start();
+    let transport = crate::mocks::MockTransportActor::default().start();
     let subscribers = std::collections::HashMap::new();
     let actor = ZzNetConnActor::new(
         transport.recipient(),
@@ -155,14 +155,12 @@ async fn test_late_subscriber() {
 
     // Now subscribe
     let room_mgr = MockRoomManager::default().start();
-    mock_mgr_addr
-        .clone()
-        .do_send(zznet_connection::bus::SubscribeToRoom {
-            room_name: "intent-config".to_string(),
-            room_is_active_recipient: room_mgr.clone().recipient(),
-            data_recipient: room_mgr.clone().recipient(),
-            termination_recipient: room_mgr.clone().recipient(),
-        });
+    mock_mgr_addr.clone().do_send(crate::bus::SubscribeToRoom {
+        room_name: "intent-config".to_string(),
+        room_is_active_recipient: room_mgr.clone().recipient(),
+        data_recipient: room_mgr.clone().recipient(),
+        termination_recipient: room_mgr.clone().recipient(),
+    });
 
     // Wait
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -184,7 +182,7 @@ async fn test_data_round_trip() {
     let room_mgr = MockRoomManager::new(tx).start();
 
     // Subscribe to "room-a"
-    mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
+    mock_mgr_addr.do_send(crate::bus::SubscribeToRoom {
         room_name: "room-a".to_string(),
         room_is_active_recipient: room_mgr.clone().recipient(),
         data_recipient: room_mgr.clone().recipient(),
@@ -192,11 +190,11 @@ async fn test_data_round_trip() {
     });
 
     // Start the actor
-    let transport = zznet_connection::mocks::MockTransportActor::default().start();
+    let transport = crate::mocks::MockTransportActor::default().start();
     let mut subscribers = std::collections::HashMap::new();
     subscribers.insert(
         "room-a".to_string(),
-        zznet_connection::bus::RoomSubscribers {
+        crate::bus::RoomSubscribers {
             room_is_active: room_mgr.clone().recipient::<RoomIsActive>(),
             data: room_mgr.clone().recipient::<DataForRoom>(),
             termination: room_mgr.clone().recipient::<RoomTerminated>(),
@@ -282,7 +280,7 @@ async fn test_late_subscriber_republication() {
     // Subscribe first
     let (tx, _rx) = mpsc::unbounded_channel();
     let room_mgr = MockRoomManager::new(tx).start();
-    mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
+    mock_mgr_addr.do_send(crate::bus::SubscribeToRoom {
         room_name: "room-a".to_string(),
         room_is_active_recipient: room_mgr.clone().recipient(),
         data_recipient: room_mgr.clone().recipient(),
@@ -290,14 +288,14 @@ async fn test_late_subscriber_republication() {
     });
 
     // Simulate the room becoming active
-    mock_mgr_addr.do_send(
-        zznet_connection::mocks::MockBusCommand::SimulateRoomIsActive("room-a".to_string()),
-    );
+    mock_mgr_addr.do_send(crate::mocks::MockBusCommand::SimulateRoomIsActive(
+        "room-a".to_string(),
+    ));
 
     // Now, subscribe a new MockRoomManager.
     let (tx2, mut rx2) = mpsc::unbounded_channel();
     let room_mgr2 = MockRoomManager::new(tx2).start();
-    mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
+    mock_mgr_addr.do_send(crate::bus::SubscribeToRoom {
         room_name: "room-a".to_string(),
         room_is_active_recipient: room_mgr2.clone().recipient(),
         data_recipient: room_mgr2.clone().recipient(),
@@ -329,7 +327,7 @@ async fn test_shutdown_cascade() {
     let room_mgr = MockRoomManager::new(tx).start();
 
     // Subscribe to "room-a"
-    mock_mgr_addr.do_send(zznet_connection::bus::SubscribeToRoom {
+    mock_mgr_addr.do_send(crate::bus::SubscribeToRoom {
         room_name: "room-a".to_string(),
         room_is_active_recipient: room_mgr.clone().recipient(),
         data_recipient: room_mgr.clone().recipient(),
@@ -337,11 +335,11 @@ async fn test_shutdown_cascade() {
     });
 
     // Start the actor
-    let transport = zznet_connection::mocks::MockTransportActor::default().start();
+    let transport = crate::mocks::MockTransportActor::default().start();
     let mut subscribers = std::collections::HashMap::new();
     subscribers.insert(
         "room-a".to_string(),
-        zznet_connection::bus::RoomSubscribers {
+        crate::bus::RoomSubscribers {
             room_is_active: room_mgr.clone().recipient::<RoomIsActive>(),
             data: room_mgr.clone().recipient::<DataForRoom>(),
             termination: room_mgr.clone().recipient::<RoomTerminated>(),

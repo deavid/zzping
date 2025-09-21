@@ -3,14 +3,14 @@
 use anyhow::Result;
 use log::info;
 // Removed use ntest::timeout;
+use crate::task_supervisor::SupervisorShutdown;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
-use zzping_collector::task_supervisor::SupervisorShutdown;
 
 use ntest::timeout;
 
 // Import the common test utilities
-mod common;
+use super::common;
 use common::MockIngestionService;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -27,12 +27,20 @@ async fn test_graceful_shutdown_flushes_buffer() -> Result<()> {
 
     // Create a temporary config file
     info!("Process: Create a temporary config file");
-    let mut config = zzping_collector::config::Config::load("tests/test-configs/valid-config.ron")?;
-    config.database_addr = format!("http://{addr}");
     let temp_dir = tempfile::tempdir()?;
     let temp_config_path = temp_dir.path().join("config.ron");
-    let config_str = ron::to_string(&config)?;
-    tokio::fs::write(&temp_config_path, config_str).await?;
+
+    let collector_config_content = format!(
+        r#"(
+    collector_uuid: "graceful-shutdown-test-uuid",
+    database_addr: "http://{addr}",
+    auth_token: "test-token",
+    use_mock_ping_client: true,
+)
+"#
+    );
+
+    tokio::fs::write(&temp_config_path, collector_config_content).await?;
     let config_path_str = temp_config_path.to_str().unwrap().to_string();
 
     // Create channel to receive the shutdown sender from the service
@@ -42,7 +50,7 @@ async fn test_graceful_shutdown_flushes_buffer() -> Result<()> {
     // Bootstrap the collector using the special test function
     info!("Process: Bootstrap the collector using the special test function");
     // Use the test helper that sets a short health interval to keep tests fast.
-    let service = zzping_collector::bootstrap_collector_for_test_with_interval(
+    let service = crate::bootstrap_collector_for_test_with_interval(
         config_path_str,
         shutdown_tx_sender,
         1, // 1 ms heartbeat interval for fast tests

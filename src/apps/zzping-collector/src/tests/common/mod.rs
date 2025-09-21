@@ -4,7 +4,7 @@
 // and not all tests will use all functions.
 #![allow(dead_code)]
 
-use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError};
+use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError, warn};
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
@@ -305,8 +305,8 @@ impl Ingestion for MockIngestionService {
     }
 }
 
+use crate::target_worker::WorkerCommand;
 use tokio::sync::mpsc;
-use zzping_collector::target_worker::WorkerCommand;
 
 // --- Mock TargetWorker ---
 
@@ -318,14 +318,14 @@ pub struct MockTargetWorkerHandle {
 /// A factory function to create a real `TargetWorkerHandle` for the supervisor
 /// to use, and a `MockTargetWorkerHandle` for the test to inspect.
 pub fn mock_worker_factory() -> (
-    zzping_collector::target_worker::TargetWorkerHandle,
+    crate::target_worker::TargetWorkerHandle,
     MockTargetWorkerHandle,
 ) {
     let (command_tx, command_rx) = mpsc::channel(10);
     let mock_handle = MockTargetWorkerHandle { command_rx };
 
     // The real handle that the supervisor will interact with.
-    let real_handle = zzping_collector::target_worker::TargetWorkerHandle {
+    let real_handle = crate::target_worker::TargetWorkerHandle {
         command_tx,
         // The task handle is not used by the supervisor test, so we can use a dummy one.
         task_handle: tokio::spawn(async {}),
@@ -338,7 +338,7 @@ pub async fn spawn_mock_server(service: MockIngestionService) -> SocketAddr {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let server = IngestionServer::new(service);
-
+    warn!("Spawning mock server with address: {addr}");
     tokio::spawn(async move {
         Server::builder()
             .add_service(server)
@@ -348,4 +348,11 @@ pub async fn spawn_mock_server(service: MockIngestionService) -> SocketAddr {
     });
 
     addr
+}
+
+pub(crate) fn setup_logger() {
+    let _ = env_logger::builder()
+        .is_test(true)
+        .filter_level(log::LevelFilter::Debug)
+        .try_init();
 }

@@ -1,22 +1,24 @@
 // zzping-collector/tests/pinger_test.rs
 
+use crate::database_client::DatabaseClient;
+use crate::ping_mock_client::PingMockClient;
+use crate::pinger::{Pinger, PingerCommand};
 use ntest::timeout;
 use std::net::IpAddr;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use zzping_collector::database_client::DatabaseClient;
-use zzping_collector::ping_mock_client::PingMockClient;
-use zzping_collector::pinger::{Pinger, PingerCommand};
 use zzping_proto::zzping::CollectorRole;
 
 // Include the test utilities
-mod common;
+use super::common;
 use common::MockIngestionService;
 
 #[tokio::test]
 #[timeout(2000)]
 async fn test_pinger_loop() {
+    common::setup_logger();
+
     let target: IpAddr = "127.0.0.1".parse().unwrap();
     let ping_rate_pps = 100;
     let test_duration = Duration::from_millis(50);
@@ -87,11 +89,14 @@ fn test_monotonic_time_source_resync_updates_reference() {
     // MonotonicTimeSource is private; a direct unit test would require changing
     // visibility. We rely on the higher-level pinger tests and integration
     // tests to exercise resync behavior.
+    common::setup_logger();
 }
 
 #[tokio::test]
 #[timeout(1000)]
 async fn test_pinger_handles_lost_packets() {
+    common::setup_logger();
+
     let target: IpAddr = "127.0.0.1".parse().unwrap();
     let grace_period = Duration::from_millis(50);
 
@@ -145,6 +150,8 @@ async fn test_pinger_handles_lost_packets() {
 #[tokio::test]
 #[timeout(1000)]
 async fn test_pinger_pauses_and_resumes() {
+    common::setup_logger();
+
     let target: IpAddr = "127.0.0.1".parse().unwrap();
     let (ping_event_tx, mut ping_event_rx) = mpsc::channel(100);
     let mock_ping_client = Arc::new(PingMockClient::new(target, ping_event_tx));

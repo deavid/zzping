@@ -24,6 +24,9 @@ pub mod client_holder;
 pub mod target_worker;
 pub mod task_supervisor;
 
+#[cfg(test)]
+pub mod tests;
+
 use crate::{
     cli::Cli,
     collector_service::{CachedIntent, CollectorService},

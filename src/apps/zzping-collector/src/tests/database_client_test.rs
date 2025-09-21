@@ -1,10 +1,10 @@
-use zzping_collector::database_client::DatabaseClient;
+use crate::database_client::DatabaseClient;
 use zzping_proto::zzping::{CollectorRole, HeartbeatRequest};
 
 // Import the common test utilities
 use ntest::timeout;
 
-mod common;
+use super::common;
 use common::{MockIngestionService, spawn_mock_server};
 
 #[tokio::test]

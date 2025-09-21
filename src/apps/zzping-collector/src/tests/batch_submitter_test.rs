@@ -1,17 +1,16 @@
+use crate::batch_submitter::BatchSubmitter;
+use crate::database_client::{DatabaseClient, DatabaseClientTrait}; // Added DatabaseClientTrait
+use crate::pinger::FinalizedPing;
 use ntest::timeout;
 use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::mpsc;
-use zzping_collector::batch_submitter::BatchSubmitter;
-use zzping_collector::database_client::{DatabaseClient, DatabaseClientTrait}; // Added DatabaseClientTrait
-use zzping_collector::pinger::FinalizedPing; // Added Arc
+use tokio::sync::mpsc; // Added Arc
 
+use super::common;
 use common::MockIngestionService;
 use zzping_proto::zzping::{SendBatchResponse, send_batch_response};
-
-mod common;
 
 fn setup_submitter(
     db_client: Arc<dyn DatabaseClientTrait>, // Changed to Arc<dyn DatabaseClientTrait>

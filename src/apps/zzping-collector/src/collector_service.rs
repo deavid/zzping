@@ -42,6 +42,8 @@ pub struct CollectorService {
     test_shutdown_tx_sender: Option<mpsc::Sender<mpsc::Sender<SupervisorShutdown>>>,
     // Optional holder that is kept up-to-date with the current DatabaseClient.
     client_holder: Option<ClientHolder>,
+    // Path to the cache file for persisting intent. None means no caching.
+    cache_file_path: Option<String>,
 }
 
 impl CollectorService {
@@ -66,6 +68,7 @@ impl CollectorService {
             supervisor_shutdown_tx: None,
             test_shutdown_tx_sender: None,
             client_holder: None,
+            cache_file_path: Some("last_intent.ron".to_string()),
         })
     }
 
@@ -92,6 +95,7 @@ impl CollectorService {
             supervisor_shutdown_tx: None,
             test_shutdown_tx_sender,
             client_holder: None,
+            cache_file_path: None, // No caching in tests
         })
     }
 
@@ -117,6 +121,7 @@ impl CollectorService {
             supervisor_shutdown_tx: None,
             test_shutdown_tx_sender,
             client_holder: None,
+            cache_file_path: None, // No caching in tests
         })
     }
 
@@ -144,6 +149,7 @@ impl CollectorService {
             supervisor_shutdown_tx: None,
             test_shutdown_tx_sender,
             client_holder: None,
+            cache_file_path: None, // No caching in tests
         })
     }
 
@@ -252,12 +258,14 @@ impl CollectorService {
         self.client_holder = Some(client_holder.clone());
 
         // Persistence task
+        let cache_file_path = self.cache_file_path.clone();
         tokio::spawn(async move {
             while let Some(intent) = persistence_rx.recv().await {
-                if let Ok(ron_string) = ron::to_string(&intent)
-                    && let Err(e) = tokio::fs::write("last_intent.ron", ron_string).await
+                if let Some(ref path) = cache_file_path
+                    && let Ok(ron_string) = ron::to_string(&intent)
+                    && let Err(e) = tokio::fs::write(path, ron_string).await
                 {
-                    warn!("Failed to write last_intent.ron: {e}");
+                    warn!("Failed to write {path}: {e}");
                 }
             }
         });
@@ -309,6 +317,7 @@ impl CollectorService {
                             persistence_tx.clone(),
                             fsync_tx.clone(),
                             self.config.use_mock_ping_client,
+                            self.cache_file_path.as_ref().map(|s| s.as_str().into()),
                         );
                         let session_handle = tokio::spawn(session_handler.run());
 

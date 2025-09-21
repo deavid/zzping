@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use log::{error, info, warn};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::HashSet, time::Duration};
@@ -15,6 +16,7 @@ use zzping_proto::zzping::{
 };
 
 /// An internal message to the state manager loop.
+#[derive(Debug)]
 enum SessionUpdate {
     FromHeartbeat(HeartbeatResponse),
     FromCommand(Command),
@@ -37,10 +39,12 @@ pub struct SessionHandler {
     fsync_tx: mpsc::Sender<u64>,
     /// Whether to use mock ping clients (for testing).
     use_mock_ping_client: bool,
+    cache_file_path: Option<PathBuf>,
 }
 
 impl SessionHandler {
     /// Creates a new `SessionHandler`.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         client: Arc<dyn DatabaseClientTrait>,
         config_tx: watch::Sender<Option<SupervisorConfig>>,
@@ -49,6 +53,7 @@ impl SessionHandler {
         persistence_tx: mpsc::Sender<CachedIntent>,
         fsync_tx: mpsc::Sender<u64>,
         use_mock_ping_client: bool,
+        cache_file_path: Option<PathBuf>,
     ) -> Self {
         Self {
             client,
@@ -58,6 +63,7 @@ impl SessionHandler {
             persistence_tx,
             fsync_tx,
             use_mock_ping_client,
+            cache_file_path,
         }
     }
     /// Runs the `SessionHandler`'s main loops.
@@ -65,6 +71,10 @@ impl SessionHandler {
         info!("SessionHandler started.");
 
         let (update_tx, update_rx) = mpsc::channel(10);
+        info!(
+            "Created channel: update_tx addr={:p}, update_rx addr={:p}",
+            &update_tx, &update_rx
+        );
         let client_clone1 = self.client.clone();
         let client_clone2 = self.client.clone();
         let last_processed_command = Arc::new(AtomicU64::new(0));
@@ -88,6 +98,7 @@ impl SessionHandler {
             self.persistence_tx,
             self.use_mock_ping_client,
             last_processed_command.clone(),
+            self.cache_file_path,
         ));
 
         // The session ends if any of the core loops finishes. When that
@@ -135,7 +146,12 @@ impl SessionHandler {
         persistence_tx: mpsc::Sender<CachedIntent>,
         use_mock_ping_client: bool,
         last_processed_command: Arc<AtomicU64>,
+        cache_file_path: Option<PathBuf>,
     ) -> Result<()> {
+        info!(
+            "State manager loop starting with update_rx addr={:p}",
+            &update_rx
+        );
         let mut current_config = SupervisorConfig {
             targets: HashSet::new(),
             ping_rate_pps: 0,
@@ -144,7 +160,9 @@ impl SessionHandler {
             swap_at_nanos: None,
         };
         // Try to load the last known config from disk, if available.
-        if let Ok(data) = std::fs::read_to_string("last_intent.ron") {
+        if let Some(cache_path) = &cache_file_path
+            && let Ok(data) = std::fs::read_to_string(cache_path)
+        {
             if let Ok(intent) = ron::from_str::<CachedIntent>(&data) {
                 current_config.targets = intent.targets.clone();
                 current_config.ping_rate_pps = intent.ping_rate_pps;
@@ -158,11 +176,13 @@ impl SessionHandler {
                 // when a heartbeat or command arrives. Broadcasting immediately
                 // causes tests that expect the heartbeat-derived config to fail.
             } else {
-                info!("Failed to parse last_intent.ron; continuing without cached intent.");
+                info!("Failed to parse cached intent; continuing without cached intent.");
             }
         }
 
+        info!("State manager loop starting...");
         while let Some(update) = update_rx.recv().await {
+            info!("State manager received update: {update:?}");
             match update {
                 SessionUpdate::FromHeartbeat(response) => {
                     current_config.role =
@@ -230,6 +250,7 @@ impl SessionHandler {
                 // Continue even if persistence task is not available.
             }
         }
+        info!("State manager loop exiting - update_rx.recv() returned None");
         Ok(())
     }
 
@@ -241,6 +262,10 @@ impl SessionHandler {
         last_processed_command: Arc<AtomicU64>,
         fsync_tx: mpsc::Sender<u64>,
     ) -> Result<()> {
+        info!(
+            "Heartbeat loop starting with update_tx addr={:p}",
+            &update_tx
+        );
         // FIXME: This interval must be configurable externally, specially for unit tests!
         let mut interval = tokio::time::interval(if cfg!(test) {
             Duration::from_millis(1)
@@ -307,6 +332,7 @@ impl SessionHandler {
         collector_uuid: String,
         update_tx: mpsc::Sender<SessionUpdate>,
     ) -> Result<()> {
+        info!("Command loop starting with update_tx addr={:p}", &update_tx);
         let request = CommandRequest { collector_uuid };
         let mut stream = client.subscribe_to_commands(request).await?.into_inner();
         info!("Successfully subscribed to command stream.");
@@ -328,6 +354,7 @@ impl SessionHandler {
                 Ok(message_result) => match message_result? {
                     Some(command) => {
                         info!("Received command: {command:?}");
+                        info!("About to send SessionUpdate::FromCommand to state manager...");
                         if update_tx
                             .send(SessionUpdate::FromCommand(command))
                             .await
@@ -336,6 +363,7 @@ impl SessionHandler {
                             info!("State manager disconnected, command loop shutting down.");
                             break;
                         }
+                        info!("Successfully sent SessionUpdate::FromCommand to state manager.");
                     }
                     None => {
                         info!("Command stream ended (received None).");

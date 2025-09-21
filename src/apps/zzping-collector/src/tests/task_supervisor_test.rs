@@ -1,11 +1,11 @@
+use crate::database_client::DatabaseClient;
+use crate::target_worker::WorkerCommand;
+use crate::task_supervisor::{ClientUpdate, SupervisorConfig, TaskSupervisor};
 use ntest::timeout;
 use std::{collections::HashSet, net::IpAddr, str::FromStr};
-use zzping_collector::database_client::DatabaseClient;
-use zzping_collector::target_worker::WorkerCommand;
-use zzping_collector::task_supervisor::{ClientUpdate, SupervisorConfig, TaskSupervisor};
 use zzping_proto::zzping::CollectorRole;
 
-mod common;
+use super::common;
 use common::mock_worker_factory;
 
 #[tokio::test]
@@ -93,18 +93,18 @@ async fn test_supervisor_sends_shutdown_to_removed_workers() {
 #[tokio::test]
 #[timeout(2000)]
 async fn test_supervisor_defers_and_then_creates_workers() {
+    use crate::task_supervisor::SupervisorConfig;
     use std::net::IpAddr;
-    use zzping_collector::task_supervisor::SupervisorConfig;
 
     let supervisor =
-        zzping_collector::task_supervisor::TaskSupervisor::new("test-uuid".to_string(), 1000, None);
+        crate::task_supervisor::TaskSupervisor::new("test-uuid".to_string(), 1000, None);
 
     let (config_tx, config_rx) = tokio::sync::watch::channel::<Option<SupervisorConfig>>(None);
     let (client_update_tx, client_update_rx) = tokio::sync::mpsc::channel::<ClientUpdate>(10);
     let (health_tx, _health_rx) =
-        tokio::sync::mpsc::channel::<zzping_collector::task_supervisor::HealthReport>(10);
+        tokio::sync::mpsc::channel::<crate::task_supervisor::HealthReport>(10);
     let (_shutdown_tx, shutdown_rx) =
-        tokio::sync::mpsc::channel::<zzping_collector::task_supervisor::SupervisorShutdown>(1);
+        tokio::sync::mpsc::channel::<crate::task_supervisor::SupervisorShutdown>(1);
     let (_fsync_tx, fsync_rx) = tokio::sync::mpsc::channel::<u64>(10);
 
     // Reconcile a config with one target while no client is present
@@ -166,16 +166,16 @@ async fn test_supervisor_defers_and_then_creates_workers() {
 #[tokio::test]
 #[timeout(1000)]
 async fn test_supervisor_schedules_swap_and_applies_role() {
-    use zzping_collector::task_supervisor::ClientUpdate;
+    use crate::task_supervisor::ClientUpdate;
 
     let supervisor = TaskSupervisor::new("test-uuid".to_string(), 1000, None);
 
     let (config_tx, config_rx) = tokio::sync::watch::channel::<Option<SupervisorConfig>>(None);
     let (client_update_tx, client_update_rx) = tokio::sync::mpsc::channel::<ClientUpdate>(10);
     let (health_tx, _health_rx) =
-        tokio::sync::mpsc::channel::<zzping_collector::task_supervisor::HealthReport>(10);
+        tokio::sync::mpsc::channel::<crate::task_supervisor::HealthReport>(10);
     let (_shutdown_tx, shutdown_rx) =
-        tokio::sync::mpsc::channel::<zzping_collector::task_supervisor::SupervisorShutdown>(1);
+        tokio::sync::mpsc::channel::<crate::task_supervisor::SupervisorShutdown>(1);
     let (_fsync_tx, fsync_rx) = tokio::sync::mpsc::channel::<u64>(10);
 
     // Run supervisor in background
@@ -247,9 +247,9 @@ async fn test_supervisor_schedules_swap_and_applies_role() {
     let (s_cfg_tx, s_cfg_rx) = tokio::sync::watch::channel::<Option<SupervisorConfig>>(None);
     let (_s_client_tx, s_client_rx) = tokio::sync::mpsc::channel::<ClientUpdate>(10);
     let (s_health_tx, _s_health_rx) =
-        tokio::sync::mpsc::channel::<zzping_collector::task_supervisor::HealthReport>(10);
+        tokio::sync::mpsc::channel::<crate::task_supervisor::HealthReport>(10);
     let (_s_shutdown_tx, s_shutdown_rx) =
-        tokio::sync::mpsc::channel::<zzping_collector::task_supervisor::SupervisorShutdown>(1);
+        tokio::sync::mpsc::channel::<crate::task_supervisor::SupervisorShutdown>(1);
     let (_s_fsync_tx, s_fsync_rx) = tokio::sync::mpsc::channel::<u64>(10);
 
     // Run the small supervisor
@@ -314,7 +314,7 @@ async fn test_supervisor_schedules_swap_and_applies_role() {
 #[tokio::test]
 #[timeout(1000)]
 async fn test_supervisor_cancels_scheduled_swap_on_config_change() {
-    use zzping_collector::task_supervisor::ClientUpdate;
+    use crate::task_supervisor::ClientUpdate;
 
     // Setup a small supervisor with a single mock worker to observe commands
     let mut small_sup = TaskSupervisor::new("cancel-uuid".to_string(), 1000, None);
@@ -325,9 +325,9 @@ async fn test_supervisor_cancels_scheduled_swap_on_config_change() {
     let (s_cfg_tx, s_cfg_rx) = tokio::sync::watch::channel::<Option<SupervisorConfig>>(None);
     let (_s_client_tx, s_client_rx) = tokio::sync::mpsc::channel::<ClientUpdate>(10);
     let (s_health_tx, _s_health_rx) =
-        tokio::sync::mpsc::channel::<zzping_collector::task_supervisor::HealthReport>(10);
+        tokio::sync::mpsc::channel::<crate::task_supervisor::HealthReport>(10);
     let (_s_shutdown_tx, s_shutdown_rx) =
-        tokio::sync::mpsc::channel::<zzping_collector::task_supervisor::SupervisorShutdown>(1);
+        tokio::sync::mpsc::channel::<crate::task_supervisor::SupervisorShutdown>(1);
     let (_s_fsync_tx, s_fsync_rx) = tokio::sync::mpsc::channel::<u64>(10);
 
     // Run supervisor
