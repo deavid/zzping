@@ -1,6 +1,6 @@
 use crate::actor::{FrameFromTransport, TransportTerminated, ZzNetConnActor};
 use crate::bus::{DataForRoom, RoomIsActive, RoomTerminated};
-use crate::mocks::start_mock_connection_manager;
+use crate::mocks::{start_mock_connection_manager, SimpleMockTransportActor};
 use crate::protocol::{Frame, HandshakeFrame, RoomFrame, serialize};
 use actix::prelude::*;
 use std::time::Duration;
@@ -75,7 +75,7 @@ async fn test_full_handshake_and_notification() {
     });
 
     // Start the actor manually
-    let transport = crate::mocks::MockTransportActor::default().start();
+    let transport = SimpleMockTransportActor::default().start();
     let mut subscribers = std::collections::HashMap::new();
     subscribers.insert(
         "intent-config".to_string(),
@@ -123,7 +123,7 @@ async fn test_late_subscriber() {
     let (mock_mgr_addr, _harness) = start_mock_connection_manager();
 
     // Start actor first
-    let transport = crate::mocks::MockTransportActor::default().start();
+    let transport = SimpleMockTransportActor::default().start();
     let subscribers = std::collections::HashMap::new();
     let actor = ZzNetConnActor::new(
         transport.recipient(),
@@ -190,7 +190,7 @@ async fn test_data_round_trip() {
     });
 
     // Start the actor
-    let transport = crate::mocks::MockTransportActor::default().start();
+    let transport = SimpleMockTransportActor::default().start();
     let mut subscribers = std::collections::HashMap::new();
     subscribers.insert(
         "room-a".to_string(),
@@ -335,7 +335,7 @@ async fn test_shutdown_cascade() {
     });
 
     // Start the actor
-    let transport = crate::mocks::MockTransportActor::default().start();
+    let transport = SimpleMockTransportActor::default().start();
     let mut subscribers = std::collections::HashMap::new();
     subscribers.insert(
         "room-a".to_string(),
