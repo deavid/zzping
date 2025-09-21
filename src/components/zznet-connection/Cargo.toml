@@ -13,6 +13,7 @@ anyhow = { workspace = true }
 bincode = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
+thiserror = { workspace = true }
 tokio = { workspace = true }
 env_logger = { workspace = true }
 

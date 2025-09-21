@@ -5,64 +5,140 @@
 //!
 //! ## Overview
 //!
-//! The mock transport simulates a perfect network link with the following characteristics:
+//! The mock system is split into two separate components for proper separation of concerns:
 //!
-//! - **Full-duplex communication**: Bidirectional data flow using paired bounded channels (128 slot buffer)
-//! - **Connection simulation**: Creates connected pairs of `MockTransportConnectionActor`s
-//! - **Actor-based architecture**: Uses Actix actors for concurrency and message passing
-//! - **Lifecycle management**: Proper startup, operation, and shutdown of mock connections
+//! ### Transport Layer Mocking
+//! - **`MockTransportManager`**: Simulates the transport layer with full-duplex communication
+//! - **`MockTransportHarness`**: Test control interface for transport simulation
+//! - Creates connected pairs of `MockTransportConnectionActor`s to simulate network links
 //!
-//! ## Limitations and Constraints
-//!
-//! This mock simulates a perfect network link. It does **not** simulate:
-//!
-//! - **Network latency or delays**: All data transfer is instantaneous
-//! - **Packet loss or reordering**: No data is dropped or reordered
-//! - **Connection failures or drops mid-stream**: Connections remain stable once established
-//! - **Backpressure from finite network buffers**: Uses bounded channels with 128 slots, but does not simulate network buffer limits
-//! - **The zznet handshake protocol**: Only provides the raw transport layer for it
-//! - **Address or peer information**: No simulation of network addresses, ports, or peer metadata
-//! - **Network conditions**: No bandwidth throttling, jitter, or other network impairments
+//! ### Bus Interface Mocking
+//! - **`MockZzNetConnManager`**: Simulates the connection manager's bus interface
+//! - **`MockBusHarness`**: Test control interface for bus interface simulation
+//! - Handles room subscription logic and room activation notifications
 //!
 //! ## Usage in Tests
 //!
-//! ```rust,ignore
-//! use zznet_mocks::{MockHarnessFactory, ZzNetConnActor};
+//! ### Transport Testing
+//! ```rust
+//! use zznet_connection::mocks::{MockHarnessFactory, SimpleMockTransportActor};
+//! use zznet_connection::actor::ZzNetConnActor;
+//! use zznet_connection::auth::AuthRole;
+//! use actix::prelude::*;
+//! use std::collections::HashMap;
+//! use tokio;
 //!
-//! // Create the mock harness
-//! let (manager_addr, harness) = MockHarnessFactory.start();
+//! #[actix::main]
+//! async fn main() {
+//!     // Create the transport mock harness
+//!     let (transport_mgr, transport_harness) = MockHarnessFactory.transport_manager();
 //!
-//! // Create your ZzNetConnActors (real or mock implementations)
-//! let client_actor = ZzNetConnActor.start();
-//! let server_actor = ZzNetConnActor.start();
+//!     // Create ZzNetConnActors with proper initialization
+//!     let dummy_transport = SimpleMockTransportActor::default().start();
+//!     let client_actor = ZzNetConnActor::new(
+//!         dummy_transport.recipient(),
+//!         HashMap::new(),
+//!         "1.0".to_string(),
+//!         AuthRole::Collector,
+//!         vec![],
+//!         transport_mgr.clone().recipient(),
+//!     ).start();
 //!
-//! // Simulate a connection
-//! harness.simulate_connection(client_actor, server_actor).await;
+//!     let dummy_transport2 = SimpleMockTransportActor::default().start();
+//!     let server_actor = ZzNetConnActor::new(
+//!         dummy_transport2.recipient(),
+//!         HashMap::new(),
+//!         "1.0".to_string(),
+//!         AuthRole::Collector,
+//!         vec![],
+//!         transport_mgr.recipient(),
+//!     ).start();
 //!
-//! // Run your test logic...
+//!     // Simulate a connection
+//!     transport_harness.simulate_connection(client_actor, server_actor).await;
 //!
-//! // Clean up
-//! harness.shutdown().await;
+//!     // Clean up
+//!     transport_harness.shutdown().await;
+//! }
+//! ```
+//!
+//! ### Bus Interface Testing
+//! ```rust
+//! use zznet_connection::mocks::{MockHarnessFactory, SimpleMockTransportActor};
+//! use zznet_connection::bus::{SubscribeToRoom, RoomIsActive, DataForRoom, RoomTerminated};
+//! use zznet_connection::actor::ZzNetConnActor;
+//! use zznet_connection::auth::AuthRole;
+//! use actix::prelude::*;
+//! use std::collections::HashMap;
+//! use tokio;
+//!
+//! // Mock actor to receive bus messages
+//! #[derive(Default)]
+//! struct MockReceiver;
+//!
+//! impl Actor for MockReceiver {
+//!     type Context = Context<Self>;
+//! }
+//!
+//! impl Handler<RoomIsActive> for MockReceiver {
+//!     type Result = ();
+//!     fn handle(&mut self, _msg: RoomIsActive, _ctx: &mut Context<Self>) {}
+//! }
+//!
+//! impl Handler<DataForRoom> for MockReceiver {
+//!     type Result = ();
+//!     fn handle(&mut self, _msg: DataForRoom, _ctx: &mut Context<Self>) {}
+//! }
+//!
+//! impl Handler<RoomTerminated> for MockReceiver {
+//!     type Result = ();
+//!     fn handle(&mut self, _msg: RoomTerminated, _ctx: &mut Context<Self>) {}
+//! }
+//!
+//! #[actix::main]
+//! async fn main() {
+//!     // Create the bus interface mock harness
+//!     let (bus_mgr, bus_harness) = MockHarnessFactory.connection_manager();
+//!
+//!     // Create a mock receiver for bus messages
+//!     let receiver = MockReceiver::default().start();
+//!
+//!     // Subscribe to rooms through the bus interface
+//!     bus_mgr.do_send(SubscribeToRoom {
+//!         room_name: "room-name".to_string(),
+//!         room_is_active_recipient: receiver.clone().recipient(),
+//!         data_recipient: receiver.clone().recipient(),
+//!         termination_recipient: receiver.recipient(),
+//!     });
+//!
+//!     // Simulate room activation
+//!     bus_harness.simulate_room_is_active("room-name".to_string()).await;
+//!
+//!     // Check subscriber count
+//!     let count = bus_harness.get_subscriber_count("room-name").await;
+//!     assert_eq!(count, 1);
+//! }
 //! ```
 //!
 //! ## Architecture
 //!
-//! - `MockHarnessFactory`: Entry point for creating test setups
-//! - `MockTransportHarness`: Test control interface
-//! - `MockTransportManager`: Orchestrates connection creation and lifecycle
+//! - `MockHarnessFactory`: Entry point for creating separate mock setups
+//! - `MockTransportManager` & `MockTransportHarness`: Transport layer simulation
+//! - `MockZzNetConnManager` & `MockBusHarness`: Bus interface simulation
 //! - `MockTransportConnectionActor`: Simulates individual network connections
 //! - `ZzNetConnActor`: Trait/interface for components using the transport
-//!
-//! For tests requiring realistic network conditions, consider using real network
-//! transports or advanced network simulation tools.
 
 pub mod connection;
+pub mod connection_manager;
 pub mod factory;
 pub mod harness;
 pub mod manager;
 
 // Re-export commonly used items
 pub use connection::{MockTransportConnectionActor, SimpleMockTransportActor};
-pub use factory::start_mock_connection_manager;
-pub use harness::{HarnessCommand, MockTransportHarness};
-pub use manager::{MockBusCommand, MockTransportManager};
+pub use connection_manager::{MockConnManagerCommand, MockZzNetConnManager};
+pub use factory::{
+    MockHarnessFactory, start_mock_connection_manager, start_mock_transport_manager,
+};
+pub use harness::{HarnessCommand, MockBusHarness, MockTransportHarness};
+pub use manager::MockTransportManager;

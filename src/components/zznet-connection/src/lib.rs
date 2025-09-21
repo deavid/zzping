@@ -52,7 +52,9 @@
 //! details of protocol handshakes or data framing.
 
 pub mod actor;
+pub mod auth;
 pub mod bus;
+pub mod error;
 pub mod manager;
 pub mod mocks;
 pub mod protocol;

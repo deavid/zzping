@@ -1,4 +1,5 @@
 use crate::actor::{FrameFromTransport, TransportTerminated, ZzNetConnActor};
+use crate::auth::AuthRole;
 use crate::bus::{DataForRoom, RoomIsActive, RoomTerminated};
 use crate::mocks::{start_mock_connection_manager, SimpleMockTransportActor};
 use crate::protocol::{Frame, HandshakeFrame, RoomFrame, serialize};
@@ -89,7 +90,7 @@ async fn test_full_handshake_and_notification() {
         transport.recipient(),
         subscribers,
         "1.0".to_string(),
-        "client".to_string(),
+        AuthRole::Collector,
         vec!["intent-config".to_string()],
         mock_mgr_addr.clone().recipient(),
     );
@@ -98,7 +99,7 @@ async fn test_full_handshake_and_notification() {
     // Send Hello from peer
     let hello_frame = Frame::Handshake(HandshakeFrame::Hello {
         protocol_version: "1.0".to_string(),
-        auth_role: "server".to_string(),
+        auth_role: AuthRole::Database,
         offered_rooms: vec!["intent-config".to_string()],
     });
     let hello_data = serialize(&hello_frame).unwrap();
@@ -129,7 +130,7 @@ async fn test_late_subscriber() {
         transport.recipient(),
         subscribers,
         "1.0".to_string(),
-        "client".to_string(),
+        AuthRole::Collector,
         vec!["intent-config".to_string()],
         mock_mgr_addr.clone().recipient(),
     );
@@ -138,7 +139,7 @@ async fn test_late_subscriber() {
     // Complete handshake
     let hello_frame = Frame::Handshake(HandshakeFrame::Hello {
         protocol_version: "1.0".to_string(),
-        auth_role: "server".to_string(),
+        auth_role: AuthRole::Database,
         offered_rooms: vec!["intent-config".to_string()],
     });
     let hello_data = serialize(&hello_frame).unwrap();
@@ -204,7 +205,7 @@ async fn test_data_round_trip() {
         transport.recipient(),
         subscribers,
         "1.0".to_string(),
-        "client".to_string(),
+        AuthRole::Collector,
         vec!["room-a".to_string()],
         mock_mgr_addr.clone().recipient(),
     );
@@ -213,7 +214,7 @@ async fn test_data_round_trip() {
     // Send Hello from peer
     let hello_frame = Frame::Handshake(HandshakeFrame::Hello {
         protocol_version: "1.0".to_string(),
-        auth_role: "server".to_string(),
+        auth_role: AuthRole::Database,
         offered_rooms: vec!["room-a".to_string()],
     });
     let hello_data = serialize(&hello_frame).unwrap();
@@ -275,7 +276,7 @@ async fn test_data_round_trip() {
 #[ntest::timeout(1000)]
 async fn test_late_subscriber_republication() {
     // Test 2: Late Subscriber (Re-Publication)
-    let (mock_mgr_addr, _harness) = start_mock_connection_manager();
+    let (mock_mgr_addr, harness) = start_mock_connection_manager();
 
     // Subscribe first
     let (tx, _rx) = mpsc::unbounded_channel();
@@ -288,9 +289,7 @@ async fn test_late_subscriber_republication() {
     });
 
     // Simulate the room becoming active
-    mock_mgr_addr.do_send(crate::mocks::MockBusCommand::SimulateRoomIsActive(
-        "room-a".to_string(),
-    ));
+    harness.simulate_room_is_active("room-a".to_string()).await;
 
     // Now, subscribe a new MockRoomManager.
     let (tx2, mut rx2) = mpsc::unbounded_channel();
@@ -349,7 +348,7 @@ async fn test_shutdown_cascade() {
         transport.recipient(),
         subscribers,
         "1.0".to_string(),
-        "client".to_string(),
+        AuthRole::Collector,
         vec!["room-a".to_string()],
         mock_mgr_addr.clone().recipient(),
     );
@@ -358,7 +357,7 @@ async fn test_shutdown_cascade() {
     // Complete handshake
     let hello_frame = Frame::Handshake(HandshakeFrame::Hello {
         protocol_version: "1.0".to_string(),
-        auth_role: "server".to_string(),
+        auth_role: AuthRole::Database,
         offered_rooms: vec!["room-a".to_string()],
     });
     let hello_data = serialize(&hello_frame).unwrap();

@@ -3,7 +3,8 @@
 //! The `MockTransportHarness` is the primary tool a test will use to interact
 //! with and drive the behavior of the simulated network.
 
-use super::manager::{MockTransportManager, MockBusCommand};
+use super::connection_manager::{MockConnManagerCommand, MockZzNetConnManager};
+use super::manager::MockTransportManager;
 use crate::actor::ZzNetConnActor;
 use actix::prelude::*;
 use tokio::sync::oneshot;
@@ -64,16 +65,33 @@ impl MockTransportHarness {
     pub async fn shutdown(&self) {
         self.manager.do_send(HarnessCommand::Shutdown);
     }
+}
+
+/// The public-facing test harness for controlling bus interface mocking.
+///
+/// This harness controls a `MockZzNetConnManager` and provides methods to
+/// simulate room activation and query subscription state.
+pub struct MockBusHarness {
+    /// The address of the `MockZzNetConnManager` actor that this harness controls.
+    manager: Addr<MockZzNetConnManager>,
+}
+
+impl MockBusHarness {
+    /// Creates a new harness that controls the given manager.
+    /// This is typically called by the `MockHarnessFactory`.
+    pub fn new(manager: Addr<MockZzNetConnManager>) -> Self {
+        Self { manager }
+    }
 
     /// Simulate a room becoming active (for connection manager functionality).
     pub async fn simulate_room_is_active(&self, room_name: String) {
-        self.manager.do_send(MockBusCommand::SimulateRoomIsActive(room_name));
+        self.manager.do_send(MockConnManagerCommand::SimulateRoomIsActive(room_name));
     }
 
     /// Get the number of subscribers for a room (for connection manager functionality).
     pub async fn get_subscriber_count(&self, room_name: &str) -> usize {
         let (tx, rx) = oneshot::channel();
-        self.manager.do_send(MockBusCommand::GetSubscriberCount(
+        self.manager.do_send(MockConnManagerCommand::GetSubscriberCount(
             room_name.to_string(),
             tx,
         ));

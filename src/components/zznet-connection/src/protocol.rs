@@ -3,14 +3,15 @@
 //! This module is deliberately isolated from any actor or network I/O details,
 //! allowing the handshake logic to be unit-tested in a simple, synchronous manner.
 
-use anyhow::Result;
+use crate::auth::AuthRole;
+use crate::error::{Result, ZzNetConnectionError};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum HandshakeFrame {
     Hello {
         protocol_version: String,
-        auth_role: String,
+        auth_role: AuthRole,
         offered_rooms: Vec<String>,
     },
 }
@@ -28,11 +29,11 @@ pub enum Frame {
 }
 
 pub fn serialize(frame: &Frame) -> Result<Vec<u8>> {
-    bincode::serialize(frame).map_err(Into::into)
+    bincode::serialize(frame).map_err(ZzNetConnectionError::Serialization)
 }
 
 pub fn deserialize(data: &[u8]) -> Result<Frame> {
-    bincode::deserialize(data).map_err(Into::into)
+    bincode::deserialize(data).map_err(ZzNetConnectionError::Serialization)
 }
 
 /// Represents the current state of the handshake process.
@@ -83,7 +84,7 @@ impl Handshake {
     pub fn create_hello_frame(
         &mut self,
         protocol_version: String,
-        auth_role: String,
+        auth_role: AuthRole,
         offered_rooms: Vec<String>,
     ) -> Result<Vec<u8>> {
         match self.state {
@@ -101,10 +102,10 @@ impl Handshake {
                 log::info!("Handshake state -> SentHello");
                 Ok(serialized)
             }
-            _ => Err(anyhow::anyhow!(
+            _ => Err(ZzNetConnectionError::InvalidState(format!(
                 "Cannot create hello frame from state {:?}",
                 self.state
-            )),
+            ))),
         }
     }
 
@@ -117,7 +118,7 @@ impl Handshake {
         match frame {
             Frame::Handshake(HandshakeFrame::Hello {
                 protocol_version: _,
-                auth_role: _,
+                auth_role,
                 offered_rooms: their_offered_rooms,
             }) => {
                 match &self.state {
@@ -129,17 +130,23 @@ impl Handshake {
                         self.state = HandshakeState::Failed(
                             "Received Hello before own rooms were configured".to_string(),
                         );
-                        Err(anyhow::anyhow!(
-                            "Received Hello before create_hello_frame was called."
+                        Err(ZzNetConnectionError::HandshakeFailed(
+                            "Received Hello before create_hello_frame was called.".to_string(),
                         ))
                     }
                     HandshakeState::SentHello { our_offered_rooms } => {
+                        // Validate that peer's auth_role can access offered rooms
+                        let valid_rooms: Vec<String> = their_offered_rooms
+                            .into_iter()
+                            .filter(|room| auth_role.can_access_room(room))
+                            .collect();
+
                         // This is the ideal case. We sent Hello, they sent Hello.
                         // Now we can compute the intersection and complete the handshake.
                         log::info!("Handshake: Received peer's Hello. Computing intersection.");
                         let intersection: Vec<String> = our_offered_rooms
                             .iter()
-                            .filter(|&room| their_offered_rooms.contains(room))
+                            .filter(|&room| valid_rooms.contains(room))
                             .cloned()
                             .collect();
 
@@ -156,11 +163,15 @@ impl Handshake {
                         Ok(None)
                     }
                     HandshakeState::Failed(..) => {
-                        Err(anyhow::anyhow!("Received a frame while in a Failed state."))
+                        Err(ZzNetConnectionError::InvalidState(
+                            "Received a frame while in a Failed state.".to_string(),
+                        ))
                     }
                 }
             }
-            Frame::Room(_) => Err(anyhow::anyhow!("Received Room frame during handshake")),
+            Frame::Room(_) => Err(ZzNetConnectionError::InvalidState(
+                "Received Room frame during handshake".to_string(),
+            )),
         }
     }
 }
@@ -188,7 +199,7 @@ mod tests {
         log::info!("Starting test_serialization_handshake_frame");
         let frame = Frame::Handshake(HandshakeFrame::Hello {
             protocol_version: "1.0".to_string(),
-            auth_role: "client".to_string(),
+            auth_role: AuthRole::Collector,
             offered_rooms: vec!["room1".to_string(), "room2".to_string()],
         });
         let serialized = serialize(&frame).unwrap();
@@ -227,7 +238,7 @@ mod tests {
         let frame_data = handshake
             .create_hello_frame(
                 "1.0".to_string(),
-                "client".to_string(),
+                AuthRole::Collector,
                 vec!["room1".to_string(), "room2".to_string()],
             )
             .unwrap();
@@ -239,7 +250,7 @@ mod tests {
                 offered_rooms,
             }) => {
                 assert_eq!(protocol_version, "1.0");
-                assert_eq!(auth_role, "client");
+                assert_eq!(auth_role, AuthRole::Collector);
                 assert_eq!(
                     offered_rooms,
                     vec!["room1".to_string(), "room2".to_string()]
@@ -259,22 +270,22 @@ mod tests {
         handshake
             .create_hello_frame(
                 "1.0".to_string(),
-                "client".to_string(),
-                vec!["room1".to_string(), "room2".to_string()],
+                AuthRole::Collector,
+                vec!["intent-config".to_string(), "room2".to_string()],
             )
             .unwrap();
 
         let peer_frame = Frame::Handshake(HandshakeFrame::Hello {
             protocol_version: "1.0".to_string(),
-            auth_role: "server".to_string(),
-            offered_rooms: vec!["room1".to_string(), "room3".to_string()],
+            auth_role: AuthRole::Database,
+            offered_rooms: vec!["intent-config".to_string(), "room3".to_string()],
         });
         let peer_data = serialize(&peer_frame).unwrap();
 
         let result = handshake.process_frame(peer_data).unwrap();
         assert!(result.is_none());
         assert!(handshake.is_complete());
-        assert_eq!(handshake.active_rooms(), Some(&["room1".to_string()][..]));
+        assert_eq!(handshake.active_rooms(), Some(&["intent-config".to_string()][..]));
         log::info!("Completed test_process_frame_valid_hello");
     }
 
@@ -286,7 +297,7 @@ mod tests {
         handshake
             .create_hello_frame(
                 "1.0".to_string(),
-                "client".to_string(),
+                AuthRole::Collector,
                 vec!["room1".to_string()],
             )
             .unwrap();

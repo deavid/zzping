@@ -3,6 +3,7 @@
 //! This actor manages the `zznet` protocol for a single, underlying transport connection.
 //! Its lifetime is tied to that connection.
 
+use crate::auth::AuthRole;
 use crate::bus::{DataForRoom, RoomIsActive, RoomSubscribers, RoomTerminated, SendDataToRoom};
 use crate::protocol::{Frame, Handshake, deserialize, serialize};
 use actix::prelude::*;
@@ -21,7 +22,7 @@ pub struct ZzNetConnActor {
     /// Protocol version to use.
     protocol_version: String,
     /// Auth role.
-    auth_role: String,
+    auth_role: AuthRole,
     /// Offered rooms.
     offered_rooms: Vec<String>,
     /// Active rooms after negotiation.
@@ -83,7 +84,7 @@ impl ZzNetConnActor {
         transport: Recipient<FrameForTransport>,
         subscribers: HashMap<String, RoomSubscribers>,
         protocol_version: String,
-        auth_role: String,
+        auth_role: AuthRole,
         offered_rooms: Vec<String>,
         manager: Recipient<ConnectionTerminated>,
     ) -> Self {
@@ -104,26 +105,33 @@ impl ZzNetConnActor {
 impl Actor for ZzNetConnActor {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Context<Self>) {
+    fn started(&mut self, ctx: &mut Context<Self>) {
         log::info!("ZzNetConnActor started. Beginning handshake.");
         // In a real implementation, we might need to tell the transport
         // that we are ready to receive frames. For now, we assume it starts sending.
 
         // Kick off the handshake by sending the first Hello message.
-        let hello_frame = self
-            .handshake
-            .create_hello_frame(
-                self.protocol_version.clone(),
-                self.auth_role.clone(),
-                self.offered_rooms.clone(),
-            )
-            .unwrap();
+        let hello_frame = match self.handshake.create_hello_frame(
+            self.protocol_version.clone(),
+            self.auth_role.clone(),
+            self.offered_rooms.clone(),
+        ) {
+            Ok(frame) => frame,
+            Err(e) => {
+                log::error!("Failed to create hello frame: {}", e);
+                ctx.stop();
+                return;
+            }
+        };
         self.transport.do_send(FrameForTransport(hello_frame));
     }
 
-    fn stopped(&mut self, _ctx: &mut Context<Self>) {
+    fn stopped(&mut self, ctx: &mut Context<Self>) {
         log::info!("ZzNetConnActor stopped.");
-        // TODO: Notify the manager that this connection has died.
+        // Send termination notification to manager
+        self.manager.do_send(ConnectionTerminated {
+            connection_actor: ctx.address(),
+        });
     }
 }
 
@@ -157,7 +165,14 @@ impl Handler<FrameFromTransport> for ZzNetConnActor {
                         let publish_frame = Frame::Room(crate::protocol::RoomFrame::PublishRooms {
                             offered_rooms: self.offered_rooms.clone(),
                         });
-                        let serialized = serialize(&publish_frame).unwrap();
+                        let serialized = match serialize(&publish_frame) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                log::error!("Failed to serialize publish frame: {}", e);
+                                ctx.stop();
+                                return;
+                            }
+                        };
                         self.transport.do_send(FrameForTransport(serialized));
                         self.state = ConnActorState::AwaitingRooms;
                     }
@@ -250,14 +265,17 @@ impl Handler<NewTransportConnection> for ZzNetConnActor {
         self.transport = msg.transport_handle;
         // If not yet started handshake, send hello now.
         if self.state == ConnActorState::AwaitingHandshake {
-            let hello_frame = self
-                .handshake
-                .create_hello_frame(
-                    self.protocol_version.clone(),
-                    self.auth_role.clone(),
-                    self.offered_rooms.clone(),
-                )
-                .unwrap();
+            let hello_frame = match self.handshake.create_hello_frame(
+                self.protocol_version.clone(),
+                self.auth_role.clone(),
+                self.offered_rooms.clone(),
+            ) {
+                Ok(frame) => frame,
+                Err(e) => {
+                    log::error!("Failed to create hello frame: {}", e);
+                    return;
+                }
+            };
             self.transport.do_send(FrameForTransport(hello_frame));
         }
     }
@@ -307,7 +325,13 @@ impl Handler<RepublishRooms> for ZzNetConnActor {
             let publish_frame = Frame::Room(crate::protocol::RoomFrame::PublishRooms {
                 offered_rooms: self.offered_rooms.clone(),
             });
-            let serialized = serialize(&publish_frame).unwrap();
+            let serialized = match serialize(&publish_frame) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("Failed to serialize republish frame: {}", e);
+                    return;
+                }
+            };
             self.transport.do_send(FrameForTransport(serialized));
         }
     }
@@ -328,7 +352,13 @@ impl Handler<SendDataToRoom> for ZzNetConnActor {
                 room: msg.room_name,
                 data: msg.data,
             });
-            let serialized = serialize(&frame).unwrap();
+            let serialized = match serialize(&frame) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("Failed to serialize message frame: {}", e);
+                    return;
+                }
+            };
             self.transport.do_send(FrameForTransport(serialized));
         } else {
             log::warn!("Attempted to send data to inactive room: {}", msg.room_name);

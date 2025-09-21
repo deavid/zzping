@@ -6086,6 +6086,7 @@ dependencies = [
  "log",
  "ntest",
  "serde",
+ "thiserror 2.0.16",
  "tokio",
 ]
 

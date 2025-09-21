@@ -5,8 +5,9 @@
 //! underlying transport connection.
 
 use crate::actor::ZzNetConnActor;
-use crate::actor::{ConnectionTerminated, FrameForTransport};
-use crate::bus::{RoomSubscribers, SubscribeToRoom, UnsubscribeFromRoom};
+use crate::actor::{ConnectionTerminated, FrameForTransport, RepublishRooms};
+use crate::auth::AuthRole;
+use crate::bus::{RoomSubscribers, RoomTerminated, SubscribeToRoom, UnsubscribeFromRoom};
 use actix::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -108,7 +109,7 @@ impl Handler<NewTransportConnection> for ZzNetConnManager {
             msg.transport_handle,
             self.subscribers.clone(),
             "1.0".to_string(),
-            "client".to_string(),
+            AuthRole::Collector,
             self.offered_rooms.iter().cloned().collect(),
             ctx.address().recipient(),
         )
@@ -122,9 +123,38 @@ impl Handler<ConnectionTerminated> for ZzNetConnManager {
 
     fn handle(&mut self, msg: ConnectionTerminated, _ctx: &mut Context<Self>) {
         log::info!("Connection terminated: {:?}", msg.connection_actor);
-        self.active_connections
-            .retain(|actor| actor != &msg.connection_actor);
-        // TODO: Clean up any state related to this connection.
+
+        // 1. Remove from active connections
+        let was_removed = self
+            .active_connections
+            .iter()
+            .position(|actor| actor == &msg.connection_actor)
+            .map(|pos| self.active_connections.remove(pos))
+            .is_some();
+
+        if was_removed {
+            // 2. Notify subscribers about connection loss for active rooms
+            for (room_name, subscribers) in &self.subscribers {
+                if self.offered_rooms.contains(room_name) {
+                    subscribers.termination.do_send(RoomTerminated {
+                        room_name: room_name.clone(),
+                    });
+                }
+            }
+
+            // 3. Re-publish rooms to remaining connections to maintain service
+            for actor in &self.active_connections {
+                actor.do_send(RepublishRooms {
+                    subscribers: self.subscribers.clone(),
+                });
+            }
+
+            // 4. Log connection count for monitoring
+            log::info!(
+                "Active connections after cleanup: {}",
+                self.active_connections.len()
+            );
+        }
     }
 }
 
