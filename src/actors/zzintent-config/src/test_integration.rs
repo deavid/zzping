@@ -2,6 +2,33 @@
 
 // To run: cargo test --test integration -- --nocapture
 
+// FIXME: This entire test file represents architectural debt - it's a proof-of-concept
+// that was never completed. The following issues need to be addressed:
+//
+// 1. BIDIRECTIONAL COMMUNICATION MISSING:
+//    - WriteData handler is a stub that doesn't actually process data
+//    - Sessions should send responses/acknowledgments back to remote peers
+//    - No testing of outbound intent-config protocol messages
+//
+// 2. PROTOCOL TRANSLATION LAYER MISSING:
+//    - Test uses generic WriteData/Data messages instead of actual IntentConfigData/UpdateConfig
+//    - Missing bridge between network layer and intent-config application layer
+//    - No validation of actual intent-config protocol semantics
+//
+// 3. INCOMPLETE MOCK INFRASTRUCTURE:
+//    - SimulateIncomingData exists but has no handler implementation
+//    - Test bypasses proper network simulation by directly sending Data to sessions
+//    - Mock transport layer incomplete (comment: "A full harness would use channels")
+//
+// 4. MISSING TEST SCENARIOS:
+//    - No testing of configuration responses, heartbeats, or acknowledgments
+//    - No error scenario testing (connection failures, malformed data)
+//    - No testing of session lifecycle management
+//
+// TODO: Either complete the bidirectional test infrastructure or replace with focused unit tests
+// TODO: Add protocol translation layer between network messages and intent-config messages
+// TODO: Implement proper mock transport layer with channels for bidirectional data flow
+
 use actix::prelude::*;
 use std::collections::HashMap;
 
@@ -16,8 +43,12 @@ use std::collections::HashMap;
 pub type RoomHandle = Addr<MockRoom>;
 
 /// Message sent FROM an application TO a Room to send data.
+/// FIXME: This message type exists but is never actually sent in tests
+/// TODO: Implement bidirectional communication - sessions should send config responses
+/// TODO: Test scenarios: acknowledgments, heartbeats, error reports, config updates
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
+#[allow(dead_code)] // Intentionally unused in this proof-of-concept - see TODO comments above
 pub struct WriteData(pub Vec<u8>);
 
 /// Message sent FROM a Room TO an application with received data.
@@ -49,8 +80,12 @@ pub struct NewRoom(pub RoomHandle);
 // Simulates a single, logical network channel.
 
 /// Message our test can send TO the MockRoom to simulate receiving data.
+/// FIXME: This struct is defined but never constructed - missing Handler implementation
+/// TODO: Implement Handler<SimulateIncomingData> for MockRoom to enable proper network simulation
+/// TODO: Use this instead of directly sending Data messages to sessions (bypasses network layer)
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
+#[allow(dead_code)] // Intentionally unused in this proof-of-concept - see TODO comments above
 pub struct SimulateIncomingData(pub Vec<u8>);
 
 pub struct MockRoom {
@@ -65,10 +100,15 @@ impl Actor for MockRoom {
 // Handler for data coming FROM the application actor.
 impl Handler<WriteData> for MockRoom {
     type Result = ();
-    fn handle(&mut self, msg: WriteData, ctx: &mut Context<Self>) {
+    // FIXME: Intentionally incomplete handler - represents architectural debt
+    // TODO: Process msg.0 (Vec<u8>) data and forward to mock transport layer
+    // TODO: Use ctx for actor lifecycle management if needed
+    // TODO: Implement proper bidirectional mock transport with channels
+    fn handle(&mut self, _msg: WriteData, _ctx: &mut Context<Self>) {
         println!("[MockRoom] Received data from application, forwarding to test.");
         // This is where it would send to the other side of the mock connection.
         // For this simple test, we can just log it. A full harness would use channels.
+        // TODO: Replace this comment with actual implementation or remove if not needed
     }
 }
 
@@ -243,9 +283,17 @@ impl Handler<Data> for IntentConfigSessionActor {
     fn handle(&mut self, msg: Data, _ctx: &mut Context<Self>) {
         let text = String::from_utf8_lossy(&msg.0);
         println!("[AppSession] Received data from room: '{}'", text);
+        // TODO: This is using a simple string protocol instead of actual intent-config messages
+        // TODO: Replace with proper deserialization of IntentConfigData, UpdateConfig, etc.
+        // TODO: Add error handling for malformed protocol messages
+        // TODO: Implement protocol versioning and backwards compatibility
         if let Some(update) = text.strip_prefix("UPDATE: ") {
+            // TODO: Convert string to proper IntentConfigData structure
+            // TODO: Send UpdateConfig message to actual IntentConfigActor instead of simple string
             self.supervisor.do_send(InternalUpdate(update.to_string()));
         }
+        // TODO: Add support for other message types: Subscribe, Unsubscribe, config requests
+        // TODO: Send acknowledgments back via self.room.do_send(WriteData(...))
     }
 }
 
@@ -255,6 +303,13 @@ impl Handler<Data> for IntentConfigSessionActor {
 
 #[actix::test]
 async fn test_full_lifecycle_proof_of_concept() {
+    // NOTE: This is an intentionally incomplete proof-of-concept test
+    // See file-level FIXME comments for comprehensive list of architectural debt
+    // Current limitations:
+    // - Only tests unidirectional communication (incoming data)
+    // - Uses string-based protocol instead of actual IntentConfigData messages
+    // - Bypasses network layer simulation (sends Data directly to sessions)
+    // - No testing of outbound messages, error scenarios, or protocol edge cases
     use std::time::Duration;
     let _ = env_logger::builder().is_test(true).try_init();
 
@@ -277,6 +332,9 @@ async fn test_full_lifecycle_proof_of_concept() {
 
     // ACT: Simulate the remote peer sending an "Update" message.
     println!("\n--- TEST: Simulating incoming data ---");
+    // FIXME: This comment reveals the architectural problems in the test design:
+    // "This part is tricky with the MockRoom setup, a full harness would be better"
+    // TODO: Implement proper SimulateIncomingData handler instead of bypassing network layer
     // (This part is tricky with the MockRoom setup, a full harness would be better)
     // A real test harness would hold the other side of the mpsc channels.
     // For this PoC, we assert on the state change.
@@ -285,6 +343,9 @@ async fn test_full_lifecycle_proof_of_concept() {
     let state = app_supervisor.send(GetState).await.unwrap();
     assert_eq!(state, ""); // Default state
 
+    // FIXME: This bypasses the intended network simulation architecture
+    // TODO: Replace with proper network-layer simulation: bus.do_send(SimulateIncomingData(...))
+    // TODO: Add protocol translation: convert raw bytes to IntentConfigData messages
     // Simulate sending data to the session actor (a real test would do this via the mock bus)
     let sessions = app_supervisor.send(GetSessions).await.unwrap();
     assert_eq!(sessions.len(), 1);
