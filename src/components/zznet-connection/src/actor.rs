@@ -41,18 +41,6 @@ pub struct FrameFromTransport(pub Vec<u8>);
 #[rtype(result = "()")]
 pub struct FrameForTransport(pub Vec<u8>);
 
-/// The notification sent from the transport layer to a `ZzNetConnActor`
-/// when a new connection is available.
-#[derive(Message, Debug)]
-#[rtype(result = "()")]
-pub struct NewTransportConnection {
-    /// A handle to the newly created transport connection actor. The consumer
-    /// will use this to send outgoing frames.
-    pub transport_handle: Recipient<FrameForTransport>,
-    // In a real transport, you might also include the remote peer's address.
-    // pub peer_addr: std::net::SocketAddr,
-}
-
 /// A message sent from the transport to indicate termination.
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -257,30 +245,6 @@ impl Handler<FrameForTransport> for ZzNetConnActor {
 }
 
 /// Handles new transport connection notification.
-impl Handler<NewTransportConnection> for ZzNetConnActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: NewTransportConnection, _ctx: &mut Context<Self>) {
-        log::debug!("ZzNetConnActor received new transport connection.");
-        self.transport = msg.transport_handle;
-        // If not yet started handshake, send hello now.
-        if self.state == ConnActorState::AwaitingHandshake {
-            let hello_frame = match self.handshake.create_hello_frame(
-                self.protocol_version.clone(),
-                self.auth_role.clone(),
-                self.offered_rooms.clone(),
-            ) {
-                Ok(frame) => frame,
-                Err(e) => {
-                    log::error!("Failed to create hello frame: {}", e);
-                    return;
-                }
-            };
-            self.transport.do_send(FrameForTransport(hello_frame));
-        }
-    }
-}
-
 /// Handles transport termination.
 impl Handler<TransportTerminated> for ZzNetConnActor {
     type Result = ();

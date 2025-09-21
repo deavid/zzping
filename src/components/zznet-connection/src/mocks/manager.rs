@@ -2,7 +2,7 @@
 
 use super::connection::{MockTransportConnectionActor, PoisonPill};
 use super::harness::HarnessCommand;
-use crate::actor::{ConnectionTerminated, NewTransportConnection};
+use crate::actor::ConnectionTerminated;
 use actix::prelude::*;
 use std::collections::HashMap;
 
@@ -33,53 +33,13 @@ impl Handler<HarnessCommand> for MockTransportManager {
     fn handle(&mut self, msg: HarnessCommand, _ctx: &mut Context<Self>) {
         match msg {
             HarnessCommand::SimulateConnection {
-                client_conn_actor,
-                server_conn_actor,
+                client_conn_actor: _client_conn_actor,
+                server_conn_actor: _server_conn_actor,
             } => {
-                log::debug!("MockTransportManager: Simulating a new connection.");
-
-                // Create two pairs of bounded channels to simulate a full-duplex connection.
-                // client_tx sends data from the "client" side to the "server" side.
-                // server_tx sends data from the "server" side to the "client" side.
-                let (client_tx, client_rx) = tokio::sync::mpsc::channel(128);
-                let (server_tx, server_rx) = tokio::sync::mpsc::channel(128);
-
-                // Spawn the "server" side of the connection.
-                let server_conn_addr = MockTransportConnectionActor::new(
-                    server_tx,
-                    client_rx,
-                    server_conn_actor.clone(),
-                )
-                .start();
-
-                // Spawn the "client" side of the connection.
-                let client_conn_addr = MockTransportConnectionActor::new(
-                    client_tx,
-                    server_rx,
-                    client_conn_actor.clone(),
-                )
-                .start();
-
-                // Track the connections
-                let conn_id = self.connection_counter;
-                self.connection_counter += 1;
-                self.active_connections
-                    .insert(conn_id, client_conn_addr.clone());
-                self.active_connections
-                    .insert(conn_id + 1, server_conn_addr.clone());
-
-                // Now, notify the real `ZzNetConnActor`s that their new transport
-                // connections are ready.
-
-                // The client ZzNetConnActor gets the client-side transport handle.
-                client_conn_actor.do_send(NewTransportConnection {
-                    transport_handle: client_conn_addr.recipient(),
-                });
-
-                // The server ZzNetConnActor gets the server-side transport handle.
-                server_conn_actor.do_send(NewTransportConnection {
-                    transport_handle: server_conn_addr.recipient(),
-                });
+                log::debug!(
+                    "MockTransportManager: DISABLED - this mock is broken and needs to be redesigned"
+                );
+                // TODO: Fix the lazy AI design - actors should be created with transports, not vice versa
             }
             HarnessCommand::Shutdown => {
                 log::debug!("MockTransportManager: Shutting down all connections.");

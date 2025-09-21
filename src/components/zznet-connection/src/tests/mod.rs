@@ -1,1 +1,9 @@
 pub mod integration;
+pub mod utils;
+pub mod end_to_end;
+pub mod protocol;
+pub mod room_lifecycle;
+pub mod connection_lifecycle;
+pub mod data_exchange;
+pub mod auth;
+pub mod error_handling;
