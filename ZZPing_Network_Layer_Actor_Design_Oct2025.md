@@ -1507,7 +1507,47 @@ These are questions that do not need to be answered now but may become relevant 
 
 **Decision**: Deferred. Application components should handle authorization (they know the business rules). Protocol layer can optionally filter rooms based on role if needed.
 
-### Question 3: Backpressure and Flow Control
+### Question 3: Protocol Versioning and Backwards Compatibility
+
+**Context**: The current design uses a simple `version: "1.0"` string in the `Hello` frame. Currently, version strings must match exactly or the connection is rejected. As the protocol evolves, we may need to support backwards compatibility to enable non-disruptive upgrades.
+
+**Key Questions to Explore Later**:
+
+1. **Upgrade Strategy**:
+   - In our deployment model, do we upgrade all services atomically (entire system goes down, upgrades, comes back up)?
+   - Or do we need rolling upgrades where old and new versions coexist temporarily?
+   - What's the typical upgrade window and acceptable downtime?
+
+2. **Compatibility Surface**:
+   - What changes to the protocol are "compatible" vs "breaking"?
+   - Adding new room types: compatible or breaking?
+   - Adding new fields to existing frames: compatible or breaking?
+   - Changing serialization format: always breaking?
+
+3. **Version Negotiation Mechanisms** (if needed):
+   - Simple rejection: "versions must match exactly" (current approach)
+   - Negotiation: "I support versions X, Y, Z; pick one we both support"
+   - Feature flags: "I support features A, B, C; use the intersection"
+   - Backwards compatibility mode: "new server can speak old protocol"
+
+4. **Discovery and Diagnostics**:
+   - When a version mismatch occurs, how does an operator discover it?
+   - What information is logged? (both versions, who rejected whom, why)
+   - Can we detect "mixed version" states in a cluster?
+
+5. **Migration Path**:
+   - If we later need to add versioning logic, can it be done without breaking existing deployments?
+   - Can we evolve from "exact match" to "negotiated match" gracefully?
+
+**Architectural Consideration**: The current design supports adding versioning logic later without fundamental changes:
+- The `Hello` frame already has a version field
+- The handshake phase is where version checking happens
+- We can evolve the version field from a simple string to a structured format (e.g., `{ major: 1, minor: 2, features: [...] }`) without changing the architecture
+- Compatibility logic would live in the `SessionActor` (protocol layer), not in application components
+
+**Current Decision**: Use exact version matching ("1.0" == "1.0" or reject). This is simple, forces clarity in deployments, and doesn't preclude adding negotiation later when we have actual compatibility requirements.
+
+### Question 4: Backpressure and Flow Control
 
 **Context**: If a component produces data faster than the network can send it, what happens?
 
@@ -1518,7 +1558,7 @@ These are questions that do not need to be answered now but may become relevant 
 
 **Decision**: Use bounded channels for session actors. If channel is full, sender is automatically back-pressured. This is simple and effective.
 
-### Question 4: Metrics and Observability
+### Question 5: Metrics and Observability
 
 **Context**: How do we expose metrics (e.g., active connections, messages sent/received, errors)?
 
