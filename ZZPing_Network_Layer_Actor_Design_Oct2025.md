@@ -68,6 +68,82 @@ Components must be implemented as isolated actors. Communication between compone
 
 **Rationale**: Enables independent testing, eliminates race conditions, and provides clear concurrency semantics.
 
+---
+
+## System Context and Operational Constraints
+
+Before diving into the architecture, it's critical to understand the operational context in which this network layer operates. These constraints justify many architectural decisions and explain why "fail fast, fail loud" is an appropriate strategy.
+
+### Service-Level Resilience Design
+
+**Network Partition Tolerance**: All zzping services are designed to survive network isolation for **at least 1 hour** with graceful degradation:
+- **Collectors** continue pinging targets and buffer results in local memory (memdb component)
+- **Database** continues serving queries with existing data
+- **GUI/CLI** freeze and work with cached local data
+
+**Fail-Static Behavior**: Services maintain their last-known-good state during network outages rather than failing open or closed unpredictably.
+
+**Operational Independence**: Each service is designed to not be a strict dependency of any other service. A service failure should not cascade to dependent services beyond the expected loss of that service's functionality.
+
+**Automatic Recovery**: Services are expected to be managed by process supervisors (systemd, Docker, Kubernetes) that automatically restart them on failure. Restart is fast and clean, with minimal operational impact.
+
+**Architectural Consequence**: This system-level resilience means the network layer can afford to "fail fast, fail loud" at the connection level. If a connection encounters an unrecoverable error, tearing it down is acceptable because:
+1. The remote service is designed to handle connection loss
+2. Reconnection will happen automatically
+3. Service-level state is preserved independently of connection state
+
+### Component Lifecycle Model
+
+**Static Wiring**: Components are wired together at boot time, and this wiring never changes during the service lifetime. There is no dynamic component discovery, no runtime registration changes, no readiness probes, no health checks beyond basic "is the actor alive?"
+
+**No Startup Sequencing**: Components do not have complex startup dependencies. Each component is self-sufficient enough to start in any order. If a component needs data from another component, it naturally waits (via message passing) until that data arrives.
+
+**Pre-Online State**: As a consequence of the boot sequence (`Actors → Router → SessionManager → Transport`), the architecture explicitly supports a "pre-online" state where:
+- All internal actors are running and communicating
+- All room handlers are registered and ready
+- The transport layer is NOT yet attached (no network connections accepted/initiated)
+
+This pre-online state is operationally valuable for controlled rollouts, maintenance windows, or testing scenarios where you want the service logic running but network-isolated.
+
+**Single Point of Activation**: Attaching the transport layer is the final step that makes the service "live" on the network. This is a clear, auditable boundary between "service is prepared" and "service is online."
+
+### Transport Layer Resilience Requirement
+
+**Exception to "Fail Fast"**: While most components can panic on unexpected errors (triggering service restart), the **transport layer must be resilient** because it performs real I/O operations with external systems.
+
+**Required Error Handling**: The transport layer must use `Result<T, E>` for all I/O operations and handle errors gracefully:
+- TCP connection failures → log and retry or report to session layer
+- Socket read/write errors → close connection cleanly, notify session layer
+- TLS handshake failures → log and reject connection
+
+**Rationale**: The transport layer is the boundary between our controlled actor environment and the chaotic external network. It must absorb and translate external failures into clean internal events (e.g., `TransportTerminated`), not panic.
+
+**Contrast with Application Layer**: Application business logic is expected to use `Result<T, E>` for expected errors (e.g., validation failures), but unexpected errors (logic bugs) should panic. The transport layer has no "unexpected errors" when it comes to I/O—all I/O failures are expected and must be handled.
+
+### Failure Isolation Philosophy
+
+**Component Failure = Process Failure**: If a main application actor (e.g., `IntentConfigActor`) panics due to a logic bug, the entire service should crash and restart. There is no partial recovery.
+
+**Connection Failure = Local Failure**: If a per-connection session actor panics, only that connection's vertical slice should tear down (session actor + protocol actor + transport connection). Other connections continue normally.
+
+**Why This Works**: The system-level design (automatic restarts, 1-hour partition tolerance, fail-static behavior) makes service restarts cheap and safe. It's better to crash and restart in a clean state than to continue in a corrupted state.
+
+### Invariants Under This Model
+
+Given the operational context above, the following invariants are critical:
+
+1. **"Fail Atomically"**: If any part of a connection's vertical slice fails (application session actor, protocol session actor, transport), the entire slice must be torn down atomically. Partial failures must not leave dangling state.
+
+2. **"Static Wiring"**: Room registrations never change after boot. The set of rooms a service can handle is fixed for the lifetime of the process.
+
+3. **"No Orphan Messages"**: A room message must never be sent to a transport connection without a corresponding registered application subscriber. This is enforced by static registration and boot-time validation.
+
+4. **"Session-to-Connection 1:1"**: There is exactly one protocol session actor per active transport connection. No sharing, no multiplexing at the session level.
+
+5. **"Transport Errors Are Expected"**: The transport layer must never panic due to I/O errors. All I/O operations must be wrapped in `Result<T, E>` and handled explicitly.
+
+---
+
 ### R2: Components Must Be Self-Testable with Minimal Dependencies
 Each component must be testable in isolation with mock dependencies. A component's networking code must be self-contained within the same crate as its business logic.
 
@@ -112,6 +188,113 @@ When a connection is lost and re-established, the protocol layer must treat it a
 A component's networking code (message types, serialization, protocol logic) must reside in the same crate as its business logic. A developer working on a component should not need to navigate across multiple crates to understand its network behavior.
 
 **Rationale**: Improves code locality, reduces cognitive load, and makes components truly self-contained units. If a component talks to itself across the network, all that code should be in one place.
+
+---
+
+## Architectural Guarantees (Not Conventions)
+
+The following are not best practices or recommendations—they are **guarantees** enforced by the architecture itself, making certain classes of bugs impossible.
+
+### Guarantee 1: SessionHandle Enforces "Fail Atomically"
+
+**The Invariant**: If any part of a connection's vertical slice fails (application session actor, protocol session actor, or transport), the entire slice must be torn down atomically. Partial failures must not leave dangling state.
+
+**How It's Enforced**: The `SessionHandle` given to application session actors uses Rust's **RAII (Resource Acquisition Is Initialization)** pattern via the `Drop` trait:
+
+```rust
+pub struct SessionHandle {
+    inner: Option<SessionHandleInner>,
+}
+
+impl Drop for SessionHandleInner {
+    fn drop(&mut self) {
+        // Automatically tear down connection when handle is dropped
+        self.protocol_actor.do_send(TeardownConnection {
+            connection_id: self.connection_id,
+        });
+    }
+}
+```
+
+**What This Means**:
+- When an application session actor stops (clean shutdown or panic), its `SessionHandle` is automatically dropped
+- Dropping the handle triggers `TeardownConnection` to the protocol actor
+- The protocol actor stops and closes the transport
+- The entire vertical slice is torn down atomically
+
+**Why This Is Better Than Convention**:
+- Developers cannot forget to tear down the connection—Rust's type system guarantees it
+- Works correctly even during panics (Drop always runs, even during unwinding)
+- No special error handling code needed in application actors
+- The invariant is enforced at compile time, not runtime
+
+### Guarantee 2: Peer Context Is Always Available
+
+**The Invariant**: Application components always know WHO they're connected to (peer hostname, role, protocol version).
+
+**How It's Enforced**: The `SessionEvent::Active` variant includes peer context from the `Hello` frame:
+
+```rust
+pub enum SessionEvent {
+    Active {
+        connection_id: u64,
+        rooms: Vec<String>,
+        handle: SessionHandle,
+
+        // Guaranteed to be present - came from Hello frame
+        peer_hostname: String,
+        peer_role: AuthRole,
+        peer_version: String,
+    },
+    // ...
+}
+```
+
+**What This Enables**:
+- Authorization: "Only accept connections from Database role"
+- Logging: "Collector 'collector-01' connected"
+- Application logic: "Behave differently when talking to CLI vs Database"
+- Debugging: Operators can see WHO is connected, not just connection IDs
+
+**Why This Matters**: Without peer context, applications would need to implement their own ad-hoc "who are you?" protocol at the start of every session. This design makes peer identity a first-class citizen of the architecture.
+
+### Guarantee 3: Message Ordering Within a Room
+
+**The Invariant**: Messages sent to the same room on the same connection are delivered in FIFO (First-In-First-Out) order.
+
+**How It's Enforced**: The entire pipeline naturally preserves FIFO ordering:
+1. Application session actor sends messages through `SessionHandle` in order
+2. Protocol session actor receives them in its mailbox (Actix mailboxes are FIFO)
+3. Protocol actor serializes them onto the TCP stream in order
+4. TCP guarantees FIFO byte delivery
+5. Peer receives and processes frames in order
+
+**What This Enables**:
+- Stateful protocols can send sequences of updates (`Create`, `Update`, `Delete`) and know they'll be processed in order
+- No need for explicit sequence numbers within a room
+- Simplifies application logic dramatically
+
+**What Is NOT Guaranteed**:
+- ❌ **No ordering between different rooms** on the same connection (they come from independent actors)
+- ❌ **No ordering across different connections** (network latency is unpredictable)
+
+### Guarantee 4: SessionActive Arrives Before Data
+
+**The Invariant**: For any connection, the `SessionActive` event is fully processed by application components before any `DataForRoom` events arrive for that connection.
+
+**How It's Enforced**: The protocol session actor processes events sequentially:
+1. Completes handshake and room negotiation
+2. Publishes `SessionActive` events to all relevant rooms
+3. Only then continues reading and dispatching data frames from the transport
+
+Because the protocol actor is single-threaded (actor model) and processes its mailbox sequentially, and because Actix message delivery is fast (microseconds), the `SessionActive` handlers in main actors will spawn session actors before the first data frame is read from the TCP buffer.
+
+**What This Prevents**:
+- Race conditions where data arrives before the session actor exists
+- Orphan data that has no handler
+- Complex buffering logic in main actors
+
+**Why This Works**: The actor model's sequential processing, combined with TCP's receive buffering, creates a natural synchronization point. The protocol actor cannot read the next frame until it has dispatched the previous event.
 
 ---
 
@@ -224,6 +407,140 @@ When a new TCP connection is established (even from the same remote host):
 - ⚠️ Allows different serialization formats for protocol vs. application (flexibility, but also potential confusion)
 
 **Decision**: We accept this trade-off. The architectural clarity gained is worth the minor performance cost.
+
+---
+
+## Protocol Structure: Two-Phase Design
+
+The zznet protocol operates in two distinct phases. Understanding this layering is critical for comprehending how version negotiation and protocol evolution work.
+
+### Phase 1: Negotiation Protocol (HELLO)
+
+The first phase is a **meta-protocol**—a protocol for selecting which actual protocol to use.
+
+**Purpose**:
+- Establish basic peer identity (hostname, role)
+- Negotiate protocol version
+- Decide which protocol variant to use for the remainder of the connection
+
+**Frame Structure** (simplified):
+```rust
+#[derive(Serialize, Deserialize)]
+struct HelloFrame {
+    protocol_family: String,        // "zznet"
+    supported_versions: Vec<String>, // ["1.0", "2.0"]
+    hostname: String,
+    role: AuthRole,                  // Collector, Database, CLI, etc.
+}
+
+#[derive(Serialize, Deserialize)]
+struct HelloAckFrame {
+    selected_version: String,        // "1.0"
+    // Additional negotiation data if needed
+}
+```
+
+**Behavior**:
+1. Client sends `HelloFrame` with its supported versions
+2. Server receives `HelloFrame`, checks compatibility
+3. Server selects a mutually-supported version (or rejects if none)
+4. Server sends `HelloAckFrame` with selected version
+5. **Both sides now switch to the selected protocol version**
+
+**For v1.0**: The negotiation is trivial—both sides must support exactly "1.0". If versions don't match, the connection is rejected with an error.
+
+**For Future Versions**: This phase enables:
+- **Version negotiation**: "I support 1.0 and 2.0, you support 2.0 and 3.0, let's use 2.0"
+- **Feature negotiation**: "Do you support compression? Do you support multiplexing?"
+- **Protocol switching**: After HELLO, the connection could switch to a completely different protocol (e.g., gRPC, QUIC)
+
+**Critical Invariant**: The HELLO phase is **always the same**, regardless of what protocol is negotiated. It's the stable, unchanging foundation that enables protocol evolution.
+
+### Phase 2: Application Protocol (Room-Based Communication)
+
+After HELLO negotiation completes, the connection switches to the **selected protocol version**. For v1.0, this is the room-based protocol described throughout this document.
+
+**Purpose**:
+- Negotiate which rooms (logical channels) are active on this connection
+- Multiplex application messages by room name
+- Handle application-level lifecycle (room activation, data exchange, termination)
+
+**Frame Structure** (v1.0):
+```rust
+#[derive(Serialize, Deserialize)]
+enum Frame {
+    // Room negotiation
+    OfferRooms {
+        rooms: Vec<String>,
+    },
+
+    // Data exchange
+    MessageForRoom {
+        room: String,
+        data: Vec<u8>,
+    },
+
+    // Lifecycle
+    ConnectionClosed {
+        reason: String,
+    },
+}
+```
+
+**Behavior**:
+1. Both sides send `OfferRooms` with their list of supported rooms
+2. Intersection is computed: `active_rooms = peer_rooms ∩ local_rooms`
+3. If intersection is empty, **error**: disconnect with "no compatible rooms"
+4. Otherwise, for each room in the intersection, the routing layer dispatches `SessionActive` events
+5. Application components spawn session actors and begin exchanging `MessageForRoom` frames
+
+**Critical Invariant**: Room names are **protocol identifiers**. A room named "intent-config" must mean the same protocol (same message types, same semantics) on both sides. Room names are part of the global contract across all zzping services.
+
+### Why Two Phases?
+
+**Separation of Concerns**:
+- HELLO phase: "Who are you, what versions do you speak?"
+- Application phase: "Let's exchange data for these specific protocols"
+
+**Evolution Without Breaking Changes**:
+- The HELLO phase never changes (or changes extremely rarely)
+- Application protocols can evolve independently
+- New protocol versions can be added without breaking old clients
+
+**Transport Independence**:
+- HELLO phase establishes a common language
+- After HELLO, you could switch to a completely different transport (e.g., negotiating to use gRPC instead of raw TCP frames)
+
+### Implementation Note
+
+In v1.0, the two phases are implemented within the same `SessionActor` as a state machine:
+
+```rust
+enum SessionState {
+    Hello,           // Exchanging Hello frames
+    Negotiating,     // Negotiating rooms
+    Active,          // Exchanging data
+    Closing,         // Tearing down
+}
+```
+
+The actor progresses through these states sequentially. **The HELLO state must complete successfully before any room negotiation begins.**
+
+### Room Name Registry (Implicit Contract)
+
+While room names are strings at the protocol level, they represent **well-known protocol identifiers** in the zzping ecosystem:
+
+| Room Name       | Purpose                          | Message Protocol          |
+|-----------------|----------------------------------|---------------------------|
+| `intent-config` | Intent configuration sync        | `IntentConfigMessage`     |
+| `health`        | Health check / heartbeat         | `HealthMessage`           |
+| `metrics`       | Metrics collection               | `MetricsMessage`          |
+| `alerts`        | Alert notifications              | `AlertMessage`            |
+| `ping-results`  | Ping result streaming            | `PingResultMessage`       |
+
+**These are not arbitrary strings.** They are the equivalent of API endpoints or RPC method names in a distributed system. If a component offers "intent-config", it **must** implement the `IntentConfigMessage` protocol correctly.
+
+**Configuration errors** (e.g., a Database expecting "metrics" but Collector only offers "ping-results") will be caught during room negotiation, resulting in an empty intersection and connection rejection.
 
 ---
 
@@ -353,12 +670,60 @@ router.do_send(RegisterRoom {
 // 4. Create session manager (depends on router)
 let session_mgr = SessionManager::new(router.recipient()).start();
 
-// 5. Attach transport
+// 5. VALIDATE wiring before going live
+validate_boot_config(&router, &session_mgr)?;
+
+// 6. Attach transport (service goes "online")
 let transport = TcpTransport::new(...);
 session_mgr.do_send(AttachTransport { transport });
 ```
 
 **No chicken-and-egg problem because actors are created first, dependencies are established second.**
+
+### Boot Validation
+
+Before attaching the transport, the system validates that the wiring is correct. Invalid configurations cause the service to **panic at boot** rather than fail silently at runtime.
+
+**Validation checks**:
+```rust
+fn validate_boot_config(router: &RoomRouter, session_mgr: &SessionManager) -> Result<(), BootError> {
+    let offered_rooms = session_mgr.offered_rooms();
+    let registered_rooms = router.registered_rooms();
+
+    // Check 1: Every offered room must have a registered handler
+    for room in offered_rooms {
+        if !registered_rooms.contains(room) {
+            return Err(BootError::NoHandlerForRoom {
+                room: room.clone(),
+                hint: "Did you forget to call RegisterRoom?",
+            });
+        }
+    }
+
+    // Check 2: No duplicate registrations (optional, depending on policy)
+    let mut seen = HashSet::new();
+    for room in registered_rooms {
+        if !seen.insert(room) {
+            return Err(BootError::DuplicateHandler {
+                room: room.clone(),
+                hint: "A room should have exactly one handler",
+            });
+        }
+    }
+
+    Ok(())
+}
+```
+
+**Failure mode**: If validation fails, the service panics with a clear error message:
+```
+thread 'main' panicked at 'Boot validation failed: NoHandlerForRoom {
+    room: "intent-config",
+    hint: "Did you forget to call RegisterRoom?"
+}'
+```
+
+**Why this is good**: Misconfiguration is caught immediately at boot, not discovered hours later when a connection finally arrives. Operators get clear, actionable error messages.
 
 ---
 
@@ -693,9 +1058,45 @@ pub enum Frame {
 }
 
 /// Handle for sending data to a specific connection
+///
+/// CRITICAL: This handle uses RAII (Drop) to guarantee the "fail atomically" invariant.
+/// When a SessionHandle is dropped (either explicitly via .close() or when the owning
+/// actor stops), it automatically triggers teardown of the entire connection vertical slice.
 pub struct SessionHandle {
+    inner: Option<SessionHandleInner>,
+}
+
+struct SessionHandleInner {
     connection_id: u64,
     sender: mpsc::Sender<(String, Vec<u8>)>,
+    protocol_actor: Addr<SessionActor>,
+}
+
+impl SessionHandle {
+    pub fn send(&self, room: String, data: Vec<u8>) -> Result<(), SendError> {
+        self.inner.as_ref()
+            .ok_or(SendError::Closed)?
+            .sender.send((room, data))
+            .await
+    }
+
+    pub fn close(mut self) {
+        // Explicit close: drop the inner handle, triggering teardown
+        self.inner.take();
+    }
+}
+
+impl Drop for SessionHandleInner {
+    fn drop(&mut self) {
+        // When this handle is dropped, tear down the connection
+        // This ensures the "fail atomically" invariant:
+        // - If the application session actor panics, the handle is dropped
+        // - This triggers TeardownConnection to the protocol actor
+        // - The entire vertical slice is torn down atomically
+        self.protocol_actor.do_send(TeardownConnection {
+            connection_id: self.connection_id,
+        });
+    }
 }
 
 /// Events published by SessionActor
@@ -705,6 +1106,12 @@ pub enum SessionEvent {
         connection_id: u64,
         rooms: Vec<String>,
         handle: SessionHandle,
+
+        // Peer context from Hello frame
+        // Applications need this to know WHO they're connected to
+        peer_hostname: String,
+        peer_role: AuthRole,
+        peer_version: String,
     },
     DataForRoom {
         connection_id: u64,
@@ -1356,6 +1763,12 @@ A critical aspect of any actor-based system is how it handles failures. This sec
 - **Handling**: SessionActor (protocol layer) logs error and stops, triggering the same cascade as transport failure
 - **Result**: Connection is terminated, remote peer will see a clean disconnect
 
+**2a. Empty Room Intersection**
+- **Cause**: After room negotiation, the intersection of offered rooms is empty (no compatible protocols)
+- **Handling**: SessionActor logs warning "No compatible rooms with peer {hostname}" and stops immediately
+- **Result**: Both sides disconnect. If client, it will retry connection, repeating the warning. This indicates a configuration error that operators must fix.
+- **Example**: Collector offers ["intent-config", "health"], Database offers ["metrics", "alerts"], intersection = [] → disconnect
+
 **3. Application Logic Errors (Panic in Session Actor)**
 - **Cause**: Bug in application code (e.g., deserialization failure, logic panic)
 - **Handling**: **This is the critical case.** If an `IntentConfigSessionActor` panics:
@@ -1481,6 +1894,263 @@ async fn test_session_actor_panic_tears_down_connection() {
 
 ---
 
+## Backpressure and Flow Control
+
+A critical aspect of any network system is how it handles the case where data is produced faster than it can be consumed. This section defines the backpressure strategy and provides guidance for application developers.
+
+### The SessionHandle.send() Contract
+
+When an application session actor calls `session_handle.send()`, the contract is explicit:
+
+```rust
+pub enum SendError {
+    /// The connection is closed (protocol actor stopped)
+    ConnectionClosed,
+
+    /// The send channel is full (backpressure)
+    ChannelFull,
+
+    /// Failed to serialize data (should never happen with correct types)
+    SerializationError(bincode::Error),
+}
+
+impl SessionHandle {
+    /// Queue data for sending on this connection.
+    ///
+    /// **Return value**: Ok(()) means data was queued to the protocol actor's mailbox.
+    /// This does NOT mean:
+    /// - Data has been sent on the wire
+    /// - Data has been received by the peer
+    /// - Data will definitely be delivered
+    ///
+    /// **Errors**:
+    /// - ConnectionClosed: The connection is no longer active. Stop this session actor.
+    /// - ChannelFull: Backpressure - the send buffer is full. Decide how to handle.
+    /// - SerializationError: Logic bug - the data couldn't be serialized.
+    pub async fn send(&self, room: String, data: Vec<u8>) -> Result<(), SendError> {
+        let inner = self.inner.as_ref().ok_or(SendError::ConnectionClosed)?;
+
+        inner.sender.send((room, data))
+            .await
+            .map_err(|_| SendError::ChannelFull)
+    }
+}
+```
+
+**The critical error is `ChannelFull`**. This means the bounded channel between the application session actor and the protocol session actor is full. The protocol actor cannot keep up with the rate of messages being sent.
+
+### Why Bounded Channels?
+
+**We use bounded channels** (not unbounded) because:
+1. **Prevents OOM**: Unbounded queues can grow without limit, consuming all memory
+2. **Explicit backpressure**: The producer (application) is forced to handle the "too fast" case
+3. **Failure detection**: If queues are growing unbounded, something is fundamentally wrong
+
+**The downside**: Application developers must explicitly handle `ChannelFull` errors. This is a trade-off we accept for safety and explicitness.
+
+### Backpressure Handling Patterns
+
+Different application components have different requirements. Here are the recommended patterns:
+
+#### Pattern 1: Drop Old Data (Latency-Sensitive)
+
+**Use case**: Real-time monitoring, health checks, pings
+
+**Strategy**: If the channel is full, drop the current message. The latest data is more valuable than stale data.
+
+```rust
+impl IntentConfigSessionActor {
+    async fn send_ping(&self, ping: PingMessage) {
+        let bytes = bincode::serialize(&ping).unwrap();
+
+        match self.session_handle.send("pinger", bytes).await {
+            Ok(()) => {
+                // Sent successfully
+            }
+            Err(SendError::ChannelFull) => {
+                // Drop this ping, it's already stale
+                self.metrics.dropped_pings.inc();
+            }
+            Err(SendError::ConnectionClosed) => {
+                // Connection died, stop actor
+                ctx.stop();
+            }
+            Err(SendError::SerializationError(e)) => {
+                panic!("Serialization bug: {:?}", e);
+            }
+        }
+    }
+}
+```
+
+**Pros**: Simple, never blocks, system stays responsive
+**Cons**: Data loss (acceptable for latency-sensitive data)
+
+#### Pattern 2: Replace Old Data (State Synchronization)
+
+**Use case**: Configuration sync, state replication
+
+**Strategy**: If the channel is full, the old queued data is obsolete anyway. Keep only the latest.
+
+```rust
+impl IntentConfigSessionActor {
+    async fn send_config(&mut self, config: ConfigMessage) {
+        let bytes = bincode::serialize(&config).unwrap();
+
+        // Store as "pending" config
+        self.pending_config = Some(config.clone());
+
+        match self.session_handle.send("intent-config", bytes).await {
+            Ok(()) => {
+                self.pending_config = None;
+            }
+            Err(SendError::ChannelFull) => {
+                // Old config updates in queue are obsolete
+                // We'll retry with the latest config
+                self.schedule_retry();
+            }
+            Err(SendError::ConnectionClosed) => {
+                ctx.stop();
+            }
+            Err(SendError::SerializationError(e)) => {
+                panic!("Serialization bug: {:?}", e);
+            }
+        }
+    }
+
+    fn schedule_retry(&mut self) {
+        // Try again in 100ms with the latest pending config
+        ctx.run_later(Duration::from_millis(100), |act, ctx| {
+            if let Some(config) = act.pending_config.clone() {
+                act.send_config(config);
+            }
+        });
+    }
+}
+```
+
+**Pros**: Never blocks, guarantees latest state is eventually sent
+**Cons**: Requires state tracking, retry logic
+
+#### Pattern 3: Apply Backpressure (Reliable Delivery)
+
+**Use case**: Metrics collection, event logging, audit trails
+
+**Strategy**: If the channel is full, block (or return error to caller) until space is available. Do not drop data.
+
+```rust
+impl MetricsSessionActor {
+    async fn send_metric(&self, metric: MetricMessage) -> Result<(), MetricError> {
+        let bytes = bincode::serialize(&metric)?;
+
+        // Retry loop with exponential backoff
+        let mut retry_delay = Duration::from_millis(10);
+        loop {
+            match self.session_handle.send("metrics", bytes.clone()).await {
+                Ok(()) => {
+                    return Ok(());
+                }
+                Err(SendError::ChannelFull) => {
+                    // Apply backpressure: wait and retry
+                    tokio::time::sleep(retry_delay).await;
+                    retry_delay = std::cmp::min(retry_delay * 2, Duration::from_secs(1));
+                }
+                Err(SendError::ConnectionClosed) => {
+                    return Err(MetricError::ConnectionLost);
+                }
+                Err(SendError::SerializationError(e)) => {
+                    panic!("Serialization bug: {:?}", e);
+                }
+            }
+        }
+    }
+}
+```
+
+**Pros**: Reliable delivery, no data loss
+**Cons**: Can block the sender, may cause head-of-line blocking
+
+#### Pattern 4: Aggregate and Compress (High-Throughput)
+
+**Use case**: High-frequency events, telemetry streams
+
+**Strategy**: If the channel is full, aggregate multiple events into batches, reducing message count.
+
+```rust
+impl TelemetrySessionActor {
+    async fn send_events(&mut self, events: Vec<Event>) {
+        // Try to send individual events
+        for event in events {
+            let bytes = bincode::serialize(&event).unwrap();
+
+            match self.session_handle.send("telemetry", bytes).await {
+                Ok(()) => {
+                    // Sent successfully
+                }
+                Err(SendError::ChannelFull) => {
+                    // Buffer this event for batching
+                    self.buffer.push(event);
+
+                    // If buffer is large enough, send as batch
+                    if self.buffer.len() >= 100 {
+                        self.flush_batch().await;
+                    }
+                }
+                Err(SendError::ConnectionClosed) => {
+                    ctx.stop();
+                    return;
+                }
+                Err(SendError::SerializationError(e)) => {
+                    panic!("Serialization bug: {:?}", e);
+                }
+            }
+        }
+    }
+
+    async fn flush_batch(&mut self) {
+        let batch = BatchMessage {
+            events: std::mem::take(&mut self.buffer),
+        };
+        let bytes = bincode::serialize(&batch).unwrap();
+
+        // Send batch (may still fail if channel is full)
+        let _ = self.session_handle.send("telemetry", bytes).await;
+    }
+}
+```
+
+**Pros**: Reduces message overhead, handles bursts well
+**Cons**: Adds latency, complexity in batching logic
+
+### Channel Sizing
+
+The bounded channel size is a tuning parameter. Recommendations:
+
+- **Default**: 100 messages
+- **Latency-sensitive** (pings, health): 10 messages (fail fast if slow)
+- **High-throughput** (metrics, logs): 1000 messages (buffer bursts)
+
+**Rule of thumb**: The channel should buffer ~1 second of typical load. If the protocol actor can't keep up for more than 1 second, something is wrong and backpressure should kick in.
+
+### What About Receiving Data?
+
+**Receiving is simpler**: The protocol session actor reads frames from the transport and dispatches them to the application session actor via its mailbox. Actix mailboxes are bounded (default 16), so automatic backpressure is applied.
+
+**If an application session actor is slow**, its mailbox fills up, the protocol actor's sends block, the TCP receive buffer fills up, and the peer experiences TCP backpressure. This is the correct behavior.
+
+**Application developers should**:
+- Process messages quickly (< 1ms per message)
+- If expensive work is needed, spawn a task or send to a worker pool
+- Never block the actor's message handler
+
+### Key Principle: Explicit is Better Than Implicit
+
+**We force application developers to think about backpressure** by making `ChannelFull` an explicit error. This is intentional. Different applications have different requirements, and the framework should not make policy decisions for them.
+
+**The alternative** (unbounded queues, silent dropping) hides problems until production, when memory exhaustion or data loss occurs mysteriously. By making backpressure explicit, we force correct-by-construction designs.
+
+---
+
 ## Open Questions and Future Work
 
 These are questions that do not need to be answered now but may become relevant as the system evolves.
@@ -1568,6 +2238,66 @@ These are questions that do not need to be answered now but may become relevant 
 - Logging only
 
 **Decision**: Deferred. Can add later without changing architecture. Actors can publish metrics messages to a metrics collector actor.
+
+---
+
+## Summary of Architectural Invariants
+
+This section collects all the invariants identified throughout this document in one place. These are the properties that **must always be true** for the system to function correctly.
+
+### Protocol-Level Invariants
+
+1. **"Room Names Are Protocol Identifiers"**: A room name (e.g., "intent-config") must mean the same protocol (same message types, same serialization format) on both sides of a connection. Room names are part of the global contract across all zzping services.
+
+2. **"HELLO Before Application Protocol"**: The HELLO negotiation phase must complete successfully before any room negotiation or data exchange can begin. This is enforced by the SessionActor state machine.
+
+3. **"Empty Intersection = Error"**: If room negotiation produces an empty intersection (no compatible rooms), the connection must be terminated immediately with an error logged on both sides.
+
+4. **"FIFO Within a Room"**: Messages sent to the same room on the same connection are delivered in FIFO order. This is guaranteed by the TCP transport and actor mailbox ordering.
+
+### Lifecycle Invariants
+
+5. **"Static Wiring"**: Room registrations never change after boot. The set of rooms a service can handle is fixed for the lifetime of the process. (R8)
+
+6. **"Session-to-Connection 1:1"**: There is exactly one protocol session actor per active transport connection. No sharing, no multiplexing at the session level.
+
+7. **"SessionActive Before DataForRoom"**: For any connection, the `SessionActive` event is fully processed by application components before any `DataForRoom` events arrive for that connection. This prevents orphan data and race conditions.
+
+8. **"No Orphan Messages"**: A room message is never sent to a transport connection without a corresponding registered application subscriber. This is enforced by static registration and boot-time validation.
+
+### Failure Invariants
+
+9. **"Fail Atomically"**: If any part of a connection's vertical slice fails (application session actor, protocol session actor, or transport), the entire slice must be torn down atomically. Partial failures must not leave dangling state. This is **guaranteed** by the RAII pattern on `SessionHandle`.
+
+10. **"SessionHandle Enforces Teardown"**: When a `SessionHandle` is dropped (explicitly via `.close()` or when the owning actor stops), it automatically triggers teardown of the entire connection. This is enforced by Rust's type system via the `Drop` trait.
+
+11. **"Main Actor Failure = Service Failure"**: If a main application actor or infrastructure actor (RoomRouter, SessionManager) panics, the entire service should crash and restart. There is no partial recovery from singleton actor failures.
+
+12. **"Transport Errors Are Expected"**: The transport layer must never panic due to I/O errors. All I/O operations must be wrapped in `Result<T, E>` and handled explicitly. This is the exception to "fail fast, fail loud."
+
+### Ordering Guarantees
+
+13. **"FIFO Within a Room"** (restated for emphasis): Messages sent to the same room on the same connection arrive in order at the peer.
+
+14. **"No Ordering Between Rooms"**: Messages sent to different rooms on the same connection have no ordering guarantee. They come from independent actors with independent timing.
+
+15. **"No Ordering Across Connections"**: Messages from different connections arrive in arbitrary order. Network latency and scheduler timing are unpredictable.
+
+### Boot-Time Guarantees
+
+16. **"Offered Rooms Must Have Handlers"**: Every room in the "offered rooms" list must have a registered handler in the RoomRouter. This is validated at boot time before the transport is attached. Violation causes a panic with a clear error message.
+
+17. **"Pre-Online State"**: After wiring is complete and validated, but before the transport is attached, the service is in a "pre-online" state where all internal actors are running and ready, but no network connections are accepted. This is an intentional architectural feature.
+
+### Backpressure Guarantees
+
+18. **"Bounded Channels"**: Channels between application session actors and protocol session actors are bounded. When full, `SessionHandle.send()` returns `Err(SendError::ChannelFull)`, forcing explicit backpressure handling.
+
+19. **"send() Means Queued"**: `SessionHandle.send()` returning `Ok(())` means data was queued to the protocol actor's mailbox. It does NOT mean data was sent on the wire or received by the peer.
+
+### Peer Identity Guarantees
+
+20. **"Peer Context Is Always Available"**: Application components always know WHO they're connected to (peer hostname, role, protocol version). This information is included in the `SessionActive` event and comes from the HELLO frame.
 
 ---
 
