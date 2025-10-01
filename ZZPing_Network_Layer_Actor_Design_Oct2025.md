@@ -1340,6 +1340,147 @@ The current `zznet-connection` crate has issues but also contains working protoc
 
 ---
 
+## Error Handling and Supervision Strategy
+
+A critical aspect of any actor-based system is how it handles failures. This section defines the error handling and supervision strategy for the network layer.
+
+### Failure Categories
+
+**1. Transport Failures (Connection Loss)**
+- **Cause**: Network issues, remote process crash, TCP timeout
+- **Handling**: Explicit and expected. SessionActor (protocol layer) detects `recv() = None`, publishes `SessionTerminated` event, and stops
+- **Result**: Clean cascade - application session actors receive termination event and stop gracefully
+
+**2. Protocol Errors (Malformed Frames, Handshake Failure)**
+- **Cause**: Protocol violation, version mismatch, corrupted data
+- **Handling**: SessionActor (protocol layer) logs error and stops, triggering the same cascade as transport failure
+- **Result**: Connection is terminated, remote peer will see a clean disconnect
+
+**3. Application Logic Errors (Panic in Session Actor)**
+- **Cause**: Bug in application code (e.g., deserialization failure, logic panic)
+- **Handling**: **This is the critical case.** If an `IntentConfigSessionActor` panics:
+  - The actor stops immediately
+  - **The entire vertical slice must tear down**: protocol session actor + transport connection
+  - Rationale: A panic likely indicates corrupted per-connection state. Continuing the connection could lead to undefined behavior or data corruption
+
+**4. Application Logic Errors (Panic in Main Actor)**
+- **Cause**: Severe bug in global component logic
+- **Handling**: **The entire service should crash**
+- **Rationale**: The main actor holds global state. If it panics, the service is in an undefined state. Better to crash and restart (via process supervisor) than continue in an inconsistent state
+
+### Supervision Strategy
+
+**Actix Default Behavior**: When an actor panics, Actix stops the actor and drops all its addresses. Any messages sent to a stopped actor are silently dropped or return errors (depending on send method).
+
+**Our Strategy**:
+
+#### For Application Session Actors (e.g., `IntentConfigSessionActor`)
+- **Supervision**: No restart. Let the actor die.
+- **Cascading Teardown**: When the application session actor stops (whether cleanly or via panic), it must trigger teardown of the protocol session actor
+- **Implementation**:
+  ```rust
+  impl Actor for IntentConfigSessionActor {
+      type Context = Context<Self>;
+
+      fn stopped(&mut self, _ctx: &mut Context<Self>) {
+          // Explicitly close the session handle when this actor stops
+          // This signals to the protocol layer to tear down the connection
+          self.session_handle.close();
+
+          // Notify main actor about abnormal termination if needed
+          if self.is_panic {
+              self.main_actor.do_send(SessionFailed {
+                  connection_id: self.connection_id,
+                  error: "Session actor panicked".to_string(),
+              });
+          }
+      }
+  }
+  ```
+
+#### For Protocol Session Actors (e.g., `ZzNetSessionActor`)
+- **Supervision**: No restart. Let the actor die.
+- **Cascading Teardown**: When stopped, close the transport connection
+- **Implementation**:
+  ```rust
+  impl Actor for SessionActor {
+      type Context = Context<Self>;
+
+      fn stopped(&mut self, _ctx: &mut Context<Self>) {
+          // Close transport connection
+          self.transport.close();
+
+          // Publish termination event (if not already published)
+          if !self.termination_published {
+              self.router.do_send(SessionEvent::Terminated {
+                  connection_id: self.connection_id,
+              });
+          }
+      }
+  }
+  ```
+
+#### For Main Actors (e.g., `IntentConfigActor`)
+- **Supervision**: No restart. Let the service crash.
+- **Rationale**: Main actors hold global state. A panic indicates a severe bug that cannot be recovered from
+- **Implementation**: No special handling needed. Let Actix stop the actor, which will cause the service to exit
+
+#### For Singleton Infrastructure Actors (`SessionManager`, `RoomRouter`)
+- **Supervision**: No restart. Let the service crash.
+- **Rationale**: These are critical infrastructure. If they fail, the entire network layer is non-functional
+- **Implementation**: No special handling. Service should exit and be restarted by a process supervisor (systemd, Docker, etc.)
+
+### Error Propagation
+
+**Vertical Slice Teardown** (Application → Protocol → Transport):
+1. Application session actor panics or encounters fatal error
+2. In `stopped()`, it closes `SessionHandle`
+3. Protocol session actor detects closed handle and stops
+4. In `stopped()`, protocol actor closes transport connection
+5. Transport closure triggers connection termination cleanup
+
+**Horizontal Event Propagation** (Protocol → Router → Application):
+1. Protocol session actor stops (for any reason)
+2. Before stopping, it publishes `SessionTerminated` event
+3. Router forwards event to all registered handlers
+4. Application main actors receive event and clean up tracking state
+
+### Key Principle: Fail Fast, Fail Loud
+
+**Do NOT**:
+- Swallow errors silently
+- Attempt to "recover" from panics (can't be done safely)
+- Continue processing on a connection where an actor has panicked
+
+**DO**:
+- Log all errors with full context
+- Tear down the entire connection on any actor panic
+- Let the service crash on main actor or infrastructure actor failures
+- Rely on a process supervisor for service-level restarts
+
+### Testing Error Paths
+
+Error handling must be tested:
+
+```rust
+#[actix::test]
+async fn test_session_actor_panic_tears_down_connection() {
+    // Set up a full connection
+    let (client, server) = create_test_connection().await;
+
+    // Inject a message that will cause the session actor to panic
+    client.send_malformed_data().await;
+
+    // Verify the entire connection is torn down
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    assert!(server.connection_is_closed());
+    assert!(client.received_termination_event());
+}
+```
+
+---
+
 ## Open Questions and Future Work
 
 These are questions that do not need to be answered now but may become relevant as the system evolves.
