@@ -157,6 +157,39 @@ where
         &self.offered_rooms
     }
 
+    /// Get a cloneable sender for a specific peer
+    ///
+    /// This allows application code to send messages to a peer without going through
+    /// the actor system. The returned `mpsc::Sender` can be cloned and used from any
+    /// async context.
+    ///
+    /// Returns `None` if the peer doesn't exist or isn't connected.
+    ///
+    ///
+    pub fn get_peer_sender(&self, peer_id: &PeerId) -> Option<mpsc::Sender<(RoomId, TMsg)>> {
+        let peer = self.peers.get(peer_id)?;
+        peer.get_sender()
+    }
+
+    /// Subscribe to inbound messages from a specific peer
+    ///
+    /// Returns a broadcast receiver that will receive all inbound messages from the peer.
+    /// This is useful for clients that want to handle messages directly without using
+    /// the Room abstraction (e.g., request-response patterns).
+    ///
+    /// Multiple subscribers can call this method to get independent receivers.
+    ///
+    /// Returns `None` if the peer doesn't exist or is not connected.
+    ///
+    ///
+    pub fn subscribe_peer_inbound(
+        &mut self,
+        peer_id: &PeerId,
+    ) -> Option<tokio::sync::broadcast::Receiver<(RoomId, TMsg)>> {
+        let peer = self.peers.get_mut(peer_id)?;
+        peer.subscribe_inbound()
+    }
+
     /// Set the rooms this SessionManager offers to all peers
     ///
     /// This is typically called at startup to declare which rooms

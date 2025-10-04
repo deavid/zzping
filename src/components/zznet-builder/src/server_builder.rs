@@ -1,0 +1,335 @@
+//! ServerBuilder - Fluent API for creating TCP servers
+
+use crate::error::{BuilderError, BuilderResult};
+use actix::prelude::*;
+use std::time::Duration;
+use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
+use zznet_hello::auth::AuthRole;
+use zznet_hello::connection_manager::ConnectionManager;
+use zznet_session::room_message_trait::RoomMessageTrait;
+use zznet_session::types::RoomId;
+use zznet_transport_tcp::config::TlsConfig;
+use zznet_transport_tcp::server::TcpTransportServer;
+
+/// Builder for creating TCP servers with automatic connection management
+///
+///
+pub struct ServerBuilder<TMsg>
+where
+    TMsg: RoomMessageTrait,
+{
+    bind_addr: Option<String>,
+    our_role: AuthRole,
+    offered_rooms: Vec<String>,
+    handshake_timeout: Duration,
+    tls_config: Option<TlsConfig>,
+    connection_manager: Option<Addr<ConnectionManager<TMsg>>>,
+}
+
+impl<TMsg> ServerBuilder<TMsg>
+where
+    TMsg: RoomMessageTrait + 'static,
+{
+    /// Create a new ServerBuilder with default configuration
+    pub fn new() -> Self {
+        Self {
+            bind_addr: None,
+            our_role: AuthRole::Database,
+            offered_rooms: vec![],
+            handshake_timeout: Duration::from_secs(10),
+            tls_config: None,
+            connection_manager: None,
+        }
+    }
+
+    /// Set the bind address (required)
+    ///
+    ///
+    pub fn bind(mut self, addr: impl Into<String>) -> Self {
+        self.bind_addr = Some(addr.into());
+        self
+    }
+
+    /// Set the authentication role for this server
+    ///
+    ///
+    pub fn as_role(mut self, role: AuthRole) -> Self {
+        self.our_role = role;
+        self
+    }
+
+    /// Set the rooms this server offers
+    ///
+    ///
+    pub fn offer_rooms(mut self, rooms: Vec<String>) -> Self {
+        self.offered_rooms = rooms;
+        self
+    }
+
+    /// Set the handshake timeout duration
+    ///
+    ///
+    pub fn handshake_timeout(mut self, timeout: Duration) -> Self {
+        self.handshake_timeout = timeout;
+        self
+    }
+
+    /// Set the TLS configuration for encrypted connections
+    ///
+    ///
+    pub fn with_tls(mut self, config: TlsConfig) -> Self {
+        self.tls_config = Some(config);
+        self
+    }
+
+    /// Set the ConnectionManager for handling connections
+    ///
+    /// If not provided, a new ConnectionManager will be created.
+    pub fn with_connection_manager(mut self, manager: Addr<ConnectionManager<TMsg>>) -> Self {
+        self.connection_manager = Some(manager);
+        self
+    }
+
+    /// Validate configuration before starting
+    fn validate(&self) -> BuilderResult<()> {
+        if self.bind_addr.is_none() {
+            return Err(BuilderError::MissingConfig("bind_addr".to_string()));
+        }
+
+        if self.offered_rooms.is_empty() {
+            return Err(BuilderError::InvalidConfig(
+                "must offer at least one room".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Start the server and return a handle
+    ///
+    /// This creates a ServerActor that listens for connections and spawns
+    /// HelloActors for each accepted connection.
+    pub async fn start(self) -> BuilderResult<Addr<ServerActor<TMsg>>> {
+        self.validate()?;
+
+        let bind_addr = self.bind_addr.unwrap();
+
+        // Create ConnectionManager if not provided
+        let connection_manager = if let Some(cm) = self.connection_manager {
+            cm
+        } else {
+            let rooms: Vec<RoomId> = self
+                .offered_rooms
+                .iter()
+                .map(|s| RoomId::from(s.as_str()))
+                .collect();
+            ConnectionManager::<TMsg>::new(rooms).start()
+        };
+
+        // Create TCP server
+        let tcp_server = TcpTransportServer::new(&bind_addr, self.tls_config)
+            .await
+            .map_err(|e| BuilderError::BindFailed(format!("{}: {}", bind_addr, e)))?;
+
+        // Create HelloConfig
+        let hello_config = HelloConfig {
+            our_role: self.our_role,
+            offered_rooms: self.offered_rooms.clone(),
+            handshake_timeout: self.handshake_timeout,
+            hostname: "server-hostname".to_string(),
+        };
+
+        // Create and start ServerActor
+        let actor = ServerActor {
+            tcp_server: std::sync::Arc::new(tokio::sync::Mutex::new(tcp_server)),
+            hello_config,
+            connection_manager,
+        };
+
+        Ok(actor.start())
+    }
+}
+
+impl<TMsg> Default for ServerBuilder<TMsg>
+where
+    TMsg: RoomMessageTrait + 'static,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Actor that manages the server's accept loop
+pub struct ServerActor<TMsg>
+where
+    TMsg: RoomMessageTrait,
+{
+    tcp_server: std::sync::Arc<tokio::sync::Mutex<TcpTransportServer>>,
+    hello_config: HelloConfig,
+    connection_manager: Addr<ConnectionManager<TMsg>>,
+}
+
+impl<TMsg> Actor for ServerActor<TMsg>
+where
+    TMsg: RoomMessageTrait + 'static,
+{
+    type Context = Context<Self>;
+
+    fn started(&mut self, ctx: &mut Context<Self>) {
+        tracing::info!("ServerActor started, beginning accept loop");
+        // Trigger first accept
+        ctx.address().do_send(AcceptNext);
+    }
+}
+
+/// Internal message to trigger the next accept
+#[derive(Message)]
+#[rtype(result = "()")]
+struct AcceptNext;
+
+impl<TMsg> Handler<AcceptNext> for ServerActor<TMsg>
+where
+    TMsg: RoomMessageTrait + 'static,
+{
+    type Result = ResponseActFuture<Self, ()>;
+
+    fn handle(&mut self, _msg: AcceptNext, _ctx: &mut Context<Self>) -> Self::Result {
+        use zznet_api::transport::TransportServer;
+
+        let hello_config = self.hello_config.clone();
+        let connection_manager = self.connection_manager.clone();
+        let tcp_server = self.tcp_server.clone();
+
+        Box::pin(
+            async move {
+                // Lock and accept the next connection
+                let mut server = tcp_server.lock().await;
+                server.accept().await
+            }
+            .into_actor(self)
+            .map(move |result, _act, ctx| {
+                match result {
+                    Ok(transport) => {
+                        tracing::info!("Accepted new connection");
+
+                        // Spawn HelloActor for this connection
+                        let _hello_actor = start_hello_actor_with_session_manager(
+                            transport,
+                            hello_config,
+                            Some(connection_manager.recipient()),
+                        );
+
+                        // HelloActor will notify ConnectionManager when handshake completes
+                    }
+                    Err(e) => {
+                        tracing::error!("Accept failed: {}", e);
+                    }
+                }
+
+                // Trigger next accept
+                ctx.address().do_send(AcceptNext);
+            }),
+        )
+    }
+}
+
+/// Message to stop the server
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct StopServer;
+
+impl<TMsg> Handler<StopServer> for ServerActor<TMsg>
+where
+    TMsg: RoomMessageTrait + 'static,
+{
+    type Result = ();
+
+    fn handle(&mut self, _msg: StopServer, ctx: &mut Context<Self>) {
+        tracing::info!("Stopping server");
+        ctx.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zznet_session::room_message_trait::RoomMessageTrait;
+    use zznet_session::types::RoomId;
+
+    #[derive(Debug, Clone)]
+    #[allow(dead_code)]
+    enum TestMessages {
+        Test(String),
+    }
+
+    impl RoomMessageTrait for TestMessages {
+        fn room_id(&self) -> RoomId {
+            RoomId::from("test")
+        }
+
+        fn serialize_inner(
+            &self,
+        ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
+            Ok(vec![])
+        }
+
+        fn deserialize_for_room(
+            _room_id: &RoomId,
+            _bytes: &[u8],
+        ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
+            Ok(TestMessages::Test("test".to_string()))
+        }
+
+        fn supported_rooms() -> Vec<RoomId> {
+            vec![RoomId::from("test")]
+        }
+    }
+
+    #[test]
+    fn test_server_builder_new() {
+        let builder = ServerBuilder::<TestMessages>::new();
+        assert!(builder.bind_addr.is_none());
+        assert_eq!(builder.our_role, AuthRole::Database);
+        assert!(builder.offered_rooms.is_empty());
+    }
+
+    #[test]
+    fn test_server_builder_fluent_api() {
+        let builder = ServerBuilder::<TestMessages>::new()
+            .bind("127.0.0.1:8080")
+            .as_role(AuthRole::Collector)
+            .offer_rooms(vec!["test".to_string()])
+            .handshake_timeout(Duration::from_secs(5));
+
+        assert_eq!(builder.bind_addr.unwrap(), "127.0.0.1:8080");
+        assert_eq!(builder.our_role, AuthRole::Collector);
+        assert_eq!(builder.offered_rooms, vec!["test".to_string()]);
+        assert_eq!(builder.handshake_timeout, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn test_validation_missing_bind_addr() {
+        let builder = ServerBuilder::<TestMessages>::new().offer_rooms(vec!["test".to_string()]);
+
+        let result = builder.validate();
+        assert!(matches!(result, Err(BuilderError::MissingConfig(_))));
+    }
+
+    #[test]
+    fn test_validation_missing_rooms() {
+        let builder = ServerBuilder::<TestMessages>::new().bind("127.0.0.1:8080");
+
+        let result = builder.validate();
+        assert!(matches!(result, Err(BuilderError::InvalidConfig(_))));
+    }
+
+    #[test]
+    fn test_validation_success() {
+        let builder = ServerBuilder::<TestMessages>::new()
+            .bind("127.0.0.1:8080")
+            .offer_rooms(vec!["test".to_string()]);
+
+        let result = builder.validate();
+        assert!(result.is_ok());
+    }
+}

@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 // To run: cargo test --test integration -- --nocapture
 
 // FIXME: This entire test file represents architectural debt - it's a proof-of-concept

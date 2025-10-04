@@ -1,7 +1,7 @@
 use crate::room_message_trait::RoomMessageTrait;
 use crate::types::{ConnectionState, PeerId, RoomId, SessionError};
 use std::collections::HashMap;
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
 /// Trait for type-erased room operations
@@ -55,6 +55,10 @@ where
 
     // Rooms we've joined (intersection of local and peer offered rooms)
     joined_rooms: Vec<RoomId>,
+
+    // Broadcast channel for inbound messages (for raw API clients like ZznetDatabaseClient)
+    // Allows subscribing to inbound messages without using the Room abstraction
+    inbound_broadcast: Option<broadcast::Sender<(RoomId, TMsg)>>,
 }
 
 impl<TMsg> PeerSession<TMsg>
@@ -73,6 +77,7 @@ where
             inbound_task: None,
             peer_offered_rooms: None,
             joined_rooms: Vec::new(),
+            inbound_broadcast: None,
         }
     }
 
@@ -178,6 +183,12 @@ where
         let outbound_clone = outbound_tx.clone();
         self.outbound_tx = Some(outbound_tx);
 
+        // Create broadcast channel for inbound messages if not already created
+        if self.inbound_broadcast.is_none() {
+            let (tx, _rx) = broadcast::channel(100);
+            self.inbound_broadcast = Some(tx);
+        }
+
         // Spawn forwarder for each room (Component → Peer)
         for (room_id, room) in &mut self.rooms {
             room.spawn_forwarder(outbound_clone.clone()).map_err(|_| {
@@ -192,8 +203,14 @@ where
         // This task owns the rooms HashMap and routes messages
         let rooms = std::mem::take(&mut self.rooms);
         let peer_id = self.peer_id.clone();
+        let broadcast_tx = self.inbound_broadcast.clone();
 
-        let task = tokio::spawn(Self::inbound_task_loop(rooms, peer_id, inbound_rx));
+        let task = tokio::spawn(Self::inbound_task_loop(
+            rooms,
+            peer_id,
+            inbound_rx,
+            broadcast_tx,
+        ));
 
         self.inbound_task = Some(task);
         self.state = ConnectionState::Connected;
@@ -207,12 +224,21 @@ where
     /// Runs continuously until the inbound channel is closed.
     ///
     /// This is the core message pump for all inbound messages from a peer.
+    /// If a broadcast sender is provided, messages are also broadcast to subscribers.
     async fn inbound_task_loop(
         mut rooms: HashMap<RoomId, Box<dyn RoomHandle<TMsg>>>,
         peer_id: PeerId,
         mut inbound_rx: mpsc::Receiver<(RoomId, TMsg)>,
+        broadcast_tx: Option<broadcast::Sender<(RoomId, TMsg)>>,
     ) {
         while let Some((room_id, msg)) = inbound_rx.recv().await {
+            // Broadcast to raw API subscribers (if any)
+            if let Some(ref tx) = broadcast_tx {
+                // Clone the message for broadcast (receivers get their own copy)
+                let _ = tx.send((room_id.clone(), msg.clone()));
+            }
+
+            // Route to Room handlers
             Self::route_inbound_message(&mut rooms, &peer_id, room_id, msg).await;
         }
         tracing::debug!("Peer {} inbound task stopped", peer_id);
@@ -329,6 +355,40 @@ where
             .map_err(|_| SessionError::SendFailed)?;
 
         Ok(())
+    }
+
+    /// Get a cloneable sender for this peer
+    ///
+    /// Returns `None` if the peer is not connected. The returned sender can be
+    /// cloned and used from any async context to send messages to this peer.
+    ///
+    /// **Usage**:
+    ///
+    pub fn get_sender(&self) -> Option<mpsc::Sender<(RoomId, TMsg)>> {
+        self.outbound_tx.clone()
+    }
+
+    /// Subscribe to inbound messages from this peer
+    ///
+    /// Returns a broadcast receiver that will receive all inbound messages from the peer.
+    /// This is useful for clients that want to handle messages directly without using
+    /// the Room abstraction (e.g., request-response patterns).
+    ///
+    /// Multiple subscribers can call this method to get independent receivers.
+    /// The broadcast channel is created on first subscription and reused thereafter.
+    ///
+    /// Returns `None` if the peer is not yet connected.
+    ///
+    /// **Usage**:
+    ///
+    pub fn subscribe_inbound(&mut self) -> Option<broadcast::Receiver<(RoomId, TMsg)>> {
+        // Create broadcast channel on first subscription
+        if self.inbound_broadcast.is_none() {
+            let (tx, _rx) = broadcast::channel(100);
+            self.inbound_broadcast = Some(tx);
+        }
+
+        self.inbound_broadcast.as_ref().map(|tx| tx.subscribe())
     }
 }
 
@@ -1121,7 +1181,7 @@ mod tests {
 
         // Run the loop
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx).await;
+        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx, None).await;
 
         // Verify message was delivered
         let sent = messages_ref.lock().unwrap();
@@ -1158,7 +1218,7 @@ mod tests {
 
         // Run the loop
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx).await;
+        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx, None).await;
 
         // Verify all messages were delivered in order
         let sent = messages_ref.lock().unwrap();
@@ -1209,7 +1269,7 @@ mod tests {
 
         // Run the loop
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx).await;
+        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx, None).await;
 
         // Verify messages routed to correct rooms
         let sent1 = messages_ref1.lock().unwrap();
@@ -1293,7 +1353,7 @@ mod tests {
 
         // Run the loop - should process message and then exit gracefully
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx).await;
+        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx, None).await;
 
         // Verify message was processed before shutdown
         let sent = messages_ref.lock().unwrap();

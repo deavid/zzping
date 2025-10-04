@@ -1,9 +1,21 @@
 [package]
 name = "zznet-api"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ZZPing Network Layer: Transport abstraction traits and mock implementation"
 
 [dependencies]
-anyhow = { workspace = true }
-async-trait = "0.1"
+tokio = { workspace = true }
+bytes = { workspace = true }
+async-trait = { workspace = true }
+thiserror = { workspace = true }
 serde = { workspace = true }
+
+# Keep legacy for compatibility during migration
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util", "sync"] }

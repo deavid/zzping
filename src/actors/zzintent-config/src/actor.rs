@@ -135,10 +135,23 @@ impl Handler<IntentConfigMessage> for IntentConfigActor {
             }
 
             // --- Database Role Behavior ---
-            (IntentConfigRole::Database, IntentConfigMessage::ConfigUpdate { targets, ping_rate_pps }) => {
+            (
+                IntentConfigRole::Database,
+                IntentConfigMessage::ConfigUpdate {
+                    targets,
+                    ping_rate_pps,
+                },
+            ) => {
                 // Database accepts config updates from collectors
-                log::info!("Database received ConfigUpdate: targets={:?}, pps={}", targets, ping_rate_pps);
-                let new_config = IntentConfigData { targets, ping_rate_pps };
+                log::info!(
+                    "Database received ConfigUpdate: targets={:?}, pps={}",
+                    targets,
+                    ping_rate_pps
+                );
+                let new_config = IntentConfigData {
+                    targets,
+                    ping_rate_pps,
+                };
                 if new_config != self.current_config {
                     self.current_config = new_config;
                     self.broadcast_config();
@@ -146,10 +159,23 @@ impl Handler<IntentConfigMessage> for IntentConfigActor {
                 // TODO: Send acknowledgment via SessionManager
             }
 
-            (IntentConfigRole::Database, IntentConfigMessage::CurrentConfig { targets, ping_rate_pps }) => {
+            (
+                IntentConfigRole::Database,
+                IntentConfigMessage::CurrentConfig {
+                    targets,
+                    ping_rate_pps,
+                },
+            ) => {
                 // Database received response to query
-                log::info!("Database received CurrentConfig: targets={:?}, pps={}", targets, ping_rate_pps);
-                let new_config = IntentConfigData { targets, ping_rate_pps };
+                log::info!(
+                    "Database received CurrentConfig: targets={:?}, pps={}",
+                    targets,
+                    ping_rate_pps
+                );
+                let new_config = IntentConfigData {
+                    targets,
+                    ping_rate_pps,
+                };
                 if new_config != self.current_config {
                     self.current_config = new_config;
                     self.broadcast_config();
@@ -404,7 +430,13 @@ mod tests {
         actor.handle(msg, &mut ctx);
 
         // ASSERT: Database's config should change
-        assert_eq!(actor.current_config.targets, vec!["8.8.8.8".parse::<std::net::IpAddr>().unwrap(), "1.1.1.1".parse().unwrap()]);
+        assert_eq!(
+            actor.current_config.targets,
+            vec![
+                "8.8.8.8".parse::<std::net::IpAddr>().unwrap(),
+                "1.1.1.1".parse().unwrap()
+            ]
+        );
         assert_eq!(actor.current_config.ping_rate_pps, 123);
     }
 
@@ -441,7 +473,10 @@ mod tests {
             .await
             .expect("Subscriber did not receive network update")
             .unwrap();
-        assert_eq!(received_config.targets, vec!["7.7.7.7".parse::<std::net::IpAddr>().unwrap()]);
+        assert_eq!(
+            received_config.targets,
+            vec!["7.7.7.7".parse::<std::net::IpAddr>().unwrap()]
+        );
         assert_eq!(received_config.ping_rate_pps, 77);
     }
 
@@ -464,7 +499,10 @@ mod tests {
         actor.handle(msg, &mut ctx);
 
         // ASSERT: Database should update its config
-        assert_eq!(actor.current_config.targets, vec!["2.2.2.2".parse::<std::net::IpAddr>().unwrap()]);
+        assert_eq!(
+            actor.current_config.targets,
+            vec!["2.2.2.2".parse::<std::net::IpAddr>().unwrap()]
+        );
         assert_eq!(actor.current_config.ping_rate_pps, 22);
     }
 

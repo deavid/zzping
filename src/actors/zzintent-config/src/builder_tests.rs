@@ -60,8 +60,7 @@ mod tests {
     async fn test_builder_starts_with_database_role() {
         setup();
         // ARRANGE
-        let builder = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database);
+        let builder = IntentConfigBuilder::new().role(IntentConfigRole::Database);
 
         // ACT
         let addr = builder.start();
@@ -75,10 +74,9 @@ mod tests {
     async fn test_builder_starts_with_collector_role() {
         setup();
         // ARRANGE
-        let builder = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Collector {
-                config_file_path: "/tmp/test_intent.ron".into(),
-            });
+        let builder = IntentConfigBuilder::new().role(IntentConfigRole::Collector {
+            config_file_path: "/tmp/test_intent.ron".into(),
+        });
 
         // ACT
         let addr = builder.start();
@@ -92,10 +90,9 @@ mod tests {
     async fn test_builder_panics_on_invalid_collector_role() {
         setup();
         // ARRANGE: Collector with empty path (invalid)
-        let builder = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Collector {
-                config_file_path: PathBuf::new(),
-            });
+        let builder = IntentConfigBuilder::new().role(IntentConfigRole::Collector {
+            config_file_path: PathBuf::new(),
+        });
 
         // ACT: Should panic
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

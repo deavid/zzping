@@ -1,6 +1,6 @@
+use crate::room::RoomChannels;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use crate::room::RoomChannels;
 
 /// Connects two rooms bidirectionally
 /// Messages sent from Room A arrive at Room B and vice versa
@@ -25,10 +25,7 @@ pub fn connect_rooms<T: Send + 'static>(
     }
 }
 
-async fn forward_messages<T>(
-    mut rx: mpsc::Receiver<T>,
-    tx: mpsc::Sender<T>,
-) {
+async fn forward_messages<T>(mut rx: mpsc::Receiver<T>, tx: mpsc::Sender<T>) {
     while let Some(msg) = rx.recv().await {
         if tx.send(msg).await.is_err() {
             // Other side closed, stop forwarding

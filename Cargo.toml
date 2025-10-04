@@ -8,11 +8,15 @@ members = [
     "src/apps/zzping-collector",
     "src/apps/zzping-cli",
     "src/apps/zzping-gui",
-    "src/components/zznet",
     "src/actors/zzintent-config",
-    "src/components/zznet-connection",
+    "src/actors/zznet-hello",
+    "src/components/zznet-builder",
     "src/components/zznet-room",
     "src/components/zznet-session",
+    "src/transports/zznet-transport-tcp",
+    "examples/simple-network-example",
+    "examples/message-exchange-example",
+    "examples/tls-example",
 ]
 
 [workspace.package]
@@ -69,6 +73,7 @@ thiserror = "2.0"
 tokio = { version = "1", features = ["full", "test-util"] }
 tonic-health = "0.7"
 toml = "0.8"
+tracing = "0.1"
 futures = "0.3"                                               # Moved back to [workspace.dependencies]
 mockall = "0.12"
 ntest = "0.9"

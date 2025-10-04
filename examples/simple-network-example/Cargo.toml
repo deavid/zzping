@@ -1,0 +1,25 @@
+[package]
+name = "simple-network-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "simple_network_example"
+path = "src/main.rs"
+
+[dependencies]
+# ZZNet components
+zznet-api = { path = "../../src/common/zznet-api" }
+zznet-hello = { path = "../../src/actors/zznet-hello" }
+zznet-builder = { path = "../../src/components/zznet-builder" }
+zznet-session = { path = "../../src/components/zznet-session" }
+zznet-transport-tcp = { path = "../../src/transports/zznet-transport-tcp" }
+
+# Async runtime
+actix = { workspace = true }
+tokio = { workspace = true }
+
+# Logging
+env_logger = { workspace = true }
+log = { workspace = true }

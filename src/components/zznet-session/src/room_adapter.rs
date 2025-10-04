@@ -26,30 +26,6 @@ use tokio::sync::mpsc;
 /// - `T: Message` - Actix message type
 ///
 /// # Example
-///
-/// ```rust,ignore
-/// // Create room with concrete type
-/// let actor = IntentConfigActor::new(...).start();
-/// let (room, channels) = Room::<IntentConfigMessage>::new(actor.recipient());
-///
-/// // Wrap in adapter for type erasure
-/// let (tx, _rx) = mpsc::channel(10);
-/// let adapter = RoomAdapter::new(
-///     RoomId::from("intentconfig"),
-///     channels.inbound_tx,
-///     channels.outbound_rx,
-///     tx,
-/// );
-///
-/// // Spawn room receiver
-/// room.spawn_receiver()?;
-///
-/// // Type-erase to trait object
-/// let boxed: Box<dyn RoomHandle<CollectorMessages>> = Box::new(adapter);
-///
-/// // Can now store in HashMap with other room types
-/// peer_session.add_room(room_id, boxed)?;
-/// ```
 pub struct RoomAdapter<T, TMsg>
 where
     T: Send + Clone + TryFrom<TMsg> + Into<TMsg> + 'static,

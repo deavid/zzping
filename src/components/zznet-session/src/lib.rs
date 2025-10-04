@@ -24,40 +24,6 @@
 //!
 //! ## Example
 //!
-//! ```rust,ignore
-//! // Note: This is a conceptual example. See integration_tests.rs for working examples.
-//! use zznet_session::session_manager::SessionManager;
-//! use zznet_session::peer_session::PeerSession;
-//! use zznet_session::types::{PeerId, RoomId};
-//! use tokio::sync::mpsc;
-//!
-//! // Define your application message enum (must implement RoomMessageTrait)
-//! enum MyAppMessages {
-//!     MemDB(String),
-//! }
-//!
-//! // Create two SessionManagers (simulating two processes)
-//! let mut manager_a = SessionManager::<MyAppMessages>::new();
-//! let mut manager_b = SessionManager::<MyAppMessages>::new();
-//!
-//! // Add peers with pre-constructed PeerSession
-//! let peer_a = PeerSession::new(PeerId::from("peer_a"));
-//! let peer_b = PeerSession::new(PeerId::from("peer_b"));
-//!
-//! manager_a.add_peer(PeerId::from("peer_b"), peer_b).unwrap();
-//! manager_b.add_peer(PeerId::from("peer_a"), peer_a).unwrap();
-//!
-//! // Connect with channels (NO SERIALIZATION)
-//! let (tx_a, rx_b) = mpsc::channel(10);
-//! let (tx_b, rx_a) = mpsc::channel(10);
-//!
-//! manager_a.connect_peer(PeerId::from("peer_b"), tx_a, rx_a).unwrap();
-//! manager_b.connect_peer(PeerId::from("peer_a"), tx_b, rx_b).unwrap();
-//!
-//! // Messages flow as typed structs, never serialized
-//! # }
-//! ```
-//!
 //! ## Testing Connection Lifecycle
 //!
 //! This PoC enables testing:

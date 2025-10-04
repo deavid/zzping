@@ -88,9 +88,7 @@ impl IntentConfigBuilder {
     /// The returned `Addr` is the handle to the running actor, used for sending messages.
     pub fn start(self) -> Addr<IntentConfigActor> {
         // Validate role configuration
-        self.role
-            .validate()
-            .expect("Invalid role configuration");
+        self.role.validate().expect("Invalid role configuration");
 
         // Create and start actor with role
         IntentConfigActor::new_with_role(self.role).start()

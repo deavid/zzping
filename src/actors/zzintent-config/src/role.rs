@@ -160,9 +160,11 @@ mod tests {
 
         let result = collector.validate();
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("requires non-empty config_file_path"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("requires non-empty config_file_path")
+        );
     }
 
     #[test]

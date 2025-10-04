@@ -1,0 +1,43 @@
+[package]
+name = "zznet-transport-tcp"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "TCP/TLS transport implementation for ZZPing network stack"
+
+[dependencies]
+# Internal dependencies
+zznet-api = { path = "../../common/zznet-api" }
+
+# Async runtime
+tokio.workspace = true
+async-trait.workspace = true
+
+# TLS
+rustls.workspace = true
+tokio-rustls.workspace = true
+rustls-pemfile.workspace = true
+rustls-native-certs.workspace = true
+
+# Data handling
+bytes.workspace = true
+byteorder.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Serialization (for frame length prefix)
+bincode.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = [
+    "test-util",
+    "macros",
+    "rt-multi-thread",
+] }
+tempfile.workspace = true

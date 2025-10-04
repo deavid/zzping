@@ -1,0 +1,23 @@
+[package]
+name = "zznet-builder"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "High-level builder API for ZZPing network servers and clients"
+
+[dependencies]
+zznet-api = { path = "../../common/zznet-api" }
+zznet-hello = { path = "../../actors/zznet-hello" }
+zznet-session = { path = "../zznet-session" }
+zznet-transport-tcp = { path = "../../transports/zznet-transport-tcp" }
+actix.workspace = true
+tokio.workspace = true
+tracing = "0.1"
+thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+serde = { workspace = true }
+bincode = { workspace = true }
