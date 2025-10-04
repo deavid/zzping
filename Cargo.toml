@@ -11,6 +11,8 @@ members = [
     "src/components/zznet",
     "src/actors/zzintent-config",
     "src/components/zznet-connection",
+    "src/components/zznet-room",
+    "src/components/zznet-session",
 ]
 
 [workspace.package]

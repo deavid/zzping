@@ -1,8 +1,10 @@
 # ZZPing Network Layer Architecture: Actor-Based Design
 
-**Date**: October 1, 2025
-**Status**: Active Design
+**Date**: October 1, 2025 (Updated: October 2, 2025)
+**Status**: Active Design - Aligned with Vision Document
 **Authors**: David Martínez Martí, AI Design Partner (Claude 4.5 Sonnet)
+
+**Reference**: This document has been aligned with `ZZPing_Network_Layer_Vision.md`, which serves as the authoritative reference for essential architectural principles.
 
 ---
 
@@ -42,20 +44,25 @@ This document provides a clean, layered architecture with clear separation of co
 
 This document defines the architecture for the **ZZPing network layer**, which enables components within a service to communicate with their counterparts in other services over the network.
 
-**Core Insight**: Each network connection spawns a dedicated **session actor** within each application component. This per-connection actor pattern eliminates shared state, provides explicit lifecycle management, and makes connection-aware protocols natural to implement.
+**Core Insight**: The **SessionManager** is the heart of the network layer—a completely transport-agnostic component that manages all peer connections and routes typed messages between components. Components communicate using only typed messages, completely independent of how those messages are transported.
 
 **Key Architectural Layers**:
-1. **Transport Layer**: Abstract, pluggable transport (TCP/TLS, gRPC, etc.)
-2. **Session Layer**: Protocol state machine (handshake, room negotiation, frame multiplexing)
-3. **Routing Layer**: Routes session events to registered component handlers
-4. **Application Layer**: Business logic components with main + per-connection session actors
+1. **Transport Layer**: Abstract, pluggable transport (TCP/TLS, mock, gRPC, etc.) - handles bytes only
+2. **HELLO Handler**: Peer identity and transport-level handshake (operates on bytes)
+3. **SessionManager**: Transport-agnostic core managing PeerSessions (operates on typed messages only)
+4. **Room Router**: Routes typed messages to registered component handlers
+5. **Application Components**: Business logic with same code on both sides (e.g., MemDB ↔ MemDB)
+
+**Two Distinct Protocols**:
+- **Protocol A (HELLO)**: Peer identity exchange using bytes - handled before SessionManager involvement
+- **Protocol B (Room Communication)**: Typed message exchange between components - managed entirely by SessionManager
 
 **What This Enables**:
+- SessionManager completely testable without any network I/O (mock-first testing)
 - Pure actor model with no shared state or locking
 - Self-testable components with minimal dependencies
-- Clean handling of connection lifecycle in stateful protocols
-- Transport-agnostic design (swap TCP for gRPC without touching app code)
-- Symmetric protocol (same code runs on client and server)
+- Transport-agnostic design (swap TCP for mock without touching SessionManager)
+- Symmetric protocol (same component code runs on both sides with different config)
 
 ---
 
@@ -380,151 +387,224 @@ When a new TCP connection is established (even from the same remote host):
 
 ### How Is Serialization Handled?
 
-**Two-stage serialization**:
+**Critical Principle**: SessionManager NEVER touches bytes. It operates entirely on typed messages.
 
-1. **Stage 1 (Application → Room)**: Application message is serialized to `Vec<u8>`
+**The Serialization Layers**:
+
+1. **Component Layer** (typed → typed): Component sends typed message to SessionManager
    ```rust
-   let msg = IntentConfigMessage::UpdateConfig { ... };
-   let bytes = bincode::serialize(&msg)?; // Stage 1
+   // Component code
+   let msg = MemDBMessage::Insert { key, value };
+   session_manager.send_to_peer(peer_id, "memdb", msg);  // Still typed!
    ```
 
-2. **Stage 2 (Room → Transport)**: Bytes are wrapped in a protocol frame and serialized again
+2. **SessionManager Layer** (typed → typed): Routes typed message to correct PeerSession
    ```rust
-   let frame = Frame::MessageForRoom { room: "intent-config", data: bytes };
-   let frame_bytes = bincode::serialize(&frame)?; // Stage 2
+   // SessionManager code - NO serialization, only routing
+   impl SessionManager {
+       fn send_to_peer<T: Serialize>(&self, peer_id: PeerId, room: &str, message: T) {
+           let peer_session = self.peer_sessions.get(&peer_id)?;
+           peer_session.send_room_message(room, message);  // Still typed!
+       }
+   }
    ```
 
-**Why Two Stages?**
-- The session layer cannot deserialize application messages because it doesn't know their types (they're in different crates)
-- The session layer needs to route based on room name before deserializing the payload
-- This is a necessary consequence of the layered, type-safe design
+3. **PeerSession Layer** (typed → bytes): Serializes message, wraps in envelope, sends to transport
+   ```rust
+   // PeerSession code - THIS is where serialization happens
+   impl PeerSession {
+       fn send_room_message<T: Serialize>(&self, room: &str, message: T) {
+           // Stage 1: Serialize component message
+           let message_bytes = bincode::serialize(&message)?;
+
+           // Stage 2: Wrap in SessionMessage envelope
+           let envelope = SessionMessage::RoomMessage {
+               room: room.to_string(),
+               data: message_bytes,
+           };
+
+           // Stage 3: Serialize envelope and send via transport
+           let envelope_bytes = bincode::serialize(&envelope)?;
+           self.transport_handle.send_bytes(envelope_bytes)?;
+       }
+   }
+   ```
+
+**Why This Layering?**
+- **SessionManager is transport-agnostic**: It never sees bytes, only typed messages
+- **PeerSession is the serialization boundary**: It converts between typed (above) and bytes (below)
+- **Testing without network**: SessionManager can be tested with mock TransportHandles
+- **Type safety**: Compiler catches type mismatches between components
+
+**The Key Insight**:
+- SessionManager doesn't know about serialization, envelopes, or bytes
+- PeerSession encapsulates all byte-handling
+- This is what makes SessionManager transport-agnostic and testable without network I/O
 
 **Trade-offs**:
-- ✅ Clean separation of concerns
-- ✅ Type safety at every layer
-- ✅ Transport and protocol are decoupled from application types
-- ⚠️ Slight overhead from double serialization (acceptable in our latency-tolerant domain)
-- ⚠️ Allows different serialization formats for protocol vs. application (flexibility, but also potential confusion)
+- ✅ SessionManager completely testable without network
+- ✅ Transport truly pluggable (TCP, mock, gRPC)
+- ✅ Clear layer boundaries (typed vs bytes)
+- ⚠️ Multiple serialization stages (component message → envelope → wire)
+- ⚠️ PeerSession must be generic over message types
 
-**Decision**: We accept this trade-off. The architectural clarity gained is worth the minor performance cost.
+**Decision**: We accept this trade-off. The ability to test SessionManager without network I/O is worth the complexity.
 
 ---
 
-## Protocol Structure: Two-Phase Design
+## Protocol Structure: Two Distinct Protocols
 
-The zznet protocol operates in two distinct phases. Understanding this layering is critical for comprehending how version negotiation and protocol evolution work.
+The zznet layer uses **two separate protocols** operating at different layers with different concerns. Understanding this separation is critical for comprehending the architecture.
 
-### Phase 1: Negotiation Protocol (HELLO)
+### Protocol A: HELLO (Peer Identity & Transport Handshake)
 
-The first phase is a **meta-protocol**—a protocol for selecting which actual protocol to use.
+This protocol establishes peer identity and validates the transport connection **before** the SessionManager gets involved.
+
+**Layer**: Operates at the transport layer, **below** SessionManager
+
+**Data Format**: Bytes (serialized frames)
 
 **Purpose**:
 - Establish basic peer identity (hostname, role)
-- Negotiate protocol version
-- Decide which protocol variant to use for the remainder of the connection
+- Verify protocol compatibility
+- Complete transport-level handshake (may include TLS, authentication, etc.)
 
 **Frame Structure** (simplified):
 ```rust
 #[derive(Serialize, Deserialize)]
 struct HelloFrame {
     protocol_family: String,        // "zznet"
-    supported_versions: Vec<String>, // ["1.0", "2.0"]
+    protocol_version: String,        // "1.0"
     hostname: String,
     role: AuthRole,                  // Collector, Database, CLI, etc.
 }
 
 #[derive(Serialize, Deserialize)]
 struct HelloAckFrame {
-    selected_version: String,        // "1.0"
-    // Additional negotiation data if needed
+    accepted: bool,
+    hostname: String,
+    role: AuthRole,
 }
 ```
 
 **Behavior**:
-1. Client sends `HelloFrame` with its supported versions
-2. Server receives `HelloFrame`, checks compatibility
-3. Server selects a mutually-supported version (or rejects if none)
-4. Server sends `HelloAckFrame` with selected version
-5. **Both sides now switch to the selected protocol version**
+1. Transport connection established (TCP, TLS, etc.)
+2. HELLO Handler sends `HelloFrame` with identity
+3. Remote peer receives `HelloFrame`, validates it
+4. Remote peer sends `HelloAckFrame` (accept/reject)
+5. **If accepted**: HELLO Handler creates a PeerIdentity and hands off to SessionManager
+6. **If rejected**: Connection closed with error
 
-**For v1.0**: The negotiation is trivial—both sides must support exactly "1.0". If versions don't match, the connection is rejected with an error.
+**Critical Points**:
+- HELLO operates on **bytes** (serialized frames)
+- HELLO knows nothing about rooms or typed messages
+- HELLO completes **before** SessionManager creates a PeerSession
+- SessionManager never sees HELLO messages - it receives only the validated PeerIdentity result
 
-**For Future Versions**: This phase enables:
-- **Version negotiation**: "I support 1.0 and 2.0, you support 2.0 and 3.0, let's use 2.0"
-- **Feature negotiation**: "Do you support compression? Do you support multiplexing?"
-- **Protocol switching**: After HELLO, the connection could switch to a completely different protocol (e.g., gRPC, QUIC)
+### Protocol B: Room Communication (Typed Messages Between Components)
 
-**Critical Invariant**: The HELLO phase is **always the same**, regardless of what protocol is negotiated. It's the stable, unchanging foundation that enables protocol evolution.
+After HELLO completes and SessionManager creates a PeerSession, components communicate using **typed messages**.
 
-### Phase 2: Application Protocol (Room-Based Communication)
+**Layer**: Operates at the SessionManager layer and above, **completely transport-agnostic**
 
-After HELLO negotiation completes, the connection switches to the **selected protocol version**. For v1.0, this is the room-based protocol described throughout this document.
+**Data Format**: Typed Rust messages (e.g., `MemDBMessage`, `IntentConfigMessage`)
 
 **Purpose**:
-- Negotiate which rooms (logical channels) are active on this connection
-- Multiplex application messages by room name
-- Handle application-level lifecycle (room activation, data exchange, termination)
+- Negotiate which rooms (communication channels) are active
+- Exchange typed messages between component pairs
+- Handle component-level lifecycle (room activation, message exchange)
 
-**Frame Structure** (v1.0):
+**Room Negotiation**:
 ```rust
-#[derive(Serialize, Deserialize)]
-enum Frame {
-    // Room negotiation
-    OfferRooms {
-        rooms: Vec<String>,
-    },
+// Each side publishes their supported rooms
+let local_rooms = vec!["memdb", "intent-config"];
+let peer_rooms = vec!["memdb", "health"];
 
-    // Data exchange
-    MessageForRoom {
-        room: String,
-        data: Vec<u8>,
-    },
+// SessionManager computes intersection
+let active_rooms = local_rooms.intersection(&peer_rooms); // ["memdb"]
 
-    // Lifecycle
-    ConnectionClosed {
-        reason: String,
-    },
-}
+// Auto-join: SessionManager creates Room for each active room
+// No dynamic join/leave - rooms are determined at connection establishment
 ```
 
-**Behavior**:
-1. Both sides send `OfferRooms` with their list of supported rooms
-2. Intersection is computed: `active_rooms = peer_rooms ∩ local_rooms`
-3. If intersection is empty, **error**: disconnect with "no compatible rooms"
-4. Otherwise, for each room in the intersection, the routing layer dispatches `SessionActive` events
-5. Application components spawn session actors and begin exchanging `MessageForRoom` frames
+**Message Exchange** (SessionManager perspective):
+```rust
+// Component sends typed message
+component.send_to_peer(
+    peer_id,
+    "memdb",
+    MemDBMessage::Query { id: 123 }
+);
 
-**Critical Invariant**: Room names are **protocol identifiers**. A room named "intent-config" must mean the same protocol (same message types, same semantics) on both sides. Room names are part of the global contract across all zzping services.
+// SessionManager routes to correct PeerSession
+// PeerSession serializes and sends to transport
+// Remote transport receives bytes
+// Remote PeerSession deserializes to MemDBMessage
+// Remote SessionManager routes to MemDB component
+```
 
-### Why Two Phases?
+**Critical Points**:
+- SessionManager operates **only on typed messages** - never sees bytes
+- Room negotiation happens via auto-join intersection (no dynamic subscribe/unsubscribe)
+- Same component code on both sides (e.g., MemDB(Collector) ↔ MemDB(Database))
+- Rooms are point-to-point, 1:1 channels (not broadcast)
+- Each room is a "phone line" between two component instances
 
-**Separation of Concerns**:
-- HELLO phase: "Who are you, what versions do you speak?"
-- Application phase: "Let's exchange data for these specific protocols"
+### Why Two Protocols?
+
+**Complete Layer Separation**:
+- **Protocol A (HELLO)**: Transport layer concern - operates on bytes, handles peer identity
+- **Protocol B (Room Communication)**: Application layer concern - operates on typed messages, handles component communication
+- SessionManager sits **above** Protocol A and manages Protocol B
+
+**Transport Agnostic Testing**:
+- SessionManager can be tested with mock transport (in-memory channels)
+- Two SessionManagers can communicate via mock without any network I/O
+- Protocol A (HELLO) can be tested independently of SessionManager
+- This is the **design validation**: if you can't test SessionManager without network I/O, the architecture is wrong
 
 **Evolution Without Breaking Changes**:
-- The HELLO phase never changes (or changes extremely rarely)
-- Application protocols can evolve independently
-- New protocol versions can be added without breaking old clients
+- HELLO protocol (Protocol A) changes rarely - provides stable foundation
+- Room message types (Protocol B) can evolve independently
+- SessionManager never changes when transport changes (TCP → mock → gRPC)
 
-**Transport Independence**:
-- HELLO phase establishes a common language
-- After HELLO, you could switch to a completely different transport (e.g., negotiating to use gRPC instead of raw TCP frames)
+**Critical Architectural Invariant**:
+SessionManager must compile and function **without** any transport crate dependency. It receives PeerIdentity (from HELLO Handler) and sends/receives typed messages. It never sees bytes.
 
-### Implementation Note
+### Implementation Architecture
 
-In v1.0, the two phases are implemented within the same `SessionActor` as a state machine:
+The two protocols are handled by **separate components** at different layers:
 
 ```rust
-enum SessionState {
-    Hello,           // Exchanging Hello frames
-    Negotiating,     // Negotiating rooms
-    Active,          // Exchanging data
-    Closing,         // Tearing down
+// Protocol A: HELLO Handler (transport layer, deals with bytes)
+struct HelloHandler {
+    transport: Box<dyn Transport>,
+}
+
+impl HelloHandler {
+    fn perform_handshake(&mut self) -> Result<PeerIdentity> {
+        // Send/receive HELLO frames (bytes)
+        // Validate peer identity
+        // Return validated PeerIdentity to SessionManager
+    }
+}
+
+// Protocol B: SessionManager (transport-agnostic, deals with typed messages)
+struct SessionManager {
+    peers: HashMap<PeerId, PeerSession>,
+    router: RoomRouter,
+}
+
+impl SessionManager {
+    fn create_peer_session(&mut self, identity: PeerIdentity, transport_handle: TransportHandle) {
+        // Negotiate rooms via intersection
+        // Create PeerSession
+        // Never sees bytes - only typed messages
+    }
 }
 ```
 
-The actor progresses through these states sequentially. **The HELLO state must complete successfully before any room negotiation begins.**
+**Critical Separation**: HELLO Handler completes **before** SessionManager creates a PeerSession. SessionManager never participates in HELLO - it only receives the validated result.
 
 ### Room Name Registry (Implicit Contract)
 
@@ -541,6 +621,128 @@ While room names are strings at the protocol level, they represent **well-known 
 **These are not arbitrary strings.** They are the equivalent of API endpoints or RPC method names in a distributed system. If a component offers "intent-config", it **must** implement the `IntentConfigMessage` protocol correctly.
 
 **Configuration errors** (e.g., a Database expecting "metrics" but Collector only offers "ping-results") will be caught during room negotiation, resulting in an empty intersection and connection rejection.
+
+---
+
+## Connection Model and Operational Constraints
+
+This section defines critical operational characteristics of the network layer that affect implementation and behavior.
+
+### Connection Lifecycle
+
+**Model**: Persistent, long-lived connections. No connection pooling or reuse.
+
+**Rationale**: Each connection represents an active relationship between two services. When a service restarts, it establishes a new connection. The overhead of TCP handshake + TLS + protocol negotiation is acceptable for our connection frequency (minutes to hours between reconnects, not seconds).
+
+**Behavior**:
+- Services establish connections at startup and maintain them until shutdown
+- No connection pool management needed
+- Each connection is independent (no state sharing between connections)
+
+### Keepalive and Liveness Detection
+
+**Mechanism**: Transport-level heartbeat using **zero-sized frames**.
+
+**Frame Format**:
+```rust
+// Transport frame structure
+// [u32 length][payload bytes]
+
+// Heartbeat frame
+[0x00, 0x00, 0x00, 0x00]  // length = 0, no payload
+```
+
+**Behavior**:
+- **Both sides** must send heartbeat frames periodically (every 1 second recommended)
+- If no frames received (heartbeat or data) for configured timeout (e.g., 5 seconds), assume connection is dead
+- If several consecutive heartbeat send attempts fail at TCP level, close connection
+- Heartbeat is **transport layer responsibility**, not visible to protocol or application layers
+
+**Rationale**: Detect "zombie connections" (peer crashed but TCP didn't notice) quickly. TCP keepalive can take minutes; protocol-level heartbeat detects failure in seconds.
+
+### Message Size Limits
+
+**Hard Limit**: 16 MiB (16,777,216 bytes) per message.
+
+**Enforcement**:
+- **Sending**: Protocol layer must reject messages exceeding 16 MiB before attempting to send. Return error to application session actor.
+- **Receiving**: If frame header indicates size > 16 MiB, immediately close connection with protocol error.
+
+**Rationale**:
+1. **Security**: Prevent attackers from causing memory exhaustion by claiming terabytes of data
+2. **Multiplexing**: Large messages would starve other rooms on the same connection (head-of-line blocking)
+3. **Predictability**: Services can allocate bounded buffers
+
+**Configuration**: This is a compile-time constant in the transport layer, not runtime-configurable.
+
+**Failure Mode**: Attempting to send >16 MiB is a logic error (panic-worthy). Receiving >16 MiB is a protocol violation (close connection).
+
+### Observability
+
+**Requirements**: The framework must provide visibility into connection state for operators.
+
+**Minimum Required Metrics** (to be exposed):
+- Number of active connections
+- List of connected peers (hostname, role)
+- Active rooms per connection
+- Messages sent/received counters
+- Errors (backpressure, protocol violations, etc.)
+
+**Implementation Strategy** (deferred): For v1.0, logging to console is sufficient. Future versions may expose structured metrics (Prometheus, statsd, etc.).
+
+**Logging Frequency**: Periodic summary (e.g., every 60 seconds) showing active connections and basic stats.
+
+---
+
+## Explicit Non-Goals
+
+These are design decisions about what the architecture explicitly **does not** provide. Documenting non-goals prevents scope creep and clarifies boundaries.
+
+### NG1: Connection Pooling
+
+**Not Provided**: The framework does not implement connection pooling, connection reuse, or connection multiplexing across application requests.
+
+**Rationale**: Our connection model is persistent, long-lived connections. Pooling is for short-lived request/response patterns (e.g., HTTP). Not needed here.
+
+### NG2: Multiple Connections from Same Identity
+
+**Not Provided**: The framework does not correlate or manage multiple connections claiming the same identity (e.g., two connections from "Collector-1").
+
+**Who Handles It**: Application business logic. The framework treats each connection as independent. If an application needs "connection displacement" (close old connection when new one arrives), it must implement that logic itself using the `peer_hostname` field in `SessionActive`.
+
+### NG3: Resource Limits and Admission Control
+
+**Not Provided**: No maximum connection limits, no per-peer connection limits, no admission control.
+
+**Rationale**: Not needed for our use case. Services are deployed in controlled environments with known peer counts (e.g., 10 collectors, 1 database). If needed in the future, the transport layer can implement limits.
+
+### NG4: Graceful Shutdown
+
+**Not Provided**: No graceful connection drain, no "goodbye" frame, no timeout for finishing in-flight requests.
+
+**Behavior**: On shutdown (SIGINT, SIGTERM), connections are closed immediately. From the peer's perspective, the connection just drops.
+
+**Who Handles It**: Application business logic can implement its own shutdown logic (e.g., flush buffers before stopping actors) using signal handlers, but the network layer does not coordinate this.
+
+### NG5: Transport Switching
+
+**Not Provided**: No dynamic transport negotiation (e.g., starting with TCP, upgrading to QUIC).
+
+**Rationale**: YAGNI. Transport is decided before connection establishment and never changes. If transport switching is needed, build a separate transport layer implementation.
+
+### NG6: Error Recovery at Application Layer
+
+**Not Provided**: All errors at the application layer (deserialization failures, logic panics) are **fatal** and tear down the connection.
+
+**Rationale**: Errors indicate bugs or incompatible protocol versions. Better to fail fast and restart than continue in an inconsistent state.
+
+**Exception**: The transport layer handles I/O errors gracefully (using `Result<T, E>`), but these are not exposed to applications.
+
+### NG7: Authorization Error Responses
+
+**Current Limitation**: If an application rejects a connection based on authorization (e.g., "this role is not allowed for this room"), there is no way to send an error message back to the peer. The connection is silently closed.
+
+**Future Consideration**: Could add a `Frame::Rejected { room: String, reason: String }` frame, but this is not a v1.0 requirement.
 
 ---
 
@@ -729,247 +931,594 @@ thread 'main' panicked at 'Boot validation failed: NoHandlerForRoom {
 
 ## Layered Architecture
 
-The network layer is organized into four distinct layers, each with a clear responsibility. Data flows vertically through these layers. Each layer only communicates with its immediate neighbors.
+The network layer is organized into distinct layers with a **critical boundary** between typed messages (above SessionManager) and bytes (below SessionManager).
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│            APPLICATION LAYER                             │
-│  ┌────────────────────┐  ┌────────────────────┐         │
-│  │ IntentConfigActor  │  │ PingerActor        │         │
-│  │ (main, singleton)  │  │ (main, singleton)  │         │
-│  └────────────────────┘  └────────────────────┘         │
-│         ↕                        ↕                        │
-│  ┌────────────────────┐  ┌────────────────────┐         │
-│  │ SessionActor       │  │ SessionActor       │         │
-│  │ (per connection)   │  │ (per connection)   │         │
-│  └────────────────────┘  └────────────────────┘         │
+│            APPLICATION COMPONENTS                        │
+│   Same component code both sides (config differs)      │
+│                                                          │
+│  Collector Side:              Database Side:           │
+│  ┌───────────────────┐  ┌───────────────────┐         │
+│  │ MemDB(Collector)  │  │ MemDB(Database)   │         │
+│  │ "memdb" room      │  │ "memdb" room      │         │
+│  └───────────────────┘  └───────────────────┘         │
 └──────────────────────────────────────────────────────────┘
-                    ↕ (typed messages)
+                    ↕
+              (typed: MemDBMessage)
+                    ↕
 ┌──────────────────────────────────────────────────────────┐
-│             ROUTING LAYER                                │
+│                   ROOM ROUTER                          │
+│   Routes typed messages by room name to components     │
 │  ┌──────────────────────────────────────────┐            │
-│  │          RoomRouter                      │            │
-│  │  Routes events to registered handlers    │            │
+│  │ room "memdb" → MemDB component       │            │
+│  │ room "intent-config" → IntentConfig   │            │
 │  └──────────────────────────────────────────┘            │
 └──────────────────────────────────────────────────────────┘
-                    ↕ (Vec<u8> + metadata)
+                    ↕
+              (typed messages)
+                    ↕
+╱──────── TYPED │ BYTES BOUNDARY ────────╲
+                    ↕
 ┌──────────────────────────────────────────────────────────┐
-│             SESSION LAYER                                │
-│  ┌────────────────────┐                                  │
-│  │  SessionManager    │                                  │
-│  │  (singleton)       │                                  │
-│  └────────────────────┘                                  │
-│         ↕                                                 │
-│  ┌────────────────────┐  ┌────────────────────┐         │
-│  │  SessionActor      │  │  SessionActor      │         │
-│  │  (per connection)  │  │  (per connection)  │         │
-│  └────────────────────┘  └────────────────────┘         │
-└──────────────────────────────────────────────────────────┘
-                    ↕ (frames)
-┌──────────────────────────────────────────────────────────┐
-│             TRANSPORT LAYER                              │
+│              SESSION MANAGER (CORE)                    │
+│         100% TRANSPORT AGNOSTIC                        │
+│   Manages PeerSessions, negotiates rooms via          │
+│   intersection, routes typed messages                 │
+│                                                          │
 │  ┌──────────────────────────────────────────┐            │
-│  │   TcpTransport / GrpcTransport / etc.    │            │
-│  │   (pluggable implementation)             │            │
+│  │ PeerSession for Collector-1         │            │
+│  │ rooms: ["memdb", "intent-config"]    │            │
 │  └──────────────────────────────────────────┘            │
+│  ┌──────────────────────────────────────────┐            │
+│  │ PeerSession for Collector-2         │            │
+│  │ rooms: ["memdb"]                    │            │
+│  └──────────────────────────────────────────┘            │
+└──────────────────────────────────────────────────────────┘
+                    ↕
+            (TransportHandle)
+           send_bytes / recv_bytes
+                    ↕
+┌──────────────────────────────────────────────────────────┐
+│                HELLO HANDLER                         │
+│   Performs Protocol A (HELLO) using bytes             │
+│   Validates peer identity                             │
+│   Hands validated PeerIdentity to SessionManager      │
+└──────────────────────────────────────────────────────────┘
+                    ↕
+                 (bytes)
+                    ↕
+┌──────────────────────────────────────────────────────────┐
+│              TRANSPORT LAYER                          │
+│   TCP/TLS, Mock, gRPC - completely pluggable          │
+│   Trait-based, no hardcoded implementation            │
 └──────────────────────────────────────────────────────────┘
 ```
+
+**Critical Architectural Invariant**: SessionManager operates **entirely above the typed/bytes boundary**. It never sees serialized bytes, never knows about the transport implementation, and can be fully tested with mock TransportHandles.
 
 ### Layer Responsibilities
 
-#### Application Layer
-**What it does**:
-- Implements business logic
-- Maintains global and per-connection state
-- Handles serialization/deserialization of application messages
-- Spawns and manages session actors
+#### Application Components
+**What they do**:
+- Implement business logic for specific protocols (e.g., MemDB, IntentConfig)
+- Same code runs on both sides, configured differently
+- Send/receive typed messages via SessionManager
+- Handle component-specific lifecycle
 
-**What it knows about**:
-- Its own message types (e.g., `IntentConfigMessage`)
-- Connection lifecycle (via events from routing layer)
-- How to respond to protocol-specific requests
+**What they know about**:
+- Their own message types (e.g., `MemDBMessage`)
+- Which rooms they publish (e.g., `["memdb"]`)
+- Their business logic
 
-**What it does NOT know about**:
-- Transport implementation (TCP vs. gRPC)
-- Protocol framing or handshake details
+**What they do NOT know about**:
+- Transport implementation (TCP vs. mock)
+- Serialization format (bincode, JSON, etc.)
+- Network layer existence (fully decoupled)
 - Other application components
 
-#### Routing Layer
+#### Room Router
 **What it does**:
-- Maintains a registry of room name → handler mappings
-- Routes `SessionActive`, `SessionTerminated`, and `DataForRoom` events to the appropriate application components
-- Provides the "switchboard" between session layer and application layer
+- Maintains registry: room name → component handler
+- Routes typed messages from SessionManager to components
+- Routes typed messages from components to SessionManager
 
 **What it knows about**:
-- Which components are registered for which rooms
-- How to dispatch events to handlers
+- Room name → component mappings
+- Typed message routing (generic over message type)
 
 **What it does NOT know about**:
-- The content of messages (just passes `Vec<u8>`)
-- Application-specific logic
-- Transport or protocol details
+- Message content or semantics
+- Transport or serialization details
 
-#### Session Layer
+#### SessionManager (THE CORE)
 **What it does**:
-- Manages the zznet protocol state machine (handshake, room negotiation)
-- Multiplexes/demultiplexes frames by room name
-- Spawns a `SessionActor` per transport connection
-- Publishes lifecycle events (connection active, terminated)
+- Manages all PeerSessions (one per peer connection)
+- Negotiates rooms via PublishRooms intersection
+- Routes typed messages between components and PeerSessions
+- Completely transport-agnostic
 
 **What it knows about**:
-- Protocol message types (`Hello`, `PublishRooms`, `MessageForRoom`)
-- Frame serialization format
-- Connection state (awaiting handshake, active, etc.)
+- PeerIdentity (from HELLO Handler)
+- Which rooms are active per peer
+- Typed message routing
 
 **What it does NOT know about**:
-- Application message types
-- Business logic
-- Which components are subscribed to which rooms
+- How messages are serialized (that's PeerSession's job)
+- Transport implementation (receives TransportHandle abstraction)
+- HELLO protocol details (receives validated PeerIdentity)
+
+**Critical Constraint**: SessionManager must compile without any transport crate dependency
+
+#### HELLO Handler
+**What it does**:
+- Performs Protocol A (HELLO) handshake
+- Validates peer identity
+- Hands validated PeerIdentity + TransportHandle to SessionManager
+
+**What it knows about**:
+- HELLO frame format (bytes)
+- Peer validation rules
+- Transport details (for handshake)
+
+**What it does NOT know about**:
+- Rooms or typed messages
+- SessionManager internals
 
 #### Transport Layer
 **What it does**:
-- Provides an abstract interface for bidirectional byte streams
-- Handles physical connection establishment (TCP socket, TLS handshake, etc.)
-- May provide connection pooling, reconnection, etc. (transport-specific)
+- Provides byte stream abstraction (send_bytes/recv_bytes)
+- Handles physical connection (TCP, TLS, mock channels)
+- Completely pluggable via trait
 
 **What it knows about**:
-- Network I/O primitives
-- Transport-specific configuration (TLS certificates, timeouts, etc.)
+- Network I/O or mock channel I/O
+- Transport-specific config (TLS certs, etc.)
 
 **What it does NOT know about**:
-- Protocol framing or content
+- Message framing or content
+- HELLO protocol
 - Application logic
+
+---
+
+## SessionManager: The Transport-Agnostic Core
+
+The **SessionManager** is the central component of the network layer. It is **completely transport-agnostic** and operates entirely on typed messages, never seeing bytes.
+
+### Core Responsibilities
+
+1. **Manage PeerSessions**: One PeerSession per active peer connection
+2. **Negotiate Rooms**: Auto-join rooms via PublishRooms intersection
+3. **Route Typed Messages**: Between components and PeerSessions
+4. **Lifecycle Management**: Notify components of peer connect/disconnect
+
+### Critical Design Constraints
+
+**SessionManager MUST**:
+- ✅ Operate only on typed messages (never bytes)
+- ✅ Compile without transport crate dependency
+- ✅ Be fully testable with mock TransportHandles
+- ✅ Know nothing about serialization formats
+- ✅ Know nothing about HELLO protocol details
+
+**SessionManager MUST NOT**:
+- ❌ Call any transport methods directly (only via TransportHandle abstraction)
+- ❌ Serialize or deserialize messages (that's PeerSession's job)
+- ❌ Participate in HELLO handshake (receives validated PeerIdentity)
+- ❌ Know whether transport is TCP, mock, or something else
+
+### Structure
+
+```rust
+pub struct SessionManager {
+    // All active peer sessions
+    peers: HashMap<PeerId, PeerSession>,
+
+    // Room router for dispatching messages to components
+    router: RoomRouter,
+
+    // Rooms this SessionManager publishes
+    published_rooms: HashSet<String>,
+}
+
+pub struct PeerSession {
+    peer_id: PeerId,
+    peer_identity: PeerIdentity,  // From HELLO Handler
+    active_rooms: Vec<String>,    // Intersection of PublishRooms
+    transport_handle: TransportHandle,  // Abstract send/recv
+}
+
+// Abstract interface - SessionManager never knows the concrete type
+pub trait TransportHandle: Send {
+    fn send_bytes(&self, bytes: Vec<u8>) -> Result<()>;
+    fn recv_bytes(&self) -> Result<Vec<u8>>;
+}
+```
+
+### Room Negotiation Flow
+
+```rust
+// 1. HELLO Handler completes, hands off to SessionManager
+session_manager.create_peer_session(peer_identity, transport_handle);
+
+// 2. SessionManager initiates room negotiation
+let local_rooms = session_manager.published_rooms.clone();
+peer_session.send_publish_rooms(local_rooms);
+
+// 3. Receive remote peer's PublishRooms
+let remote_rooms = peer_session.recv_publish_rooms()?;
+
+// 4. Compute intersection (auto-join)
+let active_rooms = local_rooms
+    .intersection(&remote_rooms)
+    .cloned()
+    .collect::<Vec<_>>();
+
+// 5. If no common rooms, disconnect
+if active_rooms.is_empty() {
+    return Err("No compatible rooms");
+}
+
+// 6. Store active rooms and notify components
+peer_session.active_rooms = active_rooms.clone();
+for room in active_rooms {
+    router.dispatch(PeerConnected {
+        peer_id: peer_session.peer_id,
+        room: room.clone(),
+    });
+}
+```
+
+### Message Routing Flow
+
+**Outbound** (Component → Peer):
+```rust
+// Component sends typed message
+memdb_component.send_to_peer(
+    peer_id,
+    "memdb",
+    MemDBMessage::Insert { key, value }
+);
+
+// SessionManager receives typed message
+impl SessionManager {
+    fn send_to_peer<T: Serialize>(
+        &self,
+        peer_id: PeerId,
+        room: &str,
+        message: T
+    ) -> Result<()> {
+        // Find PeerSession
+        let peer = self.peers.get(&peer_id)?;
+
+        // Verify room is active
+        if !peer.active_rooms.contains(&room.to_string()) {
+            return Err("Room not active");
+        }
+
+        // Delegate to PeerSession (it handles serialization)
+        peer.send_message(room, message)
+    }
+}
+
+// PeerSession serializes and sends via transport
+impl PeerSession {
+    fn send_message<T: Serialize>(
+        &self,
+        room: &str,
+        message: T
+    ) -> Result<()> {
+        // Serialize typed message to bytes
+        let message_bytes = bincode::serialize(&message)?;
+
+        // Wrap in RoomMessage envelope
+        let envelope = RoomMessage {
+            room: room.to_string(),
+            data: message_bytes,
+        };
+        let envelope_bytes = bincode::serialize(&envelope)?;
+
+        // Send via abstract transport
+        self.transport_handle.send_bytes(envelope_bytes)
+    }
+}
+```
+
+**Inbound** (Peer → Component):
+```rust
+// PeerSession receives bytes from transport
+impl PeerSession {
+    fn handle_received_bytes(&self, bytes: Vec<u8>) -> Result<()> {
+        // Deserialize envelope
+        let envelope: RoomMessage = bincode::deserialize(&bytes)?;
+
+        // Route to SessionManager with room + bytes
+        session_manager.route_message(
+            self.peer_id,
+            envelope.room,
+            envelope.data  // Still bytes - component will deserialize
+        );
+    }
+}
+
+// SessionManager routes to component
+impl SessionManager {
+    fn route_message(
+        &self,
+        peer_id: PeerId,
+        room: String,
+        data: Vec<u8>
+    ) {
+        // Dispatch to component registered for this room
+        self.router.dispatch(MessageFromPeer {
+            peer_id,
+            room,
+            data,  // Component deserializes to its typed message
+        });
+    }
+}
+```
+
+### Testing Strategy
+
+**The Design Validation**: Two SessionManagers must be able to communicate via in-memory channels without any network I/O.
+
+```rust
+#[test]
+fn test_session_manager_communication() {
+    // Create mock transport (in-memory channels)
+    let (tx_a, rx_a) = channel();
+    let (tx_b, rx_b) = channel();
+
+    let handle_a = MockTransportHandle { tx: tx_a, rx: rx_b };
+    let handle_b = MockTransportHandle { tx: tx_b, rx: rx_a };
+
+    // Create two SessionManagers
+    let mut sm_a = SessionManager::new();
+    let mut sm_b = SessionManager::new();
+
+    // Both publish "memdb" room
+    sm_a.published_rooms.insert("memdb".to_string());
+    sm_b.published_rooms.insert("memdb".to_string());
+
+    // Create peer sessions (bypassing HELLO)
+    let peer_id_b = PeerId::new();
+    sm_a.create_peer_session(
+        PeerIdentity { hostname: "database".into(), role: Role::Database },
+        handle_a
+    );
+
+    let peer_id_a = PeerId::new();
+    sm_b.create_peer_session(
+        PeerIdentity { hostname: "collector".into(), role: Role::Collector },
+        handle_b
+    );
+
+    // Room negotiation happens automatically
+
+    // Send typed message from A to B
+    sm_a.send_to_peer(
+        peer_id_b,
+        "memdb",
+        MemDBMessage::Insert { key: "test".into(), value: 42 }
+    );
+
+    // B receives and processes
+    let received = sm_b.recv_message_blocking()?;
+    assert_eq!(received.room, "memdb");
+
+    let msg: MemDBMessage = bincode::deserialize(&received.data)?;
+    assert_eq!(msg, MemDBMessage::Insert { key: "test".into(), value: 42 });
+}
+```
+
+**This test proves**:
+- SessionManager works without any network
+- Transport is truly abstracted
+- Components can be tested in isolation
+
+### Why This Design?
+
+**Testability**: Most tests can run without network I/O (fast, reliable, no ports/firewalls)
+
+**Modularity**: Each layer has clear boundaries and minimal dependencies
+
+**Flexibility**:
+- Swap TCP for mock without changing SessionManager
+- Swap bincode for protobuf without changing SessionManager
+- Add new transports without touching SessionManager
+
+**Type Safety**:
+- Components work with typed messages
+- Compiler catches message type mismatches
+- No casting or dynamic typing
+
+**Simplicity**:
+- SessionManager has one job: route typed messages between components and peers
+- No serialization logic mixed with routing logic
+- No transport logic mixed with application logic
 
 ---
 
 ## Component Design Patterns
 
-These patterns are used consistently across all application components in the system. By following these patterns, components gain automatic benefits (clean lifecycle, testability, etc.).
+These patterns show how components interact with the network layer. **Critical**: The same component code runs on both sides of a connection, just configured differently.
 
-### Pattern 1: Main Actor (Singleton)
+### Example: MemDB Component (Same Code Both Sides)
 
-**Purpose**: Holds global state that spans all connections.
+The MemDB component demonstrates the symmetric protocol design. The **exact same code** runs on both Collector and Database, but with different configuration.
+
+**On Collector**:
+```rust
+let memdb = MemDB::new(MemDBConfig {
+    role: Role::Collector,
+    mode: Mode::SendUpdates,  // Push changes to Database
+    persistence: None,         // No local storage
+});
+```
+
+**On Database**:
+```rust
+let memdb = MemDB::new(MemDBConfig {
+    role: Role::Database,
+    mode: Mode::ReceiveUpdates,  // Receive changes from Collectors
+    persistence: Some(persistence_config),  // Persist to disk
+});
+```
+
+**Communication Flow**:
+```
+Collector MemDB                    Database MemDB
+     |                                    |
+     | MemDBMessage::Insert { key, val }  |
+     |------------------------------------>|
+     |                                    | (stores in DB)
+     |                                    |
+     |  MemDBMessage::Ack { key }         |
+     |<------------------------------------|
+```
+
+Both sides understand `MemDBMessage` and handle it according to their configuration. Neither side knows or cares whether the peer is a Collector or Database—they just exchange typed messages.
+
+### Pattern 1: Component Structure (Generic)
+
+**Purpose**: Self-contained component that can communicate with its peer instances.
 
 **Characteristics**:
-- One instance per service
-- Lives for the lifetime of the service
-- Handles events from the routing layer
-- Spawns session actors when connections become active
+- One instance per service (may spawn per-connection actors internally if needed)
+- Same code on both sides, different config
+- Publishes room names it supports
+- Sends/receives typed messages
 
 **Typical State**:
 ```rust
-pub struct IntentConfigActor {
-    // Global state (e.g., the current configuration)
-    current_config: Config,
+pub struct MemDBActor {
+    // Configuration determines behavior
+    config: MemDBConfig,
 
-    // Track active session actors (optional, if main actor needs to send them messages)
-    sessions: HashMap<u64, Addr<IntentConfigSessionActor>>,
+    // Component-specific state
+    data: HashMap<String, Value>,
+
+    // Track active peer connections (optional)
+    peers: HashMap<PeerId, PeerState>,
 }
 ```
 
 **Typical Message Handlers**:
 ```rust
-// From the routing layer
-impl Handler<SessionActive> for IntentConfigActor { ... }
-impl Handler<SessionTerminated> for IntentConfigActor { ... }
+// From SessionManager (via RoomRouter)
+impl Handler<PeerConnected> for MemDBActor { ... }
+impl Handler<PeerDisconnected> for MemDBActor { ... }
+impl Handler<MessageFromPeer<MemDBMessage>> for MemDBActor { ... }
 
 // From local actors (intra-process communication)
-impl Handler<LocalRequest> for IntentConfigActor { ... }
+impl Handler<LocalQuery> for MemDBActor { ... }
 
-// From session actors (reports from connections)
-impl Handler<RemoteMessage> for IntentConfigActor { ... }
-```
-
-### Pattern 2: Session Actor (Per-Connection)
-
-**Purpose**: Manages state for a single, specific network connection.
-
-**Characteristics**:
-- One instance per active connection
-- Lifetime tied to connection lifetime (stops automatically when connection dies)
-- Owns the `SessionHandle` (the send channel to the network)
-- Handles serialization and deserialization
-- Acts as a bridge between the main actor and the network
-
-**Typical State**:
-```rust
-pub struct IntentConfigSessionActor {
-    // Which connection this session represents
-    connection_id: u64,
-
-    // Handle to the main actor (to send reports, requests)
-    main_actor: Addr<IntentConfigActor>,
-
-    // Handle to send data back to the network
-    session_handle: SessionHandle,
-
-    // Per-connection state
-    has_received_initial_sync: bool,
-    pending_ack: Option<MessageId>,
-}
-```
-
-**Typical Message Handlers**:
-```rust
-// From the routing layer (incoming data from network)
-impl Handler<DataForRoom> for IntentConfigSessionActor {
-    fn handle(&mut self, msg: DataForRoom, _ctx: &mut Context<Self>) {
-        // Deserialize
-        let typed_msg: IntentConfigMessage = bincode::deserialize(&msg.data)?;
-
-        // Handle or forward to main actor
-        match typed_msg {
-            IntentConfigMessage::GetConfig => {
-                // Respond directly
-                self.send_to_network(IntentConfigMessage::ConfigResponse { ... });
+// Internal logic
+impl MemDBActor {
+    fn handle_insert(&mut self, peer: PeerId, key: String, value: Value) {
+        match self.config.mode {
+            Mode::ReceiveUpdates => {
+                // Store and send ack
+                self.data.insert(key.clone(), value);
+                self.send_to_peer(peer, MemDBMessage::Ack { key });
             }
-            IntentConfigMessage::UpdateConfig { config } => {
-                // Forward to main actor
-                self.main_actor.do_send(ConfigUpdate { config });
+            Mode::SendUpdates => {
+                // Ignore inserts from peer (shouldn't happen)
+                warn!("Received insert in SendUpdates mode");
             }
         }
     }
 }
+```
 
-// From the main actor (outgoing data to network)
-impl Handler<SendToRemote> for IntentConfigSessionActor {
-    fn handle(&mut self, msg: SendToRemote, _ctx: &mut Context<Self>) {
-        // Serialize
-        let bytes = bincode::serialize(&msg.data)?;
+### Pattern 2: Per-Connection State (Optional Pattern)
 
-        // Send to network
-        self.session_handle.send("intent-config", bytes);
+**Purpose**: Some components may need to track per-peer state internally.
+
+**When to Use**: Only if the component needs different state per peer connection. Many components don't need this.
+
+**Example**: MemDB might track sync status per peer:
+```rust
+pub struct MemDBActor {
+    config: MemDBConfig,
+    data: HashMap<String, Value>,
+
+    // Per-peer state (optional pattern)
+    peer_state: HashMap<PeerId, PeerSyncState>,
+}
+
+struct PeerSyncState {
+    last_sync_timestamp: Timestamp,
+    pending_acks: HashSet<String>,
+}
+
+impl Handler<PeerConnected> for MemDBActor {
+    fn handle(&mut self, msg: PeerConnected, _ctx: &mut Context<Self>) {
+        // Initialize per-peer state
+        self.peer_state.insert(msg.peer_id, PeerSyncState::default());
+
+        // Send initial sync if configured to do so
+        if self.config.mode == Mode::SendUpdates {
+            self.send_initial_sync(msg.peer_id);
+        }
+    }
+}
+
+impl Handler<PeerDisconnected> for MemDBActor {
+    fn handle(&mut self, msg: PeerDisconnected, _ctx: &mut Context<Self>) {
+        // Clean up per-peer state
+        self.peer_state.remove(&msg.peer_id);
     }
 }
 ```
+
+**Key Point**: Per-connection state is **internal to the component**. The network layer (SessionManager) doesn't know or care about it. The component receives `PeerConnected`/`PeerDisconnected` events and manages its own state.
 
 ### Pattern 3: Lifecycle Management
 
 **Connection Established Flow**:
 ```
 1. Transport provides new connection
-2. SessionManager spawns SessionActor (protocol layer)
-3. SessionActor completes handshake and room negotiation
-4. SessionActor publishes SessionActive event
-5. RoomRouter routes event to registered handlers
-6. IntentConfigActor receives SessionActive
-7. IntentConfigActor spawns IntentConfigSessionActor
-8. IntentConfigSessionActor sends initial sync to remote peer
+2. HELLO Handler performs Protocol A handshake (bytes)
+3. HELLO Handler validates peer identity
+4. HELLO Handler hands PeerIdentity + TransportHandle to SessionManager
+5. SessionManager creates PeerSession
+6. PeerSession negotiates rooms via PublishRooms intersection
+7. For each active room, SessionManager sends PeerConnected to component
+8. Component (e.g., MemDB) initializes per-peer state
+9. Component sends initial sync messages if needed
+```
+
+**Message Exchange Flow** (Collector → Database):
+```
+1. Collector MemDB: memdb.send_to_peer(db_peer, MemDBMessage::Insert { ... })
+2. SessionManager: routes to PeerSession for db_peer
+3. PeerSession: serializes MemDBMessage to bytes
+4. TransportHandle: sends bytes to transport
+5. Transport: sends bytes over network (TCP/TLS/mock)
+6. Remote Transport: receives bytes
+7. Remote PeerSession: deserializes bytes to MemDBMessage
+8. Remote SessionManager: routes to MemDB component (room="memdb")
+9. Database MemDB: handles Insert, stores data, sends Ack
+10. (Flow reverses for Ack message)
 ```
 
 **Connection Terminated Flow**:
 ```
-1. Transport connection dies
-2. SessionActor (protocol layer) detects and stops
-3. Before stopping, SessionActor publishes SessionTerminated event
-4. RoomRouter routes event to registered handlers
-5. IntentConfigActor receives SessionTerminated
-6. IntentConfigActor sends Stop message to IntentConfigSessionActor
-7. IntentConfigSessionActor stops and cleans up
-8. Main actor removes session from tracking
+1. Transport detects connection loss (or receives close)
+2. SessionManager notifies all components with active rooms
+3. SessionManager sends PeerDisconnected to each component
+4. Components clean up per-peer state
+5. SessionManager removes PeerSession
 ```
 
-**Key Point**: Lifecycle is **explicit and observable**. Every transition is a message. No hidden state.
+**Key Points**:
+- Lifecycle is **explicit and observable** - every transition is a message
+- Same flow for all components (MemDB, IntentConfig, etc.)
+- Components are completely decoupled from transport layer
+- SessionManager manages all coordination
 
 ---
 
@@ -1011,134 +1560,265 @@ pub trait Transport: Send {
 - `MockTransport`: In-memory pipes for testing
 - (Future) `GrpcTransport`, `QuicTransport`, etc.
 
-### Crate 2: `zznet-session` (Protocol Engine)
+### Crate 2: `zznet-hello` (HELLO Protocol Handler)
 
-**Location**: `src/components/zznet-session/`
+**Location**: `src/components/zznet-hello/`
 
-**Purpose**: Implement the zznet handshake and room negotiation protocol. Manage protocol state machines for each connection.
+**Purpose**: Implement Protocol A (HELLO handshake) - peer identity exchange and validation. Operates on bytes, sits between transport and SessionManager.
 
 **Key Types**:
 
 ```rust
-/// Singleton actor that spawns SessionActor for each new transport connection
-pub struct SessionManager {
-    router: Recipient<SessionEvent>,
-}
-
-/// Per-connection actor that manages protocol state
-pub struct SessionActor {
+/// Per-connection handler for HELLO protocol
+pub struct HelloHandler {
     transport: Box<dyn TransportConnection>,
-    state: ProtocolState,
-    active_rooms: Vec<String>,
-    manager: Addr<SessionManager>,
 }
 
-/// Protocol state machine
-enum ProtocolState {
-    AwaitingHandshake,
-    AwaitingRoomList,
-    Active,
+/// Result of successful HELLO handshake
+pub struct PeerIdentity {
+    hostname: String,
+    role: AuthRole,
+    protocol_version: String,
 }
 
-/// Protocol message types
+/// HELLO protocol frames (serialized to bytes)
 #[derive(Serialize, Deserialize)]
-pub enum Frame {
+enum HelloFrame {
     Hello {
-        version: String,
-        auth_role: AuthRole,
-        offered_rooms: Vec<String>,
+        protocol_family: String,  // "zznet"
+        version: String,           // "1.0"
+        hostname: String,
+        role: AuthRole,
     },
-    PublishRooms {
-        offered_rooms: Vec<String>,
-    },
-    MessageForRoom {
-        room: String,
-        data: Vec<u8>,
+    HelloAck {
+        accepted: bool,
+        hostname: String,
+        role: AuthRole,
     },
 }
 
-/// Handle for sending data to a specific connection
-///
-/// CRITICAL: This handle uses RAII (Drop) to guarantee the "fail atomically" invariant.
-/// When a SessionHandle is dropped (either explicitly via .close() or when the owning
-/// actor stops), it automatically triggers teardown of the entire connection vertical slice.
-pub struct SessionHandle {
-    inner: Option<SessionHandleInner>,
-}
-
-struct SessionHandleInner {
-    connection_id: u64,
-    sender: mpsc::Sender<(String, Vec<u8>)>,
-    protocol_actor: Addr<SessionActor>,
-}
-
-impl SessionHandle {
-    pub fn send(&self, room: String, data: Vec<u8>) -> Result<(), SendError> {
-        self.inner.as_ref()
-            .ok_or(SendError::Closed)?
-            .sender.send((room, data))
-            .await
+impl HelloHandler {
+    /// Perform HELLO handshake (sends Hello, receives HelloAck)
+    pub async fn perform_handshake(&mut self) -> Result<PeerIdentity> {
+        // Send Hello frame (bytes)
+        // Receive HelloAck (bytes)
+        // Validate peer
+        // Return PeerIdentity if successful
     }
-
-    pub fn close(mut self) {
-        // Explicit close: drop the inner handle, triggering teardown
-        self.inner.take();
-    }
-}
-
-impl Drop for SessionHandleInner {
-    fn drop(&mut self) {
-        // When this handle is dropped, tear down the connection
-        // This ensures the "fail atomically" invariant:
-        // - If the application session actor panics, the handle is dropped
-        // - This triggers TeardownConnection to the protocol actor
-        // - The entire vertical slice is torn down atomically
-        self.protocol_actor.do_send(TeardownConnection {
-            connection_id: self.connection_id,
-        });
-    }
-}
-
-/// Events published by SessionActor
-#[derive(Message)]
-pub enum SessionEvent {
-    Active {
-        connection_id: u64,
-        rooms: Vec<String>,
-        handle: SessionHandle,
-
-        // Peer context from Hello frame
-        // Applications need this to know WHO they're connected to
-        peer_hostname: String,
-        peer_role: AuthRole,
-        peer_version: String,
-    },
-    DataForRoom {
-        connection_id: u64,
-        room: String,
-        data: Vec<u8>,
-    },
-    Terminated {
-        connection_id: u64,
-    },
 }
 ```
 
-**Dependencies**: `zznet-transport`, `actix`, `serde`, `bincode`
+**Dependencies**: `zznet-transport`, `serde`, `bincode`
 
 **Responsibilities**:
-- Execute handshake protocol
-- Negotiate active rooms (intersection of local and remote offered rooms)
-- Multiplex outgoing messages by room name
-- Demultiplex incoming messages by room name
-- Publish lifecycle events to router
+- Serialize/deserialize HELLO frames
+- Send Hello, receive HelloAck (or vice versa)
+- Validate peer identity and protocol version
+- Return PeerIdentity to SessionManager
 
 **What it does NOT do**:
-- Deserialize application messages (only knows about `Vec<u8>`)
-- Route messages to specific components (publishes events to router)
-- Implement business logic
+- Room negotiation (that's SessionManager's job)
+- Typed message handling
+- Application logic
 
-### Crate 3: `zznet-router` (Message Routing)
+---
+
+### Crate 3: `zznet-session` (Transport-Agnostic Session Management)
+
+**Location**: `src/components/zznet-session/`
+
+**Purpose**: Manage PeerSessions and route typed messages. **100% transport-agnostic** - never touches bytes or serialization.
+
+**Key Types**:
+
+```rust
+/// Singleton actor managing all peer sessions
+pub struct SessionManager {
+    peer_sessions: HashMap<PeerId, PeerSession>,
+    router: Recipient<RoomMessage>,
+    published_rooms: HashSet<String>,
+}
+
+/// Per-connection state (managed by SessionManager)
+pub struct PeerSession {
+    peer_id: PeerId,
+    peer_identity: PeerIdentity,  // From HELLO Handler
+    active_rooms: Vec<String>,    // Intersection after negotiation
+    transport_handle: TransportHandle,  // Abstract interface
+}
+
+/// Abstract transport interface (SessionManager never knows concrete type)
+pub trait TransportHandle: Send {
+    fn send_bytes(&self, bytes: Vec<u8>) -> Result<()>;
+    fn recv_bytes(&self) -> Result<Vec<u8>>;
+}
+
+/// Messages for room negotiation (Protocol B - typed!)
+#[derive(Serialize, Deserialize)]
+enum SessionMessage {
+    PublishRooms { rooms: Vec<String> },
+    RoomMessage { room: String, data: Vec<u8> },  // data is serialized component message
+}
+
+```
+
+**Dependencies**: `zznet-hello` (for `PeerIdentity`), `actix`, `serde` (but NOT zznet-transport!)
+
+**Critical Constraint**: SessionManager must compile without any transport crate dependency. It only knows about the TransportHandle trait.
+
+**What it does**:
+- Create PeerSession after HELLO completes
+- Negotiate rooms via PublishRooms intersection (Protocol B)
+- Route typed messages between components and PeerSessions
+- Notify components of peer connect/disconnect
+
+**What it does NOT do**:
+- HELLO protocol (that's HelloHandler's job)
+- Direct transport access (only via TransportHandle trait)
+- Serialization of component messages (PeerSession handles that)
+
+---
+
+### Crate 4: `zznet-router` (Message Routing)
+
+impl SessionManager {
+    /// Called after HELLO Handler completes
+    pub fn create_peer_session(
+        &mut self,
+        peer_identity: PeerIdentity,
+        transport_handle: Box<dyn TransportHandle>,
+    ) -> Result<PeerId> {
+        let peer_id = PeerId::new();
+
+        // Create PeerSession
+        let session = PeerSession {
+            peer_id,
+            peer_identity,
+            active_rooms: vec![],  // Negotiated next
+            transport_handle,
+        };
+
+        self.peer_sessions.insert(peer_id, session);
+
+        // Start room negotiation (Protocol B - typed messages!)
+        self.negotiate_rooms(peer_id)?;
+
+        Ok(peer_id)
+    }
+
+    fn negotiate_rooms(&mut self, peer_id: PeerId) -> Result<()> {
+        let session = self.peer_sessions.get_mut(&peer_id)?;
+
+        // Send our published rooms
+        let msg = SessionMessage::PublishRooms {
+            rooms: self.published_rooms.iter().cloned().collect(),
+        };
+        session.send_message(msg)?;  // PeerSession handles serialization
+
+        // Receive peer's published rooms
+        let peer_msg = session.recv_message()?;  // PeerSession handles deserialization
+
+        if let SessionMessage::PublishRooms { rooms: peer_rooms } = peer_msg {
+            // Compute intersection
+            let active_rooms: Vec<String> = self.published_rooms
+                .intersection(&peer_rooms.into_iter().collect())
+                .cloned()
+                .collect();
+
+            if active_rooms.is_empty() {
+                return Err("No compatible rooms");
+            }
+
+            session.active_rooms = active_rooms.clone();
+
+            // Notify components
+            for room in active_rooms {
+                self.router.send(PeerConnected {
+                    peer_id,
+                    room: room.clone(),
+                }).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Component sends typed message to peer
+    pub fn send_to_peer<T: Serialize>(
+        &self,
+        peer_id: PeerId,
+        room: &str,
+        message: T,
+    ) -> Result<()> {
+        let session = self.peer_sessions.get(&peer_id)?;
+
+        // Verify room is active
+        if !session.active_rooms.contains(&room.to_string()) {
+            return Err("Room not active");
+        }
+
+        // Delegate to PeerSession (it handles serialization)
+        session.send_room_message(room, message)
+    }
+}
+
+/// Per-connection state handles serialization (SessionManager doesn't!)
+impl PeerSession {
+    fn send_message(&self, msg: SessionMessage) -> Result<()> {
+        // Serialize SessionMessage to bytes
+        let bytes = bincode::serialize(&msg)?;
+
+        // Send via abstract transport
+        self.transport_handle.send_bytes(bytes)
+    }
+
+    fn recv_message(&self) -> Result<SessionMessage> {
+        // Receive bytes via abstract transport
+        let bytes = self.transport_handle.recv_bytes()?;
+
+        // Deserialize to SessionMessage
+        bincode::deserialize(&bytes)
+    }
+
+    fn send_room_message<T: Serialize>(&self, room: &str, msg: T) -> Result<()> {
+        // Serialize component message to bytes
+        let data = bincode::serialize(&msg)?;
+
+        // Wrap in RoomMessage
+        let session_msg = SessionMessage::RoomMessage {
+            room: room.to_string(),
+            data,
+        };
+
+        // Send via abstract transport
+        self.send_message(session_msg)
+    }
+}
+
+/// Handle for components to send to peer (simplified for illustration)
+/// CRITICAL: This handle uses RAII (Drop) to guarantee the "fail atomically" invariant.
+pub struct PeerHandle {
+    peer_id: PeerId,
+    session_manager: Addr<SessionManager>,
+}
+
+impl PeerHandle {
+    pub async fn send<T: Serialize>(&self, room: &str, message: T) -> Result<()> {
+        self.session_manager.send(SendToPeer {
+            peer_id: self.peer_id,
+            room: room.to_string(),
+            message_bytes: bincode::serialize(&message)?,
+        }).await
+    }
+}
+
+}
+
+---
+
+### Crate 4: `zznet-router` (Message Routing)
+
+**Note**: The above shows how SessionManager and PeerSession work together. PeerSession handles serialization so SessionManager doesn't have to know about bytes.
 
 **Location**: `src/components/zznet-router/`
 
@@ -1163,29 +1843,48 @@ pub struct RegisterRoom {
 
 **Dependencies**: `zznet-session` (for `SessionEvent` type), `actix`
 
+**Messages from SessionManager**:
+```rust
+#[derive(Message)]
+pub enum RoomEvent {
+    PeerConnected {
+        peer_id: PeerId,
+        room: String,
+        peer_identity: PeerIdentity,  // From HELLO
+    },
+    MessageFromPeer {
+        peer_id: PeerId,
+        room: String,
+        data: Vec<u8>,  // Serialized component message
+    },
+    PeerDisconnected {
+        peer_id: PeerId,
+        room: String,
+    },
+}
+```
+
 **Logic**:
 ```rust
-impl Handler<SessionEvent> for RoomRouter {
-    fn handle(&mut self, msg: SessionEvent, _ctx: &mut Context<Self>) {
+impl Handler<RoomEvent> for RoomRouter {
+    fn handle(&mut self, msg: RoomEvent, _ctx: &mut Context<Self>) {
         match &msg {
-            SessionEvent::Active { rooms, .. } => {
-                // Notify handlers for all active rooms
-                for room in rooms {
-                    if let Some(handler) = self.handlers.get(room) {
-                        handler.do_send(msg.clone());
-                    }
-                }
-            }
-            SessionEvent::DataForRoom { room, .. } => {
+            RoomEvent::PeerConnected { room, .. } => {
                 // Route to specific room handler
                 if let Some(handler) = self.handlers.get(room) {
                     handler.do_send(msg);
                 }
             }
-            SessionEvent::Terminated { .. } => {
-                // Broadcast to all registered handlers
-                for handler in self.handlers.values() {
-                    handler.do_send(msg.clone());
+            RoomEvent::MessageFromPeer { room, .. } => {
+                // Route to specific room handler
+                if let Some(handler) = self.handlers.get(room) {
+                    handler.do_send(msg);
+                }
+            }
+            RoomEvent::PeerDisconnected { room, .. } => {
+                // Route to specific room handler
+                if let Some(handler) = self.handlers.get(room) {
+                    handler.do_send(msg);
                 }
             }
         }
@@ -2249,7 +2948,7 @@ This section collects all the invariants identified throughout this document in 
 
 1. **"Room Names Are Protocol Identifiers"**: A room name (e.g., "intent-config") must mean the same protocol (same message types, same serialization format) on both sides of a connection. Room names are part of the global contract across all zzping services.
 
-2. **"HELLO Before Application Protocol"**: The HELLO negotiation phase must complete successfully before any room negotiation or data exchange can begin. This is enforced by the SessionActor state machine.
+2. **"HELLO Before Application Protocol"**: The HELLO negotiation phase (Protocol A) must complete successfully before SessionManager creates a PeerSession and begins room negotiation (Protocol B). HELLO Handler completes first, then hands validated PeerIdentity to SessionManager.
 
 3. **"Empty Intersection = Error"**: If room negotiation produces an empty intersection (no compatible rooms), the connection must be terminated immediately with an error logged on both sides.
 
@@ -2275,6 +2974,12 @@ This section collects all the invariants identified throughout this document in 
 
 12. **"Transport Errors Are Expected"**: The transport layer must never panic due to I/O errors. All I/O operations must be wrapped in `Result<T, E>` and handled explicitly. This is the exception to "fail fast, fail loud."
 
+### Message Constraints
+
+13. **"16 MiB Maximum Message Size"**: No message may exceed 16 MiB. The protocol layer rejects messages exceeding this limit before sending. The transport layer closes the connection if it receives a frame header claiming >16 MiB. This is a hard, compile-time constant.
+
+14. **"Heartbeat Keepalive"**: The transport layer sends zero-sized frames every ~1 second as heartbeat. Both sides must send heartbeats. If no frames (heartbeat or data) are received for >5 seconds, the connection is assumed dead and closed.
+
 ### Ordering Guarantees
 
 13. **"FIFO Within a Room"** (restated for emphasis): Messages sent to the same room on the same connection arrive in order at the peer.
@@ -2291,13 +2996,13 @@ This section collects all the invariants identified throughout this document in 
 
 ### Backpressure Guarantees
 
-18. **"Bounded Channels"**: Channels between application session actors and protocol session actors are bounded. When full, `SessionHandle.send()` returns `Err(SendError::ChannelFull)`, forcing explicit backpressure handling.
+18. **"Bounded Channels"**: Communication channels between components and SessionManager (and internally within SessionManager to PeerSessions) are bounded. When full, send operations return errors, forcing explicit backpressure handling.
 
-19. **"send() Means Queued"**: `SessionHandle.send()` returning `Ok(())` means data was queued to the protocol actor's mailbox. It does NOT mean data was sent on the wire or received by the peer.
+19. **"send() Means Queued"**: A successful send from a component to SessionManager means the message was queued for delivery. It does NOT mean data was sent on the wire or received by the peer. Components must use application-level acknowledgments if they need delivery confirmation.
 
 ### Peer Identity Guarantees
 
-20. **"Peer Context Is Always Available"**: Application components always know WHO they're connected to (peer hostname, role, protocol version). This information is included in the `SessionActive` event and comes from the HELLO frame.
+20. **"Peer Context Is Always Available"**: Application components always know WHO they're connected to (peer hostname, role, protocol version). This information is included in the `PeerConnected` event and comes from the validated PeerIdentity (which originated from the HELLO handshake performed by the HelloHandler).
 
 ---
 
@@ -2315,9 +3020,12 @@ The design satisfies all core requirements (R1-R10) and provides a solid foundat
 
 **Next Steps**:
 1. Review this document for correctness and completeness
-2. Begin implementation of `zznet-session` crate
-3. Implement one component (e.g., `intent-config`) to validate the design
-4. Iterate based on learnings
+2. Begin implementation of `zznet-hello` crate (Protocol A - HELLO handler for peer identity)
+3. Begin implementation of `zznet-session` crate (Protocol B - SessionManager + PeerSession for typed messages)
+4. Implement mock TransportHandle for testing
+5. Validate architecture by testing two SessionManagers communicating via mock (no network I/O)
+6. Implement one component (e.g., MemDB) to validate the design with same code on both sides
+7. Iterate based on learnings
 
 ---
 

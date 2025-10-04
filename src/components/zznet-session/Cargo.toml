@@ -1,0 +1,23 @@
+[package]
+name = "zznet-session"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "ZZPing Network Layer PoC #1.5: SessionManager for typed message routing"
+
+[dependencies]
+zznet-room = { path = "../zznet-room" }
+actix.workspace = true
+tokio.workspace = true
+tracing = "0.1"
+thiserror.workspace = true
+
+# NO serialization dependencies!
+# NO transport dependencies!
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+serde = { workspace = true }
+bincode = { workspace = true }

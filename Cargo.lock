@@ -6091,6 +6091,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "zznet-room"
+version = "0.2.2-beta2"
+dependencies = [
+ "actix",
+ "thiserror 2.0.16",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "zznet-session"
+version = "0.2.2-beta2"
+dependencies = [
+ "actix",
+ "bincode",
+ "serde",
+ "thiserror 2.0.16",
+ "tokio",
+ "tracing",
+ "zznet-room",
+]
+
+[[package]]
 name = "zzping-cli"
 version = "0.2.2-beta2"
 dependencies = [

@@ -58,3 +58,114 @@ This is the most important section. The goal of documentation is to explain the 
 
 *   **Rule:** Avoid hardcoding values that directly affect behavior, especially time, counts, or buffer sizes.
 *   **Guidance:** These values should be passed in via a configuration struct. This allows tests to use small, fast values (e.g., `Duration::from_micros(1)`) while production can use larger, more sensible values. A component should not dictate its own timing; it should be configured.
+
+## 6. Testing Standards
+
+### Test Location and Organization
+
+*   **Rule:** ALL tests must be in `src/` files using `#[cfg(test)] mod tests { ... }`. Integration tests in `tests/` are NOT allowed.
+*   **Rationale:** Keeps tests close to implementation, easier to maintain, ensures private APIs are tested.
+
+### Test Coverage Requirements
+
+*   **Rule:** EVERY public function, method, and struct must have at least one test. EVERY error path must be tested.
+*   **Guidance:** If you implement a method, you MUST write tests for it. No exceptions.
+*   **Coverage target:** Aim for 100% line coverage. If coverage is below 90%, add more tests.
+
+### What to Test
+
+*   **Rule:** Test the contract, not the implementation.
+*   **Examples:**
+    *   ✅ Test that calling `connect()` changes state to `Connected`
+    *   ✅ Test that sending while disconnected returns an error
+    *   ✅ Test that `Drop` properly cleans up resources
+    *   ❌ Don't test internal private helper functions unless they have complex logic
+
+### Test Organization
+
+*   **Rule:** Group related tests together. Use descriptive test names that explain what behavior is being tested.
+*   **Pattern:** `test_<function_name>_<scenario>_<expected_result>`
+*   **Examples:**
+    *   `test_send_to_room_when_connected_succeeds`
+    *   `test_send_to_room_when_disconnected_returns_error`
+    *   `test_add_peer_already_exists_returns_error`
+
+## 7. Module Structure and Exports
+
+### lib.rs Must Be Minimal
+
+*   **Rule:** `lib.rs` should ONLY contain module declarations (`pub mod <name>;`) and crate-level documentation. NO re-exports with `pub use`.
+*   **Rationale:** Re-exports hide the actual module structure and make it harder to understand where types are defined. Users should import from the actual module: `use crate::types::PeerId` not `use crate::PeerId`.
+*   **Exception:** If a type is genuinely moved and you want to provide a deprecation path, re-exports are acceptable with a deprecation warning.
+
+### Import Paths
+
+*   **Rule:** Public APIs should be imported from their defining module, not from `lib.rs` re-exports.
+*   **Example:**
+    *   ✅ `use zznet_session::types::{PeerId, RoomId};`
+    *   ✅ `use zznet_session::session_manager::SessionManager;`
+    *   ❌ `use zznet_session::{PeerId, RoomId, SessionManager};`
+
+## 8. Common Anti-Patterns to Avoid
+
+### Dead Code
+
+*   **Rule:** Remove or use all declared fields and methods. If a field is declared but never read, either use it or remove it.
+*   **Guidance:** Compiler warnings about dead code are RED FLAGS. Fix them immediately.
+
+### Over-Documentation
+
+*   **Rule:** Don't document what the code obviously does. Document WHY and the CONTRACT.
+*   **Examples:**
+    *   ❌ `/// Returns true if connected` (obvious from signature)
+    *   ✅ `/// Checks connection state. Returns true only when channels are active and messages can be sent.`
+
+### Integration Tests in tests/
+
+*   **Rule:** Do NOT create integration tests in `tests/` directory.
+*   **Rationale:** Integration tests should also be in `src/` using `#[cfg(test)]`. This keeps all test code together with the implementation.
+
+### Long-Lived Loop Bodies Not Extracted
+
+*   **Rule:** Long-lived loops (event loops, message routers, etc.) MUST have their per-iteration logic extracted into a separate method or function.
+*   **Rationale:**
+    *   Makes the loop body independently testable
+    *   Separates "loop infrastructure" from "iteration logic"
+    *   Enables unit testing without spawning actual tasks
+    *   Improves code clarity and maintainability
+*   **Pattern:**
+    ```rust
+    // ❌ BAD: Loop body inline, not testable
+    tokio::spawn(async move {
+        while let Some((room_id, msg)) = rx.recv().await {
+            if let Some(tx) = room_txs.get(&room_id) {
+                if tx.send(msg).await.is_err() {
+                    tracing::warn!("Failed to route");
+                }
+            } else {
+                tracing::warn!("Unknown room");
+            }
+        }
+    });
+
+    // ✅ GOOD: Loop body extracted, testable
+    tokio::spawn(async move {
+        while let Some((room_id, msg)) = rx.recv().await {
+            Self::route_inbound_message(&room_txs, &peer_id, room_id, msg).await;
+        }
+    });
+
+    // With corresponding method:
+    async fn route_inbound_message(
+        room_txs: &HashMap<RoomId, mpsc::Sender<Msg>>,
+        peer_id: &PeerId,
+        room_id: RoomId,
+        msg: Msg,
+    ) {
+        // Logic here, now testable!
+    }
+    ```
+*   **Testing Requirement:** The extracted method MUST have comprehensive tests covering:
+    *   Success case (message routed correctly)
+    *   Error cases (unknown room, closed channel, etc.)
+    *   Edge cases specific to the logic
