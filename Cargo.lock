@@ -6369,6 +6369,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
+ "zznet-room",
  "zznet-session",
  "zzping-auth",
 ]
