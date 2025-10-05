@@ -53,11 +53,14 @@ impl RoomMessageTrait for TestMessage {
     }
 
     fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
-        bincode::serialize(self).map_err(|e| SerializationError::BincodeError(e.to_string()))
+        bincode::serde::encode_to_vec(self, bincode::config::standard())
+            .map_err(|e| SerializationError::BincodeError(e.to_string()))
     }
 
     fn deserialize_for_room(_room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError> {
-        bincode::deserialize(bytes).map_err(|e| DeserializationError::BincodeError(e.to_string()))
+        bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+            .map(|(value, _)| value)
+            .map_err(|e| DeserializationError::BincodeError(e.to_string()))
     }
 
     fn supported_rooms() -> Vec<RoomId> {

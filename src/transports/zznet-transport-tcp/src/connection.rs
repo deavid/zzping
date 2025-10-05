@@ -404,7 +404,7 @@ mod tests {
     #[test]
     fn test_parse_peer_cert_der_rejects_expired_cert() {
         // Generate a certificate with a validity period in the past using rcgen
-        let mut params = rcgen::CertificateParams::new(vec![]);
+        let mut params = rcgen::CertificateParams::new(vec![]).expect("failed to create params");
         // set CN
         params
             .distinguished_name
@@ -413,8 +413,11 @@ mod tests {
         params.not_before = rcgen::date_time_ymd(2000, 1, 1);
         params.not_after = rcgen::date_time_ymd(2000, 1, 2);
 
-        let cert = rcgen::Certificate::from_params(params).expect("failed to create rcgen cert");
-        let der = cert.serialize_der().expect("failed to serialize cert");
+        let signing_key = rcgen::KeyPair::generate().expect("failed to generate key");
+        let cert = params
+            .self_signed(&signing_key)
+            .expect("failed to create rcgen cert");
+        let der = cert.der().to_vec();
 
         let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let res = TcpTransport::parse_peer_cert_der(&der, addr);
@@ -424,16 +427,20 @@ mod tests {
     #[test]
     fn test_parse_peer_cert_der_missing_cn() {
         // Generate a cert with SAN but no CN using rcgen
-        let mut params = rcgen::CertificateParams::new(vec!["example.com".to_string()]);
+        let mut params = rcgen::CertificateParams::new(vec!["example.com".to_string()])
+            .expect("failed to create params");
         // Intentionally leave subject_alt_names but clear the distinguished_name
         params.distinguished_name = rcgen::DistinguishedName::new();
         // Add DNS SAN
-        params
-            .subject_alt_names
-            .push(rcgen::SanType::DnsName("alice".to_string()));
+        params.subject_alt_names.push(rcgen::SanType::DnsName(
+            rcgen::string::Ia5String::try_from("alice").unwrap(),
+        ));
 
-        let cert = rcgen::Certificate::from_params(params).expect("failed to build cert");
-        let der = cert.serialize_der().expect("failed to serialize der");
+        let signing_key = rcgen::KeyPair::generate().expect("failed to generate key");
+        let cert = params
+            .self_signed(&signing_key)
+            .expect("failed to build cert");
+        let der = cert.der().to_vec();
 
         let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let res = TcpTransport::parse_peer_cert_der(der.as_slice(), addr);
@@ -449,14 +456,17 @@ mod tests {
     #[test]
     fn test_parse_peer_cert_der_missing_san() {
         // Generate a cert with CN but no SAN using rcgen
-        let mut params = rcgen::CertificateParams::new(vec![]);
+        let mut params = rcgen::CertificateParams::new(vec![]).expect("failed to create params");
         // Set CN via distinguished name
         params
             .distinguished_name
             .push(rcgen::DnType::CommonName, "database");
 
-        let cert = rcgen::Certificate::from_params(params).expect("failed to build cert");
-        let der = cert.serialize_der().expect("failed to serialize der");
+        let signing_key = rcgen::KeyPair::generate().expect("failed to generate key");
+        let cert = params
+            .self_signed(&signing_key)
+            .expect("failed to build cert");
+        let der = cert.der().to_vec();
 
         let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let res = TcpTransport::parse_peer_cert_der(der.as_slice(), addr);

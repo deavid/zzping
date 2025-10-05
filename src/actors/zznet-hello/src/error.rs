@@ -68,8 +68,14 @@ pub enum HelloError {
     SessionManager(String),
 }
 
-impl From<bincode::Error> for HelloError {
-    fn from(err: bincode::Error) -> Self {
+impl From<bincode::error::EncodeError> for HelloError {
+    fn from(err: bincode::error::EncodeError) -> Self {
+        HelloError::Serialization(err.to_string())
+    }
+}
+
+impl From<bincode::error::DecodeError> for HelloError {
+    fn from(err: bincode::error::DecodeError) -> Self {
         HelloError::Serialization(err.to_string())
     }
 }
@@ -106,7 +112,9 @@ mod tests {
     fn test_bincode_error_conversion() {
         // Create a bincode error by trying to deserialize invalid data
         let invalid_data = vec![0xFF, 0xFF, 0xFF, 0xFF];
-        let result: Result<String, bincode::Error> = bincode::deserialize(&invalid_data);
+        let result: Result<String, bincode::error::DecodeError> =
+            bincode::serde::decode_from_slice(&invalid_data, bincode::config::standard())
+                .map(|(value, _)| value);
         let bincode_err = result.unwrap_err();
 
         let hello_err: HelloError = bincode_err.into();

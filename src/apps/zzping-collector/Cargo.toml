@@ -40,8 +40,8 @@ futures = { workspace = true }
 [dev-dependencies]
 byteorder = "1.5"
 tempfile = "3.23"
-toml = "0.8"
+toml = "0.9"
 zzping-database = { workspace = true, features = ["test-utils"] }
-mockall = "0.12"
+mockall = "0.13"
 ntest = "0.9"
-serial_test = "0.5"
+serial_test = "3.2"

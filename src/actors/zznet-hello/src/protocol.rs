@@ -85,15 +85,16 @@ impl Frame {
     /// Serialize this frame to bytes.
     ///
     /// Returns the serialized bytes suitable for sending over a transport.
-    pub fn serialize(&self) -> Result<Vec<u8>, bincode::Error> {
-        bincode::serialize(self)
+    pub fn serialize(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+        bincode::serde::encode_to_vec(self, bincode::config::standard())
     }
 
     /// Deserialize a frame from bytes.
     ///
     /// Returns the deserialized frame or an error if the data is malformed.
-    pub fn deserialize(data: &[u8]) -> Result<Self, bincode::Error> {
-        bincode::deserialize(data)
+    pub fn deserialize(data: &[u8]) -> Result<Self, bincode::error::DecodeError> {
+        let (d, _) = bincode::serde::decode_from_slice(data, bincode::config::standard())?;
+        Ok(d)
     }
 }
 

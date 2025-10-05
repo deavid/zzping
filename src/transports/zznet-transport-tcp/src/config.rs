@@ -100,12 +100,69 @@ impl TlsConfig {
     /// A TlsConfig ready to build client or server configurations
     pub fn from_role(role: Role, certs_dir: Option<&str>) -> Result<Self, TlsError> {
         let dir = certs_dir.unwrap_or("certs");
-        Ok(Self {
+        // Ensure a rustls CryptoProvider is installed for the process.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+
+        // Build initial config
+        let mut config = Self {
             cert: TlsCertAndKey::from_role(role, certs_dir),
             ca_cert_path: Some(format!("{}/ca.pem", dir).into()),
             add_native_ca_certs: false,
             server_name: "zzping".into(),
-        })
+        };
+
+        // If any of the expected files don't exist, try resolving them relative
+        // to the workspace root (useful for integration tests that compute an
+        // absolute path to the workspace test_certs directory).
+        // This keeps existing behavior but makes tests more robust when paths
+        // are passed in different forms.
+        let pem_exists = config.cert.pem_path.exists();
+        let key_exists = config.cert.key_path.exists();
+        let ca_exists = config
+            .ca_cert_path
+            .as_ref()
+            .map(|p| p.exists())
+            .unwrap_or(false);
+
+        if !(pem_exists && key_exists && ca_exists)
+            && let Some(provided_dir) = certs_dir
+        {
+            // Try resolving relative to the workspace root inferred from
+            // this crate's manifest dir. This mirrors how tests compute
+            // workspace root.
+            if let Some(workspace_root) = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .map(|p| p.to_path_buf())
+            {
+                let alt_dir = workspace_root.join(provided_dir);
+
+                let alt_pem = alt_dir.join(
+                    config
+                        .cert
+                        .pem_path
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("")),
+                );
+                let alt_key = alt_dir.join(
+                    config
+                        .cert
+                        .key_path
+                        .file_name()
+                        .unwrap_or_else(|| std::ffi::OsStr::new("")),
+                );
+                let alt_ca = alt_dir.join("ca.pem");
+
+                if alt_pem.exists() && alt_key.exists() && alt_ca.exists() {
+                    config.cert.pem_path = alt_pem;
+                    config.cert.key_path = alt_key;
+                    config.ca_cert_path = Some(alt_ca);
+                }
+            }
+        }
+
+        Ok(config)
     }
 
     /// Builds a rustls ClientConfig with mutual TLS authentication.

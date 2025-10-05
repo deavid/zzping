@@ -224,11 +224,10 @@ impl Ingestion for MockIngestionService {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .push(request.into_inner());
-        let response = self
+        let response = *self
             .send_batch_response
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+            .unwrap_or_else(|e| e.into_inner());
         Ok(Response::new(response))
     }
 

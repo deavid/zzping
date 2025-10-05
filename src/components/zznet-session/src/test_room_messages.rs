@@ -74,10 +74,18 @@ impl RoomMessageTrait for CollectorMessages {
     fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
         // CRITICAL: Serialize ONLY the inner message, NOT the enum structure
         let bytes = match self {
-            CollectorMessages::IntentConfig(msg) => bincode::serialize(msg),
-            CollectorMessages::MemDB(msg) => bincode::serialize(msg),
-            CollectorMessages::Health(msg) => bincode::serialize(msg),
-            CollectorMessages::Metrics(msg) => bincode::serialize(msg),
+            CollectorMessages::IntentConfig(msg) => {
+                bincode::serde::encode_to_vec(msg, bincode::config::standard())
+            }
+            CollectorMessages::MemDB(msg) => {
+                bincode::serde::encode_to_vec(msg, bincode::config::standard())
+            }
+            CollectorMessages::Health(msg) => {
+                bincode::serde::encode_to_vec(msg, bincode::config::standard())
+            }
+            CollectorMessages::Metrics(msg) => {
+                bincode::serde::encode_to_vec(msg, bincode::config::standard())
+            }
         };
         bytes.map_err(|e| SerializationError::BincodeError(e.to_string()))
     }
@@ -86,22 +94,26 @@ impl RoomMessageTrait for CollectorMessages {
         // CRITICAL: Deserialize based on room name, reconstruct enum wrapper
         match room_id.as_str() {
             "intentconfig" => {
-                let msg = bincode::deserialize::<IntentConfigMessage>(bytes)
+                let msg = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+                    .map(|(value, _)| value)
                     .map_err(|e| DeserializationError::BincodeError(e.to_string()))?;
                 Ok(CollectorMessages::IntentConfig(msg))
             }
             "memdb" => {
-                let msg = bincode::deserialize::<MemDBMessage>(bytes)
+                let msg = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+                    .map(|(value, _)| value)
                     .map_err(|e| DeserializationError::BincodeError(e.to_string()))?;
                 Ok(CollectorMessages::MemDB(msg))
             }
             "health" => {
-                let msg = bincode::deserialize::<HealthMessage>(bytes)
+                let msg = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+                    .map(|(value, _)| value)
                     .map_err(|e| DeserializationError::BincodeError(e.to_string()))?;
                 Ok(CollectorMessages::Health(msg))
             }
             "metrics" => {
-                let msg = bincode::deserialize::<MetricsMessage>(bytes)
+                let msg = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+                    .map(|(value, _)| value)
                     .map_err(|e| DeserializationError::BincodeError(e.to_string()))?;
                 Ok(CollectorMessages::Metrics(msg))
             }
@@ -211,8 +223,12 @@ impl RoomMessageTrait for ClientMessages {
 
     fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
         let bytes = match self {
-            ClientMessages::IntentConfig(msg) => bincode::serialize(msg),
-            ClientMessages::Health(msg) => bincode::serialize(msg),
+            ClientMessages::IntentConfig(msg) => {
+                bincode::serde::encode_to_vec(msg, bincode::config::standard())
+            }
+            ClientMessages::Health(msg) => {
+                bincode::serde::encode_to_vec(msg, bincode::config::standard())
+            }
         };
         bytes.map_err(|e| SerializationError::BincodeError(e.to_string()))
     }
@@ -220,12 +236,14 @@ impl RoomMessageTrait for ClientMessages {
     fn deserialize_for_room(room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError> {
         match room_id.as_str() {
             "intentconfig" => {
-                let msg = bincode::deserialize::<IntentConfigMessage>(bytes)
+                let msg = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+                    .map(|(value, _)| value)
                     .map_err(|e| DeserializationError::BincodeError(e.to_string()))?;
                 Ok(ClientMessages::IntentConfig(msg))
             }
             "health" => {
-                let msg = bincode::deserialize::<HealthMessage>(bytes)
+                let msg = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
+                    .map(|(value, _)| value)
                     .map_err(|e| DeserializationError::BincodeError(e.to_string()))?;
                 Ok(ClientMessages::Health(msg))
             }
@@ -350,7 +368,8 @@ mod tests {
         let serialized = collector_msg.serialize_inner().unwrap();
 
         // Serialize directly (without enum wrapper)
-        let direct_serialized = bincode::serialize(&original).unwrap();
+        let direct_serialized =
+            bincode::serde::encode_to_vec(&original, bincode::config::standard()).unwrap();
 
         // CRITICAL: They must be identical!
         // This proves the enum structure is NOT serialized.
@@ -691,7 +710,9 @@ mod tests {
         };
 
         // Direct serialization
-        let direct_size = bincode::serialize(&msg).unwrap().len();
+        let direct_size = bincode::serde::encode_to_vec(&msg, bincode::config::standard())
+            .unwrap()
+            .len();
 
         // Via CollectorMessages
         let collector_msg = CollectorMessages::IntentConfig(msg.clone());

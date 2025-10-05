@@ -14,7 +14,7 @@ zznet-session = { path = "../../components/zznet-session" }
 actix = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
-bincode = { workspace = true }
+bincode = { workspace = true, features = ["serde"] }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 bytes = { workspace = true }

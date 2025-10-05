@@ -53,7 +53,9 @@ use zznet_session::types::RoomId;
 ///
 /// All messages are strongly typed and transport-agnostic - they never
 /// touch bytes or serialization at this layer.
-#[derive(Clone, Debug, Message, Serialize, Deserialize, PartialEq)]
+#[derive(
+    Clone, Debug, Message, Serialize, Deserialize, bincode::Encode, bincode::Decode, PartialEq,
+)]
 #[rtype(result = "()")]
 pub enum IntentConfigMessage {
     /// Administrative request to change configuration
@@ -200,7 +202,8 @@ impl RoomMessageTrait for IntentConfigMessage {
     fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
         // For now, use bincode for serialization
         // In production, this might use a more efficient format
-        bincode::serialize(self).map_err(|e| SerializationError::BincodeError(e.to_string()))
+        bincode::encode_to_vec(self, bincode::config::standard())
+            .map_err(|e| SerializationError::BincodeError(e.to_string()))
     }
 
     fn deserialize_for_room(room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError> {
@@ -209,7 +212,9 @@ impl RoomMessageTrait for IntentConfigMessage {
             return Err(DeserializationError::UnknownRoom(room_id.clone()));
         }
 
-        bincode::deserialize(bytes).map_err(|e| DeserializationError::BincodeError(e.to_string()))
+        bincode::decode_from_slice(bytes, bincode::config::standard())
+            .map(|(value, _)| value)
+            .map_err(|e| DeserializationError::BincodeError(e.to_string()))
     }
 
     fn supported_rooms() -> Vec<RoomId> {

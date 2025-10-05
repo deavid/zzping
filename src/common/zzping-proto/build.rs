@@ -2,10 +2,10 @@
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=proto/ingestion.proto");
-    tonic_build::configure()
+    tonic_prost_build::configure()
         .build_server(true) // We need the server traits
         .build_client(true) // We need the client structs
-        .compile(
+        .compile_protos(
             &["proto/ingestion.proto"], // The file to compile
             &["proto"],                 // The path to search for imports
         )?;

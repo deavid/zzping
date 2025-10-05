@@ -29,8 +29,8 @@ pub fn serialize_room_message<T: Serialize>(
     message: &T,
 ) -> Result<Vec<u8>, HelloError> {
     // Serialize the message payload
-    let payload =
-        bincode::serialize(message).map_err(|e| HelloError::Serialization(e.to_string()))?;
+    let payload = bincode::serde::encode_to_vec(message, bincode::config::standard())
+        .map_err(|e| HelloError::Serialization(e.to_string()))?;
 
     // Wrap in RoomFrame
     let room_frame = RoomFrame::Message {
@@ -68,8 +68,10 @@ pub fn deserialize_room_message<T: for<'de> Deserialize<'de>>(
             payload,
         }) => {
             // Deserialize the payload
-            let message: T = bincode::deserialize(&payload)
-                .map_err(|e| HelloError::Serialization(e.to_string()))?;
+            let message: T =
+                bincode::serde::decode_from_slice(&payload, bincode::config::standard())
+                    .map(|(value, _)| value)
+                    .map_err(|e| HelloError::Serialization(e.to_string()))?;
 
             Ok((from_room, to_room, message))
         }

@@ -135,7 +135,11 @@ impl HelloActor {
     /// Create a new HelloActor.
     ///
     /// This is private - use `start_hello_actor()` to properly create and start the actor.
-    fn new(config: HelloConfig, peer_identity: zznet_api::types::PeerIdentity, io_tx: mpsc::UnboundedSender<Bytes>) -> Self {
+    fn new(
+        config: HelloConfig,
+        peer_identity: zznet_api::types::PeerIdentity,
+        io_tx: mpsc::UnboundedSender<Bytes>,
+    ) -> Self {
         Self {
             config,
             handshake: Handshake::new(),

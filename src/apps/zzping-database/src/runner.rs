@@ -33,7 +33,8 @@ pub async fn run() -> Result<()> {
 
     let addr = INGESTION_ADDR.parse()?;
     let ingestion_service = IngestionServiceImpl::new(item_tx, DATA_DIR.to_string());
-    let server = IngestionServer::new(ingestion_service);
+    // Use tonic's with_interceptor helper to attach the auth interceptor to the service
+    let server = IngestionServer::with_interceptor(ingestion_service, check_auth);
 
     // These paths should be configurable in a real production environment.
     let cert = tokio::fs::read("certs/server.pem").await?;
@@ -44,7 +45,6 @@ pub async fn run() -> Result<()> {
     info!("gRPC server with TLS listening on {addr}");
     Server::builder()
         .tls_config(tls_config)?
-        .layer(tonic::service::interceptor(check_auth))
         .add_service(server)
         .serve(addr)
         .await?;

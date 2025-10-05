@@ -225,7 +225,7 @@ impl BatchSubmitter {
         let records_to_send: Vec<RawDataRecord> = {
             self.buffer
                 .range((self.last_acked_received_nanos + 1)..=now_ns)
-                .map(|(_, record)| record.clone())
+                .map(|(_, record)| *record)
                 .collect()
         };
 
