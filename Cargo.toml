@@ -80,7 +80,7 @@ tracing = "0.1"
 futures = "0.3"                                                           # Moved back to [workspace.dependencies]
 mockall = "0.13"
 ntest = "0.9"
-rustls = "0.23.32"
+rustls = { version = "0.23.32", features = ["ring"] }
 tokio-rustls = "0.26.4"
 rustls-pemfile = "2.2"
 rustls-native-certs = "0.8"
