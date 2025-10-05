@@ -39,7 +39,7 @@ futures = { workspace = true }
 
 [dev-dependencies]
 byteorder = "1.5"
-tempfile = "3.22"
+tempfile = "3.23"
 toml = "0.8"
 zzping-database = { workspace = true, features = ["test-utils"] }
 mockall = "0.12"

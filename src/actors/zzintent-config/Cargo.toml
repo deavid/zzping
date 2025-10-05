@@ -23,5 +23,5 @@ zznet-session = { path = "../../components/zznet-session" }
 zzping-auth = { path = "../../common/zzping-auth" }
 
 [dev-dependencies]
-tempfile = "3.8"
+tempfile = "3.23"
 zznet-room = { path = "../../components/zznet-room" }
