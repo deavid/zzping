@@ -4,12 +4,20 @@
 use crate::messages::{IntentConfigData, Subscribe, Unsubscribe, UpdateConfig};
 use crate::network_messages::IntentConfigMessage;
 use crate::role::IntentConfigRole;
+use actix::ResponseFuture;
 use actix::prelude::*;
 use std::collections::HashMap;
+use std::sync::Arc;
+use zznet_session::session_manager::SessionManager;
+use zznet_session::types::RoomId;
 
 /// The IntentConfigActor stores the current configuration and manages subscribers.
 /// This struct is the private state of our component.
-#[derive(Debug)]
+///
+/// # ⚠️ Security Warning (Phase 2)
+///
+/// Accepts `RequestConfigChange` from ANY peer without auth checks.
+/// See crate-level docs for full security warning and requirements.
 pub struct IntentConfigActor {
     current_config: IntentConfigData,
     subscribers: HashMap<usize, Recipient<IntentConfigData>>,
@@ -17,6 +25,10 @@ pub struct IntentConfigActor {
 
     /// Role configuration (Collector or Database)
     role: IntentConfigRole,
+
+    /// SessionManager for network communication (Phase 3)
+    #[allow(dead_code)] // TODO: Remove when we implement broadcasting
+    session_manager: Option<Arc<SessionManager<IntentConfigMessage>>>,
 }
 
 impl Default for IntentConfigActor {
@@ -33,12 +45,21 @@ impl IntentConfigActor {
             subscribers: HashMap::new(),
             next_id: 0,
             role,
+            session_manager: None,
         }
     }
 
     /// Get the current role
     pub fn role(&self) -> &IntentConfigRole {
         &self.role
+    }
+
+    /// Set the SessionManager for network communication
+    pub fn set_session_manager(
+        &mut self,
+        session_manager: Arc<SessionManager<IntentConfigMessage>>,
+    ) {
+        self.session_manager = Some(session_manager);
     }
 
     /// The logic to broadcast the current configuration to all subscribers.
@@ -48,6 +69,34 @@ impl IntentConfigActor {
             // `do_send` is a "tell" or fire-and-forget send. It does not wait for a response.
             recipient.do_send(self.current_config.clone());
         }
+    }
+
+    /// Persist the current configuration to disk (Database role only)
+    fn persist_config(&self) -> Result<(), std::io::Error> {
+        // Only Database role has config_file_path
+        let config_path = match &self.role {
+            IntentConfigRole::Database { config_file_path } => config_file_path,
+            IntentConfigRole::Collector => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "Collector role cannot persist config",
+                ));
+            }
+        };
+
+        log::info!("Persisting config to {:?}", config_path);
+
+        // Serialize config data to RON format
+        let config_string = ron::ser::to_string_pretty(&self.current_config, Default::default())
+            .map_err(std::io::Error::other)?;
+
+        // Write to file atomically (write to temp file, then rename)
+        let temp_path = config_path.with_extension("tmp");
+        std::fs::write(&temp_path, config_string)?;
+        std::fs::rename(&temp_path, config_path)?;
+
+        log::info!("Config successfully persisted");
+        Ok(())
     }
 }
 
@@ -110,41 +159,101 @@ impl Handler<Unsubscribe> for IntentConfigActor {
 /// - **Collector**: Responds to queries with current config, ignores incoming config updates
 /// - **Database**: Accepts config updates, can query collectors
 impl Handler<IntentConfigMessage> for IntentConfigActor {
-    type Result = ();
+    type Result = ResponseFuture<()>;
 
     fn handle(&mut self, msg: IntentConfigMessage, _ctx: &mut Context<Self>) -> Self::Result {
         log::debug!("Handling network message: {:?}, role: {:?}", msg, self.role);
 
         match (&self.role, msg) {
-            // --- Collector Role Behavior ---
-            (IntentConfigRole::Collector { .. }, IntentConfigMessage::QueryCurrentConfig) => {
-                // Collector responds with current config
-                log::info!("Collector responding to query with current config");
-                // TODO: Send response via SessionManager
-                // For now, just log - we'll add SessionManager integration in Phase 4
-            }
-
-            (IntentConfigRole::Collector { .. }, IntentConfigMessage::ConfigUpdate { .. }) => {
-                // Collector ignores incoming config updates (it's the source)
-                log::debug!("Collector ignoring incoming ConfigUpdate");
-            }
-
-            (IntentConfigRole::Collector { .. }, IntentConfigMessage::CurrentConfig { .. }) => {
-                // Collector ignores CurrentConfig responses (it doesn't query)
-                log::debug!("Collector ignoring incoming CurrentConfig");
-            }
-
-            // --- Database Role Behavior ---
+            // --- Database Role Behavior (SENDER) ---
             (
-                IntentConfigRole::Database,
+                IntentConfigRole::Database { .. },
+                IntentConfigMessage::RequestConfigChange {
+                    targets,
+                    ping_rate_pps,
+                },
+            ) => {
+                // Database ACCEPTS config change requests from AdminClient
+                log::warn!(
+                    "⚠️  RequestConfigChange accepted WITHOUT auth check: targets={:?}, pps={}",
+                    targets,
+                    ping_rate_pps
+                );
+                let new_config = IntentConfigData {
+                    targets,
+                    ping_rate_pps,
+                };
+                if new_config != self.current_config {
+                    self.current_config = new_config;
+                    if let Err(e) = self.persist_config() {
+                        log::error!("Failed to persist config: {}", e);
+                        Box::pin(async {})
+                    } else {
+                        self.broadcast_config();
+                        // Send ConfigUpdate to each Collector via SessionManager (Phase 3)
+                        // Note: Rooms are 1:1 point-to-point channels, not broadcast channels.
+                        // We must send individually to each connected peer.
+                        if let Some(session_manager) = &self.session_manager {
+                            let session_manager = Arc::clone(session_manager);
+                            let config_update = IntentConfigMessage::ConfigUpdate {
+                                targets: self.current_config.targets.clone(),
+                                ping_rate_pps: self.current_config.ping_rate_pps,
+                            };
+                            let room_id = RoomId::from("intent-config");
+
+                            let peer_ids = session_manager.peer_ids();
+                            if peer_ids.is_empty() {
+                                log::warn!("No peers connected - ConfigUpdate not sent to network");
+                                Box::pin(async {})
+                            } else {
+                                Box::pin(async move {
+                                    for peer_id in peer_ids {
+                                        match session_manager
+                                            .send_to_room(&peer_id, &room_id, config_update.clone())
+                                            .await
+                                        {
+                                            Ok(_) => {
+                                                log::info!("Sent ConfigUpdate to peer: {}", peer_id)
+                                            }
+                                            Err(e) => log::warn!(
+                                                "Failed to send ConfigUpdate to peer {}: {}",
+                                                peer_id,
+                                                e
+                                            ),
+                                        }
+                                    }
+                                })
+                            }
+                        } else {
+                            log::warn!(
+                                "No SessionManager configured - ConfigUpdate not sent to network"
+                            );
+                            Box::pin(async {})
+                        }
+                    }
+                } else {
+                    log::info!("Config unchanged, no action needed");
+                    Box::pin(async {})
+                }
+            }
+
+            // --- Collector Role Behavior (RECEIVER) ---
+            (IntentConfigRole::Collector, IntentConfigMessage::RequestConfigChange { .. }) => {
+                // Collector ignores RequestConfigChange (only Database handles admin requests)
+                log::debug!("Collector ignoring RequestConfigChange - not an admin endpoint");
+                Box::pin(async {})
+            }
+
+            (
+                IntentConfigRole::Collector,
                 IntentConfigMessage::ConfigUpdate {
                     targets,
                     ping_rate_pps,
                 },
             ) => {
-                // Database accepts config updates from collectors
+                // Collector ACCEPTS config updates from Database
                 log::info!(
-                    "Database received ConfigUpdate: targets={:?}, pps={}",
+                    "Collector received ConfigUpdate: targets={:?}, pps={}",
                     targets,
                     ping_rate_pps
                 );
@@ -156,48 +265,27 @@ impl Handler<IntentConfigMessage> for IntentConfigActor {
                     self.current_config = new_config;
                     self.broadcast_config();
                 }
-                // TODO: Send acknowledgment via SessionManager
-            }
-
-            (
-                IntentConfigRole::Database,
-                IntentConfigMessage::CurrentConfig {
-                    targets,
-                    ping_rate_pps,
-                },
-            ) => {
-                // Database received response to query
-                log::info!(
-                    "Database received CurrentConfig: targets={:?}, pps={}",
-                    targets,
-                    ping_rate_pps
-                );
-                let new_config = IntentConfigData {
-                    targets,
-                    ping_rate_pps,
-                };
-                if new_config != self.current_config {
-                    self.current_config = new_config;
-                    self.broadcast_config();
-                }
-            }
-
-            // --- Common Behavior ---
-            (_, IntentConfigMessage::Heartbeat) => {
-                // Both roles accept heartbeats
-                log::debug!("Received heartbeat");
-            }
-
-            (_, IntentConfigMessage::Error { reason }) => {
-                // Both roles log errors
-                log::error!("Received error from peer: {}", reason);
+                Box::pin(async {})
             }
 
             // --- Invalid combinations ---
-            (IntentConfigRole::Database, IntentConfigMessage::QueryCurrentConfig) => {
-                // Database shouldn't receive queries (only collectors respond)
-                log::warn!("Database received QueryCurrentConfig - invalid for this role");
+            (IntentConfigRole::Collector, IntentConfigMessage::QueryCurrentConfig) => {
+                // Collector shouldn't receive queries (only Database responds)
+                log::warn!("Collector received QueryCurrentConfig - invalid for this role");
                 // TODO: Send error response via SessionManager
+                Box::pin(async {})
+            }
+
+            // Catch-all for unhandled Collector messages
+            (IntentConfigRole::Collector, _) => {
+                log::debug!("Collector ignoring unhandled message");
+                Box::pin(async {})
+            }
+
+            // Catch-all for unhandled Database messages
+            (IntentConfigRole::Database { .. }, _) => {
+                log::debug!("Database ignoring unhandled message");
+                Box::pin(async {})
             }
         }
     }
@@ -364,37 +452,33 @@ mod tests {
 
     // --- Network Handler Tests ---
 
-    // Test 6: Collector handles QueryCurrentConfig
+    // Test 6: Collector ignores QueryCurrentConfig
     #[actix::test]
     #[ntest::timeout(100)]
-    async fn test_collector_handles_query() {
+    async fn test_collector_ignores_query() {
         setup();
         // ARRANGE
-        let role = IntentConfigRole::Collector {
-            config_file_path: "/etc/intent.ron".into(),
-        };
+        let role = IntentConfigRole::Collector;
         let mut actor = IntentConfigActor::new_with_role(role);
-        actor.current_config = IntentConfigData {
-            targets: vec!["1.1.1.1".parse().unwrap()],
-            ping_rate_pps: 42,
-        };
+        let original_config = actor.current_config.clone();
         let mut ctx = Context::<IntentConfigActor>::new();
 
         // ACT
-        actor.handle(IntentConfigMessage::QueryCurrentConfig, &mut ctx);
+        let _ = actor
+            .handle(IntentConfigMessage::QueryCurrentConfig, &mut ctx)
+            .await;
 
-        // ASSERT: Just verify it doesn't panic - response will be added in Phase 4
+        // ASSERT: Collector's config should NOT change
+        assert_eq!(actor.current_config, original_config);
     }
 
-    // Test 7: Collector ignores ConfigUpdate
+    // Test 7: Collector accepts ConfigUpdate
     #[actix::test]
     #[ntest::timeout(100)]
-    async fn test_collector_ignores_config_update() {
+    async fn test_network_message_collector_accepts_update() {
         setup();
         // ARRANGE
-        let role = IntentConfigRole::Collector {
-            config_file_path: "/etc/intent.ron".into(),
-        };
+        let role = IntentConfigRole::Collector;
         let mut actor = IntentConfigActor::new_with_role(role);
         let original_config = actor.current_config.clone();
         let mut ctx = Context::<IntentConfigActor>::new();
@@ -405,20 +489,30 @@ mod tests {
         };
 
         // ACT
-        actor.handle(msg, &mut ctx);
+        let _ = actor.handle(msg, &mut ctx).await;
 
-        // ASSERT: Collector's config should NOT change
-        assert_eq!(actor.current_config, original_config);
+        // ASSERT: Collector's config SHOULD change
+        assert_ne!(actor.current_config, original_config);
+        assert_eq!(
+            actor.current_config.targets,
+            vec!["9.9.9.9".parse::<std::net::IpAddr>().unwrap()]
+        );
+        assert_eq!(actor.current_config.ping_rate_pps, 999);
     }
 
-    // Test 8: Database accepts ConfigUpdate
+    // Test 8: Database ignores ConfigUpdate
     #[actix::test]
     #[ntest::timeout(100)]
-    async fn test_database_accepts_config_update() {
+    async fn test_network_message_database_ignores_update() {
         setup();
         // ARRANGE
-        let role = IntentConfigRole::Database;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path,
+        };
         let mut actor = IntentConfigActor::new_with_role(role);
+        let original_config = actor.current_config.clone();
         let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigMessage::ConfigUpdate {
@@ -427,67 +521,25 @@ mod tests {
         };
 
         // ACT
-        actor.handle(msg, &mut ctx);
+        let _ = actor.handle(msg, &mut ctx).await;
 
-        // ASSERT: Database's config should change
-        assert_eq!(
-            actor.current_config.targets,
-            vec![
-                "8.8.8.8".parse::<std::net::IpAddr>().unwrap(),
-                "1.1.1.1".parse().unwrap()
-            ]
-        );
-        assert_eq!(actor.current_config.ping_rate_pps, 123);
+        // ASSERT: Database's config should NOT change
+        assert_eq!(actor.current_config, original_config);
     }
 
-    // Test 9: Database broadcasts on network update
+    // Test 9: Database ignores CurrentConfig
     #[actix::test]
     #[ntest::timeout(100)]
-    async fn test_database_broadcasts_network_update() {
+    async fn test_database_ignores_current_config() {
         setup();
         // ARRANGE
-        let role = IntentConfigRole::Database;
-        let mut actor = IntentConfigActor::new_with_role(role);
-        let mut ctx = Context::<IntentConfigActor>::new();
-
-        // Add a subscriber
-        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
-        let mock_subscriber = MockSubscriber { tx }.start();
-        let subscribe_msg = Subscribe {
-            recipient: mock_subscriber.recipient(),
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path,
         };
-        actor.handle(subscribe_msg, &mut ctx);
-        // Drain initial config
-        rx.recv().await.unwrap();
-
-        let msg = IntentConfigMessage::ConfigUpdate {
-            targets: vec!["7.7.7.7".parse().unwrap()],
-            ping_rate_pps: 77,
-        };
-
-        // ACT
-        actor.handle(msg, &mut ctx);
-
-        // ASSERT: Subscriber should receive the new config
-        let received_config = tokio::time::timeout(Duration::from_millis(10), rx.recv())
-            .await
-            .expect("Subscriber did not receive network update")
-            .unwrap();
-        assert_eq!(
-            received_config.targets,
-            vec!["7.7.7.7".parse::<std::net::IpAddr>().unwrap()]
-        );
-        assert_eq!(received_config.ping_rate_pps, 77);
-    }
-
-    // Test 10: Database handles CurrentConfig response
-    #[actix::test]
-    #[ntest::timeout(100)]
-    async fn test_database_handles_current_config() {
-        setup();
-        // ARRANGE
-        let role = IntentConfigRole::Database;
         let mut actor = IntentConfigActor::new_with_role(role);
+        let original_config = actor.current_config.clone();
         let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigMessage::CurrentConfig {
@@ -496,25 +548,138 @@ mod tests {
         };
 
         // ACT
-        actor.handle(msg, &mut ctx);
+        let _ = actor.handle(msg, &mut ctx).await;
 
-        // ASSERT: Database should update its config
-        assert_eq!(
-            actor.current_config.targets,
-            vec!["2.2.2.2".parse::<std::net::IpAddr>().unwrap()]
-        );
-        assert_eq!(actor.current_config.ping_rate_pps, 22);
+        // ASSERT: Database should NOT update its config
+        assert_eq!(actor.current_config, original_config);
     }
 
-    // Test 11: Both roles handle Error messages
+    // Test 10: Database persistence
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_database_persistence() {
+        setup();
+        // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path.clone(),
+        };
+        let mut actor = IntentConfigActor::new_with_role(role);
+        actor.current_config = IntentConfigData {
+            targets: vec!["1.2.3.4".parse().unwrap()],
+            ping_rate_pps: 100,
+        };
+
+        // ACT
+        actor.persist_config().unwrap();
+
+        // ASSERT: File should exist and contain correct data
+        assert!(config_path.exists());
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("1.2.3.4"));
+        assert!(content.contains("100"));
+    }
+
+    // Test 11: Database handles RequestConfigChange
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_database_handles_request_config_change() {
+        setup();
+        // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path.clone(),
+        };
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let original_config = actor.current_config.clone();
+        let mut ctx = Context::<IntentConfigActor>::new();
+
+        let msg = IntentConfigMessage::RequestConfigChange {
+            targets: vec!["5.5.5.5".parse().unwrap()],
+            ping_rate_pps: 555,
+        };
+
+        // ACT
+        let _ = actor.handle(msg, &mut ctx).await;
+
+        // ASSERT: Config should change and be persisted
+        assert_ne!(actor.current_config, original_config);
+        assert_eq!(
+            actor.current_config.targets,
+            vec!["5.5.5.5".parse::<std::net::IpAddr>().unwrap()]
+        );
+        assert_eq!(actor.current_config.ping_rate_pps, 555);
+        // Check persistence
+        assert!(config_path.exists());
+        let content = std::fs::read_to_string(&config_path).unwrap();
+        assert!(content.contains("5.5.5.5"));
+        assert!(content.contains("555"));
+    }
+
+    // Test 12: Collector ignores RequestConfigChange
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_collector_ignores_request_config_change() {
+        setup();
+        // ARRANGE
+        let role = IntentConfigRole::Collector;
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let original_config = actor.current_config.clone();
+        let mut ctx = Context::<IntentConfigActor>::new();
+
+        let msg = IntentConfigMessage::RequestConfigChange {
+            targets: vec!["6.6.6.6".parse().unwrap()],
+            ping_rate_pps: 666,
+        };
+
+        // ACT
+        let _ = actor.handle(msg, &mut ctx).await;
+
+        // ASSERT: Config should NOT change
+        assert_eq!(actor.current_config, original_config);
+    }
+
+    // Test 13: No-op when config unchanged
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_no_op_when_config_unchanged() {
+        setup();
+        // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path.clone(),
+        };
+        let mut actor = IntentConfigActor::new_with_role(role);
+        // Set config to known state
+        actor.current_config = IntentConfigData {
+            targets: vec!["7.7.7.7".parse().unwrap()],
+            ping_rate_pps: 777,
+        };
+        let mut ctx = Context::<IntentConfigActor>::new();
+
+        let msg = IntentConfigMessage::RequestConfigChange {
+            targets: vec!["7.7.7.7".parse().unwrap()], // Same as current
+            ping_rate_pps: 777,                        // Same as current
+        };
+
+        // ACT
+        let _ = actor.handle(msg, &mut ctx).await;
+
+        // ASSERT: File should not be modified (no-op)
+        // Since it's the same config, persist should not be called
+        // We can't easily check if persist was called, but at least verify no panic
+    }
+
+    // Test 14: Both roles handle Error messages
     #[actix::test]
     #[ntest::timeout(100)]
     async fn test_error_handling() {
         setup();
         // Test Collector
-        let role = IntentConfigRole::Collector {
-            config_file_path: "/etc/intent.ron".into(),
-        };
+        let role = IntentConfigRole::Collector;
         let mut actor = IntentConfigActor::new_with_role(role);
         let mut ctx = Context::<IntentConfigActor>::new();
 
@@ -523,12 +688,17 @@ mod tests {
         };
 
         // ACT: Should not panic
-        actor.handle(msg.clone(), &mut ctx);
+        let _ = actor.handle(msg.clone(), &mut ctx).await;
 
         // Test Database
-        let mut actor = IntentConfigActor::new_with_role(IntentConfigRole::Database);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path,
+        };
+        let mut actor = IntentConfigActor::new_with_role(role);
         let mut ctx = Context::<IntentConfigActor>::new();
-        actor.handle(msg, &mut ctx);
+        let _ = actor.handle(msg, &mut ctx).await;
         // ASSERT: Just verify no panic
     }
 
@@ -538,18 +708,21 @@ mod tests {
     async fn test_heartbeat_handling() {
         setup();
         // Test Collector
-        let role = IntentConfigRole::Collector {
-            config_file_path: "/etc/intent.ron".into(),
-        };
+        let role = IntentConfigRole::Collector;
         let mut actor = IntentConfigActor::new_with_role(role);
         let mut ctx = Context::<IntentConfigActor>::new();
 
-        actor.handle(IntentConfigMessage::Heartbeat, &mut ctx);
+        let _ = actor.handle(IntentConfigMessage::Heartbeat, &mut ctx).await;
 
         // Test Database
-        let mut actor = IntentConfigActor::new_with_role(IntentConfigRole::Database);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path,
+        };
+        let mut actor = IntentConfigActor::new_with_role(role);
         let mut ctx = Context::<IntentConfigActor>::new();
-        actor.handle(IntentConfigMessage::Heartbeat, &mut ctx);
+        let _ = actor.handle(IntentConfigMessage::Heartbeat, &mut ctx).await;
         // ASSERT: Just verify no panic
     }
 }

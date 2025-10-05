@@ -37,8 +37,12 @@ mod tests {
     async fn test_api_update_config() {
         setup();
         // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
         let addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database)
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
             .start();
 
         let new_config = IntentConfigData {
@@ -60,8 +64,12 @@ mod tests {
     async fn test_api_subscribe() {
         setup();
         // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
         let addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database)
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
             .start();
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
@@ -88,8 +96,12 @@ mod tests {
     async fn test_api_subscribe_multiple() {
         setup();
         // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
         let addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database)
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
             .start();
 
         let (tx1, mut rx1) = tokio::sync::mpsc::channel(10);
@@ -116,8 +128,12 @@ mod tests {
     async fn test_api_unsubscribe() {
         setup();
         // ARRANGE: Test that unsubscribe doesn't crash the actor
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
         let addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database)
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
             .start();
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
@@ -150,8 +166,12 @@ mod tests {
     async fn test_api_subscribe_receives_updates() {
         setup();
         // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
         let addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database)
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
             .start();
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
@@ -180,8 +200,12 @@ mod tests {
     async fn test_api_multiple_updates() {
         setup();
         // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
         let addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database)
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
             .start();
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
@@ -212,8 +236,12 @@ mod tests {
     async fn test_api_unsubscribe_wrong_id() {
         setup();
         // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
         let addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database)
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
             .start();
 
         // ACT: Unsubscribe with non-existent ID

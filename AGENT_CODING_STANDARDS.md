@@ -27,6 +27,67 @@ This is the most important section. The goal of documentation is to explain the 
 *   All public items (`structs`, `enums`, `functions`, `traits`, and public struct fields) **MUST** have a docstring.
 *   **DO NOT** describe the parameters or return values in a list format. The function signature already contains this information. Instead, explain what the function *achieves* and what its *contract* is with the caller.
 
+#### Forbidden Docstring Patterns
+
+*   **FORBIDDEN: "Arguments:", "Returns:", "Errors:" sections**
+    *   The function signature already provides parameter and return type information.
+    *   Repeating this violates DRY and creates maintenance burden.
+    *   Exception: Complex error conditions or invariants that aren't obvious from types alone may be explained in prose (not list format).
+
+*   **FORBIDDEN: Example code blocks with ```ignore**
+    *   Creates pseudo-tests that never run and can become stale/incorrect.
+    *   If example code is worth showing, it MUST be tested (use ```rust without ignore for doc-tests).
+    *   If the example is too complex for a doc-test, put it in the tests/ or examples/ directory.
+    *   Exception: Non-code examples (ASCII diagrams, config file formats, JSON/TOML samples) are allowed.
+
+*   **Example of FORBIDDEN pattern:**
+    ```rust
+    /// Process configuration data
+    ///
+    /// Arguments:
+    /// * `config` - The configuration to process
+    /// * `validate` - Whether to validate
+    ///
+    /// Returns:
+    /// * `Ok(ProcessedConfig)` on success
+    /// * `Err(ConfigError)` on failure
+    ///
+    /// # Example
+    /// ```ignore
+    /// let result = process_config(my_config, true);
+    /// ```
+    pub fn process_config(config: Config, validate: bool) -> Result<ProcessedConfig, ConfigError>
+    ```
+
+*   **Example of CORRECT pattern:**
+    ```rust
+    /// Validates and normalizes configuration, applying defaults for missing values.
+    ///
+    /// Validation ensures all required fields are present and values are within
+    /// acceptable ranges. Normalization converts relative paths to absolute and
+    /// applies system-specific defaults.
+    ///
+    /// Fails if required fields are missing or values are out of valid ranges.
+    pub fn process_config(config: Config, validate: bool) -> Result<ProcessedConfig, ConfigError>
+    ```
+
+#### What TO Document
+
+*   **Concept**: What is this thing? (struct, enum, module)
+*   **Contract**: What guarantees does this provide? What are the invariants?
+*   **Purpose**: Why does this exist? When should it be used?
+*   **Behavior**: What does this do that isn't obvious from the signature?
+*   **Constraints**: What are the limitations, preconditions, or assumptions?
+*   **Errors**: What error conditions exist that aren't clear from the type system?
+
+#### What NOT to Document
+
+*   ❌ Parameter names and types (already in signature)
+*   ❌ Return type (already in signature)
+*   ❌ What the code literally does line-by-line
+*   ❌ Obvious behavior that matches the function name
+*   ❌ Example code that won't be tested
+
 ### Inline Comments (`//`)
 
 *   Use inline comments sparingly. The code should be as self-documenting as possible.

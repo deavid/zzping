@@ -1,8 +1,11 @@
 //! Provides the public builder for creating and starting the IntentConfigActor.
 
 use crate::actor::IntentConfigActor;
+use crate::network_messages::IntentConfigMessage;
 use crate::role::IntentConfigRole;
 use actix::prelude::*;
+use std::sync::Arc;
+use zznet_session::session_manager::SessionManager;
 
 /// A builder for the IntentConfig component.
 ///
@@ -12,26 +15,9 @@ use actix::prelude::*;
 ///
 /// # Example
 ///
-/// ```ignore
-/// use zzintent_config::builder::IntentConfigBuilder;
-/// use zzintent_config::role::IntentConfigRole;
-/// use std::path::PathBuf;
-///
-/// // Collector role
-/// let collector = IntentConfigBuilder::new()
-///     .role(IntentConfigRole::Collector {
-///         config_file_path: PathBuf::from("/etc/intent.ron"),
-///     })
-///     .start();
-///
-/// // Database role
-/// let database = IntentConfigBuilder::new()
-///     .role(IntentConfigRole::Database)
-///     .start();
-/// ```
-#[derive(Debug)]
 pub struct IntentConfigBuilder {
     role: IntentConfigRole,
+    session_manager: Option<Arc<SessionManager<IntentConfigMessage>>>,
 }
 
 impl Default for IntentConfigBuilder {
@@ -47,24 +33,19 @@ impl IntentConfigBuilder {
     pub fn new() -> Self {
         Self {
             role: IntentConfigRole::default(),
+            session_manager: None,
         }
     }
 
     /// Set the role for this IntentConfig actor
-    ///
-    /// # Example
-    /// ```ignore
-    /// use zzintent_config::builder::IntentConfigBuilder;
-    /// use zzintent_config::role::IntentConfigRole;
-    /// use std::path::PathBuf;
-    ///
-    /// let builder = IntentConfigBuilder::new()
-    ///     .role(IntentConfigRole::Collector {
-    ///         config_file_path: PathBuf::from("/etc/intent.ron"),
-    ///     });
-    /// ```
     pub fn role(mut self, role: IntentConfigRole) -> Self {
         self.role = role;
+        self
+    }
+
+    /// Set the SessionManager for network communication
+    pub fn session_manager(mut self, session_manager: SessionManager<IntentConfigMessage>) -> Self {
+        self.session_manager = Some(Arc::new(session_manager));
         self
     }
 
@@ -86,11 +67,18 @@ impl IntentConfigBuilder {
     /// # Returns
     ///
     /// The returned `Addr` is the handle to the running actor, used for sending messages.
-    pub fn start(self) -> Addr<IntentConfigActor> {
+    pub fn start(mut self) -> Addr<IntentConfigActor> {
         // Validate role configuration
         self.role.validate().expect("Invalid role configuration");
 
         // Create and start actor with role
-        IntentConfigActor::new_with_role(self.role).start()
+        let mut actor = IntentConfigActor::new_with_role(self.role);
+
+        // Set session manager if provided
+        if let Some(session_manager) = self.session_manager.take() {
+            actor.set_session_manager(session_manager);
+        }
+
+        actor.start()
     }
 }

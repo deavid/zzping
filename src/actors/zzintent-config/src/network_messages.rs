@@ -6,37 +6,45 @@
 //!
 //! # Protocol Design
 //!
-//! The protocol supports two roles:
-//! - **Collector**: Reads config from disk, broadcasts updates
-//! - **Database**: Receives updates, can query for current state
+//! The protocol supports three roles:
+//! - **Database**: Authoritative source, sends config updates
+//! - **Collector**: Passive receiver, accepts config updates
+//! - **AdminClient**: Operator, requests config changes
 //!
 //! # Message Flow Examples
 //!
-//! ## Config Update Flow
+//! ## Config Update Flow (Normal Operation)
 //! ```text
-//! File Change → Collector
-//!     ↓ ConfigUpdate
-//! SessionManager (room: "intentconfig")
-//!     ↓ ConfigUpdate
-//! Database → broadcast to local subscribers
+//! AdminClient
+//!     ↓ RequestConfigChange (to Database)
+//! Database
+//!     ↓ persist to disk
+//!     ↓ send ConfigUpdate individually to each Collector
+//! SessionManager → Collector-1 (room: "intent-config", 1:1 connection)
+//! SessionManager → Collector-2 (room: "intent-config", 1:1 connection)
+//! SessionManager → Collector-N (room: "intent-config", 1:1 connection)
+//! Each Collector → apply to local operations
 //! ```
 //!
-//! ## Query Flow
+//! **Architecture Note:** Each Database-Collector connection has its own
+//! dedicated "intent-config" room. Rooms are 1:1 point-to-point channels,
+//! NOT broadcast channels. Database sends ConfigUpdate individually to each
+//! connected Collector peer.
+//!
+//! ## Query Flow (Database startup/recovery)
 //! ```text
-//! Database startup
-//!     ↓ QueryCurrentConfig
-//! SessionManager (room: "intentconfig")
-//!     ↓ QueryCurrentConfig
-//! Collector
-//!     ↓ CurrentConfig
-//! SessionManager (room: "intentconfig")
-//!     ↓ CurrentConfig
-//! Database → update local state
+//! Database reads from disk on startup
+//!     ↓ sends ConfigUpdate to each connected Collector (1:1)
+//! Collectors receive initial state
 //! ```
 
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
+use zznet_session::room_message_trait::{
+    DeserializationError, RoomMessageTrait, SerializationError,
+};
+use zznet_session::types::RoomId;
 
 /// Network protocol messages for IntentConfig component
 ///
@@ -48,20 +56,26 @@ use std::net::IpAddr;
 #[derive(Clone, Debug, Message, Serialize, Deserialize, PartialEq)]
 #[rtype(result = "()")]
 pub enum IntentConfigMessage {
-    /// Configuration update from Collector to Database
+    /// Administrative request to change configuration
     ///
-    /// Sent whenever the Collector detects a configuration change (e.g., from file).
-    /// Database receives this and:
-    /// 1. Updates its local state
-    /// 2. Broadcasts to local subscribers (MemDB, etc.)
+    /// Sent by AdminClient to Database to request a configuration change.
+    /// Database validates, persists, and sends individually to each Collector.
     ///
-    /// # Example
-    /// ```ignore
-    /// IntentConfigMessage::ConfigUpdate {
-    ///     targets: vec!["8.8.8.8".parse().unwrap()],
-    ///     ping_rate_pps: 100,
-    /// }
-    /// ```
+    /// ⚠️ SECURITY WARNING: No auth enforcement yet. See crate-level docs.
+    RequestConfigChange {
+        /// List of IP addresses to ping
+        targets: Vec<IpAddr>,
+        /// Ping rate in packets per second
+        ping_rate_pps: u64,
+    },
+
+    /// Configuration update from Database to Collectors
+    ///
+    /// Sent whenever the Database changes configuration (via AdminClient request
+    /// or on startup). Collectors receive this and apply it to their operations.
+    ///
+    /// # Flow
+    /// Database → SessionManager → Collector(s)
     ConfigUpdate {
         /// List of IP addresses to ping
         targets: Vec<IpAddr>,
@@ -71,27 +85,19 @@ pub enum IntentConfigMessage {
 
     /// Request for current configuration from Database to Collector
     ///
-    /// Sent by Database when it starts up or wants to refresh its state.
-    /// Collector responds with CurrentConfig message.
+    /// ⚠️ RESERVED FOR FUTURE USE - Not currently implemented.
     ///
-    /// # Example
-    /// ```ignore
-    /// IntentConfigMessage::QueryCurrentConfig
-    /// ```
+    /// Intended use: Database queries Collector on startup for state recovery,
+    /// or AdminClient queries Database for current configuration display.
+    /// Collector would respond with CurrentConfig message.
     QueryCurrentConfig,
 
     /// Response with current configuration from Collector to Database
     ///
-    /// Sent in response to QueryCurrentConfig. Contains the Collector's
-    /// current configuration state.
+    /// ⚠️ RESERVED FOR FUTURE USE - Not currently implemented.
     ///
-    /// # Example
-    /// ```ignore
-    /// IntentConfigMessage::CurrentConfig {
-    ///     targets: vec!["8.8.8.8".parse().unwrap()],
-    ///     ping_rate_pps: 100,
-    /// }
-    /// ```
+    /// Intended use: Response to QueryCurrentConfig containing the current
+    /// configuration state for recovery or display purposes.
     CurrentConfig {
         /// List of IP addresses to ping
         targets: Vec<IpAddr>,
@@ -99,28 +105,20 @@ pub enum IntentConfigMessage {
         ping_rate_pps: u64,
     },
 
-    /// Heartbeat message (optional, for future use)
+    /// Heartbeat message
     ///
-    /// Can be used to verify connection is alive and detect disconnections.
-    /// Not yet implemented in handlers, but defined for future use.
+    /// ⚠️ RESERVED FOR FUTURE USE - Not currently implemented.
     ///
-    /// # Example
-    /// ```ignore
-    /// IntentConfigMessage::Heartbeat
-    /// ```
+    /// Intended use: Periodic keepalive to detect connection failures and
+    /// differentiate between network partition vs peer crash.
     Heartbeat,
 
-    /// Error response (optional, for future use)
+    /// Error response
     ///
-    /// Sent when an error occurs processing a request. Can be used for
-    /// error reporting and debugging.
+    /// ⚠️ RESERVED FOR FUTURE USE - Not currently implemented.
     ///
-    /// # Example
-    /// ```ignore
-    /// IntentConfigMessage::Error {
-    ///     reason: "Invalid configuration format".to_string(),
-    /// }
-    /// ```
+    /// Intended use: Send error responses for invalid requests, authorization
+    /// failures, or internal errors that the peer should be aware of.
     Error {
         /// Human-readable error description
         reason: String,
@@ -128,7 +126,10 @@ pub enum IntentConfigMessage {
 }
 
 impl IntentConfigMessage {
-    /// Helper to create a ConfigUpdate message
+    /// Creates ConfigUpdate message for Database to send to Collectors.
+    ///
+    /// Use this for internal distribution after persisting configuration.
+    /// For admin requests, use RequestConfigChange instead.
     pub fn config_update(targets: Vec<IpAddr>, ping_rate_pps: u64) -> Self {
         Self::ConfigUpdate {
             targets,
@@ -151,7 +152,10 @@ impl IntentConfigMessage {
         }
     }
 
-    /// Check if this message contains configuration data
+    /// Identifies messages that carry configuration data (ConfigUpdate, CurrentConfig).
+    ///
+    /// Useful for filtering or routing messages based on whether they affect
+    /// configuration state.
     pub fn has_config_data(&self) -> bool {
         matches!(self, Self::ConfigUpdate { .. } | Self::CurrentConfig { .. })
     }
@@ -169,6 +173,33 @@ impl IntentConfigMessage {
             } => Some((targets.clone(), *ping_rate_pps)),
             _ => None,
         }
+    }
+}
+
+impl RoomMessageTrait for IntentConfigMessage {
+    fn room_id(&self) -> RoomId {
+        // All intent config messages use the same room for now
+        // In the future, this could be based on collector hostname or other criteria
+        RoomId::from("intent-config")
+    }
+
+    fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
+        // For now, use bincode for serialization
+        // In production, this might use a more efficient format
+        bincode::serialize(self).map_err(|e| SerializationError::BincodeError(e.to_string()))
+    }
+
+    fn deserialize_for_room(room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError> {
+        // For now, all messages go to the same room
+        if room_id.as_str() != "intent-config" {
+            return Err(DeserializationError::UnknownRoom(room_id.clone()));
+        }
+
+        bincode::deserialize(bytes).map_err(|e| DeserializationError::BincodeError(e.to_string()))
+    }
+
+    fn supported_rooms() -> Vec<RoomId> {
+        vec![RoomId::from("intent-config")]
     }
 }
 

@@ -20,8 +20,8 @@ mod tests {
         // ARRANGE & ACT
         let builder = IntentConfigBuilder::new();
 
-        // ASSERT: Default role is Database
-        assert!(matches!(builder.get_role(), IntentConfigRole::Database));
+        // ASSERT: Default role is Collector
+        assert!(matches!(builder.get_role(), IntentConfigRole::Collector));
     }
 
     #[actix::test]
@@ -29,10 +29,7 @@ mod tests {
     async fn test_builder_with_collector_role() {
         setup();
         // ARRANGE
-        let config_path = PathBuf::from("/etc/intent.ron");
-        let role = IntentConfigRole::Collector {
-            config_file_path: config_path.clone(),
-        };
+        let role = IntentConfigRole::Collector;
 
         // ACT
         let builder = IntentConfigBuilder::new().role(role.clone());
@@ -46,7 +43,10 @@ mod tests {
     async fn test_builder_with_database_role() {
         setup();
         // ARRANGE
-        let role = IntentConfigRole::Database;
+        let config_path = PathBuf::from("/var/lib/zzping/intent.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path.clone(),
+        };
 
         // ACT
         let builder = IntentConfigBuilder::new().role(role.clone());
@@ -60,7 +60,10 @@ mod tests {
     async fn test_builder_starts_with_database_role() {
         setup();
         // ARRANGE
-        let builder = IntentConfigBuilder::new().role(IntentConfigRole::Database);
+        let config_path = PathBuf::from("/tmp/test_db_intent.ron");
+        let builder = IntentConfigBuilder::new().role(IntentConfigRole::Database {
+            config_file_path: config_path,
+        });
 
         // ACT
         let addr = builder.start();
@@ -74,9 +77,7 @@ mod tests {
     async fn test_builder_starts_with_collector_role() {
         setup();
         // ARRANGE
-        let builder = IntentConfigBuilder::new().role(IntentConfigRole::Collector {
-            config_file_path: "/tmp/test_intent.ron".into(),
-        });
+        let builder = IntentConfigBuilder::new().role(IntentConfigRole::Collector);
 
         // ACT
         let addr = builder.start();
@@ -87,10 +88,10 @@ mod tests {
 
     #[actix::test]
     #[ntest::timeout(100)]
-    async fn test_builder_panics_on_invalid_collector_role() {
+    async fn test_builder_panics_on_invalid_database_role() {
         setup();
-        // ARRANGE: Collector with empty path (invalid)
-        let builder = IntentConfigBuilder::new().role(IntentConfigRole::Collector {
+        // ARRANGE: Database with empty path (invalid)
+        let builder = IntentConfigBuilder::new().role(IntentConfigRole::Database {
             config_file_path: PathBuf::new(),
         });
 
@@ -108,8 +109,11 @@ mod tests {
     async fn test_builder_chaining() {
         setup();
         // ARRANGE & ACT: Test method chaining
+        let config_path = PathBuf::from("/tmp/test_chain_intent.ron");
         let addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database)
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
             .start();
 
         // ASSERT
@@ -123,7 +127,7 @@ mod tests {
         // ARRANGE & ACT
         let builder = IntentConfigBuilder::default();
 
-        // ASSERT: Should use Database role
-        assert!(matches!(builder.get_role(), IntentConfigRole::Database));
+        // ASSERT: Should use Collector role
+        assert!(matches!(builder.get_role(), IntentConfigRole::Collector));
     }
 }
