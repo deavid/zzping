@@ -9,6 +9,7 @@ description = "ZZPing Network Layer: HELLO protocol handler and serialization bo
 
 [dependencies]
 zznet-api = { path = "../../common/zznet-api" }
+zzping-auth = { workspace = true }
 zznet-session = { path = "../../components/zznet-session" }
 actix = { workspace = true }
 tokio = { workspace = true }

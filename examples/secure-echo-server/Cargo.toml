@@ -1,0 +1,13 @@
+[package]
+name = "secure-echo-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+zzping-auth = { path = "../../src/common/zzping-auth" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+env_logger = "0.10"
+rustls = "0.21"
+tokio-rustls = "0.26"
+rustls-pemfile = "1.0"
+x509-parser = "0.14"

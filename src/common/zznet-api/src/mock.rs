@@ -20,6 +20,7 @@
 
 use crate::error::TransportError;
 use crate::transport::{TransportClient, TransportConnection, TransportServer};
+use crate::types::PeerIdentity;
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::sync::Arc;
@@ -49,6 +50,8 @@ pub struct MockConnection {
     peer_id: String,
     /// Optional error to inject on next operation.
     inject_error: Arc<Mutex<Option<TransportError>>>,
+    /// The peer identity for this connection.
+    peer_identity: PeerIdentity,
 }
 
 impl MockConnection {
@@ -73,6 +76,15 @@ impl MockConnection {
     /// ```
     pub async fn inject_error(&self, error: TransportError) {
         *self.inject_error.lock().await = Some(error);
+    }
+
+    /// Sets the peer identity for this connection.
+    ///
+    /// This allows tests to configure specific identities for ACL testing.
+    /// By default, mock connections have identity "mock" with peer-specific SAN.
+    pub fn with_peer_identity(mut self, identity: PeerIdentity) -> Self {
+        self.peer_identity = identity;
+        self
     }
 }
 
@@ -113,6 +125,10 @@ impl TransportConnection for MockConnection {
     fn peer_addr(&self) -> Option<String> {
         Some(format!("mock:{}", self.peer_id))
     }
+
+    fn peer_identity(&self) -> PeerIdentity {
+        self.peer_identity.clone()
+    }
 }
 
 /// Creates a pair of connected mock connections.
@@ -141,6 +157,11 @@ pub fn create_mock_pair(base_id: &str) -> (MockConnection, MockConnection) {
         rx: Mutex::new(rx_a),
         peer_id: format!("{}_a", base_id),
         inject_error: Arc::new(Mutex::new(None)),
+        peer_identity: PeerIdentity {
+            common_name: "mock".to_string(),
+            san_username: format!("{}_a", base_id),
+            peer_addr: format!("mock:{}_a", base_id),
+        },
     };
 
     let conn_b = MockConnection {
@@ -148,6 +169,11 @@ pub fn create_mock_pair(base_id: &str) -> (MockConnection, MockConnection) {
         rx: Mutex::new(rx_b),
         peer_id: format!("{}_b", base_id),
         inject_error: Arc::new(Mutex::new(None)),
+        peer_identity: PeerIdentity {
+            common_name: "mock".to_string(),
+            san_username: format!("{}_b", base_id),
+            peer_addr: format!("mock:{}_b", base_id),
+        },
     };
 
     (conn_a, conn_b)

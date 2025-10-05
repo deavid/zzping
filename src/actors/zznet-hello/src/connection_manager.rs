@@ -17,6 +17,9 @@ use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::{PeerId, RoomId};
 
+type Authorizer =
+    Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<crate::auth::AuthRole> + Send + Sync>;
+
 /// ConnectionManager coordinates HelloActors and SessionManager
 ///
 /// Generic over TMsg: the application's message enum type
@@ -30,6 +33,9 @@ where
     /// Maps PeerId to HelloActor address
     /// Used to send InboundRoomMessage to the correct HelloActor
     hello_actors: HashMap<PeerId, Addr<HelloActor>>,
+    /// Optional ACL manager and insecure_trust flag.
+    /// Optional authorizer: takes PeerIdentity and returns resolved AuthRole if allowed
+    acl: Option<(Authorizer, bool)>,
 }
 
 impl<TMsg> ConnectionManager<TMsg>
@@ -43,6 +49,16 @@ where
         Self {
             session_manager: SessionManager::new(offered_rooms),
             hello_actors: HashMap::new(),
+            acl: None,
+        }
+    }
+
+    /// Create a ConnectionManager with an optional AclManager and insecure_trust flag
+    pub fn new_with_acl(offered_rooms: Vec<RoomId>, acl: Option<(Authorizer, bool)>) -> Self {
+        Self {
+            session_manager: SessionManager::new(offered_rooms),
+            hello_actors: HashMap::new(),
+            acl,
         }
     }
 
@@ -249,13 +265,44 @@ where
             msg.active_rooms
         );
 
+        // Resolve the peer's role using the ACL authorizer
+        let resolved_role = if let Some((authorizer, _insecure_flag)) = &self.acl {
+            match authorizer(&msg.peer_identity) {
+                Some(role) => {
+                    tracing::info!(
+                        "Peer {} authorized by ACL as {:?} (identity: {})",
+                        peer_id,
+                        role,
+                        msg.peer_identity.full_identity()
+                    );
+                    Some(role)
+                }
+                None => {
+                    tracing::warn!(
+                        "Peer {} denied by ACL - disconnecting (identity: {})",
+                        peer_id,
+                        msg.peer_identity.full_identity()
+                    );
+                    msg.hello_actor.do_send(crate::actor::Disconnect);
+                    return;
+                }
+            }
+        } else {
+            // No ACL configured - allow connection but no role
+            tracing::debug!("Peer {} connected without ACL (no role assigned)", peer_id);
+            None
+        };
+
         // 1. Create bidirectional channels for message flow
         let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(100);
         let (conn_to_session_tx, conn_to_session_rx) = tokio::sync::mpsc::channel(100);
         let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
 
-        // 2. Create PeerSession for this peer
-        let peer_session = PeerSession::new(zznet_session::types::PeerId::from(peer_id.as_str()));
+        // 2. Create PeerSession for this peer and set auth context
+        let mut peer_session =
+            PeerSession::new(zznet_session::types::PeerId::from(peer_id.as_str()));
+        peer_session.set_role(resolved_role);
+        peer_session.set_identity(msg.peer_identity.clone());
 
         // Add the peer to SessionManager
         if let Err(e) = self.session_manager.add_peer(

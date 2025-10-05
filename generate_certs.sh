@@ -2,12 +2,12 @@
 
 # Script to generate CA and certificates for zzping components
 # Usage:
-#   ./generate_certs.sh --ca              # Generate CA certificate
-#   ./generate_certs.sh --collector       # Generate collector certificate (requires CA)
-#   ./generate_certs.sh --database        # Generate database certificate (requires CA)
-#   ./generate_certs.sh --client-ro       # Generate client-ro certificate (requires CA)
-#   ./generate_certs.sh --client-admin    # Generate client-admin certificate (requires CA)
-#   ./generate_certs.sh --all             # Generate CA and all certificates
+#   ./generate_certs.sh --ca                          # Generate CA certificate
+#   ./generate_certs.sh --collector                   # Generate collector certificate (CN=collector, SAN=DNS:root)
+#   ./generate_certs.sh --database                    # Generate database certificate (CN=database, SAN=DNS:root)
+#   ./generate_certs.sh --client-ro [username]        # Generate client-ro certificate (CN=client-ro, SAN=DNS:<username>)
+#   ./generate_certs.sh --client-admin [username]     # Generate client-admin certificate (CN=client-admin, SAN=DNS:<username>)
+#   ./generate_certs.sh --all                         # Generate CA and all service certificates
 
 set -e
 
@@ -53,7 +53,7 @@ generate_collector() {
     openssl genrsa -out "$COLLECTOR_KEY" 2048
 
     echo "Generating collector certificate signing request..."
-    openssl req -subj "/CN=zzping" -new -key "$COLLECTOR_KEY" -out "$COLLECTOR_CSR"
+    openssl req -subj "/CN=collector" -new -key "$COLLECTOR_KEY" -out "$COLLECTOR_CSR"
 
     echo "Signing collector certificate with CA..."
     openssl x509 -req -days 365 -in "$COLLECTOR_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
@@ -62,7 +62,7 @@ generate_collector() {
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:zzping,DNS:zzping-collector,IP:127.0.0.1
+subjectAltName=DNS:root
 EOF
 )
 
@@ -83,7 +83,7 @@ generate_database() {
     openssl genrsa -out "$DATABASE_KEY" 2048
 
     echo "Generating database certificate signing request..."
-    openssl req -subj "/CN=zzping" -new -key "$DATABASE_KEY" -out "$DATABASE_CSR"
+    openssl req -subj "/CN=database" -new -key "$DATABASE_KEY" -out "$DATABASE_CSR"
 
     echo "Signing database certificate with CA..."
     openssl x509 -req -days 365 -in "$DATABASE_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
@@ -92,7 +92,7 @@ generate_database() {
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:zzping,DNS:zzping-database,IP:127.0.0.1
+subjectAltName=DNS:root
 EOF
 )
 
@@ -104,6 +104,13 @@ EOF
 
 # Function to generate client-ro certificate
 generate_client_ro() {
+    local username="$1"
+    if [ -z "$username" ]; then
+        echo "Error: Username required for user certificates"
+        echo "Use: ./generate_certs.sh --client-ro <username>"
+        exit 1
+    fi
+
     if [ ! -f "$CA_CERT" ]; then
         echo "CA certificate not found. Generating CA first..."
         generate_ca
@@ -113,7 +120,7 @@ generate_client_ro() {
     openssl genrsa -out "$CLIENT_RO_KEY" 2048
 
     echo "Generating client-ro certificate signing request..."
-    openssl req -subj "/CN=zzping" -new -key "$CLIENT_RO_KEY" -out "$CLIENT_RO_CSR"
+    openssl req -subj "/CN=client-ro" -new -key "$CLIENT_RO_KEY" -out "$CLIENT_RO_CSR"
 
     echo "Signing client-ro certificate with CA..."
     openssl x509 -req -days 365 -in "$CLIENT_RO_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
@@ -122,7 +129,7 @@ generate_client_ro() {
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=clientAuth
-subjectAltName=DNS:zzping,DNS:zzping-client-ro,IP:127.0.0.1
+subjectAltName=DNS:$username
 EOF
 )
 
@@ -134,6 +141,13 @@ EOF
 
 # Function to generate client-admin certificate
 generate_client_admin() {
+    local username="$1"
+    if [ -z "$username" ]; then
+        echo "Error: Username required for user certificates"
+        echo "Use: ./generate_certs.sh --client-admin <username>"
+        exit 1
+    fi
+
     if [ ! -f "$CA_CERT" ]; then
         echo "CA certificate not found. Generating CA first..."
         generate_ca
@@ -143,7 +157,7 @@ generate_client_admin() {
     openssl genrsa -out "$CLIENT_ADMIN_KEY" 2048
 
     echo "Generating client-admin certificate signing request..."
-    openssl req -subj "/CN=zzping" -new -key "$CLIENT_ADMIN_KEY" -out "$CLIENT_ADMIN_CSR"
+    openssl req -subj "/CN=client-admin" -new -key "$CLIENT_ADMIN_KEY" -out "$CLIENT_ADMIN_CSR"
 
     echo "Signing client-admin certificate with CA..."
     openssl x509 -req -days 365 -in "$CLIENT_ADMIN_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
@@ -152,7 +166,7 @@ generate_client_admin() {
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=clientAuth
-subjectAltName=DNS:zzping,DNS:zzping-client-admin,IP:127.0.0.1
+subjectAltName=DNS:$username
 EOF
 )
 
@@ -174,26 +188,24 @@ case "$1" in
         generate_database
         ;;
     --client-ro)
-        generate_client_ro
+        generate_client_ro "$2"
         ;;
     --client-admin)
-        generate_client_admin
+        generate_client_admin "$2"
         ;;
     --all)
         generate_ca
         generate_collector
         generate_database
-        generate_client_ro
-        generate_client_admin
         ;;
     *)
         echo "Usage: $0 {--ca|--collector|--database|--client-ro|--client-admin|--all}"
-        echo "  --ca           Generate CA certificate"
-        echo "  --collector    Generate collector certificate (will generate CA if missing)"
-        echo "  --database     Generate database certificate (will generate CA if missing)"
-        echo "  --client-ro    Generate client-ro certificate (will generate CA if missing)"
-        echo "  --client-admin Generate client-admin certificate (will generate CA if missing)"
-        echo "  --all          Generate CA and all certificates"
+        echo "  --ca                    Generate CA certificate"
+        echo "  --collector             Generate collector certificate (CN=collector, SAN=DNS:root)"
+        echo "  --database              Generate database certificate (CN=database, SAN=DNS:root)"
+        echo "  --client-ro <username>  Generate client-ro certificate (CN=client-ro, SAN=DNS:<username>)"
+        echo "  --client-admin <username> Generate client-admin certificate (CN=client-admin, SAN=DNS:<username>)"
+        echo "  --all                   Generate CA and all service certificates"
         exit 1
         ;;
 esac

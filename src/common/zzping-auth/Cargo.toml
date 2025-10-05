@@ -1,0 +1,21 @@
+[package]
+name = "zzping-auth"
+version = "0.2.2-beta2"
+edition = "2021"
+description = "Application-layer authorization for ZZPing"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+zznet-api = { path = "../../common/zznet-api" }
+
+[dev-dependencies]
+tempfile.workspace = true
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "auth_benchmarks"
+harness = false

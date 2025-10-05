@@ -121,6 +121,8 @@ pub struct HelloActor {
     active_rooms: Vec<String>,
     /// Peer's role received during handshake.
     peer_role: Option<AuthRole>,
+    /// Peer's cryptographic identity from transport.
+    peer_identity: zznet_api::types::PeerIdentity,
     /// Sender to I/O task for outbound frames.
     io_tx: mpsc::UnboundedSender<Bytes>,
     /// Optional SessionManager recipient (for integration with higher layer).
@@ -133,13 +135,14 @@ impl HelloActor {
     /// Create a new HelloActor.
     ///
     /// This is private - use `start_hello_actor()` to properly create and start the actor.
-    fn new(config: HelloConfig, io_tx: mpsc::UnboundedSender<Bytes>) -> Self {
+    fn new(config: HelloConfig, peer_identity: zznet_api::types::PeerIdentity, io_tx: mpsc::UnboundedSender<Bytes>) -> Self {
         Self {
             config,
             handshake: Handshake::new(),
             state: ActorState::Handshaking,
             active_rooms: Vec::new(),
             peer_role: None,
+            peer_identity,
             io_tx,
             session_manager: None,
             inbound_tx: None,
@@ -265,6 +268,7 @@ impl HelloActor {
                         let msg = HandshakeComplete {
                             peer_id: peer_hostname.to_string(),
                             peer_role,
+                            peer_identity: self.peer_identity.clone(),
                             active_rooms: self.active_rooms.clone(),
                             hello_actor: ctx.address(),
                         };
@@ -563,7 +567,8 @@ pub fn start_hello_actor_with_session_manager(
 ) -> Addr<HelloActor> {
     let (io_tx, io_rx) = mpsc::unbounded_channel();
 
-    let mut actor = HelloActor::new(config, io_tx);
+    let peer_identity = transport.peer_identity();
+    let mut actor = HelloActor::new(config, peer_identity, io_tx);
     if let Some(sm) = session_manager {
         actor = actor.with_session_manager(sm);
     }

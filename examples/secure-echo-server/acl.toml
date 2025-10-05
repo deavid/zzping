@@ -1,0 +1,2 @@
+allowed_peers = ["collector", "alice@client-admin"]
+insecure_trust_hello = false

@@ -105,7 +105,10 @@ impl TransportServer for TcpTransportServer {
             })?;
 
             info!("TLS handshake completed with {}", peer_addr);
-            Ok(Box::new(TcpTransport::tls_server(tls_stream, peer_addr)))
+            let transport = TcpTransport::tls_server(tls_stream, peer_addr).map_err(|e| {
+                TransportError::IoError(format!("Failed to extract peer identity: {}", e))
+            })?;
+            Ok(Box::new(transport))
         } else {
             debug!("Using plain TCP (no TLS) for {}", peer_addr);
             Ok(Box::new(TcpTransport::plain(tcp_stream, peer_addr)))

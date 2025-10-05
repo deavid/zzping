@@ -1,34 +1,25 @@
-//! # ⚠️ SECURITY WARNING (Phase 2 Implementation)
+//! # Security
 //!
-//! **This component is NOT production-ready and lacks authentication/authorization.**
+//! **Authentication:** Peer identities are verified using TLS certificates.
+//! The peer's role is resolved from the certificate's CN (Common Name) field.
 //!
-//! ## Current Security Status
-//! - ✅ Network communication: Not yet implemented (Phase 3)
-//! - ❌ Authentication: Not implemented
-//! - ❌ Authorization: Not implemented
-//! - ❌ Audit logging: Not implemented
+//! **Authorization:** Configuration changes via `RequestConfigChange` are
+//! only accepted from peers with the `ClientAdmin` role. Other roles are
+//! silently rejected.
 //!
-//! ## What This Means
-//! ANY network peer can send `RequestConfigChange` messages to change system configuration.
-//! This is acceptable for:
-//! - Local testing environments
-//! - Development and integration testing
+//! **Role-Based Filtering:** The Database only sends `ConfigUpdate` messages
+//! to peers with the `Collector` role. AdminClients and other roles do not
+//! receive configuration updates.
 //!
-//! ## Production Requirements
-//! Before production deployment, Phase 4 (Auth Integration) MUST be completed:
-//! - Peer identity extraction from TLS certificates
-//! - Peer role filtering (Database should only send to Collectors, not AdminClients)
-//! - ACL-based authorization for `RequestConfigChange`
-//! - Audit logging for all configuration changes
-//! - Secure defaults (deny by default)
+//! **Audit Logging:** All configuration changes are logged with the peer's
+//! full identity (username@role format) for audit trails.
 //!
-//! ## Deployment Guard
-//! Phase 3 will add a startup check that prevents production deployment
-//! without auth integration.
+//! ## Security Implementation Details
 //!
-//! For implementation details of the security gap, see the docstrings on:
-//! - `IntentConfigActor` (actor.rs)
-//! - `IntentConfigMessage::RequestConfigChange` (network_messages.rs)
+//! - Peer roles are stored in `PeerSession` and resolved during connection handshake
+//! - Authorization checks use `SessionManager.get_peer_role()` to verify permissions
+//! - Config updates are filtered by role before sending to avoid information leakage
+//! - All security decisions are logged with peer identity information
 
 pub mod actor;
 pub mod api;

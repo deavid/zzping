@@ -1,10 +1,9 @@
-# WARNING: TEST CERTIFICATES ONLY
+# WARNING: Test Certificates Only
 
-The certificates and private keys in this directory are for **testing purposes only**.
+These certificates are for TESTING PURPOSES ONLY and should never be used in production.
 
-They are publicly checked into the Git repository and provide **ZERO security**.
+They use the new identity model:
+- Services: CN=<role>, SAN=DNS:root
+- Users: CN=<role>, SAN=DNS:<username>
 
-**DO NOT** use these certificates in a production environment.
-**DO NOT** copy these certificates for your own deployment.
-
-Generate your own unique, private certificates for any real-world use.
+Generated on: Sun 05 Oct 2025 18:36:46 IST

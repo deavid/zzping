@@ -9,6 +9,8 @@ description = "ZZPing Network Layer PoC #1.5: SessionManager for typed message r
 
 [dependencies]
 zznet-room = { path = "../zznet-room" }
+zznet-api = { path = "../../common/zznet-api" }
+zzping-auth = { path = "../../common/zzping-auth" }
 actix.workspace = true
 tokio.workspace = true
 tracing = "0.1"

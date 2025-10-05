@@ -107,7 +107,7 @@ impl TransportClient for TcpTransportClient {
                 })?;
 
             info!("TLS handshake completed for {}", self.addr);
-            Ok(Box::new(TcpTransport::tls_client(tls_stream, peer_addr)))
+            Ok(Box::new(TcpTransport::tls_client(tls_stream, peer_addr)?))
         } else {
             debug!("Using plain TCP (no TLS) for {}", self.addr);
             Ok(Box::new(TcpTransport::plain(tcp_stream, peer_addr)))

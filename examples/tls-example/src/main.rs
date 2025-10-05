@@ -27,6 +27,7 @@ use zznet_session::room_message_trait::{
 };
 use zznet_session::types::RoomId;
 use zznet_transport_tcp::config::TlsConfig;
+use zzping_auth::config::AclConfig;
 
 // ============================================================================
 // Step 1: Define Secure Messages
@@ -145,12 +146,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     log::info!("\n📡 Setting up secure server with TLS...");
 
-    let server_manager = ConnectionManager::<SecureMessage>::new(vec![
+    // Load ACL for example and wire into ConnectionManager if available
+    let offered_rooms = vec![
         RoomId::from("auth"),
         RoomId::from("data"),
         RoomId::from("health"),
-    ])
-    .start();
+    ];
+
+    // Try to load example ACL; if it fails, continue without ACL
+    let server_manager = match AclConfig::from_file("examples/tls-example/acl.toml") {
+        Ok(cfg) => match cfg.into_acl_manager() {
+            Ok(acl) => {
+                let authorizer = acl.to_authorizer();
+                ConnectionManager::<SecureMessage>::new_with_acl(
+                    offered_rooms.clone(),
+                    Some((authorizer, false)),
+                )
+                .start()
+            }
+            Err(e) => {
+                log::warn!("Failed to build ACL manager: {}", e);
+                ConnectionManager::<SecureMessage>::new(offered_rooms.clone()).start()
+            }
+        },
+        Err(e) => {
+            log::warn!("No ACL config loaded for tls-example: {}", e);
+            ConnectionManager::<SecureMessage>::new(offered_rooms.clone()).start()
+        }
+    };
 
     let _server = ServerBuilder::new()
         .bind("127.0.0.1:9002")

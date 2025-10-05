@@ -4,7 +4,7 @@ use crate::actor::IntentConfigActor;
 use crate::network_messages::IntentConfigMessage;
 use crate::role::IntentConfigRole;
 use actix::prelude::*;
-use std::sync::Arc;
+use std::rc::Rc;
 use zznet_session::session_manager::SessionManager;
 
 /// A builder for the IntentConfig component.
@@ -17,7 +17,7 @@ use zznet_session::session_manager::SessionManager;
 ///
 pub struct IntentConfigBuilder {
     role: IntentConfigRole,
-    session_manager: Option<Arc<SessionManager<IntentConfigMessage>>>,
+    session_manager: Option<Rc<SessionManager<IntentConfigMessage>>>,
 }
 
 impl Default for IntentConfigBuilder {
@@ -45,7 +45,7 @@ impl IntentConfigBuilder {
 
     /// Set the SessionManager for network communication
     pub fn session_manager(mut self, session_manager: SessionManager<IntentConfigMessage>) -> Self {
-        self.session_manager = Some(Arc::new(session_manager));
+        self.session_manager = Some(Rc::new(session_manager));
         self
     }
 

@@ -61,8 +61,22 @@ pub enum IntentConfigMessage {
     /// Sent by AdminClient to Database to request a configuration change.
     /// Database validates, persists, and sends individually to each Collector.
     ///
-    /// ⚠️ SECURITY WARNING: No auth enforcement yet. See crate-level docs.
+    /// **Security:** This message should only be accepted from peers with
+    /// ClientAdmin role. The Database actor MUST check the sender's role
+    /// before applying changes.
+    ///
+    /// **Sender Context:** The `sender_peer_id` field is filled by the
+    /// SessionManager and represents the peer ID of the connection that
+    /// sent this message. The actor can use this to query the peer's role
+    /// via `session_manager.get_peer_role(&sender_peer_id)`.
+    ///
+    /// # Fields
+    /// * `sender_peer_id` - The peer ID of the requester (for role lookup)
+    /// * `targets` - List of IP addresses to ping
+    /// * `ping_rate_pps` - Ping rate in packets per second
     RequestConfigChange {
+        /// The peer ID of the requester (filled by SessionManager)
+        sender_peer_id: String,
         /// List of IP addresses to ping
         targets: Vec<IpAddr>,
         /// Ping rate in packets per second

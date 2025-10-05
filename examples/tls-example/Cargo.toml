@@ -20,6 +20,9 @@ zznet-transport-tcp = { path = "../../src/transports/zznet-transport-tcp" }
 actix = { workspace = true }
 tokio = { workspace = true }
 
+# Auth crate for examples
+zzping-auth = { path = "../../src/common/zzping-auth" }
+
 # Serialization
 bincode = { workspace = true }
 serde = { workspace = true }

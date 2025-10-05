@@ -4,6 +4,10 @@ use std::collections::HashMap;
 use tokio::sync::{broadcast, mpsc};
 use tokio::task::JoinHandle;
 
+// NEW: Auth imports
+use zznet_api::types::PeerIdentity;
+use zzping_auth::role::AuthRole;
+
 /// Trait for type-erased room operations
 ///
 /// This trait allows PeerSession to store rooms with different component message types
@@ -43,6 +47,15 @@ where
     // Type-erased room storage (each room can have different T)
     rooms: HashMap<RoomId, Box<dyn RoomHandle<TMsg>>>,
 
+    // NEW: Authentication context for this peer
+    /// The authenticated role of this peer (resolved from certificate)
+    /// None if ACL is not configured or role resolution failed
+    peer_role: Option<AuthRole>,
+
+    /// Full identity from certificate (for audit logging)
+    /// None if not using certificate-based auth (e.g., plain TCP in dev mode)
+    peer_identity: Option<PeerIdentity>,
+
     // Outbound: send typed messages to peer
     outbound_tx: Option<mpsc::Sender<(RoomId, TMsg)>>,
 
@@ -73,12 +86,56 @@ where
             peer_id,
             state: ConnectionState::Disconnected,
             rooms: HashMap::new(),
+            peer_role: None,     // NEW
+            peer_identity: None, // NEW
             outbound_tx: None,
             inbound_task: None,
             peer_offered_rooms: None,
             joined_rooms: Vec::new(),
             inbound_broadcast: None,
         }
+    }
+
+    /// Set the authenticated role for this peer
+    ///
+    /// This should be called immediately after creating the PeerSession,
+    /// based on the result of ACL authorization.
+    ///
+    /// # Arguments
+    /// * `role` - The authenticated role, or None if auth is not configured
+    pub fn set_role(&mut self, role: Option<AuthRole>) {
+        self.peer_role = role;
+        tracing::debug!("Set peer {} role to {:?}", self.peer_id, role);
+    }
+
+    /// Set the full identity information for this peer
+    ///
+    /// This should be called immediately after creating the PeerSession,
+    /// using the PeerIdentity from HandshakeComplete.
+    ///
+    /// # Arguments
+    /// * `identity` - The peer identity from the certificate
+    pub fn set_identity(&mut self, identity: PeerIdentity) {
+        self.peer_identity = Some(identity);
+    }
+
+    /// Get the authenticated role of this peer
+    ///
+    /// Returns None if:
+    /// - ACL is not configured
+    /// - Role resolution failed
+    /// - set_role() was not called
+    pub fn role(&self) -> Option<AuthRole> {
+        self.peer_role
+    }
+
+    /// Get the full identity information for this peer
+    ///
+    /// Returns None if:
+    /// - Certificate auth is not enabled
+    /// - set_identity() was not called
+    pub fn identity(&self) -> Option<&PeerIdentity> {
+        self.peer_identity.as_ref()
     }
 
     /// Add a room to this peer session

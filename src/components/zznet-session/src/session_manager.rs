@@ -4,6 +4,10 @@ use crate::types::{ConnectionState, PeerId, RoomId, SessionError};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
+// NEW: Auth imports
+use zznet_api::types::PeerIdentity;
+use zzping_auth::role::AuthRole;
+
 /// Manages all peer sessions for this process
 ///
 /// Generic over TMsg: the application's message enum type that wraps all room messages.
@@ -145,6 +149,52 @@ where
     /// Get list of all peer IDs
     pub fn peer_ids(&self) -> Vec<PeerId> {
         self.peers.keys().cloned().collect()
+    }
+
+    /// Get the authenticated role for a peer
+    ///
+    /// Returns None if:
+    /// - Peer doesn't exist
+    /// - Peer has no role set (ACL not configured)
+    ///
+    /// # Arguments
+    /// * `peer_id` - The peer to query
+    pub fn get_peer_role(&self, peer_id: &PeerId) -> Option<AuthRole> {
+        self.peers.get(peer_id)?.role()
+    }
+
+    /// Get the full identity information for a peer
+    ///
+    /// Returns None if:
+    /// - Peer doesn't exist
+    /// - Peer has no identity set
+    ///
+    /// # Arguments
+    /// * `peer_id` - The peer to query
+    pub fn get_peer_identity(&self, peer_id: &PeerId) -> Option<&PeerIdentity> {
+        self.peers.get(peer_id)?.identity()
+    }
+
+    /// Get all peers with a specific role
+    ///
+    /// Useful for filtering operations (e.g., "send to all Collectors")
+    ///
+    /// # Arguments
+    /// * `role` - The role to filter by
+    ///
+    /// # Returns
+    /// Vector of peer IDs that have the specified role
+    pub fn peers_with_role(&self, role: AuthRole) -> Vec<PeerId> {
+        self.peers
+            .iter()
+            .filter_map(|(id, session)| {
+                if session.role() == Some(role) {
+                    Some(id.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Get number of connected peers

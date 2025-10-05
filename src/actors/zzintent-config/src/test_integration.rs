@@ -55,13 +55,16 @@ mod session_manager_integration_tests {
 
         // Create Database actor WITHOUT SessionManager
         let database_addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database { config_file_path: config_path })
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
             .start();
 
         // Send RequestConfigChange
         let targets = vec!["8.8.8.8".parse::<IpAddr>().unwrap()];
         let ping_rate_pps = 100;
         database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+            sender_peer_id: "test-admin".to_string(),
             targets: targets.clone(),
             ping_rate_pps,
         });
@@ -90,7 +93,10 @@ mod session_manager_integration_tests {
             .start();
 
         // Send ConfigUpdate (simulating network message from Database)
-        let targets = vec!["1.1.1.1".parse::<IpAddr>().unwrap(), "8.8.8.8".parse::<IpAddr>().unwrap()];
+        let targets = vec![
+            "1.1.1.1".parse::<IpAddr>().unwrap(),
+            "8.8.8.8".parse::<IpAddr>().unwrap(),
+        ];
         let ping_rate_pps = 200;
         collector_addr.do_send(IntentConfigMessage::ConfigUpdate {
             targets: targets.clone(),
@@ -119,13 +125,16 @@ mod session_manager_integration_tests {
 
         // Create Database actor
         let database_addr = IntentConfigBuilder::new()
-            .role(IntentConfigRole::Database { config_file_path: config_path.clone() })
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path.clone(),
+            })
             .start();
 
         // Send config change
         let targets = vec!["9.9.9.9".parse::<IpAddr>().unwrap()];
         let ping_rate_pps = 50;
         database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+            sender_peer_id: "test-admin".to_string(),
             targets: targets.clone(),
             ping_rate_pps,
         });
@@ -187,5 +196,66 @@ mod session_manager_integration_tests {
         // - In-memory channel-based connection
 
         panic!("Test not yet implemented - see module docs and test docstring for requirements");
+    }
+}
+
+/// AUTH INTEGRATION TESTS (Phase 4)
+///
+/// These tests validate the authentication and authorization features added in Phase 4.
+/// They require SessionManager mock utilities to simulate peer connections with roles.
+#[cfg(test)]
+mod auth_tests {
+    // Note: Imports will be needed when tests are implemented
+    // use super::*;
+    // use zznet_session::types::PeerId;
+    // use zzping_auth::role::AuthRole;
+
+    /// Test that RequestConfigChange is rejected from non-admin peers
+    ///
+    /// This test would verify:
+    /// 1. Create IntentConfigActor in Database mode
+    /// 2. Send RequestConfigChange with sender_peer_id from a Collector
+    /// 3. Verify the request is rejected (no config change applied)
+    ///
+    /// NOTE: This test is currently #[ignore] because it requires:
+    /// - A mock SessionManager that can return specific peer roles
+    /// - A way to verify rejection (actor doesn't send error responses)
+    ///
+    /// TODO: Implement when SessionManager mocking utilities are available
+    #[test]
+    #[ignore = "Requires SessionManager mock - Phase 4 follow-up"]
+    fn test_request_config_change_requires_admin_role() {
+        // Placeholder for future implementation
+        // This test would:
+        // 1. Create actor with mock SessionManager
+        // 2. Mock SessionManager.get_peer_role() to return Collector
+        // 3. Send RequestConfigChange
+        // 4. Verify config unchanged
+        todo!("Implement when SessionManager mocking available");
+    }
+
+    /// Test that ConfigUpdate is only sent to Collectors
+    ///
+    /// This test would verify:
+    /// 1. Create IntentConfigActor in Database mode
+    /// 2. Mock SessionManager with multiple peers (Collectors + AdminClients)
+    /// 3. Trigger ConfigUpdate distribution
+    /// 4. Verify only Collectors received the update
+    ///
+    /// NOTE: This test is currently #[ignore] because it requires:
+    /// - A mock SessionManager that can track send_to_room calls
+    /// - Multiple peer sessions with different roles
+    ///
+    /// TODO: Implement when SessionManager mocking utilities are available
+    #[test]
+    #[ignore = "Requires SessionManager mock - Phase 4 follow-up"]
+    fn test_config_update_only_sent_to_collectors() {
+        // Placeholder for future implementation
+        // This test would:
+        // 1. Create actor with mock SessionManager
+        // 2. Add peers: 2 Collectors, 1 ClientAdmin
+        // 3. Trigger ConfigUpdate
+        // 4. Verify send_to_room called twice (only for Collectors)
+        todo!("Implement when SessionManager mocking available");
     }
 }

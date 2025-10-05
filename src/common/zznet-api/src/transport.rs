@@ -29,6 +29,16 @@ use bytes::Bytes;
 /// - Maximum frame size: Implementations should enforce a limit (recommend 16 MiB)
 /// - Zero-length frames are valid (can be used for heartbeats)
 ///
+/// ## Identity and Security
+///
+/// All connections provide peer identity via `peer_identity()`. The identity
+/// represents the cryptographic or claimed identity of the remote peer:
+/// - TLS connections: Identity is cryptographically verified from certificates
+/// - Raw TCP connections: Identity is claimed in HELLO messages (trust depends on application policy)
+///
+/// Applications should use `peer_identity()` for authorization decisions rather
+/// than trusting network-layer claims alone.
+///
 /// ## Lifecycle
 ///
 /// - Connection is assumed to be established when the trait object is created
@@ -73,6 +83,17 @@ pub trait TransportConnection: Send {
     ///
     /// Returns `None` if address information is unavailable.
     fn peer_addr(&self) -> Option<String>;
+
+    /// Returns the verified identity of the peer.
+    ///
+    /// For TLS connections, this is extracted from the peer's certificate (CN + SAN).
+    /// For raw TCP connections, this is synthesized from HELLO message claims
+    /// (and should only be trusted if the application is in insecure mode).
+    ///
+    /// The identity is always available - there is no "no identity" state.
+    /// Applications that require cryptographic proof must check their security
+    /// configuration and reject connections if TLS is not enabled.
+    fn peer_identity(&self) -> crate::types::PeerIdentity;
 }
 
 /// A transport server that accepts incoming connections.

@@ -4,6 +4,7 @@ members = [
     "src/common/zzping-lib",
     "src/common/zzping-proto",
     "src/common/zznet-api",
+    "src/common/zzping-auth",
     "src/apps/zzping-database",
     "src/apps/zzping-collector",
     "src/apps/zzping-cli",
@@ -34,6 +35,7 @@ description = "Tools to monitor home network latency and packet loss"
 # Internal dependencies
 zzping-lib = { path = "src/common/zzping-lib" }
 zzping-proto = { path = "src/common/zzping-proto" }
+zzping-auth = { path = "src/common/zzping-auth" }
 zzping-database = { path = "src/apps/zzping-database" }
 
 # External dependencies

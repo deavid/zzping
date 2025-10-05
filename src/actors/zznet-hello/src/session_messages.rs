@@ -4,6 +4,7 @@ use actix::prelude::*;
 
 use crate::auth::AuthRole;
 use crate::error::HelloError;
+use zznet_api::types::PeerIdentity;
 
 /// Message sent TO HelloActor FROM SessionManager to send a room message.
 ///
@@ -31,6 +32,8 @@ pub struct HandshakeComplete {
     pub peer_id: String,
     /// Peer's authentication role.
     pub peer_role: AuthRole,
+    /// Peer's cryptographic identity from transport layer.
+    pub peer_identity: PeerIdentity,
     /// Rooms negotiated during handshake (intersection of offered rooms).
     pub active_rooms: Vec<String>,
     /// Address of this HelloActor for sending messages.

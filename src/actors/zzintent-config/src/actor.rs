@@ -7,9 +7,10 @@ use crate::role::IntentConfigRole;
 use actix::ResponseFuture;
 use actix::prelude::*;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::rc::Rc;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
+use zzping_auth::role::AuthRole;
 
 /// The IntentConfigActor stores the current configuration and manages subscribers.
 /// This struct is the private state of our component.
@@ -28,7 +29,7 @@ pub struct IntentConfigActor {
 
     /// SessionManager for network communication (Phase 3)
     #[allow(dead_code)] // TODO: Remove when we implement broadcasting
-    session_manager: Option<Arc<SessionManager<IntentConfigMessage>>>,
+    session_manager: Option<Rc<SessionManager<IntentConfigMessage>>>,
 }
 
 impl Default for IntentConfigActor {
@@ -57,7 +58,7 @@ impl IntentConfigActor {
     /// Set the SessionManager for network communication
     pub fn set_session_manager(
         &mut self,
-        session_manager: Arc<SessionManager<IntentConfigMessage>>,
+        session_manager: Rc<SessionManager<IntentConfigMessage>>,
     ) {
         self.session_manager = Some(session_manager);
     }
@@ -169,16 +170,83 @@ impl Handler<IntentConfigMessage> for IntentConfigActor {
             (
                 IntentConfigRole::Database { .. },
                 IntentConfigMessage::RequestConfigChange {
+                    sender_peer_id,
                     targets,
                     ping_rate_pps,
                 },
             ) => {
-                // Database ACCEPTS config change requests from AdminClient
-                log::warn!(
-                    "⚠️  RequestConfigChange accepted WITHOUT auth check: targets={:?}, pps={}",
+                log::info!(
+                    "Received RequestConfigChange from peer '{}': targets={:?}, rate={}",
+                    sender_peer_id,
                     targets,
                     ping_rate_pps
                 );
+
+                // AUTHORIZATION CHECK: Only ClientAdmin can change config
+                // Note: If no SessionManager is configured (e.g., unit tests), allow the request
+                // for backward compatibility
+                if let Some(session_manager) = &self.session_manager {
+                    // Look up the sender's role
+                    let sender_role = session_manager.get_peer_role(
+                        &zznet_session::types::PeerId::from(sender_peer_id.as_str()),
+                    );
+
+                    match sender_role {
+                        Some(AuthRole::ClientAdmin) => {
+                            // Authorized - log and proceed
+                            if let Some(identity) = session_manager.get_peer_identity(
+                                &zznet_session::types::PeerId::from(sender_peer_id.as_str()),
+                            ) {
+                                log::info!(
+                                    "✓ Config change authorized from {} (role: ClientAdmin)",
+                                    identity.full_identity()
+                                );
+                            } else {
+                                log::info!(
+                                    "✓ Config change authorized from {} (role: ClientAdmin)",
+                                    sender_peer_id
+                                );
+                            }
+                        }
+                        Some(other_role) => {
+                            // Unauthorized role
+                            log::warn!(
+                                "✗ Config change REJECTED from peer '{}' - role {:?} is not authorized (requires ClientAdmin)",
+                                sender_peer_id,
+                                other_role
+                            );
+                            return Box::pin(async {}); // Reject silently
+                        }
+                        None => {
+                            // No role information (ACL not configured or peer not authenticated)
+                            log::warn!(
+                                "✗ Config change REJECTED from peer '{}' - no role information available (ACL not configured?)",
+                                sender_peer_id
+                            );
+                            return Box::pin(async {}); // Reject silently
+                        }
+                    }
+                } else {
+                    // No SessionManager configured - this should only happen in unit tests
+                    // Production deployments MUST configure SessionManager for security
+                    #[cfg(debug_assertions)]
+                    log::warn!(
+                        "⚠️  Config change allowed WITHOUT auth check (test mode - no SessionManager) - peer: '{}'",
+                        sender_peer_id
+                    );
+
+                    #[cfg(not(debug_assertions))]
+                    {
+                        // In release builds, reject requests without SessionManager
+                        log::error!(
+                            "✗ Config change REJECTED from peer '{}' - SessionManager required in production",
+                            sender_peer_id
+                        );
+                        return Box::pin(async {});
+                    }
+                }
+
+                // Proceed with configuration update (existing code continues...)
                 let new_config = IntentConfigData {
                     targets,
                     ping_rate_pps,
@@ -194,7 +262,7 @@ impl Handler<IntentConfigMessage> for IntentConfigActor {
                         // Note: Rooms are 1:1 point-to-point channels, not broadcast channels.
                         // We must send individually to each connected peer.
                         if let Some(session_manager) = &self.session_manager {
-                            let session_manager = Arc::clone(session_manager);
+                            let session_manager = Rc::clone(session_manager);
                             let config_update = IntentConfigMessage::ConfigUpdate {
                                 targets: self.current_config.targets.clone(),
                                 ping_rate_pps: self.current_config.ping_rate_pps,
@@ -207,19 +275,49 @@ impl Handler<IntentConfigMessage> for IntentConfigActor {
                                 Box::pin(async {})
                             } else {
                                 Box::pin(async move {
+                                    // Send to each connected peer individually (rooms are 1:1, not broadcast)
+                                    // Filter: Only send to Collector peers (not AdminClients or other roles)
                                     for peer_id in peer_ids {
-                                        match session_manager
-                                            .send_to_room(&peer_id, &room_id, config_update.clone())
-                                            .await
-                                        {
-                                            Ok(_) => {
-                                                log::info!("Sent ConfigUpdate to peer: {}", peer_id)
+                                        // Check peer's role
+                                        match session_manager.get_peer_role(&peer_id) {
+                                            Some(AuthRole::Collector) => {
+                                                // Send to Collector
+                                                match session_manager
+                                                    .send_to_room(
+                                                        &peer_id,
+                                                        &room_id,
+                                                        config_update.clone(),
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(_) => {
+                                                        log::info!(
+                                                            "✓ Sent ConfigUpdate to Collector: {}",
+                                                            peer_id
+                                                        )
+                                                    }
+                                                    Err(e) => log::warn!(
+                                                        "✗ Failed to send ConfigUpdate to Collector {}: {}",
+                                                        peer_id,
+                                                        e
+                                                    ),
+                                                }
                                             }
-                                            Err(e) => log::warn!(
-                                                "Failed to send ConfigUpdate to peer {}: {}",
-                                                peer_id,
-                                                e
-                                            ),
+                                            Some(other_role) => {
+                                                // Skip non-Collector peers
+                                                log::debug!(
+                                                    "⊘ Skipped ConfigUpdate to peer {} (role: {:?}, not a Collector)",
+                                                    peer_id,
+                                                    other_role
+                                                );
+                                            }
+                                            None => {
+                                                // No role information - skip with warning
+                                                log::warn!(
+                                                    "⊘ Skipped ConfigUpdate to peer {} (no role information - ACL not configured?)",
+                                                    peer_id
+                                                );
+                                            }
                                         }
                                     }
                                 })
@@ -597,6 +695,7 @@ mod tests {
         let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigMessage::RequestConfigChange {
+            sender_peer_id: "test-admin".to_string(),
             targets: vec!["5.5.5.5".parse().unwrap()],
             ping_rate_pps: 555,
         };
@@ -630,6 +729,7 @@ mod tests {
         let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigMessage::RequestConfigChange {
+            sender_peer_id: "test-collector".to_string(),
             targets: vec!["6.6.6.6".parse().unwrap()],
             ping_rate_pps: 666,
         };
@@ -661,6 +761,7 @@ mod tests {
         let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigMessage::RequestConfigChange {
+            sender_peer_id: "test-admin".to_string(),
             targets: vec!["7.7.7.7".parse().unwrap()], // Same as current
             ping_rate_pps: 777,                        // Same as current
         };

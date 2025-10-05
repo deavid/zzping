@@ -20,12 +20,17 @@ pub enum IntentConfigRole {
     /// This role is typically used by the database process. It:
     /// - Stores current configuration state
     /// - Persists configuration to disk
-    /// - Receives config change requests from AdminClient
+    /// - Receives config change requests from AdminClient peers
     /// - Sends ConfigUpdate individually to each Collector peer via network (1:1 rooms)
     ///
+    /// # Security
+    /// - Only accepts `RequestConfigChange` from ClientAdmin role
+    /// - Only sends `ConfigUpdate` to Collector role
+    /// - Logs all configuration changes with peer identity
+    ///
     /// # Behavior
-    /// - Sends: ConfigUpdate
-    /// - Receives: RequestConfigChange (from AdminClient)
+    /// - Sends: ConfigUpdate (to Collectors only)
+    /// - Receives: RequestConfigChange (from ClientAdmin only)
     Database {
         /// Path to the configuration file to persist to
         config_file_path: PathBuf,
@@ -39,9 +44,13 @@ pub enum IntentConfigRole {
     /// - Does NOT read from disk or watch files
     /// - Does NOT send configuration updates
     ///
+    /// # Security
+    /// - Can only receive ConfigUpdate (read-only)
+    /// - Cannot send RequestConfigChange (no write access)
+    ///
     /// # Behavior
     /// - Sends: Nothing (purely receives)
-    /// - Receives: ConfigUpdate
+    /// - Receives: ConfigUpdate (from Database only)
     Collector,
 }
 

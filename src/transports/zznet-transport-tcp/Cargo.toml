@@ -21,6 +21,9 @@ tokio-rustls.workspace = true
 rustls-pemfile.workspace = true
 rustls-native-certs.workspace = true
 
+# Certificate parsing
+x509-parser = "0.16"
+
 # Data handling
 bytes.workspace = true
 byteorder.workspace = true
@@ -41,3 +44,4 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
 ] }
 tempfile.workspace = true
+rcgen = "0.9"
