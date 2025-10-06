@@ -28,18 +28,21 @@ use tracing::{debug, error, info, warn};
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportConnection;
 
-use crate::auth::AuthRole;
+// HelloActor must be application-agnostic at protocol level. Store our role as a
+// role identifier string; the application is responsible for converting its
+// concrete role enum to/from this string.
 use crate::error::HelloError;
 use crate::handshake::Handshake;
 use crate::protocol::{Frame, HandshakeFrame, RoomFrame};
 use crate::serialize;
 use crate::session_messages::{HandshakeComplete, InboundRoomMessage};
+// No direct dependency on application role enums here; protocol-level code uses raw role strings.
 
 /// Configuration for HelloActor.
 #[derive(Debug, Clone)]
 pub struct HelloConfig {
     /// Our authentication role.
-    pub our_role: AuthRole,
+    pub our_role: String,
     /// Rooms we want to offer to the peer.
     pub offered_rooms: Vec<String>,
     /// Timeout for handshake completion.
@@ -51,7 +54,7 @@ pub struct HelloConfig {
 impl Default for HelloConfig {
     fn default() -> Self {
         Self {
-            our_role: AuthRole::Collector,
+            our_role: "collector".to_string(),
             offered_rooms: vec!["intent-config".to_string()],
             handshake_timeout: Duration::from_secs(10),
             hostname: "default-hostname".to_string(),
@@ -119,8 +122,8 @@ pub struct HelloActor {
     state: ActorState,
     /// Active rooms negotiated during handshake.
     active_rooms: Vec<String>,
-    /// Peer's role received during handshake.
-    peer_role: Option<AuthRole>,
+    /// Peer's role string received during handshake (CN from certificate).
+    peer_role: Option<String>,
     /// Peer's cryptographic identity from transport.
     peer_identity: zznet_api::types::PeerIdentity,
     /// Sender to I/O task for outbound frames.
@@ -164,13 +167,13 @@ impl HelloActor {
     /// Start the handshake process by sending HELLO and OFFER frames.
     fn start_handshake(&mut self, ctx: &mut Context<Self>) {
         debug!(
-            "Starting HELLO handshake, role={:?}, rooms={:?}",
+            "Starting HELLO handshake, role={}, rooms={:?}",
             self.config.our_role, self.config.offered_rooms
         );
 
         // Create and send HELLO frame
         match self.handshake.create_hello_frame(
-            self.config.our_role,
+            self.config.our_role.clone(),
             self.config.offered_rooms.clone(),
             self.config.hostname.clone(),
         ) {
@@ -230,12 +233,13 @@ impl HelloActor {
 
     /// Handle a frame during handshake phase.
     fn handle_handshake_frame(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
-        // First, try to extract peer role if this is a HELLO frame
-        if let Ok(Frame::Handshake(HandshakeFrame::Hello { role, .. })) = Frame::deserialize(&data)
+        // First, try to extract peer role string if this is a HELLO frame
+        if let Ok(Frame::Handshake(HandshakeFrame::Hello { role_str, .. })) =
+            Frame::deserialize(&data)
             && self.peer_role.is_none()
         {
-            self.peer_role = Some(role);
-            debug!("Received peer role: {:?}", role);
+            self.peer_role = Some(role_str);
+            debug!("Received peer role string");
         }
 
         match self.handshake.process_frame(&data) {
@@ -267,11 +271,11 @@ impl HelloActor {
 
             // Notify SessionManager if configured
             if let Some(ref session_mgr) = self.session_manager {
-                if let Some(peer_role) = self.peer_role {
+                if let Some(ref peer_role) = self.peer_role {
                     if let Some(peer_hostname) = self.handshake.peer_hostname() {
                         let msg = HandshakeComplete {
                             peer_id: peer_hostname.to_string(),
-                            peer_role,
+                            peer_role_str: peer_role.clone(),
                             peer_identity: self.peer_identity.clone(),
                             active_rooms: self.active_rooms.clone(),
                             hello_actor: ctx.address(),
@@ -593,7 +597,7 @@ mod tests {
     #[test]
     fn test_hello_config_default() {
         let config = HelloConfig::default();
-        assert_eq!(config.our_role, AuthRole::Collector);
+        assert_eq!(config.our_role, "collector".to_string());
         assert_eq!(config.offered_rooms, vec!["intent-config"]);
         assert_eq!(config.handshake_timeout, Duration::from_secs(10));
     }
@@ -601,13 +605,13 @@ mod tests {
     #[test]
     fn test_hello_config_custom() {
         let config = HelloConfig {
-            our_role: AuthRole::Database,
+            our_role: "database".to_string(),
             offered_rooms: vec!["memdb".to_string(), "query".to_string()],
             handshake_timeout: Duration::from_secs(5),
             hostname: "custom-host".to_string(),
         };
 
-        assert_eq!(config.our_role, AuthRole::Database);
+        assert_eq!(config.our_role, "database".to_string());
         assert_eq!(config.offered_rooms.len(), 2);
         assert_eq!(config.handshake_timeout, Duration::from_secs(5));
         assert_eq!(config.hostname, "custom-host");
@@ -640,14 +644,14 @@ mod tests {
         let (conn1, conn2) = create_mock_pair("test1");
 
         let config1 = HelloConfig {
-            our_role: AuthRole::Collector,
+            our_role: "collector".to_string(),
             offered_rooms: vec!["memdb".to_string(), "query".to_string()],
             handshake_timeout: Duration::from_secs(5),
             hostname: "host1".to_string(),
         };
 
         let config2 = HelloConfig {
-            our_role: AuthRole::Database,
+            our_role: "database".to_string(),
             offered_rooms: vec!["memdb".to_string(), "stats".to_string()],
             handshake_timeout: Duration::from_secs(5),
             hostname: "host2".to_string(),

@@ -11,6 +11,7 @@ use crate::test_room_messages::{
 use crate::types::{PeerId, RoomId, SessionError};
 use actix::prelude::*;
 use tokio::sync::mpsc;
+use zznet_auth::mock::MockRole;
 use zznet_room::room::Room;
 
 // ============================================================================
@@ -428,7 +429,8 @@ mod peer_session_integration_tests {
     #[actix::test]
     async fn test_peer_session_with_room_adapter() {
         // Create peer session
-        let mut peer_session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut peer_session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Create rooms
         let actor1 = CollectorActor { received: vec![] }.start();
@@ -492,7 +494,8 @@ mod peer_session_integration_tests {
     #[actix::test]
     async fn test_peer_session_multiple_rooms_concurrent() {
         // Create peer session
-        let mut peer_session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut peer_session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Create 3 rooms
         let actor1 = CollectorActor { received: vec![] }.start();

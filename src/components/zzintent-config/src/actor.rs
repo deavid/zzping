@@ -8,9 +8,9 @@ use actix::ResponseFuture;
 use actix::prelude::*;
 use std::collections::HashMap;
 use std::rc::Rc;
-use zznet_hello::auth::AuthRole;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
+use zzping_auth::AuthRole;
 
 /// The IntentConfigActor stores the current configuration and manages subscribers.
 /// This struct is the private state of our component.
@@ -28,7 +28,7 @@ pub struct IntentConfigActor {
     role: IntentConfigRole,
 
     /// SessionManager for network communication (Phase 3)
-    session_manager: Option<Rc<SessionManager<IntentConfigMessage>>>,
+    session_manager: Option<Rc<SessionManager<IntentConfigMessage, AuthRole>>>,
 }
 
 impl Default for IntentConfigActor {
@@ -57,7 +57,7 @@ impl IntentConfigActor {
     /// Set the SessionManager for network communication
     pub fn set_session_manager(
         &mut self,
-        session_manager: Rc<SessionManager<IntentConfigMessage>>,
+        session_manager: Rc<SessionManager<IntentConfigMessage, AuthRole>>,
     ) {
         self.session_manager = Some(session_manager);
     }

@@ -6,6 +6,7 @@ use crate::role::IntentConfigRole;
 use actix::prelude::*;
 use std::rc::Rc;
 use zznet_session::session_manager::SessionManager;
+use zzping_auth::AuthRole;
 
 /// A builder for the IntentConfig component.
 ///
@@ -17,7 +18,7 @@ use zznet_session::session_manager::SessionManager;
 ///
 pub struct IntentConfigBuilder {
     role: IntentConfigRole,
-    session_manager: Option<Rc<SessionManager<IntentConfigMessage>>>,
+    session_manager: Option<Rc<SessionManager<IntentConfigMessage, AuthRole>>>,
 }
 
 impl Default for IntentConfigBuilder {
@@ -44,7 +45,10 @@ impl IntentConfigBuilder {
     }
 
     /// Set the SessionManager for network communication
-    pub fn session_manager(mut self, session_manager: SessionManager<IntentConfigMessage>) -> Self {
+    pub fn session_manager(
+        mut self,
+        session_manager: SessionManager<IntentConfigMessage, AuthRole>,
+    ) -> Self {
         self.session_manager = Some(Rc::new(session_manager));
         self
     }

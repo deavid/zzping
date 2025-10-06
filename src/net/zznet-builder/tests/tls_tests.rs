@@ -12,7 +12,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 use zznet_api::types::Role;
 use zznet_builder::{ClientBuilder, ServerBuilder};
-use zznet_hello::auth::AuthRole;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::{
     DeserializationError, RoomMessageTrait, SerializationError,
@@ -38,6 +37,43 @@ fn get_workspace_root() -> PathBuf {
 /// Get the certs directory path
 fn get_certs_dir() -> PathBuf {
     get_workspace_root().join("test_certs")
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum TestRole {
+    Collector,
+    Database,
+    ClientRo,
+    ClientAdmin,
+}
+
+impl zznet_auth::ApplicationRole for TestRole {
+    fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+        match cn {
+            "collector" => Ok(TestRole::Collector),
+            "database" => Ok(TestRole::Database),
+            "clientro" => Ok(TestRole::ClientRo),
+            "clientadmin" => Ok(TestRole::ClientAdmin),
+            _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            TestRole::Collector => "collector",
+            TestRole::Database => "database",
+            TestRole::ClientRo => "clientro",
+            TestRole::ClientAdmin => "clientadmin",
+        }
+    }
+
+    fn can_connect_to(&self, _target: &Self) -> bool {
+        true
+    }
+
+    fn can_access_room(&self, _room_name: &str) -> bool {
+        true
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -79,11 +115,12 @@ async fn test_tls_mutual_authentication() {
         .expect("Failed to create client TLS config");
 
     // Create server with TLS
-    let server_manager = ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+    let server_manager =
+        ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-    let _server = ServerBuilder::new()
+    let _server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:19001")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
         .with_tls(server_tls)
         .with_connection_manager(server_manager)
@@ -94,11 +131,12 @@ async fn test_tls_mutual_authentication() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Create client with TLS
-    let client_manager = ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+    let client_manager =
+        ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-    let _client = ClientBuilder::new()
+    let _client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:19001")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["test".to_string()])
         .with_tls(client_tls)
         .with_connection_manager(client_manager)
@@ -121,11 +159,12 @@ async fn test_tls_multiple_clients() {
     let server_tls = TlsConfig::from_role(Role::Database, Some(certs_path))
         .expect("Failed to create server TLS config");
 
-    let server_manager = ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+    let server_manager =
+        ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-    let _server = ServerBuilder::new()
+    let _server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:19002")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
         .with_tls(server_tls)
         .with_connection_manager(server_manager)
@@ -141,11 +180,11 @@ async fn test_tls_multiple_clients() {
             .expect("Failed to create client TLS config");
 
         let client_manager =
-            ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+            ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-        let _client = ClientBuilder::new()
+        let _client = ClientBuilder::<TestMessage, TestRole>::new()
             .connect_to("127.0.0.1:19002")
-            .as_role(AuthRole::Collector)
+            .as_role(TestRole::Collector)
             .offer_rooms(vec!["test".to_string()])
             .with_tls(client_tls)
             .with_connection_manager(client_manager)
@@ -171,11 +210,12 @@ async fn test_tls_different_roles() {
     let client_tls = TlsConfig::from_role(Role::ClientRo, Some(certs_path))
         .expect("Failed to create client TLS config");
 
-    let server_manager = ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+    let server_manager =
+        ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-    let _server = ServerBuilder::new()
+    let _server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:19003")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
         .with_tls(server_tls)
         .with_connection_manager(server_manager)
@@ -185,11 +225,12 @@ async fn test_tls_different_roles() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    let client_manager = ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+    let client_manager =
+        ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-    let _client = ClientBuilder::new()
+    let _client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:19003")
-        .as_role(AuthRole::ClientRo)
+        .as_role(TestRole::ClientRo)
         .offer_rooms(vec!["test".to_string()])
         .with_tls(client_tls)
         .with_connection_manager(client_manager)
@@ -251,11 +292,12 @@ fn test_tls_config_custom_dir() {
 #[actix::test]
 async fn test_plain_and_tls_coexist() {
     // Start plain TCP server
-    let plain_manager = ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+    let plain_manager =
+        ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-    let _plain_server = ServerBuilder::new()
+    let _plain_server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:19004")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
         // No TLS
         .with_connection_manager(plain_manager)
@@ -269,11 +311,12 @@ async fn test_plain_and_tls_coexist() {
     let tls_server_config = TlsConfig::from_role(Role::Database, Some(certs_path))
         .expect("Failed to create TLS config");
 
-    let tls_manager = ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+    let tls_manager =
+        ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-    let _tls_server = ServerBuilder::new()
+    let _tls_server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:19005")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
         .with_tls(tls_server_config)
         .with_connection_manager(tls_manager)
@@ -285,11 +328,11 @@ async fn test_plain_and_tls_coexist() {
 
     // Connect plain client to plain server
     let plain_client_manager =
-        ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+        ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-    let _plain_client = ClientBuilder::new()
+    let _plain_client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:19004")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["test".to_string()])
         // No TLS
         .with_connection_manager(plain_client_manager)
@@ -303,11 +346,11 @@ async fn test_plain_and_tls_coexist() {
         TlsConfig::from_role(Role::Collector, None).expect("Failed to create TLS config");
 
     let tls_client_manager =
-        ConnectionManager::<TestMessage>::new(vec![RoomId::from("test")]).start();
+        ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
 
-    let _tls_client = ClientBuilder::new()
+    let _tls_client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:19005")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["test".to_string()])
         .with_tls(tls_client_config)
         .with_connection_manager(tls_client_manager)

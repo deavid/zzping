@@ -3,8 +3,8 @@
 use crate::error::{BuilderError, BuilderResult};
 use actix::prelude::*;
 use std::time::Duration;
+use zznet_auth::ApplicationRole;
 use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
-use zznet_hello::auth::AuthRole;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::types::RoomId;
@@ -14,27 +14,29 @@ use zznet_transport_tcp::server::TcpTransportServer;
 /// Builder for creating TCP servers with automatic connection management
 ///
 ///
-pub struct ServerBuilder<TMsg>
+pub struct ServerBuilder<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     bind_addr: Option<String>,
-    our_role: AuthRole,
+    our_role: Option<TRole>,
     offered_rooms: Vec<String>,
     handshake_timeout: Duration,
     tls_config: Option<TlsConfig>,
-    connection_manager: Option<Addr<ConnectionManager<TMsg>>>,
+    connection_manager: Option<Addr<ConnectionManager<TMsg, TRole>>>,
 }
 
-impl<TMsg> ServerBuilder<TMsg>
+impl<TMsg, TRole> ServerBuilder<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     /// Create a new ServerBuilder with default configuration
     pub fn new() -> Self {
         Self {
             bind_addr: None,
-            our_role: AuthRole::Database,
+            our_role: None,
             offered_rooms: vec![],
             handshake_timeout: Duration::from_secs(10),
             tls_config: None,
@@ -53,8 +55,8 @@ where
     /// Set the authentication role for this server
     ///
     ///
-    pub fn as_role(mut self, role: AuthRole) -> Self {
-        self.our_role = role;
+    pub fn as_role(mut self, role: TRole) -> Self {
+        self.our_role = Some(role);
         self
     }
 
@@ -85,7 +87,10 @@ where
     /// Set the ConnectionManager for handling connections
     ///
     /// If not provided, a new ConnectionManager will be created.
-    pub fn with_connection_manager(mut self, manager: Addr<ConnectionManager<TMsg>>) -> Self {
+    pub fn with_connection_manager(
+        mut self,
+        manager: Addr<ConnectionManager<TMsg, TRole>>,
+    ) -> Self {
         self.connection_manager = Some(manager);
         self
     }
@@ -109,7 +114,7 @@ where
     ///
     /// This creates a ServerActor that listens for connections and spawns
     /// HelloActors for each accepted connection.
-    pub async fn start(self) -> BuilderResult<Addr<ServerActor<TMsg>>> {
+    pub async fn start(self) -> BuilderResult<Addr<ServerActor<TMsg, TRole>>> {
         self.validate()?;
 
         let bind_addr = self.bind_addr.unwrap();
@@ -123,7 +128,7 @@ where
                 .iter()
                 .map(|s| RoomId::from(s.as_str()))
                 .collect();
-            ConnectionManager::<TMsg>::new(rooms).start()
+            ConnectionManager::<TMsg, TRole>::new(rooms).start()
         };
 
         // Create TCP server
@@ -132,8 +137,13 @@ where
             .map_err(|e| BuilderError::BindFailed(format!("{}: {}", bind_addr, e)))?;
 
         // Create HelloConfig
+        let role = match self.our_role {
+            Some(r) => r,
+            None => return Err(BuilderError::MissingConfig("our_role".to_string())),
+        };
+
         let hello_config = HelloConfig {
-            our_role: self.our_role,
+            our_role: role.as_str().to_string(),
             offered_rooms: self.offered_rooms.clone(),
             handshake_timeout: self.handshake_timeout,
             hostname: "server-hostname".to_string(),
@@ -150,9 +160,10 @@ where
     }
 }
 
-impl<TMsg> Default for ServerBuilder<TMsg>
+impl<TMsg, TRole> Default for ServerBuilder<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     fn default() -> Self {
         Self::new()
@@ -160,18 +171,20 @@ where
 }
 
 /// Actor that manages the server's accept loop
-pub struct ServerActor<TMsg>
+pub struct ServerActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     tcp_server: std::sync::Arc<tokio::sync::Mutex<TcpTransportServer>>,
     hello_config: HelloConfig,
-    connection_manager: Addr<ConnectionManager<TMsg>>,
+    connection_manager: Addr<ConnectionManager<TMsg, TRole>>,
 }
 
-impl<TMsg> Actor for ServerActor<TMsg>
+impl<TMsg, TRole> Actor for ServerActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     type Context = Context<Self>;
 
@@ -187,9 +200,10 @@ where
 #[rtype(result = "()")]
 struct AcceptNext;
 
-impl<TMsg> Handler<AcceptNext> for ServerActor<TMsg>
+impl<TMsg, TRole> Handler<AcceptNext> for ServerActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     type Result = ResponseActFuture<Self, ()>;
 
@@ -238,9 +252,10 @@ where
 #[rtype(result = "()")]
 pub struct StopServer;
 
-impl<TMsg> Handler<StopServer> for ServerActor<TMsg>
+impl<TMsg, TRole> Handler<StopServer> for ServerActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     type Result = ();
 
@@ -253,6 +268,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde::{Deserialize, Serialize};
     use zznet_session::room_message_trait::RoomMessageTrait;
     use zznet_session::types::RoomId;
 
@@ -286,31 +302,63 @@ mod tests {
         }
     }
 
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    enum TestRole {
+        Collector,
+        Database,
+    }
+
+    impl zznet_auth::ApplicationRole for TestRole {
+        fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+            match cn {
+                "collector" => Ok(TestRole::Collector),
+                "database" => Ok(TestRole::Database),
+                _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+            }
+        }
+
+        fn as_str(&self) -> &'static str {
+            match self {
+                TestRole::Collector => "collector",
+                TestRole::Database => "database",
+            }
+        }
+
+        fn can_connect_to(&self, _target: &Self) -> bool {
+            true
+        }
+
+        fn can_access_room(&self, _room_name: &str) -> bool {
+            true
+        }
+    }
+
     #[test]
     fn test_server_builder_new() {
-        let builder = ServerBuilder::<TestMessages>::new();
+        let builder = ServerBuilder::<TestMessages, TestRole>::new();
         assert!(builder.bind_addr.is_none());
-        assert_eq!(builder.our_role, AuthRole::Database);
+        assert!(builder.our_role.is_none());
         assert!(builder.offered_rooms.is_empty());
     }
 
     #[test]
     fn test_server_builder_fluent_api() {
-        let builder = ServerBuilder::<TestMessages>::new()
+        let builder = ServerBuilder::<TestMessages, TestRole>::new()
             .bind("127.0.0.1:8080")
-            .as_role(AuthRole::Collector)
+            .as_role(TestRole::Collector)
             .offer_rooms(vec!["test".to_string()])
             .handshake_timeout(Duration::from_secs(5));
 
         assert_eq!(builder.bind_addr.unwrap(), "127.0.0.1:8080");
-        assert_eq!(builder.our_role, AuthRole::Collector);
+        assert_eq!(builder.our_role.unwrap(), TestRole::Collector);
         assert_eq!(builder.offered_rooms, vec!["test".to_string()]);
         assert_eq!(builder.handshake_timeout, Duration::from_secs(5));
     }
 
     #[test]
     fn test_validation_missing_bind_addr() {
-        let builder = ServerBuilder::<TestMessages>::new().offer_rooms(vec!["test".to_string()]);
+        let builder =
+            ServerBuilder::<TestMessages, TestRole>::new().offer_rooms(vec!["test".to_string()]);
 
         let result = builder.validate();
         assert!(matches!(result, Err(BuilderError::MissingConfig(_))));
@@ -318,7 +366,7 @@ mod tests {
 
     #[test]
     fn test_validation_missing_rooms() {
-        let builder = ServerBuilder::<TestMessages>::new().bind("127.0.0.1:8080");
+        let builder = ServerBuilder::<TestMessages, TestRole>::new().bind("127.0.0.1:8080");
 
         let result = builder.validate();
         assert!(matches!(result, Err(BuilderError::InvalidConfig(_))));
@@ -326,7 +374,7 @@ mod tests {
 
     #[test]
     fn test_validation_success() {
-        let builder = ServerBuilder::<TestMessages>::new()
+        let builder = ServerBuilder::<TestMessages, TestRole>::new()
             .bind("127.0.0.1:8080")
             .offer_rooms(vec!["test".to_string()]);
 

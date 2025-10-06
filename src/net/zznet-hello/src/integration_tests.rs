@@ -5,7 +5,7 @@
 #[cfg(test)]
 mod hello_session_integration {
     use crate::actor::{HelloConfig, start_hello_actor};
-    use crate::auth::AuthRole;
+    // Integration tests operate at application level; pass role identifier strings.
     use crate::session_messages::{HandshakeComplete, InboundRoomMessage};
     use actix::prelude::*;
     use std::time::Duration;
@@ -27,7 +27,7 @@ mod hello_session_integration {
         fn handle(&mut self, msg: HandshakeComplete, _ctx: &mut Context<Self>) {
             println!(
                 "MockSessionManager received HandshakeComplete: role={:?}, rooms={:?}",
-                msg.peer_role, msg.active_rooms
+                msg.peer_role_str, msg.active_rooms
             );
             let _ = self.handshake_received.send(msg);
         }
@@ -49,14 +49,14 @@ mod hello_session_integration {
 
         // Configure client and server
         let client_config = HelloConfig {
-            our_role: AuthRole::Collector,
+            our_role: "collector".to_string(),
             offered_rooms: vec!["intentconfig".to_string(), "health".to_string()],
             handshake_timeout: Duration::from_secs(5),
             hostname: "client-host".to_string(),
         };
 
         let server_config = HelloConfig {
-            our_role: AuthRole::Database,
+            our_role: "database".to_string(),
             offered_rooms: vec!["intentconfig".to_string(), "memdb".to_string()],
             handshake_timeout: Duration::from_secs(5),
             hostname: "server-host".to_string(),
@@ -98,14 +98,14 @@ mod hello_session_integration {
 
         // Configure and start actors
         let client_config = HelloConfig {
-            our_role: AuthRole::Collector,
+            our_role: "collector".to_string(),
             offered_rooms: vec!["intentconfig".to_string()],
             handshake_timeout: Duration::from_secs(5),
             hostname: "client-host".to_string(),
         };
 
         let server_config = HelloConfig {
-            our_role: AuthRole::Database,
+            our_role: "database".to_string(),
             offered_rooms: vec!["intentconfig".to_string()],
             handshake_timeout: Duration::from_secs(5),
             hostname: "server-host".to_string(),

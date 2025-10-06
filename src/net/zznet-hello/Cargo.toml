@@ -18,14 +18,14 @@ workspace = true
 zznet-api = { path = "../zznet-api" }
 zznet-auth = { workspace = true }
 zznet-session = { path = "../zznet-session" }
-actix = { workspace = true }
-tokio = { workspace = true }
-serde = { workspace = true }
+actix.workspace = true
+tokio.workspace = true
+serde.workspace = true
 bincode = { workspace = true, features = ["serde"] }
-tracing = { workspace = true }
-thiserror = { workspace = true }
-bytes = { workspace = true }
-zzping-auth = { path = "../../common/zzping-auth" }
+tracing.workspace = true
+thiserror.workspace = true
+bytes.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "sync", "macros"] }
+zznet-auth = { workspace = true, features = ["test-utils"] }

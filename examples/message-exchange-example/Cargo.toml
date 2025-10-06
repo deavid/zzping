@@ -35,3 +35,4 @@ serde = { workspace = true }
 # Logging
 env_logger = { workspace = true }
 log = { workspace = true }
+zzping-auth = { path = "../../src/common/zzping-auth" }

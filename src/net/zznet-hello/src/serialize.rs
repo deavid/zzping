@@ -151,7 +151,7 @@ mod tests {
 
         let handshake_frame = Frame::Handshake(HandshakeFrame::Hello {
             version: "1.0".to_string(),
-            role: crate::auth::AuthRole::Collector,
+            role_str: "collector".to_string(),
             hostname: "test-host".to_string(),
         });
         let frame_data = handshake_frame.serialize().unwrap();

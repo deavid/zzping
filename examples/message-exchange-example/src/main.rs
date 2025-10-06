@@ -16,12 +16,12 @@ use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use zznet_builder::{ClientBuilder, ServerBuilder};
-use zznet_hello::auth::AuthRole;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::{
     DeserializationError, RoomMessageTrait, SerializationError,
 };
 use zznet_session::types::RoomId;
+use zzping_auth::AuthRole;
 
 // ============================================================================
 // Step 1: Define Application Messages with Serialization
@@ -99,12 +99,12 @@ impl RoomMessageTrait for DatabaseMessage {
 ///
 /// This actor demonstrates receiving messages from collectors and sending responses.
 struct DatabaseApp {
-    connection_manager: Addr<ConnectionManager<DatabaseMessage>>,
+    connection_manager: Addr<ConnectionManager<DatabaseMessage, AuthRole>>,
     ping_count: u64,
 }
 
 impl DatabaseApp {
-    fn new(connection_manager: Addr<ConnectionManager<DatabaseMessage>>) -> Self {
+    fn new(connection_manager: Addr<ConnectionManager<DatabaseMessage, AuthRole>>) -> Self {
         Self {
             connection_manager,
             ping_count: 0,
@@ -180,14 +180,14 @@ impl DatabaseApp {
 ///
 /// This actor demonstrates sending ping data to the database.
 struct CollectorApp {
-    connection_manager: Addr<ConnectionManager<DatabaseMessage>>,
+    connection_manager: Addr<ConnectionManager<DatabaseMessage, AuthRole>>,
     collector_id: String,
     sent_count: u64,
 }
 
 impl CollectorApp {
     fn new(
-        connection_manager: Addr<ConnectionManager<DatabaseMessage>>,
+        connection_manager: Addr<ConnectionManager<DatabaseMessage, AuthRole>>,
         collector_id: String,
     ) -> Self {
         Self {
@@ -282,7 +282,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     log::info!("📡 Setting up database server...");
 
-    let server_session_manager = ConnectionManager::<DatabaseMessage>::new(vec![
+    let server_session_manager = ConnectionManager::<DatabaseMessage, AuthRole>::new(vec![
         RoomId::from("health"),
         RoomId::from("config"),
         RoomId::from("data"),
@@ -329,7 +329,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     log::info!("🔌 Setting up collector client...");
 
-    let client_session_manager = ConnectionManager::<DatabaseMessage>::new(vec![
+    let client_session_manager = ConnectionManager::<DatabaseMessage, AuthRole>::new(vec![
         RoomId::from("health"),
         RoomId::from("config"),
         RoomId::from("data"),

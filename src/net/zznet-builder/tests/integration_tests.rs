@@ -11,12 +11,49 @@
 //! - Error handling
 
 use actix::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use zznet_builder::{ClientBuilder, ServerBuilder};
-use zznet_hello::auth::AuthRole;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::types::RoomId;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum TestRole {
+    Collector,
+    Database,
+}
+
+impl zznet_auth::ApplicationRole for TestRole {
+    fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+        match cn {
+            "collector" => Ok(TestRole::Collector),
+            "database" => Ok(TestRole::Database),
+            _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            TestRole::Collector => "collector",
+            TestRole::Database => "database",
+        }
+    }
+
+    fn can_connect_to(&self, _target: &Self) -> bool {
+        true
+    }
+
+    fn can_access_room(&self, _room_name: &str) -> bool {
+        true
+    }
+}
+
+// Keep existing test code compiling which still references `AuthRole` by
+// providing a local alias to the test role. This keeps the crate free of any
+// runtime dependency on the application's `zzping-auth` while avoiding many
+// mechanical edits in tests.
+type AuthRole = TestRole;
 
 // Test message type for integration tests
 #[derive(Debug, Clone, PartialEq)]
@@ -95,14 +132,45 @@ async fn test_server_client_basic_connection() {
     let server_rooms = vec![RoomId::from("health"), RoomId::from("data")];
     let client_rooms = vec![RoomId::from("health"), RoomId::from("data")];
 
-    let server_manager = ConnectionManager::<TestMessage>::new(server_rooms).start();
-    let client_manager = ConnectionManager::<TestMessage>::new(client_rooms).start();
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    enum TestRole {
+        Collector,
+        Database,
+    }
+
+    impl zznet_auth::ApplicationRole for TestRole {
+        fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+            match cn {
+                "collector" => Ok(TestRole::Collector),
+                "database" => Ok(TestRole::Database),
+                _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+            }
+        }
+
+        fn as_str(&self) -> &'static str {
+            match self {
+                TestRole::Collector => "collector",
+                TestRole::Database => "database",
+            }
+        }
+
+        fn can_connect_to(&self, _target: &Self) -> bool {
+            true
+        }
+
+        fn can_access_room(&self, _room_name: &str) -> bool {
+            true
+        }
+    }
+
+    let server_manager = ConnectionManager::<TestMessage, TestRole>::new(server_rooms).start();
+    let client_manager = ConnectionManager::<TestMessage, TestRole>::new(client_rooms).start();
 
     // Start server
     println!("Starting server on 127.0.0.1:18080...");
-    let server = ServerBuilder::new()
+    let server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:18080")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string(), "data".to_string()])
         .with_connection_manager(server_manager)
         .start()
@@ -116,9 +184,9 @@ async fn test_server_client_basic_connection() {
 
     // Start client
     println!("Starting client connecting to 127.0.0.1:18080...");
-    let client = ClientBuilder::new()
+    let client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:18080")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string(), "data".to_string()])
         .with_connection_manager(client_manager)
         .auto_reconnect(false)
@@ -149,7 +217,7 @@ async fn test_multiple_clients() {
 
     // Create server ConnectionManager
     let server_rooms = vec![RoomId::from("health")];
-    let server_manager = ConnectionManager::<TestMessage>::new(server_rooms).start();
+    let server_manager = ConnectionManager::<TestMessage, AuthRole>::new(server_rooms).start();
 
     // Start server
     println!("Starting server on 127.0.0.1:18081...");
@@ -173,7 +241,7 @@ async fn test_multiple_clients() {
         println!("Starting client {}...", i);
 
         let client_rooms = vec![RoomId::from("health")];
-        let client_manager = ConnectionManager::<TestMessage>::new(client_rooms).start();
+        let client_manager = ConnectionManager::<TestMessage, AuthRole>::new(client_rooms).start();
 
         let client = ClientBuilder::new()
             .connect_to("127.0.0.1:18081")
@@ -218,7 +286,7 @@ async fn test_client_reconnection() {
 
     // Create ConnectionManagers
     let server_rooms = vec![RoomId::from("health")];
-    let server_manager = ConnectionManager::<TestMessage>::new(server_rooms).start();
+    let server_manager = ConnectionManager::<TestMessage, AuthRole>::new(server_rooms).start();
 
     // Start server
     println!("Starting server on 127.0.0.1:18082...");
@@ -237,7 +305,7 @@ async fn test_client_reconnection() {
     // Start client with auto-reconnect enabled
     println!("Starting client with auto-reconnect...");
     let client_rooms = vec![RoomId::from("health")];
-    let client_manager = ConnectionManager::<TestMessage>::new(client_rooms).start();
+    let client_manager = ConnectionManager::<TestMessage, AuthRole>::new(client_rooms).start();
 
     let client = ClientBuilder::new()
         .connect_to("127.0.0.1:18082")
@@ -292,8 +360,8 @@ async fn test_graceful_shutdown() {
     let server_rooms = vec![RoomId::from("health")];
     let client_rooms = vec![RoomId::from("health")];
 
-    let server_manager = ConnectionManager::<TestMessage>::new(server_rooms).start();
-    let client_manager = ConnectionManager::<TestMessage>::new(client_rooms).start();
+    let server_manager = ConnectionManager::<TestMessage, AuthRole>::new(server_rooms).start();
+    let client_manager = ConnectionManager::<TestMessage, AuthRole>::new(client_rooms).start();
 
     // Start server
     println!("Starting server on 127.0.0.1:18083...");
@@ -342,7 +410,7 @@ async fn test_server_bind_error() {
     println!("\n=== Test: Server Bind Error Handling ===");
 
     let server_rooms = vec![RoomId::from("health")];
-    let server_manager = ConnectionManager::<TestMessage>::new(server_rooms).start();
+    let server_manager = ConnectionManager::<TestMessage, AuthRole>::new(server_rooms).start();
 
     // Try to bind to invalid address
     println!("Attempting to bind to invalid address...");
@@ -366,7 +434,7 @@ async fn test_client_connection_failure() {
     println!("\n=== Test: Client Connection Failure ===");
 
     let client_rooms = vec![RoomId::from("health")];
-    let client_manager = ConnectionManager::<TestMessage>::new(client_rooms).start();
+    let client_manager = ConnectionManager::<TestMessage, AuthRole>::new(client_rooms).start();
 
     // Connect to non-existent server (no auto-reconnect)
     println!("Connecting to non-existent server...");
@@ -401,7 +469,7 @@ async fn test_different_auth_roles() {
 
     // Server as Database
     let server_rooms = vec![RoomId::from("health")];
-    let server_manager = ConnectionManager::<TestMessage>::new(server_rooms).start();
+    let server_manager = ConnectionManager::<TestMessage, AuthRole>::new(server_rooms).start();
 
     println!("Starting Database server...");
     let server = ServerBuilder::new()
@@ -417,7 +485,7 @@ async fn test_different_auth_roles() {
 
     // Client as Collector (allowed to connect to Database)
     let client1_rooms = vec![RoomId::from("health")];
-    let client1_manager = ConnectionManager::<TestMessage>::new(client1_rooms).start();
+    let client1_manager = ConnectionManager::<TestMessage, AuthRole>::new(client1_rooms).start();
 
     println!("Starting Collector client...");
     let client1 = ClientBuilder::new()
@@ -453,8 +521,8 @@ async fn test_end_to_end_message_exchange() {
     let server_rooms = vec![RoomId::from("health")];
     let client_rooms = vec![RoomId::from("health")];
 
-    let server_manager = ConnectionManager::<TestMessage>::new(server_rooms).start();
-    let client_manager = ConnectionManager::<TestMessage>::new(client_rooms).start();
+    let server_manager = ConnectionManager::<TestMessage, AuthRole>::new(server_rooms).start();
+    let client_manager = ConnectionManager::<TestMessage, AuthRole>::new(client_rooms).start();
 
     // Start server
     println!("Starting server on 127.0.0.1:18085...");

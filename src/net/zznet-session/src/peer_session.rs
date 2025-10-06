@@ -6,7 +6,7 @@ use tokio::task::JoinHandle;
 
 // NEW: Auth imports
 use zznet_api::types::PeerIdentity;
-use zzping_auth::AuthRole;
+use zznet_auth::ApplicationRole;
 
 /// Trait for type-erased room operations
 ///
@@ -37,9 +37,10 @@ where
 ///
 /// Each peer session contains Room<T> instances with different T types (type-erased via
 /// RoomHandle trait). Messages flow through the application's enum type TMsg.
-pub struct PeerSession<TMsg>
+pub struct PeerSession<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + std::fmt::Debug,
 {
     peer_id: PeerId,
     state: ConnectionState,
@@ -50,7 +51,7 @@ where
     // NEW: Authentication context for this peer
     /// The authenticated role of this peer (resolved from certificate)
     /// None if ACL is not configured or role resolution failed
-    peer_role: Option<AuthRole>,
+    peer_role: Option<TRole>,
 
     /// Full identity from certificate (for audit logging)
     /// None if not using certificate-based auth (e.g., plain TCP in dev mode)
@@ -74,9 +75,10 @@ where
     inbound_broadcast: Option<broadcast::Sender<(RoomId, TMsg)>>,
 }
 
-impl<TMsg> PeerSession<TMsg>
+impl<TMsg, TRole> PeerSession<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + std::fmt::Debug,
 {
     /// Create a new disconnected peer session
     ///
@@ -103,7 +105,7 @@ where
     ///
     /// # Arguments
     /// * `role` - The authenticated role, or None if auth is not configured
-    pub fn set_role(&mut self, role: Option<AuthRole>) {
+    pub fn set_role(&mut self, role: Option<TRole>) {
         self.peer_role = role;
         tracing::debug!("Set peer {} role to {:?}", self.peer_id, role);
     }
@@ -125,8 +127,8 @@ where
     /// - ACL is not configured
     /// - Role resolution failed
     /// - set_role() was not called
-    pub fn role(&self) -> Option<AuthRole> {
-        self.peer_role
+    pub fn role(&self) -> Option<&TRole> {
+        self.peer_role.as_ref()
     }
 
     /// Get the full identity information for this peer
@@ -449,9 +451,10 @@ where
     }
 }
 
-impl<TMsg> Drop for PeerSession<TMsg>
+impl<TMsg, TRole> Drop for PeerSession<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + std::fmt::Debug,
 {
     fn drop(&mut self) {
         self.disconnect();
@@ -468,6 +471,7 @@ mod tests {
     };
     use actix::prelude::*;
     use tokio::sync::mpsc;
+    use zznet_auth::mock::MockRole;
     use zznet_room::room::Room;
 
     // Test actors for different message types
@@ -529,7 +533,7 @@ mod tests {
     #[actix::test]
     async fn test_peer_session_new() {
         let peer_id = PeerId::from("test_peer");
-        let session = PeerSession::<CollectorMessages>::new(peer_id.clone());
+        let session = PeerSession::<CollectorMessages, MockRole>::new(peer_id.clone());
 
         assert_eq!(session.peer_id, peer_id);
         assert_eq!(session.state(), ConnectionState::Disconnected);
@@ -539,7 +543,8 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_session_add_room() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Create room with RoomAdapter
         let actor = TestActor.start();
@@ -566,7 +571,8 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_session_add_room_duplicate_error() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add first room
         let actor1 = TestActor.start();
@@ -602,7 +608,8 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_session_room_ids() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add two rooms
         let actor1 = TestActor.start();
@@ -641,7 +648,8 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_session_connect_disconnect() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add a room
         let actor = TestActor.start();
@@ -673,7 +681,8 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_session_connect_already_connected_returns_error() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add a room
         let actor = TestActor.start();
@@ -706,7 +715,8 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_session_send_to_room() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add room
         let actor = TestActor.start();
@@ -742,7 +752,8 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_session_send_when_disconnected() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add room
         let actor = TestActor.start();
@@ -768,7 +779,8 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_session_drop_cleanup() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add room
         let actor = TestActor.start();
@@ -810,7 +822,8 @@ mod tests {
     #[actix::test]
     #[ignore = "Reconnection not yet supported - Room receivers can't be respawned"]
     async fn test_peer_session_reconnect_after_disconnect() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add room
         let actor = TestActor.start();
@@ -853,7 +866,8 @@ mod tests {
 
     #[actix::test]
     async fn test_local_offered_rooms() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add rooms
         let actor1 = TestActor.start();
@@ -891,7 +905,8 @@ mod tests {
 
     #[actix::test]
     async fn test_room_intersection_full_match() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add local rooms
         let actor1 = TestActor.start();
@@ -934,7 +949,8 @@ mod tests {
 
     #[actix::test]
     async fn test_room_intersection_partial_match() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add local rooms: intentconfig, health
         let actor1 = TestActor.start();
@@ -978,7 +994,8 @@ mod tests {
 
     #[actix::test]
     async fn test_empty_intersection_error() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add local rooms
         let actor1 = TestActor.start();
@@ -1018,7 +1035,8 @@ mod tests {
 
     #[actix::test]
     async fn test_send_to_unjoined_room_rejected() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add two local rooms
         let actor1 = TestActor.start();
@@ -1071,7 +1089,8 @@ mod tests {
 
     #[actix::test]
     async fn test_send_to_joined_room_succeeds() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add room
         let actor = TestActor.start();
@@ -1114,7 +1133,8 @@ mod tests {
 
     #[actix::test]
     async fn test_is_room_joined() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add rooms
         let actor1 = TestActor.start();
@@ -1236,7 +1256,10 @@ mod tests {
 
         // Run the loop
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx, None).await;
+        PeerSession::<CollectorMessages, MockRole>::inbound_task_loop(
+            rooms, peer_id, inbound_rx, None,
+        )
+        .await;
 
         // Verify message was delivered
         let sent = messages_ref.lock().unwrap();
@@ -1273,7 +1296,10 @@ mod tests {
 
         // Run the loop
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx, None).await;
+        PeerSession::<CollectorMessages, MockRole>::inbound_task_loop(
+            rooms, peer_id, inbound_rx, None,
+        )
+        .await;
 
         // Verify all messages were delivered in order
         let sent = messages_ref.lock().unwrap();
@@ -1324,7 +1350,10 @@ mod tests {
 
         // Run the loop
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx, None).await;
+        PeerSession::<CollectorMessages, MockRole>::inbound_task_loop(
+            rooms, peer_id, inbound_rx, None,
+        )
+        .await;
 
         // Verify messages routed to correct rooms
         let sent1 = messages_ref1.lock().unwrap();
@@ -1354,7 +1383,7 @@ mod tests {
         let msg = CollectorMessages::IntentConfig(IntentConfigMessage::Query);
 
         // Route to unknown room - should not panic, just log warning
-        PeerSession::<CollectorMessages>::route_inbound_message(
+        PeerSession::<CollectorMessages, MockRole>::route_inbound_message(
             &mut rooms,
             &peer_id,
             RoomId::from("unknown"),
@@ -1377,7 +1406,7 @@ mod tests {
         let msg = CollectorMessages::IntentConfig(IntentConfigMessage::Query);
 
         // Route message - should handle error gracefully
-        PeerSession::<CollectorMessages>::route_inbound_message(
+        PeerSession::<CollectorMessages, MockRole>::route_inbound_message(
             &mut rooms,
             &peer_id,
             RoomId::from("test"),
@@ -1408,7 +1437,10 @@ mod tests {
 
         // Run the loop - should process message and then exit gracefully
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<CollectorMessages>::inbound_task_loop(rooms, peer_id, inbound_rx, None).await;
+        PeerSession::<CollectorMessages, MockRole>::inbound_task_loop(
+            rooms, peer_id, inbound_rx, None,
+        )
+        .await;
 
         // Verify message was processed before shutdown
         let sent = messages_ref.lock().unwrap();
@@ -1417,7 +1449,8 @@ mod tests {
 
     #[actix::test]
     async fn test_disconnect_stops_inbound_task() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add mock room
         let mock_room = MockRoomHandle::new(RoomId::from("test"));
@@ -1450,7 +1483,8 @@ mod tests {
 
     #[actix::test]
     async fn test_disconnect_idempotent() {
-        let mut session = PeerSession::<CollectorMessages>::new(PeerId::from("test_peer"));
+        let mut session =
+            PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));
 
         // Add mock room and connect
         let mock_room = MockRoomHandle::new(RoomId::from("test"));

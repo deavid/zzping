@@ -167,9 +167,9 @@ mod session_manager_integration_tests {
     /// complex bidirectional channel setup that's better suited for zznet-session tests.
     #[actix::test]
     async fn test_end_to_end_database_to_collectors_communication() {
-        use zznet_hello::auth::AuthRole;
         use zznet_session::session_manager::SessionManager;
         use zznet_session::types::{PeerId, RoomId};
+        use zzping_auth::AuthRole;
 
         // Setup logging
         let _ = env_logger::builder()
@@ -183,7 +183,9 @@ mod session_manager_integration_tests {
 
         // ===== Create Database SessionManager with 2 Collector peers + 1 Admin =====
         let mut session_manager =
-            SessionManager::<IntentConfigMessage>::new(vec![RoomId::from("intent-config")]);
+            SessionManager::<IntentConfigMessage, AuthRole>::new(vec![RoomId::from(
+                "intent-config",
+            )]);
 
         // Add admin peer (for RequestConfigChange authorization)
         let mut admin_peer =
@@ -207,7 +209,7 @@ mod session_manager_integration_tests {
             .unwrap();
 
         // Verify peers_with_role works
-        let collectors = session_manager.peers_with_role(AuthRole::Collector);
+        let collectors = session_manager.peers_with_role(&AuthRole::Collector);
         assert_eq!(collectors.len(), 2);
 
         // ===== Create Database Actor with SessionManager =====
@@ -269,9 +271,9 @@ mod auth_tests {
     /// 3. Verify the request is rejected (config unchanged)
     #[actix::test]
     async fn test_request_config_change_requires_admin_role() {
-        use zznet_hello::auth::AuthRole;
         use zznet_session::session_manager::SessionManager;
         use zznet_session::types::{PeerId, RoomId};
+        use zzping_auth::AuthRole;
 
         // Setup logging
         let _ = env_logger::builder()
@@ -285,7 +287,9 @@ mod auth_tests {
 
         // ===== Create SessionManager with mixed peers =====
         let mut session_manager =
-            SessionManager::<IntentConfigMessage>::new(vec![RoomId::from("intent-config")]);
+            SessionManager::<IntentConfigMessage, AuthRole>::new(vec![RoomId::from(
+                "intent-config",
+            )]);
 
         // Add admin peer (for initial config setup)
         let mut admin_peer =
@@ -372,9 +376,9 @@ mod auth_tests {
     /// The actual send_to_room() logic is tested in actor unit tests.
     #[actix::test]
     async fn test_config_update_only_sent_to_collectors() {
-        use zznet_hello::auth::AuthRole;
         use zznet_session::session_manager::SessionManager;
         use zznet_session::types::{PeerId, RoomId};
+        use zzping_auth::AuthRole;
 
         // Setup logging
         let _ = env_logger::builder()
@@ -388,7 +392,9 @@ mod auth_tests {
 
         // ===== Create SessionManager with mixed roles =====
         let mut session_manager =
-            SessionManager::<IntentConfigMessage>::new(vec![RoomId::from("intent-config")]);
+            SessionManager::<IntentConfigMessage, AuthRole>::new(vec![RoomId::from(
+                "intent-config",
+            )]);
 
         // Add 2 Collector peers
         let mut collector1 =
@@ -423,12 +429,12 @@ mod auth_tests {
         let all_peers = session_manager.peer_ids();
         assert_eq!(all_peers.len(), 4, "Should have 4 total peers");
 
-        let collectors = session_manager.peers_with_role(AuthRole::Collector);
+        let collectors = session_manager.peers_with_role(&AuthRole::Collector);
         assert_eq!(collectors.len(), 2, "Should have exactly 2 Collector peers");
         assert!(collectors.contains(&PeerId::from("collector1")));
         assert!(collectors.contains(&PeerId::from("collector2")));
 
-        let admins = session_manager.peers_with_role(AuthRole::ClientAdmin);
+        let admins = session_manager.peers_with_role(&AuthRole::ClientAdmin);
         assert_eq!(admins.len(), 1, "Should have exactly 1 ClientAdmin peer");
         assert!(admins.contains(&PeerId::from("admin-user")));
 

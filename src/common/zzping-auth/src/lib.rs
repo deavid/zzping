@@ -101,7 +101,15 @@ pub use zznet_auth::config;
 pub use zznet_auth::error;
 
 // Type alias for the authorizer closure used by ConnectionManager (ZZPing-specific)
+/// Type alias for the authorizer specialized to this application's `AuthRole`.
+///
+/// The generic `GenericAuthorizer` from `zznet-auth` is bound to the concrete
+/// `AuthRole` defined in this crate for convenience in application code and
+/// tests.
 pub type Authorizer = GenericAuthorizer<AuthRole>;
 
-// Type alias for the default AclManager using AuthRole
+/// Type alias for the default ACL manager using this crate's `AuthRole`.
+///
+/// This exposes `AclManager<AuthRole>` under a short name for callers that
+/// don't need to reference the generic form.
 pub type AclManagerDefault = AclManager<AuthRole>;

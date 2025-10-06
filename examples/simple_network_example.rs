@@ -180,7 +180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the server using ServerBuilder
     let server = ServerBuilder::new()
         .bind("127.0.0.1:9000")
-        .as_role(zznet_hello::auth_role::AuthRole::Database) // Server role
+        .as_role(zzping_auth::AuthRole::Database) // Server role
         .offer_rooms(vec![
             "health".to_string(),
             "data".to_string(),
@@ -213,7 +213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create the client using ClientBuilder
     let _client = ClientBuilder::new()
         .connect_to("127.0.0.1:9000")
-        .as_role(zznet_hello::auth_role::AuthRole::Collector) // Client role
+    .as_role(zzping_auth::AuthRole::Collector) // Client role
         .offer_rooms(vec!["health".to_string(), "data".to_string()])
         .with_connection_manager(client_session_manager.clone())
         .auto_reconnect(true) // Enable automatic reconnection

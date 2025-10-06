@@ -15,7 +15,6 @@
 //! sequence described in the protocol module. This matches the existing working
 //! implementation from zznet-connection.
 
-use crate::auth::AuthRole;
 use crate::error::HelloError;
 use crate::protocol::{Frame, HandshakeFrame};
 
@@ -99,7 +98,7 @@ impl Handshake {
     /// Returns the serialized frame ready to send.
     pub fn create_hello_frame(
         &mut self,
-        role: AuthRole,
+        role_str: String,
         offered_rooms: Vec<String>,
         hostname: String,
     ) -> Result<Vec<u8>, HelloError> {
@@ -107,7 +106,7 @@ impl Handshake {
             HandshakeState::Start => {
                 let frame = Frame::Handshake(HandshakeFrame::Hello {
                     version: self.protocol_version.clone(),
-                    role,
+                    role_str,
                     hostname,
                 });
 
@@ -126,10 +125,9 @@ impl Handshake {
         }
     }
 
-    /// Create an OFFER frame to send to peer.
-    ///
-    /// Must be in SentHello state. Returns serialized frame.
-    pub fn create_offer_frame(&self) -> Result<Vec<u8>, HelloError> {
+    /// Create an OFFER frame using the rooms we previously offered in create_hello_frame.
+    /// Returns serialized OFFER frame bytes.
+    pub fn create_offer_frame(&mut self) -> Result<Vec<u8>, HelloError> {
         match &self.state {
             HandshakeState::SentHello { our_offered_rooms } => {
                 let frame = Frame::Handshake(HandshakeFrame::Offer {
@@ -166,9 +164,9 @@ impl Handshake {
         match frame {
             HandshakeFrame::Hello {
                 version,
-                role,
+                role_str,
                 hostname,
-            } => self.process_hello(version, role, hostname),
+            } => self.process_hello(version, role_str, hostname),
             HandshakeFrame::Offer { rooms } => self.process_offer(rooms),
             HandshakeFrame::Ack { rooms } => self.process_ack(rooms),
             HandshakeFrame::Error { message } => {
@@ -181,7 +179,7 @@ impl Handshake {
     fn process_hello(
         &mut self,
         peer_version: String,
-        _peer_role: AuthRole,
+        _peer_role_str: String,
         peer_hostname: String,
     ) -> Result<Option<Vec<u8>>, HelloError> {
         // Store the peer hostname
@@ -306,7 +304,7 @@ mod tests {
 
         let frame_data = handshake
             .create_hello_frame(
-                AuthRole::Collector,
+                "collector".to_string(),
                 offered_rooms.clone(),
                 "test-host".to_string(),
             )
@@ -319,11 +317,11 @@ mod tests {
         match frame {
             Frame::Handshake(HandshakeFrame::Hello {
                 version,
-                role,
+                role_str,
                 hostname,
             }) => {
                 assert_eq!(version, "1.0");
-                assert_eq!(role, AuthRole::Collector);
+                assert_eq!(role_str, "collector");
                 assert_eq!(hostname, "test-host");
             }
             _ => panic!("Expected HELLO frame"),
@@ -335,7 +333,7 @@ mod tests {
         let mut handshake = Handshake::new();
         handshake
             .create_hello_frame(
-                AuthRole::Collector,
+                "collector".to_string(),
                 vec!["memdb".to_string()],
                 "test-host".to_string(),
             )
@@ -343,7 +341,7 @@ mod tests {
 
         // Try to create another HELLO - should fail
         let result = handshake.create_hello_frame(
-            AuthRole::Database,
+            "database".to_string(),
             vec!["memdb".to_string()],
             "test-host2".to_string(),
         );
@@ -356,7 +354,7 @@ mod tests {
         let mut handshake = Handshake::new();
         handshake
             .create_hello_frame(
-                AuthRole::Collector,
+                "collector".to_string(),
                 vec!["memdb".to_string()],
                 "test-host".to_string(),
             )
@@ -364,7 +362,7 @@ mod tests {
 
         let bad_frame = Frame::Handshake(HandshakeFrame::Hello {
             version: "2.0".to_string(),
-            role: AuthRole::Database,
+            role_str: "database".to_string(),
             hostname: "bad-host".to_string(),
         });
         let bad_data = bad_frame.serialize().unwrap();
@@ -385,7 +383,7 @@ mod tests {
         // 1. Initiator sends HELLO
         let hello1 = initiator
             .create_hello_frame(
-                AuthRole::Collector,
+                "collector".to_string(),
                 init_rooms.clone(),
                 "initiator-host".to_string(),
             )
@@ -394,7 +392,7 @@ mod tests {
         // 2. Responder sends HELLO (independent)
         let hello2 = responder
             .create_hello_frame(
-                AuthRole::Database,
+                "database".to_string(),
                 resp_rooms.clone(),
                 "responder-host".to_string(),
             )
@@ -438,10 +436,10 @@ mod tests {
 
         // Exchange HELLOs
         let hello1 = initiator
-            .create_hello_frame(AuthRole::Collector, init_rooms, "init-host".to_string())
+            .create_hello_frame("collector".to_string(), init_rooms, "init-host".to_string())
             .unwrap();
         let hello2 = responder
-            .create_hello_frame(AuthRole::Database, resp_rooms, "resp-host".to_string())
+            .create_hello_frame("database".to_string(), resp_rooms, "resp-host".to_string())
             .unwrap();
 
         let _ = initiator.process_frame(&hello2).unwrap();
@@ -461,7 +459,7 @@ mod tests {
         let mut handshake = Handshake::new();
         handshake
             .create_hello_frame(
-                AuthRole::Collector,
+                "collector".to_string(),
                 vec!["memdb".to_string()],
                 "test-host".to_string(),
             )

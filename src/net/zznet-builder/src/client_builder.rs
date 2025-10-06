@@ -3,40 +3,41 @@
 use crate::error::{BuilderError, BuilderResult};
 use actix::prelude::*;
 use std::time::Duration;
+use zznet_auth::ApplicationRole;
 use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
-use zznet_hello::auth::AuthRole;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::RoomMessageTrait;
-use zznet_session::types::RoomId;
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
 
 /// Builder for creating TCP clients with automatic reconnection
 ///
 ///
-pub struct ClientBuilder<TMsg>
+pub struct ClientBuilder<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     remote_addr: Option<String>,
-    our_role: AuthRole,
+    our_role: Option<TRole>,
     offered_rooms: Vec<String>,
     handshake_timeout: Duration,
     reconnect_delay: Duration,
     tls_config: Option<TlsConfig>,
-    connection_manager: Option<Addr<ConnectionManager<TMsg>>>,
+    connection_manager: Option<Addr<ConnectionManager<TMsg, TRole>>>,
     auto_reconnect: bool,
 }
 
-impl<TMsg> ClientBuilder<TMsg>
+impl<TMsg, TRole> ClientBuilder<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     /// Create a new ClientBuilder with default configuration
     pub fn new() -> Self {
         Self {
             remote_addr: None,
-            our_role: AuthRole::Collector,
+            our_role: None,
             offered_rooms: vec![],
             handshake_timeout: Duration::from_secs(10),
             reconnect_delay: Duration::from_secs(5),
@@ -57,8 +58,8 @@ where
     /// Set the authentication role for this client
     ///
     ///
-    pub fn as_role(mut self, role: AuthRole) -> Self {
-        self.our_role = role;
+    pub fn as_role(mut self, role: TRole) -> Self {
+        self.our_role = Some(role);
         self
     }
 
@@ -97,7 +98,10 @@ where
     /// Set the ConnectionManager for handling connections
     ///
     /// If not provided, a new ConnectionManager will be created.
-    pub fn with_connection_manager(mut self, manager: Addr<ConnectionManager<TMsg>>) -> Self {
+    pub fn with_connection_manager(
+        mut self,
+        manager: Addr<ConnectionManager<TMsg, TRole>>,
+    ) -> Self {
         self.connection_manager = Some(manager);
         self
     }
@@ -132,26 +136,30 @@ where
     ///
     /// This creates a ClientActor that manages the connection and will
     /// automatically reconnect if the connection is lost (unless disabled).
-    pub async fn connect(self) -> BuilderResult<Addr<ClientActor<TMsg>>> {
+    pub async fn connect(self) -> BuilderResult<Addr<ClientActor<TMsg, TRole>>> {
         self.validate()?;
 
         let remote_addr = self.remote_addr.unwrap();
 
-        // Create ConnectionManager if not provided
-        let connection_manager = if let Some(cm) = self.connection_manager {
-            cm
-        } else {
-            let rooms: Vec<RoomId> = self
-                .offered_rooms
-                .iter()
-                .map(|s| RoomId::from(s.as_str()))
-                .collect();
-            ConnectionManager::<TMsg>::new(rooms).start()
+        // ConnectionManager must be provided by application code (builder is application-agnostic)
+        let connection_manager = match self.connection_manager {
+            Some(cm) => cm,
+            None => {
+                return Err(BuilderError::MissingConfig(
+                    "connection_manager".to_string(),
+                ));
+            }
+        };
+
+        // our_role must be set by caller
+        let role = match self.our_role {
+            Some(r) => r,
+            None => return Err(BuilderError::MissingConfig("our_role".to_string())),
         };
 
         // Create HelloConfig
         let hello_config = HelloConfig {
-            our_role: self.our_role,
+            our_role: role.as_str().to_string(),
             offered_rooms: self.offered_rooms.clone(),
             handshake_timeout: self.handshake_timeout,
             hostname: "client-hostname".to_string(),
@@ -172,9 +180,10 @@ where
     }
 }
 
-impl<TMsg> Default for ClientBuilder<TMsg>
+impl<TMsg, TRole> Default for ClientBuilder<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     fn default() -> Self {
         Self::new()
@@ -182,22 +191,24 @@ where
 }
 
 /// Actor that manages the client's connection loop
-pub struct ClientActor<TMsg>
+pub struct ClientActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     remote_addr: String,
     tls_config: Option<TlsConfig>,
     hello_config: HelloConfig,
-    connection_manager: Addr<ConnectionManager<TMsg>>,
+    connection_manager: Addr<ConnectionManager<TMsg, TRole>>,
     reconnect_delay: Duration,
     auto_reconnect: bool,
     current_hello_actor: Option<Addr<zznet_hello::actor::HelloActor>>,
 }
 
-impl<TMsg> Actor for ClientActor<TMsg>
+impl<TMsg, TRole> Actor for ClientActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     type Context = Context<Self>;
 
@@ -207,9 +218,10 @@ where
     }
 }
 
-impl<TMsg> ClientActor<TMsg>
+impl<TMsg, TRole> ClientActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     /// Run the connection loop
     fn connect_loop(&mut self, ctx: &mut Context<Self>) {
@@ -282,9 +294,10 @@ enum ConnectionResult {
 #[rtype(result = "()")]
 pub struct Disconnect;
 
-impl<TMsg> Handler<Disconnect> for ClientActor<TMsg>
+impl<TMsg, TRole> Handler<Disconnect> for ClientActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     type Result = ();
 
@@ -305,9 +318,10 @@ where
 #[rtype(result = "()")]
 pub struct Reconnect;
 
-impl<TMsg> Handler<Reconnect> for ClientActor<TMsg>
+impl<TMsg, TRole> Handler<Reconnect> for ClientActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
 {
     type Result = ();
 
@@ -328,6 +342,8 @@ mod tests {
     use super::*;
     use zznet_session::room_message_trait::RoomMessageTrait;
     use zznet_session::types::RoomId;
+
+    use serde::{Deserialize, Serialize};
 
     /// Minimal test message enum used by the builder tests.
     #[derive(Debug, Clone)]
@@ -359,27 +375,59 @@ mod tests {
         }
     }
 
+    /// Minimal test role for builder unit tests. Derive traits required by ApplicationRole.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    enum TestRole {
+        Collector,
+        Database,
+    }
+
+    impl zznet_auth::ApplicationRole for TestRole {
+        fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+            match cn {
+                "collector" => Ok(TestRole::Collector),
+                "database" => Ok(TestRole::Database),
+                _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+            }
+        }
+
+        fn as_str(&self) -> &'static str {
+            match self {
+                TestRole::Collector => "collector",
+                TestRole::Database => "database",
+            }
+        }
+
+        fn can_connect_to(&self, _target: &Self) -> bool {
+            true
+        }
+
+        fn can_access_room(&self, _room_name: &str) -> bool {
+            true
+        }
+    }
+
     #[test]
     fn test_client_builder_new() {
-        let builder = ClientBuilder::<TestMessages>::new();
+        let builder = ClientBuilder::<TestMessages, TestRole>::new();
         assert!(builder.remote_addr.is_none());
-        assert_eq!(builder.our_role, AuthRole::Collector);
+        assert!(builder.our_role.is_none());
         assert!(builder.offered_rooms.is_empty());
         assert!(builder.auto_reconnect);
     }
 
     #[test]
     fn test_client_builder_fluent_api() {
-        let builder = ClientBuilder::<TestMessages>::new()
+        let builder = ClientBuilder::<TestMessages, TestRole>::new()
             .connect_to("127.0.0.1:8080")
-            .as_role(AuthRole::Database)
+            .as_role(TestRole::Database)
             .offer_rooms(vec!["test".to_string()])
             .handshake_timeout(Duration::from_secs(5))
             .reconnect_delay(Duration::from_secs(10))
             .auto_reconnect(false);
 
         assert_eq!(builder.remote_addr.unwrap(), "127.0.0.1:8080");
-        assert_eq!(builder.our_role, AuthRole::Database);
+        assert_eq!(builder.our_role.unwrap(), TestRole::Database);
         assert_eq!(builder.offered_rooms, vec!["test".to_string()]);
         assert_eq!(builder.handshake_timeout, Duration::from_secs(5));
         assert_eq!(builder.reconnect_delay, Duration::from_secs(10));
@@ -388,7 +436,8 @@ mod tests {
 
     #[test]
     fn test_validation_missing_remote_addr() {
-        let builder = ClientBuilder::<TestMessages>::new().offer_rooms(vec!["test".to_string()]);
+        let builder =
+            ClientBuilder::<TestMessages, TestRole>::new().offer_rooms(vec!["test".to_string()]);
 
         let result = builder.validate();
         assert!(matches!(result, Err(BuilderError::MissingConfig(_))));
@@ -396,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_validation_missing_rooms() {
-        let builder = ClientBuilder::<TestMessages>::new().connect_to("127.0.0.1:8080");
+        let builder = ClientBuilder::<TestMessages, TestRole>::new().connect_to("127.0.0.1:8080");
 
         let result = builder.validate();
         assert!(matches!(result, Err(BuilderError::InvalidConfig(_))));
@@ -404,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_validation_success() {
-        let builder = ClientBuilder::<TestMessages>::new()
+        let builder = ClientBuilder::<TestMessages, TestRole>::new()
             .connect_to("127.0.0.1:8080")
             .offer_rooms(vec!["test".to_string()]);
 

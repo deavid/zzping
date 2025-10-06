@@ -2553,6 +2553,7 @@ dependencies = [
  "zznet-room",
  "zznet-session",
  "zznet-transport-tcp",
+ "zzping-auth",
 ]
 
 [[package]]
@@ -4124,6 +4125,7 @@ dependencies = [
  "zznet-hello",
  "zznet-session",
  "zznet-transport-tcp",
+ "zzping-auth",
 ]
 
 [[package]]
@@ -6191,6 +6193,7 @@ dependencies = [
  "zznet-hello",
  "zznet-room",
  "zznet-session",
+ "zzping-auth",
 ]
 
 [[package]]
@@ -6229,6 +6232,7 @@ dependencies = [
  "tokio",
  "tracing",
  "zznet-api",
+ "zznet-auth",
  "zznet-hello",
  "zznet-session",
  "zznet-transport-tcp",
@@ -6248,7 +6252,6 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-session",
- "zzping-auth",
 ]
 
 [[package]]
@@ -6274,7 +6277,6 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-room",
- "zzping-auth",
 ]
 
 [[package]]

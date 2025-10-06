@@ -23,6 +23,7 @@ actix.workspace = true
 tokio.workspace = true
 tracing = "0.1"
 thiserror.workspace = true
+zznet-auth = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

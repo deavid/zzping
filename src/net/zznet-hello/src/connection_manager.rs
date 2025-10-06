@@ -12,35 +12,39 @@ use actix::prelude::*;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use zznet_api::transport::TransportConnection;
+use zznet_auth::ApplicationRole;
 use zznet_session::peer_session::PeerSession;
 use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::{PeerId, RoomId};
 
-type Authorizer =
-    Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<crate::auth::AuthRole> + Send + Sync>;
+type Authorizer<TRole> =
+    Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<TRole> + Send + Sync>;
 
 /// ConnectionManager coordinates HelloActors and SessionManager
 ///
 /// Generic over TMsg: the application's message enum type
-pub struct ConnectionManager<TMsg>
+/// Generic over TRole: the application's role type
+pub struct ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + std::fmt::Debug,
 {
     /// Manages all peer sessions
-    session_manager: SessionManager<TMsg>,
+    session_manager: SessionManager<TMsg, TRole>,
 
     /// Maps PeerId to HelloActor address
     /// Used to send InboundRoomMessage to the correct HelloActor
     hello_actors: HashMap<PeerId, Addr<HelloActor>>,
     /// Optional ACL manager and insecure_trust flag.
     /// Optional authorizer: takes PeerIdentity and returns resolved AuthRole if allowed
-    acl: Option<(Authorizer, bool)>,
+    acl: Option<(Authorizer<TRole>, bool)>,
 }
 
-impl<TMsg> ConnectionManager<TMsg>
+impl<TMsg, TRole> ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + std::fmt::Debug,
 {
     /// Create a new ConnectionManager
     ///
@@ -54,7 +58,10 @@ where
     }
 
     /// Create a ConnectionManager with an optional AclManager and insecure_trust flag
-    pub fn new_with_acl(offered_rooms: Vec<RoomId>, acl: Option<(Authorizer, bool)>) -> Self {
+    pub fn new_with_acl(
+        offered_rooms: Vec<RoomId>,
+        acl: Option<(Authorizer<TRole>, bool)>,
+    ) -> Self {
         Self {
             session_manager: SessionManager::new(offered_rooms),
             hello_actors: HashMap::new(),
@@ -66,7 +73,7 @@ where
     ///
     /// This allows the application to create Room<T> instances with
     /// different T types before adding to the session.
-    pub fn add_peer(&mut self, peer_id: PeerId, peer_session: PeerSession<TMsg>) {
+    pub fn add_peer(&mut self, peer_id: PeerId, peer_session: PeerSession<TMsg, TRole>) {
         if let Err(e) = self.session_manager.add_peer(peer_id.clone(), peer_session) {
             tracing::error!("Failed to add peer {}: {:?}", peer_id, e);
         }
@@ -132,9 +139,10 @@ where
     }
 }
 
-impl<TMsg> Actor for ConnectionManager<TMsg>
+impl<TMsg, TRole> Actor for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + std::fmt::Debug + 'static,
 {
     type Context = Context<Self>;
 }
@@ -145,9 +153,10 @@ where
 pub struct GetPeers;
 
 /// Handler for GetPeers - Return list of connected peer IDs
-impl<TMsg> Handler<GetPeers> for ConnectionManager<TMsg>
+impl<TMsg, TRole> Handler<GetPeers> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + std::fmt::Debug + 'static,
 {
     type Result = Vec<PeerId>;
 
@@ -176,9 +185,10 @@ impl<TMsg> GetPeerSender<TMsg> {
 }
 
 /// Handler for GetPeerSender - Return cloneable sender for a peer
-impl<TMsg> Handler<GetPeerSender<TMsg>> for ConnectionManager<TMsg>
+impl<TMsg, TRole> Handler<GetPeerSender<TMsg>> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + std::fmt::Debug + 'static,
 {
     type Result = Option<mpsc::Sender<(RoomId, TMsg)>>;
 
@@ -207,9 +217,10 @@ impl<TMsg> SubscribePeerInbound<TMsg> {
 }
 
 /// Handler for SubscribePeerInbound - Subscribe to inbound messages from peer
-impl<TMsg> Handler<SubscribePeerInbound<TMsg>> for ConnectionManager<TMsg>
+impl<TMsg, TRole> Handler<SubscribePeerInbound<TMsg>> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + std::fmt::Debug + 'static,
 {
     type Result = Option<tokio::sync::broadcast::Receiver<(RoomId, TMsg)>>;
 
@@ -241,9 +252,10 @@ pub struct SendToRoom<TMsg> {
 /// instead of routing sends through the actor system.
 ///
 /// See `get_peer_sender()` method below for the proper approach.
-impl<TMsg> Handler<SendToRoom<TMsg>> for ConnectionManager<TMsg>
+impl<TMsg, TRole> Handler<SendToRoom<TMsg>> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + std::fmt::Debug + 'static,
 {
     type Result = ResponseFuture<Result<(), String>>;
 
@@ -257,18 +269,19 @@ where
 }
 
 /// Handler for HandshakeComplete - Called when HelloActor completes handshake
-impl<TMsg> Handler<HandshakeComplete> for ConnectionManager<TMsg>
+impl<TMsg, TRole> Handler<HandshakeComplete> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
+    TRole: ApplicationRole + std::fmt::Debug + 'static,
 {
     type Result = ();
 
     fn handle(&mut self, msg: HandshakeComplete, _ctx: &mut Context<Self>) {
         let peer_id = msg.peer_id.clone();
         tracing::info!(
-            "Handshake completed - peer_id: {}, peer_role: {:?}, active_rooms: {:?}",
+            "Handshake completed - peer_id: {}, peer_role: {}, active_rooms: {:?}",
             peer_id,
-            msg.peer_role,
+            msg.peer_role_str,
             msg.active_rooms
         );
 
@@ -465,7 +478,7 @@ mod tests {
         let _b = TestMessages::MemDB;
         let _c = TestMessages::Health;
 
-        let _manager = ConnectionManager::<TestMessages>::new(rooms);
+        let _manager = ConnectionManager::<TestMessages, zznet_auth::mock::MockRole>::new(rooms);
         // Just test it compiles and constructs
     }
 }

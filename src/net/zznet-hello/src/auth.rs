@@ -4,7 +4,9 @@
 //! for determining which roles can connect to which services and access which rooms.
 
 // Re-export the application-level AuthRole from the centralized `zzping-auth` crate.
-// This file keeps the local API stable while delegating the authoritative
-// role and policy logic to `zzping-auth` (the application crate).
+// This keeps the protocol layer working with concrete roles while the session layer
+// is generic. The protocol layer needs concrete roles for serialization and protocol logic.
 
-pub use zzping_auth::AuthRole;
+pub use zznet_auth::ApplicationRole;
+// Do NOT re-export or depend on application-specific role enums here.
+// Protocol must be application-agnostic and exchange role identifiers as strings.

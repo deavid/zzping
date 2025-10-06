@@ -3,7 +3,6 @@
 //! This module defines the wire format for handshake and room communication.
 //! Frames are serialized using bincode and sent over the transport layer.
 
-use crate::auth::AuthRole;
 use serde::{Deserialize, Serialize};
 
 /// Top-level frame enum.
@@ -32,8 +31,8 @@ pub enum HandshakeFrame {
     Hello {
         /// Protocol version (currently "1.0").
         version: String,
-        /// The role of this peer.
-        role: AuthRole,
+        /// The role identifier of this peer as a string (application CN).
+        role_str: String,
         /// Hostname/identifier of this peer.
         hostname: String,
     },
@@ -106,7 +105,7 @@ mod tests {
     fn test_hello_frame_roundtrip() {
         let frame = Frame::Handshake(HandshakeFrame::Hello {
             version: "1.0".to_string(),
-            role: AuthRole::Collector,
+            role_str: "collector".to_string(),
             hostname: "test-host".to_string(),
         });
 
@@ -186,15 +185,10 @@ mod tests {
 
     #[test]
     fn test_all_roles_serialize() {
-        for role in &[
-            AuthRole::Collector,
-            AuthRole::Database,
-            AuthRole::ClientRo,
-            AuthRole::ClientAdmin,
-        ] {
+        for role_str in &["collector", "database", "client-ro", "client-admin"] {
             let frame = Frame::Handshake(HandshakeFrame::Hello {
                 version: "1.0".to_string(),
-                role: *role,
+                role_str: role_str.to_string(),
                 hostname: "test-host".to_string(),
             });
 

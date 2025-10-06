@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 // NEW: Auth imports
 use zznet_api::types::PeerIdentity;
-use zzping_auth::AuthRole;
+use zznet_auth::ApplicationRole;
 
 /// Manages all peer sessions for this process
 ///
@@ -15,21 +15,23 @@ use zzping_auth::AuthRole;
 ///
 /// 100% typed messages, zero double-serialization. Messages are converted to/from TMsg
 /// at the session boundary.
-pub struct SessionManager<TMsg>
+pub struct SessionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + std::fmt::Debug,
 {
     /// All peer sessions
-    peers: HashMap<PeerId, PeerSession<TMsg>>,
+    peers: HashMap<PeerId, PeerSession<TMsg, TRole>>,
 
     /// Rooms this SessionManager offers
     /// Used during PublishRooms negotiation to compute intersection with peers
     offered_rooms: Vec<RoomId>,
 }
 
-impl<TMsg> SessionManager<TMsg>
+impl<TMsg, TRole> SessionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
+    TRole: ApplicationRole + std::fmt::Debug,
 {
     /// Create a new SessionManager
     ///
@@ -52,7 +54,7 @@ where
     pub fn add_peer(
         &mut self,
         peer_id: PeerId,
-        peer_session: PeerSession<TMsg>,
+        peer_session: PeerSession<TMsg, TRole>,
     ) -> Result<(), SessionError> {
         if self.peers.contains_key(&peer_id) {
             return Err(SessionError::PeerAlreadyExists(peer_id));
@@ -159,7 +161,7 @@ where
     ///
     /// # Arguments
     /// * `peer_id` - The peer to query
-    pub fn get_peer_role(&self, peer_id: &PeerId) -> Option<AuthRole> {
+    pub fn get_peer_role(&self, peer_id: &PeerId) -> Option<&TRole> {
         self.peers.get(peer_id)?.role()
     }
 
@@ -184,7 +186,7 @@ where
     ///
     /// # Returns
     /// Vector of peer IDs that have the specified role
-    pub fn peers_with_role(&self, role: AuthRole) -> Vec<PeerId> {
+    pub fn peers_with_role(&self, role: &TRole) -> Vec<PeerId> {
         self.peers
             .iter()
             .filter_map(|(id, session)| {
@@ -308,10 +310,11 @@ mod tests {
     use super::*;
     use crate::test_room_messages::CollectorMessages;
     use tokio::sync::mpsc;
+    use zznet_auth::mock::MockRole;
     #[actix::test]
     async fn test_session_manager_new() {
         let offered_rooms = vec![RoomId::from("intentconfig"), RoomId::from("memdb")];
-        let manager = SessionManager::<CollectorMessages>::new(offered_rooms.clone());
+        let manager = SessionManager::<CollectorMessages, MockRole>::new(offered_rooms.clone());
 
         assert_eq!(manager.offered_rooms(), offered_rooms.as_slice());
         assert_eq!(manager.peer_ids().len(), 0);
@@ -320,11 +323,11 @@ mod tests {
 
     #[actix::test]
     async fn test_add_peer() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
         let peer_id = PeerId::from("test_peer");
 
         // Create empty peer session
-        let peer_session = PeerSession::<CollectorMessages>::new(peer_id.clone());
+        let peer_session = PeerSession::<CollectorMessages, MockRole>::new(peer_id.clone());
 
         manager.add_peer(peer_id.clone(), peer_session).unwrap();
 
@@ -337,25 +340,25 @@ mod tests {
 
     #[actix::test]
     async fn test_add_peer_already_exists() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
         let peer_id = PeerId::from("test_peer");
 
         // Add first time
-        let peer_session1 = PeerSession::<CollectorMessages>::new(peer_id.clone());
+        let peer_session1 = PeerSession::<CollectorMessages, MockRole>::new(peer_id.clone());
         manager.add_peer(peer_id.clone(), peer_session1).unwrap();
 
         // Try to add again
-        let peer_session2 = PeerSession::<CollectorMessages>::new(peer_id.clone());
+        let peer_session2 = PeerSession::<CollectorMessages, MockRole>::new(peer_id.clone());
         let result = manager.add_peer(peer_id.clone(), peer_session2);
         assert!(matches!(result, Err(SessionError::PeerAlreadyExists(_))));
     }
 
     #[actix::test]
     async fn test_remove_peer() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
         let peer_id = PeerId::from("test_peer");
 
-        let peer_session = PeerSession::<CollectorMessages>::new(peer_id.clone());
+        let peer_session = PeerSession::<CollectorMessages, MockRole>::new(peer_id.clone());
         manager.add_peer(peer_id.clone(), peer_session).unwrap();
         assert_eq!(manager.peer_ids().len(), 1);
 
@@ -365,7 +368,7 @@ mod tests {
 
     #[actix::test]
     async fn test_remove_peer_not_found() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
         let peer_id = PeerId::from("nonexistent_peer");
 
         let result = manager.remove_peer(&peer_id);
@@ -374,12 +377,12 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_ids() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
         let peer_id1 = PeerId::from("peer1");
         let peer_id2 = PeerId::from("peer2");
 
-        let peer_session1 = PeerSession::<CollectorMessages>::new(peer_id1.clone());
-        let peer_session2 = PeerSession::<CollectorMessages>::new(peer_id2.clone());
+        let peer_session1 = PeerSession::<CollectorMessages, MockRole>::new(peer_id1.clone());
+        let peer_session2 = PeerSession::<CollectorMessages, MockRole>::new(peer_id2.clone());
 
         manager.add_peer(peer_id1.clone(), peer_session1).unwrap();
         manager.add_peer(peer_id2.clone(), peer_session2).unwrap();
@@ -393,14 +396,14 @@ mod tests {
     #[actix::test]
     async fn test_offered_rooms() {
         let offered_rooms = vec![RoomId::from("intentconfig"), RoomId::from("memdb")];
-        let manager = SessionManager::<CollectorMessages>::new(offered_rooms.clone());
+        let manager = SessionManager::<CollectorMessages, MockRole>::new(offered_rooms.clone());
 
         assert_eq!(manager.offered_rooms(), offered_rooms.as_slice());
     }
 
     #[actix::test]
     async fn test_connect_peer_not_found() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
         let peer_id = PeerId::from("nonexistent_peer");
         let (tx, rx) = mpsc::channel(10);
 
@@ -410,7 +413,7 @@ mod tests {
 
     #[actix::test]
     async fn test_disconnect_peer_not_found() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
         let peer_id = PeerId::from("nonexistent_peer");
 
         let result = manager.disconnect_peer(&peer_id);
@@ -419,7 +422,7 @@ mod tests {
 
     #[actix::test]
     async fn test_send_to_room_peer_not_found() {
-        let manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
         let peer_id = PeerId::from("nonexistent_peer");
         let room_id = RoomId::from("intentconfig");
         let msg =
@@ -431,10 +434,11 @@ mod tests {
 
     #[actix::test]
     async fn test_basic_peer_lifecycle() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![RoomId::from("memdb")]);
+        let mut manager =
+            SessionManager::<CollectorMessages, MockRole>::new(vec![RoomId::from("memdb")]);
 
         // Add peer
-        let peer_session = PeerSession::<CollectorMessages>::new(PeerId::from("peer1"));
+        let peer_session = PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("peer1"));
         manager
             .add_peer(PeerId::from("peer1"), peer_session)
             .unwrap();
@@ -462,11 +466,13 @@ mod tests {
 
     #[actix::test]
     async fn test_multiple_peers_simultaneously() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![RoomId::from("memdb")]);
+        let mut manager =
+            SessionManager::<CollectorMessages, MockRole>::new(vec![RoomId::from("memdb")]);
 
         // Add three peers
         for peer_id in ["peer1", "peer2", "peer3"] {
-            let peer_session = PeerSession::<CollectorMessages>::new(PeerId::from(peer_id));
+            let peer_session =
+                PeerSession::<CollectorMessages, MockRole>::new(PeerId::from(peer_id));
             manager
                 .add_peer(PeerId::from(peer_id), peer_session)
                 .unwrap();
@@ -499,7 +505,7 @@ mod tests {
 
     #[actix::test]
     async fn test_set_offered_rooms() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
 
         // Initially empty
         assert_eq!(manager.offered_rooms().len(), 0);
@@ -523,7 +529,7 @@ mod tests {
 
     #[actix::test]
     async fn test_handle_publish_rooms() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
 
         // Manager offers 3 rooms
         manager.set_offered_rooms(vec![
@@ -553,7 +559,7 @@ mod tests {
 
     #[actix::test]
     async fn test_handle_publish_rooms_peer_not_found() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
 
         let result = manager
             .handle_publish_rooms(&PeerId::from("unknown"), vec![RoomId::from("intentconfig")]);
@@ -563,7 +569,7 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_joined_rooms() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
 
         // Create peer
         let peer = PeerSession::new(PeerId::from("database"));
@@ -579,7 +585,7 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_joined_rooms_peer_not_found() {
-        let manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
 
         let result = manager.peer_joined_rooms(&PeerId::from("unknown"));
 
@@ -588,7 +594,7 @@ mod tests {
 
     #[actix::test]
     async fn test_is_room_joined_with_peer() {
-        let mut manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
 
         // Create peer
         let peer = PeerSession::new(PeerId::from("database"));
@@ -611,7 +617,7 @@ mod tests {
 
     #[actix::test]
     async fn test_is_room_joined_with_peer_peer_not_found() {
-        let manager = SessionManager::<CollectorMessages>::new(vec![]);
+        let manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
 
         let result = manager
             .is_room_joined_with_peer(&PeerId::from("unknown"), &RoomId::from("intentconfig"));

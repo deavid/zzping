@@ -19,10 +19,10 @@
 use actix::prelude::*;
 use std::time::Duration;
 use zznet_builder::{ClientBuilder, ServerBuilder};
-use zznet_hello::auth::AuthRole;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::types::RoomId;
+use zzping_auth::AuthRole;
 
 // ============================================================================
 // Step 1: Define Application Messages
@@ -185,7 +185,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a SessionManager for the server
     // This manages all peer connections and room message routing
-    let server_session_manager = ConnectionManager::<AppMessage>::new(vec![
+    let server_session_manager = ConnectionManager::<AppMessage, AuthRole>::new(vec![
         RoomId::from("health"),
         RoomId::from("data"),
         RoomId::from("status"),
@@ -225,9 +225,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔌 Setting up client...");
 
     // Create a SessionManager for the client
-    let client_session_manager =
-        ConnectionManager::<AppMessage>::new(vec![RoomId::from("health"), RoomId::from("data")])
-            .start();
+    let client_session_manager = ConnectionManager::<AppMessage, AuthRole>::new(vec![
+        RoomId::from("health"),
+        RoomId::from("data"),
+    ])
+    .start();
 
     // Create the client using ClientBuilder
     let _client = ClientBuilder::new()

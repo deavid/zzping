@@ -9,7 +9,16 @@ use serde::{Deserialize, Serialize};
 ///
 /// Applications should implement this trait for their custom role types.
 pub trait ApplicationRole:
-    Clone + Copy + PartialEq + Eq + Serialize + for<'de> Deserialize<'de> + Send + Sync + 'static
+    Clone
+    + Copy
+    + PartialEq
+    + Eq
+    + Serialize
+    + for<'de> Deserialize<'de>
+    + Send
+    + Sync
+    + 'static
+    + Unpin
 {
     /// Parse role from certificate Common Name
     fn from_cn(cn: &str) -> Result<Self, crate::error::AuthError>;

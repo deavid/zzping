@@ -167,7 +167,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     cfg.insecure_trust_hello,
                 );
                 let authorizer = acl.to_authorizer();
-                ConnectionManager::<SecureMessage>::new_with_acl(
+                ConnectionManager::<SecureMessage, AuthRole>::new_with_acl(
                     offered_rooms.clone(),
                     Some((authorizer, false)),
                 )
@@ -175,12 +175,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             Err(e) => {
                 log::warn!("Failed to validate ACL config: {}", e);
-                ConnectionManager::<SecureMessage>::new(offered_rooms.clone()).start()
+                ConnectionManager::<SecureMessage, AuthRole>::new(offered_rooms.clone()).start()
             }
         },
         Err(e) => {
             log::warn!("No ACL config loaded for tls-example: {}", e);
-            ConnectionManager::<SecureMessage>::new(offered_rooms.clone()).start()
+            ConnectionManager::<SecureMessage, AuthRole>::new(offered_rooms.clone()).start()
         }
     };
 
@@ -211,7 +211,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     log::info!("🔌 Setting up secure client with TLS...");
 
-    let client_manager = ConnectionManager::<SecureMessage>::new(vec![
+    let client_manager = ConnectionManager::<SecureMessage, AuthRole>::new(vec![
         RoomId::from("auth"),
         RoomId::from("data"),
         RoomId::from("health"),

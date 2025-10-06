@@ -1,3 +1,7 @@
+//! Integration tests for zzping-auth helpers used by application-level code.
+//!
+//! These are small, focused tests that exercise the ACL manager and
+//! configuration helpers.
 use zznet_api::types::PeerIdentity;
 use zznet_auth::{acl::AclManager, config::AclConfig};
 use zzping_auth::AuthRole;
