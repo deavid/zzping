@@ -1,3 +1,5 @@
+//! Stress tests for ACL performance and concurrency characteristics.
+//!
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;

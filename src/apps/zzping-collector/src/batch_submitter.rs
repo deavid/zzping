@@ -12,10 +12,15 @@ use zzping_proto::zzping::{CollectorRole, RawDataRecord, SendBatchRequest, send_
 /// Commands that can be sent to the BatchSubmitter.
 #[derive(Debug)]
 pub enum BatchSubmitterCommand {
+    /// Update the collector role (Primary/Supervising) for this submitter.
     UpdateRole(CollectorRole),
+    /// Request the current buffer size; reply via the provided oneshot.
     GetHealth(tokio::sync::oneshot::Sender<usize>),
+    /// Initialize the ACK cursor to the provided timestamp (nanos).
     InitializeAckCursor(u64),
+    /// Prune buffered records by fsync timestamp.
     PruneByFsync(u64),
+    /// Instruct the submitter to perform a clean shutdown.
     Shutdown,
 }
 

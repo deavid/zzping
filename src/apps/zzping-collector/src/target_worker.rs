@@ -15,29 +15,38 @@ use zzping_proto::zzping::CollectorRole;
 /// The health status of a worker, reported to the supervisor.
 #[derive(Debug)]
 pub struct WorkerHealth {
+    /// Number of buffered records currently held by the worker.
     pub buffer_size: usize,
 }
 
-// A command enum for the TargetWorker.
+/// Control commands accepted by a TargetWorker.
 #[derive(Debug)]
 pub enum WorkerCommand {
+    /// Request current health, reply via the provided oneshot channel.
     GetHealth(oneshot::Sender<WorkerHealth>),
+    /// Update the collector role for this worker.
     UpdateRole(CollectorRole),
+    /// Prune buffered records by fsync timestamp.
     PruneByFsync(u64),
+    /// Request graceful shutdown of the worker.
     Shutdown,
 }
 
 /// A handle to a running TargetWorker, allowing the TaskSupervisor to command it.
 #[derive(Debug)]
 pub struct TargetWorkerHandle {
+    /// Channel used to send control commands to the worker.
     pub command_tx: mpsc::Sender<WorkerCommand>,
+    /// Handle for the worker's main task.
     pub task_handle: JoinHandle<()>,
 }
 
 /// A collection of handles for a TargetWorker, including a channel to inject data for testing.
 #[derive(Debug)]
 pub struct TargetWorkerHandles {
+    /// Public handle used to command the worker.
     pub handle: TargetWorkerHandle,
+    /// Channel for injecting finalized pings to the worker (used in tests).
     pub data_tx: mpsc::Sender<FinalizedPing>,
 }
 
@@ -57,15 +66,16 @@ pub struct TargetWorker {
 
 impl TargetWorker {
     /// Creates a new TargetWorker and a handle to communicate with it.
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new(
+    ///
+    /// Returns `Result<TargetWorkerHandles>` on success.
+    pub fn create(
         collector_uuid: String,
         target_ip: IpAddr,
         ping_rate_pps: u64,
         db_client: Arc<dyn DatabaseClientTrait>,
     ) -> Result<TargetWorkerHandles> {
         let ping_client = Arc::new(PingSurgeClient::new(target_ip)?);
-        Self::new_with_ping_client(
+        Self::create_with_ping_client(
             collector_uuid,
             target_ip,
             ping_rate_pps,
@@ -75,8 +85,7 @@ impl TargetWorker {
     }
 
     /// Creates a new TargetWorker with a custom PingClient (useful for testing).
-    #[allow(clippy::new_ret_no_self)]
-    pub fn new_with_ping_client(
+    pub fn create_with_ping_client(
         collector_uuid: String,
         target_ip: IpAddr,
         ping_rate_pps: u64,

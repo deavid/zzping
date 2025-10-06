@@ -1,10 +1,15 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+//! Benchmarks for ACL and authorization performance.
+//!
+//! These benchmarks exercise typical ACL operations to detect regressions in
+//! authorization performance.
+use criterion::Criterion;
 use std::collections::HashSet;
 use std::hint::black_box;
 use zznet_api::types::PeerIdentity;
 use zzping_auth::acl::AclManager;
 use zzping_auth::config::AclConfig;
 
+/// Benchmark: authorize with a small ACL.
 fn bench_authorization_small_acl(c: &mut Criterion) {
     let mut allowed = HashSet::new();
     allowed.insert("alice@client-admin".to_string());
@@ -24,6 +29,7 @@ fn bench_authorization_small_acl(c: &mut Criterion) {
     });
 }
 
+/// Benchmark: authorize with a large ACL.
 fn bench_authorization_large_acl(c: &mut Criterion) {
     let mut allowed = HashSet::new();
     for i in 0..1000 {
@@ -44,6 +50,7 @@ fn bench_authorization_large_acl(c: &mut Criterion) {
     });
 }
 
+/// Benchmark: ACL allow/deny modification performance.
 fn bench_acl_modification(c: &mut Criterion) {
     let mut acl = AclManager::new();
 
@@ -55,6 +62,7 @@ fn bench_acl_modification(c: &mut Criterion) {
     });
 }
 
+/// Benchmark: parsing ACL TOML config.
 fn bench_config_parsing(c: &mut Criterion) {
     let toml_content = r#"
 allowed_peers = ["user1@client-ro", "user2@client-admin", "collector"]
@@ -69,6 +77,7 @@ allowed_peers = ["user1@client-ro", "user2@client-admin", "collector"]
     });
 }
 
+/// Benchmark: ACL config validation.
 fn bench_config_validation(c: &mut Criterion) {
     let mut allowed = Vec::new();
     for i in 0..100 {
@@ -83,6 +92,7 @@ fn bench_config_validation(c: &mut Criterion) {
     });
 }
 
+/// Benchmark: authorization when ACL contains only roles.
 fn bench_role_only_authorization(c: &mut Criterion) {
     let mut allowed = HashSet::new();
     allowed.insert("client-ro".to_string());
@@ -101,6 +111,7 @@ fn bench_role_only_authorization(c: &mut Criterion) {
     });
 }
 
+/// Benchmark: repeated authorization calls (concurrent scenario).
 fn bench_concurrent_authorization(c: &mut Criterion) {
     let mut allowed = HashSet::new();
     allowed.insert("alice@client-admin".to_string());
@@ -120,14 +131,19 @@ fn bench_concurrent_authorization(c: &mut Criterion) {
     });
 }
 
-criterion_group!(
-    benches,
-    bench_authorization_small_acl,
-    bench_authorization_large_acl,
-    bench_acl_modification,
-    bench_config_parsing,
-    bench_config_validation,
-    bench_role_only_authorization,
-    bench_concurrent_authorization
-);
-criterion_main!(benches);
+/// Public entrypoint that runs the local benchmark functions.
+pub fn benches_entry(c: &mut Criterion) {
+    bench_authorization_small_acl(c);
+    bench_authorization_large_acl(c);
+    bench_acl_modification(c);
+    bench_config_parsing(c);
+    bench_config_validation(c);
+    bench_role_only_authorization(c);
+    bench_concurrent_authorization(c);
+}
+
+/// Simple main to run the benchmarks without macro-generated public items.
+fn main() {
+    let mut c = Criterion::default();
+    benches_entry(&mut c);
+}

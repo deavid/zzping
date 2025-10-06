@@ -12,14 +12,18 @@ use zzping_proto::zzping::{AnnouncePingsRequest, CollectorRole};
 /// A command for the Pinger task.
 #[derive(Debug)]
 pub enum PingerCommand {
+    /// Update the collector role for this pinger.
     UpdateRole(CollectorRole),
+    /// Signal the pinger to stop and exit.
     Shutdown,
 }
 
 /// The final, processed result of a ping attempt, ready for the BatchSubmitter.
 #[derive(Debug)]
 pub struct FinalizedPing {
+    /// Monotonic timestamp (nanos) when the ping was sent.
     pub sent_nanos: u64,
+    /// RTT in nanoseconds if measured, otherwise None to indicate timeout.
     pub rtt: Option<Duration>,
 }
 

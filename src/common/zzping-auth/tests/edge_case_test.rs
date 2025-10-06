@@ -1,3 +1,5 @@
+//! Edge-case tests for ACL behavior (unicode, long usernames, whitespace, etc.).
+//!
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;

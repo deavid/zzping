@@ -17,15 +17,19 @@ use zznet_api::types::Role;
 #[derive(Error, Debug)]
 pub enum TlsError {
     #[error("IO error: {0}")]
+    /// Underlying I/O error.
     Io(#[from] std::io::Error),
 
     #[error("TLS error: {0}")]
+    /// Error returned by rustls.
     Rustls(#[from] rustls::Error),
 
     #[error("Certificate error: {0}")]
+    /// Certificate parsing or validation failure.
     Certificate(String),
 
     #[error("No private key found in file")]
+    /// No private key was present in the provided PEM file.
     NoPrivateKey,
 }
 
@@ -35,7 +39,9 @@ pub enum TlsError {
 /// ensuring each zzping component uses its designated security credentials.
 #[derive(Debug, Clone)]
 pub struct TlsCertAndKey {
+    /// Path to the certificate PEM file.
     pub pem_path: PathBuf,
+    /// Path to the private key file.
     pub key_path: PathBuf,
 }
 
@@ -83,9 +89,13 @@ impl TlsCertAndKey {
 /// across all zzping components with mutual TLS authentication.
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
+    /// Certificate and key used by this endpoint.
     pub cert: TlsCertAndKey,
+    /// Optional CA certificate path used to verify peers.
     pub ca_cert_path: Option<PathBuf>,
+    /// Whether to include native system CAs.
     pub add_native_ca_certs: bool,
+    /// Server name used for SNI verification.
     pub server_name: String,
 }
 

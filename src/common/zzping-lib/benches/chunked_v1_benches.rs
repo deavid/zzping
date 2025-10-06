@@ -1,4 +1,8 @@
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+//! Benchmarks for chunked_v1 compression/decompression.
+//!
+//! These benchmarks exercise compression and decompression throughput for
+//! representative datasets.
+use criterion::{BenchmarkId, Criterion};
 use std::time::Duration;
 use zzping_lib::{
     chunked_v1::{create_chunk_body, create_chunked_v1_header, decompress_chunked_v1},
@@ -76,6 +80,7 @@ where
     records
 }
 
+/// Criterion benchmark entrypoint for chunked_v1 scenarios.
 fn criterion_benchmark(c: &mut Criterion) {
     let mut group = c.benchmark_group("chunked_v1_performance");
     // Configure for faster execution
@@ -253,6 +258,7 @@ fn criterion_benchmark(c: &mut Criterion) {
     group.finish();
 }
 
+/// Print a compact summary of benchmark metrics collected during the run.
 fn print_benchmark_summary(metrics: &[BenchmarkMetrics]) {
     println!();
     println!(
@@ -367,5 +373,14 @@ fn format_number(n: usize) -> String {
     }
 }
 
-criterion_group!(benches, criterion_benchmark);
-criterion_main!(benches);
+/// Public bench entry used by Criterion (wrapper around internal benchmark).
+pub fn benches_entry(c: &mut Criterion) {
+    criterion_benchmark(c)
+}
+
+// Provide a simple main to run the benches; avoid macro-generated public items
+// that would require additional documentation under workspace lints.
+fn main() {
+    let mut c = Criterion::default();
+    benches_entry(&mut c);
+}

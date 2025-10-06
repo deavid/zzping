@@ -41,7 +41,6 @@ fn get_certs_dir() -> PathBuf {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[allow(dead_code)]
 enum TestMessage {
     Ping(u64),
     Pong(u64),

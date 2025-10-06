@@ -369,6 +369,9 @@ use tokio_stream::wrappers::TcpListenerStream;
 use zzping_proto::zzping::ingestion_server::IngestionServer;
 
 #[cfg(feature = "test-utils")]
+/// Spawn a short-lived test gRPC server bound to an ephemeral port.
+///
+/// Returns the server socket address and a JoinHandle for the server task.
 pub async fn spawn_test_server(data_dir: String) -> (std::net::SocketAddr, JoinHandle<()>) {
     let listener = tokio::time::timeout(
         Duration::from_millis(500),

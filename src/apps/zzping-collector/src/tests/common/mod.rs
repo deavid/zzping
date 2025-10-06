@@ -2,7 +2,6 @@
 
 // Allow dead code in this module, as it's a library of test utilities
 // and not all tests will use all functions.
-#![allow(dead_code)]
 
 use log::{Level, LevelFilter, Log, Metadata, Record, SetLoggerError, warn};
 use std::net::SocketAddr;
@@ -85,17 +84,25 @@ use zzping_proto::zzping::Command;
 #[derive(Clone)]
 #[allow(clippy::type_complexity)]
 pub struct MockIngestionService {
+    /// Received SendBatch RPCs captured for inspection by tests.
     pub received_batches: Arc<Mutex<Vec<SendBatchRequest>>>,
+    /// Received Heartbeat RPCs captured for inspection by tests.
     pub received_heartbeats: Arc<Mutex<Vec<HeartbeatRequest>>>,
+    /// Configurable SendBatchResponse returned by the mock.
     pub send_batch_response: Arc<Mutex<SendBatchResponse>>,
+    /// Configurable HeartbeatResponse returned by the mock.
     pub heartbeat_response: Arc<Mutex<HeartbeatResponse>>,
     /// Test-only hook: when present, the heartbeat RPC will await a
     /// HeartbeatResponse sent on this receiver. This lets tests deterministically
     /// trigger heartbeat responses containing e.g. `last_fsynced_received_nanos`.
+    /// Optional override channel for supplying HeartbeatResponse values.
     pub heartbeat_override_rx:
         Arc<AsyncMutex<Option<tokio::sync::mpsc::Receiver<HeartbeatResponse>>>>,
+    /// Response to return for get_recent_data RPCs.
     pub get_recent_data_response: Arc<Mutex<GetRecentDataResponse>>,
+    /// Sender used to push command stream items to subscribers.
     pub command_stream_tx: Arc<Mutex<Option<tokio::sync::mpsc::Sender<Result<Command, Status>>>>>,
+    /// When true, send_batch RPCs return an error to exercise error paths.
     pub send_batch_should_fail: Arc<Mutex<bool>>,
 }
 
@@ -311,6 +318,7 @@ use tokio::sync::mpsc;
 
 /// A mock handle for a TargetWorker, used to receive commands in tests.
 pub struct MockTargetWorkerHandle {
+    /// Receiver for worker commands produced during tests.
     pub command_rx: mpsc::Receiver<WorkerCommand>,
 }
 

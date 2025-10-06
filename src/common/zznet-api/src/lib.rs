@@ -38,13 +38,17 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 /// DEPRECATED: Use transport::TransportConnection instead.
-/// This trait is part of the old channel-based protocol and will be removed.
+///
+/// Backwards-compatibility shim for legacy channel-based code.
 #[deprecated(
     since = "0.2.0",
     note = "Use transport::TransportConnection trait instead"
 )]
 #[async_trait]
 pub trait ZzChannel: Send + Sync + std::fmt::Debug {
+    /// Send raw bytes on the legacy channel.
     async fn send(&self, payload: Vec<u8>) -> Result<()>;
+
+    /// Receive raw bytes from the legacy channel.
     async fn recv(&mut self) -> Result<Option<Vec<u8>>>;
 }

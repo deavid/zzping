@@ -90,6 +90,10 @@ impl StorageEngine {
     }
 }
 
+/// Background task that consumes ingestion items and persists completed
+/// minute-based chunks to disk.
+///
+/// Runs until the sender side of the channel is closed.
 pub async fn storage_task(mut item_rx: mpsc::Receiver<IngestionItem>, data_dir: String) {
     info!("Storage task started.");
     let mut engine = StorageEngine::new(&data_dir);

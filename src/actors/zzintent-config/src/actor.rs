@@ -28,7 +28,6 @@ pub struct IntentConfigActor {
     role: IntentConfigRole,
 
     /// SessionManager for network communication (Phase 3)
-    #[allow(dead_code)] // TODO: Remove when we implement broadcasting
     session_manager: Option<Rc<SessionManager<IntentConfigMessage>>>,
 }
 

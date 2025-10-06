@@ -1185,10 +1185,8 @@ mod tests {
             }
         }
 
-        #[allow(dead_code)]
-        fn get_sent_messages(&self) -> Vec<CollectorMessages> {
-            self.sent_messages.lock().unwrap().clone()
-        }
+        // Intentionally omit accessors for sent_messages to avoid dead-code
+        // when the tests only exercise send_message behavior.
     }
 
     impl RoomHandle<CollectorMessages> for MockRoomHandle {

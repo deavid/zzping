@@ -38,7 +38,7 @@ async fn test_target_worker_primary_supervised_role_sends_init_command() -> Resu
     let target_ip = "127.0.0.1".parse::<IpAddr>()?;
     let (ping_event_tx, _) = mpsc::channel(10);
     let ping_client = Arc::new(PingMockClient::new(target_ip, ping_event_tx));
-    let handles = TargetWorker::new_with_ping_client(
+    let handles = TargetWorker::create_with_ping_client(
         "test-uuid".to_string(),
         target_ip,
         1,         // Use a normal ping rate since we're providing our own client

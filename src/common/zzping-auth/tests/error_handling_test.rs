@@ -1,3 +1,5 @@
+//! Tests for ACL config loading and basic error handling.
+//!
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;

@@ -16,33 +16,70 @@ use serde::{Deserialize, Serialize};
 // Mock Room Message Types (Simulating Real Component Messages)
 // ============================================================================
 
-/// Mock IntentConfig message (like real IntentConfigMessage)
+/// Mock IntentConfig message (like real IntentConfigMessage).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum IntentConfigMessage {
-    ConfigUpdate { targets: Vec<String>, rate: u32 },
+    /// Configuration update: list of targets and rate.
+    ConfigUpdate {
+        /// DNS targets to configure.
+        targets: Vec<String>,
+        /// Rate parameter for configuration.
+        rate: u32,
+    },
+    /// Simple query for current configuration.
     Query,
-    Response { config: String },
+    /// Response containing configuration data.
+    Response {
+        /// Serialized configuration string.
+        config: String,
+    },
 }
 
-/// Mock MemDB message (like real MemDBMessage)
+/// Mock MemDB message (like real MemDBMessage).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MemDBMessage {
-    Store { key: String, value: String },
-    Retrieve { key: String },
-    Result { value: Option<String> },
+    /// Store a key/value pair.
+    Store {
+        /// Key to store.
+        key: String,
+        /// Value to associate with the key.
+        value: String,
+    },
+    /// Retrieve a value by key.
+    Retrieve {
+        /// Key to retrieve.
+        key: String,
+    },
+    /// Result of a retrieval operation.
+    Result {
+        /// Optional retrieved value.
+        value: Option<String>,
+    },
 }
 
-/// Mock Health message (like real HealthMessage)
+/// Mock Health message (like real HealthMessage).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum HealthMessage {
+    /// Liveness ping.
     Ping,
-    Pong { uptime_seconds: u64 },
+    /// Pong response with uptime in seconds.
+    Pong {
+        /// Peer uptime in seconds.
+        uptime_seconds: u64,
+    },
 }
 
-/// Mock Metrics message (only in some apps)
+/// Mock Metrics message (only in some apps).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MetricsMessage {
-    ReportLatency { peer: String, latency_ms: u32 },
+    /// Report observed latency for a peer.
+    ReportLatency {
+        /// Peer identifier.
+        peer: String,
+        /// Observed latency in milliseconds.
+        latency_ms: u32,
+    },
+    /// Request current statistics.
     GetStats,
 }
 
@@ -55,9 +92,13 @@ pub enum MetricsMessage {
 /// This simulates a full-featured collector binary that supports all room types.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CollectorMessages {
+    /// Message for intent configuration room.
     IntentConfig(IntentConfigMessage),
+    /// Message for in-memory database room.
     MemDB(MemDBMessage),
+    /// Message for health monitoring room.
     Health(HealthMessage),
+    /// Message for metrics reporting room.
     Metrics(MetricsMessage),
 }
 
@@ -209,7 +250,9 @@ impl TryFrom<CollectorMessages> for MetricsMessage {
 /// Notice: No MemDB, No Metrics (different from CollectorMessages!)
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientMessages {
+    /// Message for intent configuration room.
     IntentConfig(IntentConfigMessage),
+    /// Message for health monitoring room.
     Health(HealthMessage),
 }
 

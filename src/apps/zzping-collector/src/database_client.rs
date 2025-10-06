@@ -17,17 +17,30 @@ use mockall::automock;
 type RpcFut<'a, T> = Pin<Box<dyn Future<Output = Result<tonic::Response<T>>> + Send + 'a>>;
 
 #[cfg_attr(test, automock)]
+/// Abstraction over the database RPC client used by the collector.
+///
+/// Implementations execute gRPC requests and return boxed futures so callers
+/// can use the trait object without exposing concrete async types.
 pub trait DatabaseClientTrait: Send + Sync + 'static {
+    /// Send a heartbeat RPC to the database service.
     fn heartbeat<'a>(&'a self, request: HeartbeatRequest) -> RpcFut<'a, HeartbeatResponse>;
+
+    /// Announce a set of pings to the database service.
     fn announce_pings<'a>(
         &'a self,
         request: AnnouncePingsRequest,
     ) -> RpcFut<'a, AnnouncePingsResponse>;
+
+    /// Send a batch of finalized pings to the database service.
     fn send_batch<'a>(&'a self, request: SendBatchRequest) -> RpcFut<'a, SendBatchResponse>;
+
+    /// Request recent data matching the provided criteria.
     fn get_recent_data<'a>(
         &'a self,
         request: GetRecentDataRequest,
     ) -> RpcFut<'a, GetRecentDataResponse>;
+
+    /// Subscribe to control commands from the database service.
     fn subscribe_to_commands<'a>(
         &'a self,
         request: CommandRequest,
@@ -59,6 +72,7 @@ impl DatabaseClient {
     }
 
     // -- Inherent async wrappers so callers can call .heartbeat(...) directly
+    /// Send a heartbeat RPC using the configured authentication token.
     pub async fn heartbeat(
         &self,
         request: HeartbeatRequest,
@@ -72,6 +86,7 @@ impl DatabaseClient {
         Ok(resp)
     }
 
+    /// Announce pings using the configured authentication token.
     pub async fn announce_pings(
         &self,
         request: AnnouncePingsRequest,
@@ -85,6 +100,7 @@ impl DatabaseClient {
         Ok(resp)
     }
 
+    /// Send a batch of records to the database service.
     pub async fn send_batch(
         &self,
         request: SendBatchRequest,
@@ -98,6 +114,7 @@ impl DatabaseClient {
         Ok(resp)
     }
 
+    /// Fetch recent data from the database service.
     pub async fn get_recent_data(
         &self,
         request: GetRecentDataRequest,
@@ -111,6 +128,7 @@ impl DatabaseClient {
         Ok(resp)
     }
 
+    /// Subscribe to commands streamed from the database service.
     pub async fn subscribe_to_commands(
         &self,
         request: CommandRequest,
@@ -128,18 +146,7 @@ impl DatabaseClient {
         Ok(resp)
     }
 
-    /// Construct a DatabaseClient from its parts. Useful for tests that want
-    /// a lightweight client without performing a network connect.
-    #[allow(dead_code)]
-    pub(crate) fn from_parts(client: IngestionClient<Channel>, auth_token: String) -> Self {
-        Self { client, auth_token }
-    }
-
-    /// Test-only constructor returning a concrete `DatabaseClient`.
-    #[allow(dead_code)]
-    pub(crate) fn new_for_test(client: IngestionClient<Channel>, auth_token: String) -> Self {
-        Self { client, auth_token }
-    }
+    // Note: test helpers were removed to avoid dead-code with workspace lints.
 }
 
 impl DatabaseClientTrait for DatabaseClient {

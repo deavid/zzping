@@ -50,7 +50,10 @@
 //! // room.process_one().await.unwrap();
 //! ```
 
+/// Connector utilities to wire two `Room`s together.
 pub mod connector;
+
+/// Typed in-memory room abstraction for local component messaging.
 pub mod room;
 
 #[cfg(test)]

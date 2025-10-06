@@ -20,7 +20,6 @@ use zznet_session::types::RoomId;
 
 // Test message type for integration tests
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 enum TestMessage {
     Ping(u64),
     Pong(u64),

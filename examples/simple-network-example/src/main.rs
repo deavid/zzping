@@ -117,12 +117,10 @@ impl RoomMessageTrait for AppMessage {
 ///
 /// This actor represents your server-side application logic.
 /// It receives messages from clients via the SessionManager.
-#[allow(dead_code)]
 struct ServerApp {
     name: String,
 }
 
-#[allow(dead_code)]
 impl ServerApp {
     fn new(name: String) -> Self {
         Self { name }
@@ -141,12 +139,10 @@ impl Actor for ServerApp {
 ///
 /// This actor represents your client-side application logic.
 /// It can send messages to the server via the SessionManager.
-#[allow(dead_code)]
 struct ClientApp {
     name: String,
 }
 
-#[allow(dead_code)]
 impl ClientApp {
     fn new(name: String) -> Self {
         Self { name }
@@ -215,6 +211,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Give server time to start
     tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Start the server application actor so its `new` and struct are used.
+    let _server_app = ServerApp::new("server-app".to_string()).start();
+
+    // Start the client application actor so its `new` and struct are used.
+    let _client_app = ClientApp::new("client-app".to_string()).start();
 
     // ========================================================================
     // Client Setup

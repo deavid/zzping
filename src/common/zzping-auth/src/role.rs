@@ -8,9 +8,13 @@ use serde::{Deserialize, Serialize};
 /// Authentication role for a peer in the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AuthRole {
+    /// Role representing a collector service.
     Collector,
+    /// Role representing the database service.
     Database,
+    /// Read-only client role.
     ClientRo,
+    /// Administrator client role with full privileges.
     ClientAdmin,
 }
 

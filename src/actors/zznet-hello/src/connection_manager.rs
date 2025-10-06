@@ -160,11 +160,13 @@ where
 #[derive(Message)]
 #[rtype(result = "Option<mpsc::Sender<(RoomId, TMsg)>>")]
 pub struct GetPeerSender<TMsg: 'static> {
+    /// The peer to query for a cloneable sender.
     pub peer_id: PeerId,
     _phantom: std::marker::PhantomData<TMsg>,
 }
 
 impl<TMsg> GetPeerSender<TMsg> {
+    /// Create a `GetPeerSender` message for the given peer id.
     pub fn new(peer_id: PeerId) -> Self {
         Self {
             peer_id,
@@ -189,11 +191,13 @@ where
 #[derive(Message)]
 #[rtype(result = "Option<tokio::sync::broadcast::Receiver<(RoomId, TMsg)>>")]
 pub struct SubscribePeerInbound<TMsg: 'static> {
+    /// The peer to subscribe to inbound messages from.
     pub peer_id: PeerId,
     _phantom: std::marker::PhantomData<TMsg>,
 }
 
 impl<TMsg> SubscribePeerInbound<TMsg> {
+    /// Create a `SubscribePeerInbound` message for the given peer id.
     pub fn new(peer_id: PeerId) -> Self {
         Self {
             peer_id,
@@ -222,8 +226,11 @@ where
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct SendToRoom<TMsg> {
+    /// Target peer id.
     pub peer_id: PeerId,
+    /// Target room id within the peer.
     pub room_id: RoomId,
+    /// The typed message to send.
     pub message: TMsg,
 }
 
@@ -409,19 +416,18 @@ mod tests {
 
     // Simple test message enum for ConnectionManager tests
     #[derive(Debug, Clone)]
-    #[allow(dead_code)]
     enum TestMessages {
-        IntentConfig(String),
-        MemDB(String),
-        Health(String),
+        IntentConfig,
+        MemDB,
+        Health,
     }
 
     impl zznet_session::room_message_trait::RoomMessageTrait for TestMessages {
         fn room_id(&self) -> RoomId {
             match self {
-                TestMessages::IntentConfig(_) => RoomId::from("intentconfig"),
-                TestMessages::MemDB(_) => RoomId::from("memdb"),
-                TestMessages::Health(_) => RoomId::from("health"),
+                TestMessages::IntentConfig => RoomId::from("intentconfig"),
+                TestMessages::MemDB => RoomId::from("memdb"),
+                TestMessages::Health => RoomId::from("health"),
             }
         }
 
@@ -435,7 +441,7 @@ mod tests {
             _room_id: &RoomId,
             _bytes: &[u8],
         ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
-            Ok(TestMessages::IntentConfig("test".to_string())) // Stub for testing
+            Ok(TestMessages::IntentConfig) // Stub for testing
         }
 
         fn supported_rooms() -> Vec<RoomId> {
@@ -454,6 +460,10 @@ mod tests {
             RoomId::from("memdb"),
             RoomId::from("health"),
         ];
+        // Construct each variant to satisfy dead-code checks for tests.
+        let _a = TestMessages::IntentConfig;
+        let _b = TestMessages::MemDB;
+        let _c = TestMessages::Health;
 
         let _manager = ConnectionManager::<TestMessages>::new(rooms);
         // Just test it compiles and constructs

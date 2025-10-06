@@ -42,10 +42,19 @@
 //! - Transport layer (PoC #4)
 //! - HELLO protocol (PoC #4)
 
+/// Per-peer session state and helpers.
 pub mod peer_session;
+
+/// Adapter utilities for routing room messages into sessions.
 pub mod room_adapter;
+
+/// Traits for serializing/deserializing room messages.
 pub mod room_message_trait;
+
+/// Manages lifetime and routing for multiple peer sessions.
 pub mod session_manager;
+
+/// Common types used by session manager and peers.
 pub mod types;
 
 #[cfg(test)]

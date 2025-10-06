@@ -7,6 +7,13 @@ license.workspace = true
 repository.workspace = true
 description = "TCP/TLS transport implementation for ZZPing network stack"
 
+# Workspace-wide linting: Since collaborators here (read, AI agents) are too happy to just allow a lint and move on, we
+# are adding here a workspace wide forbid on the lints that must not be overriden. Do not be even tempted to change this!
+# If you think you have a legitimate reason for one of these, think again: YOU DON'T. DO NOT TOUCH THESE LINT CONFIGS!
+[lints]
+# This makes the crate inherit all lints defined in [workspace.lints]
+workspace = true
+
 [dependencies]
 # Internal dependencies
 zznet-api = { path = "../../common/zznet-api" }

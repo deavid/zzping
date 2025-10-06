@@ -24,7 +24,9 @@ use zzping_proto::zzping::CollectorRole;
 /// operation if the database is unavailable on startup.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CachedIntent {
+    /// Set of target IPs managed by this collector.
     pub targets: HashSet<IpAddr>,
+    /// Desired pings per second across targets.
     pub ping_rate_pps: u64,
 }
 

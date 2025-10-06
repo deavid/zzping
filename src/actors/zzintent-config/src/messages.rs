@@ -9,7 +9,9 @@ use std::net::IpAddr;
 #[derive(Message, Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct IntentConfigData {
+    /// IP targets to ping.
     pub targets: Vec<IpAddr>,
+    /// Ping rate in packets per second.
     pub ping_rate_pps: u64,
 }
 
@@ -23,6 +25,7 @@ pub struct UpdateConfig(pub IntentConfigData);
 #[derive(Message, Hash, PartialEq, Eq)]
 #[rtype(result = "usize")] // Returns the subscription ID
 pub struct Subscribe {
+    /// Address to receive configuration update broadcasts.
     pub recipient: Recipient<IntentConfigData>,
 }
 

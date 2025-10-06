@@ -2,20 +2,23 @@ use crate::database_client::DatabaseClientTrait;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Synchronized holder for an optional database client used by collector tasks.
 pub struct ClientHolder {
     client: Arc<RwLock<Option<Arc<dyn DatabaseClientTrait>>>>,
 }
 
 impl ClientHolder {
+    /// Create a new holder wrapping the provided optional client.
     pub fn new(client: Option<Arc<dyn DatabaseClientTrait>>) -> Self {
         Self {
             client: Arc::new(RwLock::new(client)),
         }
     }
+    /// Read the current optional client.
     pub async fn get(&self) -> Option<Arc<dyn DatabaseClientTrait>> {
         self.client.read().await.clone()
     }
-
+    /// Replace the held client with the provided instance.
     pub async fn set(&self, client: Arc<dyn DatabaseClientTrait>) {
         *self.client.write().await = Some(client);
     }

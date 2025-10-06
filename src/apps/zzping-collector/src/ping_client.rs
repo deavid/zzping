@@ -25,6 +25,7 @@ pub struct PingReply {
 /// which is especially useful for testing.
 use std::net::IpAddr;
 
+/// Abstraction for an ICMP ping client used by the Pinger.
 #[async_trait]
 pub trait PingClient: Send + Sync {
     /// The IP address of the target this client is pinging.
@@ -50,6 +51,7 @@ pub struct MockPingClient {
 }
 
 impl MockPingClient {
+    /// Create a new mock ping client for the given target.
     pub fn new(target: IpAddr) -> Self {
         Self { target }
     }

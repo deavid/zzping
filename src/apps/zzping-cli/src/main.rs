@@ -1,3 +1,7 @@
+//! Command-line utility to inspect and summarize `.zzp1` data files.
+//!
+//! Provides a small CLI for dumping file metadata and basic statistics.
+
 use anyhow::Result;
 use chrono::DateTime;
 use clap::Parser;

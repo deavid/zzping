@@ -329,10 +329,11 @@ mod tests {
     use zznet_session::room_message_trait::RoomMessageTrait;
     use zznet_session::types::RoomId;
 
+    /// Minimal test message enum used by the builder tests.
     #[derive(Debug, Clone)]
-    #[allow(dead_code)]
     enum TestMessages {
-        Test(String),
+        /// Simple unit test message.
+        Test,
     }
 
     impl RoomMessageTrait for TestMessages {
@@ -350,7 +351,7 @@ mod tests {
             _room_id: &RoomId,
             _bytes: &[u8],
         ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
-            Ok(TestMessages::Test("test".to_string()))
+            Ok(TestMessages::Test)
         }
 
         fn supported_rooms() -> Vec<RoomId> {

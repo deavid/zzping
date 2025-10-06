@@ -42,7 +42,7 @@ async fn test_fsync_prunes_batch_submitter_via_supervisor_broadcast() {
     let target_ip: IpAddr = IpAddr::from_str("127.0.0.1").unwrap();
 
     // Create a real TargetWorker using the MockPingClient so we can inject data.
-    let handles = TargetWorker::new_with_ping_client(
+    let handles = TargetWorker::create_with_ping_client(
         "test-uuid".to_string(),
         target_ip,
         0, // ping_rate_pps 0 -> pinger will not generate real traffic

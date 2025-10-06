@@ -26,33 +26,70 @@ use zznet_session::types::RoomId;
 // Shared Room Message Types (Common to Both Binaries)
 // ============================================================================
 
-/// IntentConfig room messages
+/// IntentConfig room messages.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum IntentConfigMessage {
-    ConfigUpdate { targets: Vec<String>, rate: u32 },
+    /// Configuration update: list of targets and rate.
+    ConfigUpdate {
+        /// Targets to configure.
+        targets: Vec<String>,
+        /// Configuration rate parameter.
+        rate: u32,
+    },
+    /// Query for current configuration.
     Query,
-    Response { config: String },
+    /// Response containing configuration string.
+    Response {
+        /// Configuration payload.
+        config: String,
+    },
 }
 
-/// MemDB room messages
+/// MemDB room messages.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MemDBMessage {
-    Store { key: String, value: String },
-    Retrieve { key: String },
-    Result { value: Option<String> },
+    /// Store a key/value pair.
+    Store {
+        /// Key to store.
+        key: String,
+        /// Value to store.
+        value: String,
+    },
+    /// Retrieve a value by key.
+    Retrieve {
+        /// Key to retrieve.
+        key: String,
+    },
+    /// Result of a retrieval operation.
+    Result {
+        /// Optional value returned.
+        value: Option<String>,
+    },
 }
 
-/// Health room messages
+/// Health room messages.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum HealthMessage {
+    /// Liveness ping.
     Ping,
-    Pong { uptime_seconds: u64 },
+    /// Pong with uptime.
+    Pong {
+        /// Uptime in seconds.
+        uptime_seconds: u64,
+    },
 }
 
-/// Metrics room messages (only in Collector)
+/// Metrics room messages (only in Collector).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MetricsMessage {
-    ReportLatency { peer: String, latency_ms: u32 },
+    /// Report latency for a peer.
+    ReportLatency {
+        /// Peer identifier.
+        peer: String,
+        /// Latency in milliseconds.
+        latency_ms: u32,
+    },
+    /// Request statistics.
     GetStats,
 }
 
@@ -60,12 +97,16 @@ pub enum MetricsMessage {
 // Binary A: Collector (4 Rooms)
 // ============================================================================
 
-/// Collector binary's application-defined enum
+/// Collector binary's application-defined enum.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CollectorMessages {
+    /// Intent configuration room message.
     IntentConfig(IntentConfigMessage),
+    /// In-memory DB room message.
     MemDB(MemDBMessage),
+    /// Health room message.
     Health(HealthMessage),
+    /// Metrics room message (collector-only).
     Metrics(MetricsMessage), // ← Only in Collector
 }
 
@@ -141,11 +182,14 @@ impl RoomMessageTrait for CollectorMessages {
 // Binary B: Database (3 Rooms - No Metrics!)
 // ============================================================================
 
-/// Database binary's application-defined enum
+/// Database binary's application-defined enum.
 #[derive(Clone, Debug, PartialEq)]
 pub enum DatabaseMessages {
+    /// Intent configuration room message.
     IntentConfig(IntentConfigMessage),
+    /// In-memory DB room message.
     MemDB(MemDBMessage),
+    /// Health room message.
     Health(HealthMessage),
     // NO Metrics variant!
 }

@@ -18,38 +18,52 @@ use zzping_proto::zzping::CollectorRole;
 /// The configuration for the supervisor, received from the SessionHandler.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SupervisorConfig {
+    /// Target IP addresses to monitor.
     pub targets: HashSet<IpAddr>,
+    /// Pings per second to schedule.
     pub ping_rate_pps: u64,
+    /// Collector role influencing behavior.
     pub role: CollectorRole,
+    /// Optional timestamp for role swaps.
     pub swap_at_nanos: Option<u64>,
+    /// When true, use mock ping client for testing.
     pub use_mock_ping_client: bool,
 }
 
 /// A command to update the TaskSupervisor's database client.
 // Removed #[derive(Debug)]
+/// Signals that the supervisor's database client changed.
 pub enum ClientUpdate {
+    /// New database client available.
     NewClient(Arc<dyn DatabaseClientTrait>),
+    /// Database client lost/unavailable.
     ClientLost,
 }
 
 /// A command to shut down the supervisor gracefully.
 #[derive(Debug)]
 pub struct SupervisorShutdown {
+    /// Channel to acknowledge shutdown completion.
     pub ack_sender: oneshot::Sender<()>,
 }
 
 /// A report of the system's health, sent from the supervisor to the service.
 #[derive(Debug, Clone)]
 pub struct HealthReport {
+    /// Combined buffer size across workers.
     pub total_buffer_size: usize,
+    /// Current role observed by the supervisor.
     pub role: CollectorRole,
+    /// Any fatal errors reported by workers.
     pub fatal_errors: Vec<String>,
 }
 
 /// The long-lived manager of the worker pool.
 pub struct TaskSupervisor {
     collector_uuid: String,
+    /// Current database client used to create workers.
     pub db_client: Option<Arc<dyn DatabaseClientTrait>>,
+    /// Active worker handles keyed by target IP.
     pub workers: HashMap<IpAddr, TargetWorkerHandle>,
     current_role: CollectorRole,
     current_config: Option<SupervisorConfig>,
@@ -287,7 +301,7 @@ impl TaskSupervisor {
                     // For tests, use MockPingClient
                     use crate::ping_client::MockPingClient;
                     let ping_client = std::sync::Arc::new(MockPingClient::new(target_ip));
-                    TargetWorker::new_with_ping_client(
+                    TargetWorker::create_with_ping_client(
                         self.collector_uuid.clone(),
                         target_ip,
                         ping_rate_pps,
@@ -296,7 +310,7 @@ impl TaskSupervisor {
                     )
                 } else {
                     // For production, use real PingSurgeClient
-                    TargetWorker::new(
+                    TargetWorker::create(
                         self.collector_uuid.clone(),
                         target_ip,
                         ping_rate_pps,

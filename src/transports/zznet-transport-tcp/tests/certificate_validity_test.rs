@@ -1,10 +1,10 @@
-// This test file previously attempted to exercise a private parser function
-// and used `rcgen` APIs that don't match the workspace version. The real
-// unit tests live inside `src/transports/zznet-transport-tcp/src/connection.rs`
-// (so they can access private helpers). Keep this placeholder to avoid
-// accidental re-introduction of a fragile external test.
+//! Placeholder test module for certificate-related checks.
+//!
+//! Real, detailed unit tests live in the crate source where private helpers
+//! can be exercised; this file intentionally contains a no-op test to avoid
+//! re-introducing fragile external dependencies.
 
 #[test]
 fn placeholder_noop() {
-    // intentionally empty
+    // intentionally empty by design
 }

@@ -8,8 +8,11 @@ use serde::Serialize;
 /// The file-based configuration for the collector.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
+    /// UUID that uniquely identifies this collector instance.
     pub collector_uuid: String,
+    /// Address of the database service to connect to.
     pub database_addr: String,
+    /// Authentication token used for RPC requests.
     pub auth_token: String,
     /// Test-only field: when true, use MockPingClient instead of real ping client
     #[serde(default)]

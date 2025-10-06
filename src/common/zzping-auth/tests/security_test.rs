@@ -1,3 +1,5 @@
+//! Security-focused tests for ACL enforcement and related checks.
+//!
 use std::collections::HashSet;
 use zznet_api::types::PeerIdentity;
 use zzping_auth::{acl::AclManager, config::AclConfig};

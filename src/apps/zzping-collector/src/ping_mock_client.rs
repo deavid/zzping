@@ -16,6 +16,7 @@ pub struct PingMockClient {
 }
 
 impl PingMockClient {
+    /// Construct a new mock ping client for the given target and event channel.
     pub fn new(target: IpAddr, ping_event_tx: mpsc::Sender<IpAddr>) -> Self {
         Self {
             target,
@@ -24,6 +25,7 @@ impl PingMockClient {
         }
     }
 
+    /// Create a new mock ping client that reports events to `ping_event_tx`.
     pub async fn set_rtt_to_send(&self, rtt: Option<Duration>) {
         *self.rtt_to_send.lock().await = rtt;
     }

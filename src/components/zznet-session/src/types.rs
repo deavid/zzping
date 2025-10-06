@@ -5,10 +5,12 @@ use std::fmt;
 pub struct PeerId(String);
 
 impl PeerId {
+    /// Create a new PeerId from a string.
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
+    /// Borrow the inner string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -31,10 +33,12 @@ impl From<&str> for PeerId {
 pub struct RoomId(String);
 
 impl RoomId {
+    /// Create a new RoomId from a string.
     pub fn new(id: impl Into<String>) -> Self {
         Self(id.into())
     }
 
+    /// Borrow the inner string.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -65,39 +69,69 @@ pub enum ConnectionState {
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
     #[error("Peer not found: {0}")]
+    /// No session exists for the requested peer id.
     PeerNotFound(PeerId),
 
     #[error("Peer already exists: {0}")]
+    /// A peer with the same id was already registered.
     PeerAlreadyExists(PeerId),
 
     #[error("Peer already connected: {0}")]
+    /// Peer is already connected.
     PeerAlreadyConnected(PeerId),
 
     #[error("Peer not connected: {0}")]
+    /// Peer exists but is not currently connected.
     PeerNotConnected(PeerId),
 
     #[error("Room not found: {room_id} for peer {peer_id}")]
-    RoomNotFound { peer_id: PeerId, room_id: RoomId },
+    /// The requested room was not found for the peer.
+    RoomNotFound {
+        /// The peer id for which the room was looked up.
+        peer_id: PeerId,
+        /// The room id that was not found for the peer.
+        room_id: RoomId,
+    },
 
     #[error("Room already exists: {room_id} for peer {peer_id}")]
-    RoomAlreadyExists { peer_id: PeerId, room_id: RoomId },
+    /// A room with the same id already exists for the peer.
+    RoomAlreadyExists {
+        /// The peer id where the room already exists.
+        peer_id: PeerId,
+        /// The conflicting room id.
+        room_id: RoomId,
+    },
 
     #[error("Room handler not registered: {room_id}")]
-    RoomHandlerNotRegistered { room_id: RoomId },
+    /// No handler was registered for the room.
+    RoomHandlerNotRegistered {
+        /// The room id lacking a registered handler.
+        room_id: RoomId,
+    },
 
     #[error("Room receiver already spawned for {room_id} on peer {peer_id}")]
-    RoomReceiverAlreadySpawned { peer_id: PeerId, room_id: RoomId },
+    /// The receiver task for the room is already running.
+    RoomReceiverAlreadySpawned {
+        /// The peer id on which the receiver was spawned.
+        peer_id: PeerId,
+        /// The room id whose receiver is already running.
+        room_id: RoomId,
+    },
 
     #[error("Failed to send message")]
+    /// Failed due to an underlying channel/send error.
     SendFailed,
 
     #[error("Wrong message type for room (failed conversion)")]
+    /// The message could not be converted to the room's expected type.
     WrongMessageType,
 
     #[error("Room not joined: {0}")]
+    /// The requested room is not joined by the peer.
     RoomNotJoined(RoomId),
 
     #[error("Empty room intersection: no common rooms between local and peer")]
+    /// There are no common rooms between local and peer to communicate.
     EmptyIntersection,
 }
 

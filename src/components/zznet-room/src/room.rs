@@ -56,18 +56,24 @@ pub struct RoomChannels<T> {
 }
 
 #[derive(Debug, Error)]
+/// Error returned when processing inbound messages fails.
 pub enum ProcessError {
     #[error("Receiver already spawned in background")]
+    /// The room receiver task was already spawned and cannot be used manually.
     ReceiverAlreadySpawned,
     #[error("Handler failed to process message")]
+    /// The local handler failed to process the forwarded message.
     HandlerFailed,
     #[error("Channel closed")]
+    /// The inbound channel was closed and no more messages can be received.
     ChannelClosed,
 }
 
 #[derive(Debug, Error)]
+/// Error returned when attempting to spawn the room receiver task.
 pub enum SpawnError {
     #[error("Receiver already spawned")]
+    /// Attempted to spawn the receiver when it was already running.
     AlreadySpawned,
 }
 
