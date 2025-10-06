@@ -17,12 +17,12 @@ path = "src/main.rs"
 
 [dependencies]
 # ZZNet components
-zznet-api = { path = "../../src/common/zznet-api" }
-zznet-hello = { path = "../../src/actors/zznet-hello" }
-zznet-builder = { path = "../../src/components/zznet-builder" }
-zznet-session = { path = "../../src/components/zznet-session" }
-zznet-room = { path = "../../src/components/zznet-room" }
-zznet-transport-tcp = { path = "../../src/transports/zznet-transport-tcp" }
+zznet-api = { path = "../../src/net/zznet-api" }
+zznet-hello = { path = "../../src/net/zznet-hello" }
+zznet-builder = { path = "../../src/net/zznet-builder" }
+zznet-session = { path = "../../src/net/zznet-session" }
+zznet-room = { path = "../../src/net/zznet-room" }
+zznet-transport-tcp = { path = "../../src/net/zznet-transport-tcp" }
 
 # Async runtime
 actix = { workspace = true }

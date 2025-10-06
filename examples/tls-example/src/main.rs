@@ -19,6 +19,7 @@ use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use zznet_api::types::Role;
+use zznet_auth::config::AclConfig;
 use zznet_builder::{ClientBuilder, ServerBuilder};
 use zznet_hello::auth::AuthRole;
 use zznet_hello::connection_manager::ConnectionManager;
@@ -27,7 +28,6 @@ use zznet_session::room_message_trait::{
 };
 use zznet_session::types::RoomId;
 use zznet_transport_tcp::config::TlsConfig;
-use zzping_auth::config::AclConfig;
 
 // ============================================================================
 // Step 1: Define Secure Messages

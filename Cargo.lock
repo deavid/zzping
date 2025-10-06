@@ -4506,11 +4506,11 @@ dependencies = [
  "serde",
  "tokio",
  "zznet-api",
+ "zznet-auth",
  "zznet-builder",
  "zznet-hello",
  "zznet-session",
  "zznet-transport-tcp",
- "zzping-auth",
 ]
 
 [[package]]
@@ -6186,9 +6186,9 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
+ "zznet-auth",
  "zznet-room",
  "zznet-session",
- "zzping-auth",
 ]
 
 [[package]]
@@ -6201,6 +6201,19 @@ dependencies = [
  "serde",
  "thiserror 2.0.17",
  "tokio",
+]
+
+[[package]]
+name = "zznet-auth"
+version = "0.2.2-beta2"
+dependencies = [
+ "criterion",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.17",
+ "toml",
+ "tracing",
+ "zznet-api",
 ]
 
 [[package]]
@@ -6231,8 +6244,8 @@ dependencies = [
  "tokio",
  "tracing",
  "zznet-api",
+ "zznet-auth",
  "zznet-session",
- "zzping-auth",
 ]
 
 [[package]]
@@ -6256,8 +6269,8 @@ dependencies = [
  "tokio",
  "tracing",
  "zznet-api",
+ "zznet-auth",
  "zznet-room",
- "zzping-auth",
 ]
 
 [[package]]
@@ -6278,19 +6291,6 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "x509-parser",
- "zznet-api",
-]
-
-[[package]]
-name = "zzping-auth"
-version = "0.2.2-beta2"
-dependencies = [
- "criterion",
- "serde",
- "tempfile",
- "thiserror 2.0.17",
- "toml",
- "tracing",
  "zznet-api",
 ]
 

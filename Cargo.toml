@@ -1,20 +1,20 @@
 [workspace]
 resolver = "2"
 members = [
-    "src/common/zzping-lib",
-    "src/common/zzping-proto",
-    "src/common/zznet-api",
-    "src/common/zzping-auth",
-    "src/apps/zzping-database",
-    "src/apps/zzping-collector",
-    "src/apps/zzping-cli",
-    "src/apps/zzping-gui",
-    "src/actors/zzintent-config",
-    "src/actors/zznet-hello",
-    "src/components/zznet-builder",
-    "src/components/zznet-room",
-    "src/components/zznet-session",
-    "src/transports/zznet-transport-tcp",
+    "src/old/common/zzping-lib",
+    "src/old/common/zzping-proto",
+    "src/net/zznet-api",
+    "src/net/zznet-auth",
+    "src/old/apps/zzping-database",
+    "src/old/apps/zzping-collector",
+    "src/old/apps/zzping-cli",
+    "src/old/apps/zzping-gui",
+    "src/components/zzintent-config",
+    "src/net/zznet-hello",
+    "src/net/zznet-builder",
+    "src/net/zznet-room",
+    "src/net/zznet-session",
+    "src/net/zznet-transport-tcp",
     "examples/simple-network-example",
     "examples/message-exchange-example",
     "examples/tls-example",
@@ -33,10 +33,10 @@ description = "Tools to monitor home network latency and packet loss"
 # ...   and instead use "cratename.workspace = true" to refer to it.
 
 # Internal dependencies
-zzping-lib = { path = "src/common/zzping-lib" }
-zzping-proto = { path = "src/common/zzping-proto" }
-zzping-auth = { path = "src/common/zzping-auth" }
-zzping-database = { path = "src/apps/zzping-database" }
+zzping-lib = { path = "src/old/common/zzping-lib" }
+zzping-proto = { path = "src/old/common/zzping-proto" }
+zznet-auth = { path = "src/net/zznet-auth" }
+zzping-database = { path = "src/old/apps/zzping-database" }
 
 # External dependencies
 anyhow = "1.0"
