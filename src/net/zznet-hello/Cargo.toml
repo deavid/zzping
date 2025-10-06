@@ -25,6 +25,7 @@ bincode = { workspace = true, features = ["serde"] }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 bytes = { workspace = true }
+zzping-auth = { path = "../../common/zzping-auth" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "sync", "macros"] }

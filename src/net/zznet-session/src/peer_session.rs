@@ -6,7 +6,7 @@ use tokio::task::JoinHandle;
 
 // NEW: Auth imports
 use zznet_api::types::PeerIdentity;
-use zznet_auth::role::AuthRole;
+use zzping_auth::AuthRole;
 
 /// Trait for type-erased room operations
 ///

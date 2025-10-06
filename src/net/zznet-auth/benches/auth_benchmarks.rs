@@ -3,10 +3,41 @@
 //! These benchmarks exercise typical ACL operations to detect regressions in
 //! authorization performance.
 use criterion::Criterion;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::hint::black_box;
 use zznet_api::types::PeerIdentity;
 use zznet_auth::acl::AclManager;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum MockRole {
+    Client,
+    Service,
+}
+impl zznet_auth::ApplicationRole for MockRole {
+    fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+        match cn {
+            "client" => Ok(MockRole::Client),
+            "service" => Ok(MockRole::Service),
+            other => Err(zznet_auth::error::AuthError::UnknownRole(other.to_string())),
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            MockRole::Client => "client",
+            MockRole::Service => "service",
+        }
+    }
+
+    fn can_connect_to(&self, _target: &Self) -> bool {
+        true
+    }
+
+    fn can_access_room(&self, _room_name: &str) -> bool {
+        true
+    }
+}
 use zznet_auth::config::AclConfig;
 
 /// Benchmark: authorize with a small ACL.
@@ -14,7 +45,7 @@ fn bench_authorization_small_acl(c: &mut Criterion) {
     let mut allowed = HashSet::new();
     allowed.insert("alice@client-admin".to_string());
     allowed.insert("collector".to_string());
-    let acl = AclManager::with_allowed_peers(allowed);
+    let acl: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     let identity = PeerIdentity {
         common_name: "client-admin".to_string(),
@@ -35,7 +66,7 @@ fn bench_authorization_large_acl(c: &mut Criterion) {
     for i in 0..1000 {
         allowed.insert(format!("user{}@client-ro", i));
     }
-    let acl = AclManager::with_allowed_peers(allowed);
+    let acl: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     let identity = PeerIdentity {
         common_name: "client-ro".to_string(),
@@ -52,7 +83,7 @@ fn bench_authorization_large_acl(c: &mut Criterion) {
 
 /// Benchmark: ACL allow/deny modification performance.
 fn bench_acl_modification(c: &mut Criterion) {
-    let mut acl = AclManager::new();
+    let mut acl: AclManager<MockRole> = AclManager::new();
 
     c.bench_function("allow_user", |b| {
         b.iter(|| {
@@ -96,7 +127,7 @@ fn bench_config_validation(c: &mut Criterion) {
 fn bench_role_only_authorization(c: &mut Criterion) {
     let mut allowed = HashSet::new();
     allowed.insert("client-ro".to_string());
-    let acl = AclManager::with_allowed_peers(allowed);
+    let acl: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     let identity = PeerIdentity {
         common_name: "client-ro".to_string(),
@@ -115,7 +146,7 @@ fn bench_role_only_authorization(c: &mut Criterion) {
 fn bench_concurrent_authorization(c: &mut Criterion) {
     let mut allowed = HashSet::new();
     allowed.insert("alice@client-admin".to_string());
-    let acl = AclManager::with_allowed_peers(allowed);
+    let acl: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     let identity = PeerIdentity {
         common_name: "client-admin".to_string(),

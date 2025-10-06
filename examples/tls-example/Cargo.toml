@@ -27,8 +27,10 @@ zznet-transport-tcp = { path = "../../src/net/zznet-transport-tcp" }
 actix = { workspace = true }
 tokio = { workspace = true }
 
-# Auth crate for examples
+# Auth crates for examples
 zznet-auth = { path = "../../src/net/zznet-auth" }
+# Application-specific role and helpers
+zzping-auth = { path = "../../src/common/zzping-auth" }
 
 # Serialization
 bincode = { workspace = true }

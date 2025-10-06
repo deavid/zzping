@@ -167,7 +167,7 @@ mod session_manager_integration_tests {
     /// complex bidirectional channel setup that's better suited for zznet-session tests.
     #[actix::test]
     async fn test_end_to_end_database_to_collectors_communication() {
-        use zznet_auth::role::AuthRole;
+        use zznet_hello::auth::AuthRole;
         use zznet_session::session_manager::SessionManager;
         use zznet_session::types::{PeerId, RoomId};
 
@@ -269,7 +269,7 @@ mod auth_tests {
     /// 3. Verify the request is rejected (config unchanged)
     #[actix::test]
     async fn test_request_config_change_requires_admin_role() {
-        use zznet_auth::role::AuthRole;
+        use zznet_hello::auth::AuthRole;
         use zznet_session::session_manager::SessionManager;
         use zznet_session::types::{PeerId, RoomId};
 
@@ -372,7 +372,7 @@ mod auth_tests {
     /// The actual send_to_room() logic is tested in actor unit tests.
     #[actix::test]
     async fn test_config_update_only_sent_to_collectors() {
-        use zznet_auth::role::AuthRole;
+        use zznet_hello::auth::AuthRole;
         use zznet_session::session_manager::SessionManager;
         use zznet_session::types::{PeerId, RoomId};
 

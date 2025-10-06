@@ -8,7 +8,7 @@ use actix::ResponseFuture;
 use actix::prelude::*;
 use std::collections::HashMap;
 use std::rc::Rc;
-use zznet_auth::role::AuthRole;
+use zznet_hello::auth::AuthRole;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
 

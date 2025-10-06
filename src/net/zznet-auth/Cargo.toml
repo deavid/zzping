@@ -19,6 +19,9 @@ toml = { workspace = true }
 tracing = { workspace = true }
 zznet-api = { path = "../zznet-api" }
 
+[features]
+test-utils = []
+
 [dev-dependencies]
 tempfile.workspace = true
 criterion = { version = "0.7", features = ["html_reports"] }

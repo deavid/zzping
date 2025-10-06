@@ -18,6 +18,7 @@ workspace = true
 zznet-room = { path = "../zznet-room" }
 zznet-api = { path = "../zznet-api" }
 zznet-auth = { workspace = true }
+zzping-auth = { path = "../../common/zzping-auth" }
 actix.workspace = true
 tokio.workspace = true
 tracing = "0.1"

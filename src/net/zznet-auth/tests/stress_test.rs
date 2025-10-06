@@ -1,5 +1,6 @@
 //! Stress tests for ACL performance and concurrency characteristics.
 //!
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -7,19 +8,50 @@ use std::time::Instant;
 use zznet_api::types::PeerIdentity;
 use zznet_auth::acl::AclManager;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+enum MockRole {
+    X,
+    Y,
+}
+
+impl zznet_auth::ApplicationRole for MockRole {
+    fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+        match cn {
+            "x" => Ok(MockRole::X),
+            "y" => Ok(MockRole::Y),
+            _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            MockRole::X => "x",
+            MockRole::Y => "y",
+        }
+    }
+
+    fn can_connect_to(&self, _target: &Self) -> bool {
+        true
+    }
+
+    fn can_access_room(&self, _room_name: &str) -> bool {
+        true
+    }
+}
+
 #[test]
 fn stress_large_acl_lookup() {
     // Create a big allow-list
     let mut allowed = HashSet::new();
     for i in 0..10_000u32 {
-        allowed.insert(format!("user{}@client-ro", i));
+        allowed.insert(format!("user{}@x", i));
     }
 
-    let manager = AclManager::with_allowed_peers(allowed);
+    let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     // Measure lookup time for a present and absent entry
     let id_present = PeerIdentity {
-        common_name: "client-ro".to_string(),
+        common_name: "x".to_string(),
         san_username: "user9999".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
     };
@@ -39,27 +71,26 @@ fn stress_large_acl_lookup() {
     assert!(manager.authorize_peer(&id_absent).is_err());
 }
 
-/// Test high connection rate simulation
 #[test]
 fn test_high_connection_rate() {
     let mut allowed = HashSet::new();
-    allowed.insert("collector".to_string());
-    allowed.insert("alice@client-admin".to_string());
-    let manager = AclManager::with_allowed_peers(allowed);
+    allowed.insert("x".to_string());
+    allowed.insert("alice@y".to_string());
+    let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     let identities = vec![
         PeerIdentity {
-            common_name: "collector".to_string(),
+            common_name: "x".to_string(),
             san_username: "root".to_string(),
             peer_addr: "127.0.0.1:8080".to_string(),
         },
         PeerIdentity {
-            common_name: "client-admin".to_string(),
+            common_name: "y".to_string(),
             san_username: "alice".to_string(),
             peer_addr: "127.0.0.1:8081".to_string(),
         },
         PeerIdentity {
-            common_name: "client-ro".to_string(),
+            common_name: "y".to_string(),
             san_username: "bob".to_string(),
             peer_addr: "127.0.0.1:8082".to_string(),
         },
@@ -99,10 +130,9 @@ fn test_high_connection_rate() {
     assert_eq!(total_count, 300); // 100 iterations * 3 identities
 }
 
-/// Test concurrent ACL updates
 #[test]
 fn test_concurrent_acl_updates() {
-    let manager = Arc::new(Mutex::new(AclManager::new()));
+    let manager = Arc::new(Mutex::new(AclManager::<MockRole>::new()));
     let mut handles = vec![];
 
     // Spawn threads that add/remove users concurrently
@@ -110,13 +140,13 @@ fn test_concurrent_acl_updates() {
         let manager_clone = Arc::clone(&manager);
         let handle = thread::spawn(move || {
             for j in 0..100 {
-                let user = format!("user{}{}@client-ro", i, j);
+                let user = format!("user{}{}@x", i, j);
                 {
                     let mut mgr = manager_clone.lock().unwrap();
                     mgr.allow_user(&user);
                     // Check it works
                     let id = PeerIdentity {
-                        common_name: "client-ro".to_string(),
+                        common_name: "x".to_string(),
                         san_username: format!("user{}{}", i, j),
                         peer_addr: "127.0.0.1:0".to_string(),
                     };
@@ -136,7 +166,7 @@ fn test_concurrent_acl_updates() {
 
     // Final state should be empty
     let test_id = PeerIdentity {
-        common_name: "client-ro".to_string(),
+        common_name: "x".to_string(),
         san_username: "user00".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
     };
@@ -144,15 +174,14 @@ fn test_concurrent_acl_updates() {
     assert!(mgr.authorize_peer(&test_id).is_err());
 }
 
-/// Test long-running connections (memory stability)
 #[test]
 fn test_long_running_connections() {
     let mut allowed = HashSet::new();
-    allowed.insert("collector".to_string());
-    let manager = AclManager::with_allowed_peers(allowed);
+    allowed.insert("y".to_string());
+    let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     let id = PeerIdentity {
-        common_name: "collector".to_string(),
+        common_name: "y".to_string(),
         san_username: "root".to_string(),
         peer_addr: "127.0.0.1:8080".to_string(),
     };
@@ -182,24 +211,23 @@ fn test_long_running_connections() {
     );
 }
 
-/// Test memory usage stability with large ACL
 #[test]
 fn test_memory_usage_large_acl() {
     // Start with small ACL
     let mut allowed = HashSet::new();
     for i in 0..100 {
-        allowed.insert(format!("user{}@client-ro", i));
+        allowed.insert(format!("user{}@x", i));
     }
-    let mut manager = AclManager::with_allowed_peers(allowed);
+    let mut manager = AclManager::<MockRole>::with_allowed_peers(allowed);
 
     // Grow the ACL dynamically
     for i in 100..1000 {
-        manager.allow_user(&format!("user{}@client-ro", i));
+        manager.allow_user(&format!("user{}@x", i));
     }
 
     // Verify lookups still work
     let id = PeerIdentity {
-        common_name: "client-ro".to_string(),
+        common_name: "x".to_string(),
         san_username: "user999".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
     };
@@ -207,22 +235,21 @@ fn test_memory_usage_large_acl() {
 
     // Remove some
     for i in 500..600 {
-        manager.deny_user(&format!("user{}@client-ro", i));
+        manager.deny_user(&format!("user{}@x", i));
     }
 
     // Verify removals
     let removed_id = PeerIdentity {
-        common_name: "client-ro".to_string(),
+        common_name: "x".to_string(),
         san_username: "user550".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
     };
     assert!(manager.authorize_peer(&removed_id).is_err());
 }
 
-/// Test race conditions in ACL modifications
 #[test]
 fn test_acl_modification_race_conditions() {
-    let manager = Arc::new(Mutex::new(AclManager::new()));
+    let manager = Arc::new(Mutex::new(AclManager::<MockRole>::new()));
     let mut handles = vec![];
 
     // Multiple threads modifying the same ACL entries
@@ -230,13 +257,13 @@ fn test_acl_modification_race_conditions() {
         let manager_clone = Arc::clone(&manager);
         let handle = thread::spawn(move || {
             for i in 0..50 {
-                let user = format!("race{}@client-admin", i);
+                let user = format!("race{}@y", i);
                 {
                     let mut mgr = manager_clone.lock().unwrap();
                     mgr.allow_user(&user);
 
                     let id = PeerIdentity {
-                        common_name: "client-admin".to_string(),
+                        common_name: "y".to_string(),
                         san_username: format!("race{}", i),
                         peer_addr: "127.0.0.1:0".to_string(),
                     };

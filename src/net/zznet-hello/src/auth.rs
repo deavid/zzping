@@ -5,6 +5,6 @@
 
 // Re-export the application-level AuthRole from the centralized `zzping-auth` crate.
 // This file keeps the local API stable while delegating the authoritative
-// role and policy logic to `zzping-auth`.
+// role and policy logic to `zzping-auth` (the application crate).
 
-pub use zznet_auth::role::AuthRole;
+pub use zzping_auth::AuthRole;

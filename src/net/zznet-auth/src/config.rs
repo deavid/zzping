@@ -3,7 +3,6 @@
 // This module provides TOML-based configuration for access control lists,
 // allowing administrators to define which peers are allowed to access the system.
 
-use crate::acl::AclManager;
 use crate::error::AuthError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -74,14 +73,8 @@ impl AclConfig {
             }
         }
 
-        // Validate that roles are known
-        for peer in &self.allowed_peers {
-            let parts: Vec<_> = peer.split('@').collect();
-            let role = parts.last().unwrap();
-            if let Err(e) = crate::role::AuthRole::from_cn(role) {
-                tracing::warn!("ACL contains entry with unknown role '{}': {}", role, e);
-            }
-        }
+        // Note: Role validation is application-specific and should be done
+        // by the application that implements the ApplicationRole trait
 
         // Warn if the ACL is overly permissive (role-only entries exist)
         if self.allowed_peers.iter().any(|p| !p.contains('@')) {
@@ -89,16 +82,6 @@ impl AclConfig {
         }
 
         Ok(())
-    }
-
-    /// Converts the configuration into an AclManager.
-    pub fn into_acl_manager(self) -> Result<AclManager, AuthError> {
-        self.validate()?;
-        let allowed_peers = self.allowed_peers.into_iter().collect();
-        Ok(AclManager::with_allowed_peers_and_insecure(
-            allowed_peers,
-            self.insecure_trust_hello,
-        ))
     }
 }
 

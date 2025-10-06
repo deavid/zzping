@@ -104,6 +104,8 @@ New apps:
 I would expect the renaming/repathing of crates to take place as a first step before moving on. I don't want the new crates to be created
 until they're needed, so the new crates should not be created until the last moment.
 
+UPDATE: The crate rename has been performed.
+
 ## Refactor of zzping-auth
 
 This should actually be zznet-auth, 90% of the code is generic over applications, 10% of it is tied to zzping. We probably need

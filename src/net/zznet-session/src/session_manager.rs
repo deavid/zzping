@@ -6,7 +6,7 @@ use tokio::sync::mpsc;
 
 // NEW: Auth imports
 use zznet_api::types::PeerIdentity;
-use zznet_auth::role::AuthRole;
+use zzping_auth::AuthRole;
 
 /// Manages all peer sessions for this process
 ///

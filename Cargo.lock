@@ -4511,6 +4511,7 @@ dependencies = [
  "zznet-hello",
  "zznet-session",
  "zznet-transport-tcp",
+ "zzping-auth",
 ]
 
 [[package]]
@@ -6187,6 +6188,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "zznet-auth",
+ "zznet-hello",
  "zznet-room",
  "zznet-session",
 ]
@@ -6246,6 +6248,7 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-session",
+ "zzping-auth",
 ]
 
 [[package]]
@@ -6271,6 +6274,7 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-room",
+ "zzping-auth",
 ]
 
 [[package]]
@@ -6292,6 +6296,16 @@ dependencies = [
  "tracing",
  "x509-parser",
  "zznet-api",
+]
+
+[[package]]
+name = "zzping-auth"
+version = "0.2.2-beta2"
+dependencies = [
+ "serde",
+ "tempfile",
+ "zznet-api",
+ "zznet-auth",
 ]
 
 [[package]]

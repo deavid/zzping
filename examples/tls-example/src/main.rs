@@ -21,13 +21,14 @@ use std::time::Duration;
 use zznet_api::types::Role;
 use zznet_auth::config::AclConfig;
 use zznet_builder::{ClientBuilder, ServerBuilder};
-use zznet_hello::auth::AuthRole;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::{
     DeserializationError, RoomMessageTrait, SerializationError,
 };
 use zznet_session::types::RoomId;
 use zznet_transport_tcp::config::TlsConfig;
+use zzping_auth::AclManagerDefault;
+use zzping_auth::AuthRole;
 
 // ============================================================================
 // Step 1: Define Secure Messages
@@ -158,8 +159,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Try to load example ACL; if it fails, continue without ACL
     let server_manager = match AclConfig::from_file("examples/tls-example/acl.toml") {
-        Ok(cfg) => match cfg.into_acl_manager() {
-            Ok(acl) => {
+        Ok(cfg) => match cfg.validate() {
+            Ok(()) => {
+                let allowed_peers = cfg.allowed_peers.into_iter().collect();
+                let acl = AclManagerDefault::with_allowed_peers_and_insecure(
+                    allowed_peers,
+                    cfg.insecure_trust_hello,
+                );
                 let authorizer = acl.to_authorizer();
                 ConnectionManager::<SecureMessage>::new_with_acl(
                     offered_rooms.clone(),
@@ -168,7 +174,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .start()
             }
             Err(e) => {
-                log::warn!("Failed to build ACL manager: {}", e);
+                log::warn!("Failed to validate ACL config: {}", e);
                 ConnectionManager::<SecureMessage>::new(offered_rooms.clone()).start()
             }
         },
