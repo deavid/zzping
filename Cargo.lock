@@ -6193,6 +6193,7 @@ dependencies = [
  "zznet-hello",
  "zznet-room",
  "zznet-session",
+ "zzping-test-utils",
 ]
 
 [[package]]
@@ -6442,4 +6443,13 @@ dependencies = [
  "tonic",
  "tonic-prost",
  "tonic-prost-build",
+]
+
+[[package]]
+name = "zzping-test-utils"
+version = "0.1.0"
+dependencies = [
+ "tokio",
+ "zznet-auth",
+ "zznet-session",
 ]

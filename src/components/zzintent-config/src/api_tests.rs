@@ -9,42 +9,6 @@ mod tests {
     use actix::prelude::*;
     use std::time::Duration;
 
-    use serde::{Deserialize, Serialize};
-    use zznet_auth::error::AuthError;
-    use zznet_auth::role::ApplicationRole;
-
-    #[allow(dead_code)]
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-    pub enum MockRole {
-        Admin,
-        User,
-    }
-
-    impl ApplicationRole for MockRole {
-        fn from_cn(cn: &str) -> Result<Self, AuthError> {
-            match cn {
-                "admin" => Ok(Self::Admin),
-                "user" => Ok(Self::User),
-                _ => Err(AuthError::UnknownRole(cn.to_string())),
-            }
-        }
-
-        fn as_str(&self) -> &'static str {
-            match self {
-                Self::Admin => "admin",
-                Self::User => "user",
-            }
-        }
-
-        fn can_connect_to(&self, _target: &Self) -> bool {
-            true
-        }
-
-        fn can_access_room(&self, _room_name: &str) -> bool {
-            true
-        }
-    }
-
     fn setup() {
         let _ = env_logger::builder()
             .is_test(true)
@@ -285,5 +249,34 @@ mod tests {
 
         // ASSERT: Should not panic (no-op for invalid ID)
         tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_api_get_current_config() {
+        setup();
+        // ARRANGE
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let addr = IntentConfigBuilder::new()
+            .role(IntentConfigRole::Database {
+                config_file_path: config_path,
+            })
+            .start();
+
+        let expected_config = IntentConfigData {
+            targets: vec!["192.168.1.1".parse().unwrap()],
+            ping_rate_pps: 100,
+        };
+
+        // Update config first
+        addr.update_config(expected_config.clone());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // ACT: Get current config
+        let current_config = addr.get_current_config().await.unwrap();
+
+        // ASSERT: Should return the updated config
+        assert_eq!(current_config, expected_config);
     }
 }

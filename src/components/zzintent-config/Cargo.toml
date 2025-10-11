@@ -36,3 +36,4 @@ permissions = []
 [dev-dependencies]
 tempfile = "3.23"
 zznet-room = { path = "../../net/zznet-room" }
+zzping-test-utils = { path = "../../test-utils/zzping-test-utils" }

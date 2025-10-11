@@ -101,19 +101,20 @@ pub enum IntentConfigMessage {
 
     /// Request for current configuration from Database to Collector
     ///
-    /// ⚠️ RESERVED FOR FUTURE USE - Not currently implemented.
+    /// Sent by AdminClient to query current configuration, or by Database to Collector
+    /// during recovery scenarios. Database responds with CurrentConfig message.
     ///
-    /// Intended use: Database queries Collector on startup for state recovery,
-    /// or AdminClient queries Database for current configuration display.
-    /// Collector would respond with CurrentConfig message.
+    /// # Flow
+    /// AdminClient/Database → SessionManager → Database (responds with CurrentConfig)
     QueryCurrentConfig,
 
     /// Response with current configuration from Collector to Database
     ///
-    /// ⚠️ RESERVED FOR FUTURE USE - Not currently implemented.
-    ///
-    /// Intended use: Response to QueryCurrentConfig containing the current
+    /// Sent by Database in response to QueryCurrentConfig, containing the current
     /// configuration state for recovery or display purposes.
+    ///
+    /// # Flow
+    /// Database → SessionManager → All peers (broadcast response)
     CurrentConfig {
         /// List of IP addresses to ping
         targets: Vec<IpAddr>,
@@ -123,18 +124,16 @@ pub enum IntentConfigMessage {
 
     /// Heartbeat message
     ///
-    /// ⚠️ RESERVED FOR FUTURE USE - Not currently implemented.
-    ///
-    /// Intended use: Periodic keepalive to detect connection failures and
+    /// Periodic keepalive message to detect connection failures and
     /// differentiate between network partition vs peer crash.
+    /// Both Database and Collector roles accept heartbeat messages.
     Heartbeat,
 
     /// Error response
     ///
-    /// ⚠️ RESERVED FOR FUTURE USE - Not currently implemented.
-    ///
-    /// Intended use: Send error responses for invalid requests, authorization
-    /// failures, or internal errors that the peer should be aware of.
+    /// Sent by Database to requesters for authorization failures, persistence errors,
+    /// or other issues. Both Database and Collector roles can receive error messages
+    /// and log them appropriately.
     Error {
         /// Human-readable error description
         reason: String,

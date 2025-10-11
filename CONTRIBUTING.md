@@ -27,3 +27,20 @@ information on using pull requests.
 
 This project follows
 [Google's Open Source Community Guidelines](https://opensource.google/conduct/).
+
+## Testing
+
+### zzintent-config component
+
+The `zzintent-config` component has integration tests that rely on debug-mode permissive behavior when `SessionManager` is not configured. This is intentional for test ergonomics but ensures production safety by rejecting config changes in release builds.
+
+**Important**: Always run tests for `zzintent-config` in debug mode (the default for `cargo test`). The component's behavior differs between debug and release builds for security reasons.
+
+```bash
+# Run zzintent-config tests (debug mode by default)
+cargo test -p zzintent-config --lib
+
+# If you need to run in release mode, note that some integration tests may fail
+# due to the intentional security restrictions
+cargo test -p zzintent-config --lib --release  # May fail some tests
+```

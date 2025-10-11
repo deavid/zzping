@@ -38,3 +38,5 @@ mod api_tests;
 mod builder_tests;
 #[cfg(test)]
 mod test_integration;
+#[cfg(test)]
+mod test_utils;
