@@ -6193,7 +6193,6 @@ dependencies = [
  "zznet-hello",
  "zznet-room",
  "zznet-session",
- "zzping-auth",
 ]
 
 [[package]]

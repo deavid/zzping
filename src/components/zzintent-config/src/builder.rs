@@ -2,11 +2,14 @@
 
 use crate::actor::IntentConfigActor;
 use crate::network_messages::IntentConfigMessage;
+use crate::permission_wrapper::PermissionWrapper;
 use crate::role::IntentConfigRole;
 use actix::prelude::*;
 use std::rc::Rc;
 use zznet_session::session_manager::SessionManager;
-use zzping_auth::AuthRole;
+
+use crate::permissions::IntentConfigPermission;
+use zznet_auth::role::ApplicationRole;
 
 /// A builder for the IntentConfig component.
 ///
@@ -16,19 +19,14 @@ use zzping_auth::AuthRole;
 ///
 /// # Example
 ///
-pub struct IntentConfigBuilder {
+pub struct IntentConfigBuilder<T: ApplicationRole + std::fmt::Debug = IntentConfigPermission> {
     role: IntentConfigRole,
-    session_manager: Option<Rc<SessionManager<IntentConfigMessage, AuthRole>>>,
+    session_manager: Option<Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>>,
 }
 
-impl Default for IntentConfigBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl IntentConfigBuilder {
-    /// Create a new builder with default configuration
+impl IntentConfigBuilder<IntentConfigPermission> {
+    /// Create a new builder with default configuration for the common
+    /// `IntentConfigPermission` role type.
     ///
     /// Default role is Database (passive receiver).
     pub fn new() -> Self {
@@ -37,7 +35,15 @@ impl IntentConfigBuilder {
             session_manager: None,
         }
     }
+}
 
+impl Default for IntentConfigBuilder<IntentConfigPermission> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T: ApplicationRole + std::fmt::Debug> IntentConfigBuilder<T> {
     /// Set the role for this IntentConfig actor
     pub fn role(mut self, role: IntentConfigRole) -> Self {
         self.role = role;
@@ -47,7 +53,7 @@ impl IntentConfigBuilder {
     /// Set the SessionManager for network communication
     pub fn session_manager(
         mut self,
-        session_manager: SessionManager<IntentConfigMessage, AuthRole>,
+        session_manager: SessionManager<IntentConfigMessage, PermissionWrapper<T>>,
     ) -> Self {
         self.session_manager = Some(Rc::new(session_manager));
         self
@@ -71,7 +77,7 @@ impl IntentConfigBuilder {
     /// # Returns
     ///
     /// The returned `Addr` is the handle to the running actor, used for sending messages.
-    pub fn start(mut self) -> Addr<IntentConfigActor> {
+    pub fn start(mut self) -> Addr<IntentConfigActor<T>> {
         // Validate role configuration
         self.role.validate().expect("Invalid role configuration");
 

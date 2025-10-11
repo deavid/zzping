@@ -35,6 +35,7 @@
 mod session_manager_integration_tests {
     use crate::builder::IntentConfigBuilder;
     use crate::network_messages::IntentConfigMessage;
+    use crate::permissions::IntentConfigPermission;
     use crate::role::IntentConfigRole;
     use std::net::IpAddr;
     use std::time::Duration;
@@ -54,7 +55,7 @@ mod session_manager_integration_tests {
         let config_path = temp_file.path().to_path_buf();
 
         // Create Database actor WITHOUT SessionManager
-        let database_addr = IntentConfigBuilder::new()
+        let database_addr = IntentConfigBuilder::<IntentConfigPermission>::new()
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
@@ -88,7 +89,7 @@ mod session_manager_integration_tests {
             .try_init();
 
         // Create Collector actor (no SessionManager needed for receiving)
-        let collector_addr = IntentConfigBuilder::new()
+        let collector_addr = IntentConfigBuilder::<IntentConfigPermission>::new()
             .role(IntentConfigRole::Collector)
             .start();
 
@@ -124,7 +125,7 @@ mod session_manager_integration_tests {
         let config_path = temp_file.path().to_path_buf();
 
         // Create Database actor
-        let database_addr = IntentConfigBuilder::new()
+        let database_addr = IntentConfigBuilder::<IntentConfigPermission>::new()
             .role(IntentConfigRole::Database {
                 config_file_path: config_path.clone(),
             })
@@ -169,7 +170,6 @@ mod session_manager_integration_tests {
     async fn test_end_to_end_database_to_collectors_communication() {
         use zznet_session::session_manager::SessionManager;
         use zznet_session::types::{PeerId, RoomId};
-        use zzping_auth::AuthRole;
 
         // Setup logging
         let _ = env_logger::builder()
@@ -182,34 +182,51 @@ mod session_manager_integration_tests {
         let config_path = temp_file.path().to_path_buf();
 
         // ===== Create Database SessionManager with 2 Collector peers + 1 Admin =====
-        let mut session_manager =
-            SessionManager::<IntentConfigMessage, AuthRole>::new(vec![RoomId::from(
-                "intent-config",
-            )]);
+        let mut session_manager = SessionManager::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(vec![RoomId::from("intent-config")]);
 
         // Add admin peer (for RequestConfigChange authorization)
-        let mut admin_peer =
-            zznet_session::peer_session::PeerSession::new(PeerId::from("test-admin"));
-        admin_peer.set_role(Some(AuthRole::ClientAdmin));
+        let mut admin_peer = zznet_session::peer_session::PeerSession::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("test-admin"));
+        admin_peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::UpdateConfig,
+        }));
         session_manager
             .add_peer(PeerId::from("test-admin"), admin_peer)
             .unwrap();
 
         // Add Collector peers with proper roles
-        let mut peer1 = zznet_session::peer_session::PeerSession::new(PeerId::from("collector1"));
-        peer1.set_role(Some(AuthRole::Collector));
+        let mut peer1 = zznet_session::peer_session::PeerSession::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("collector1"));
+        peer1.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::ReceiveConfigUpdates,
+        }));
         session_manager
             .add_peer(PeerId::from("collector1"), peer1)
             .unwrap();
 
-        let mut peer2 = zznet_session::peer_session::PeerSession::new(PeerId::from("collector2"));
-        peer2.set_role(Some(AuthRole::Collector));
+        let mut peer2 = zznet_session::peer_session::PeerSession::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("collector2"));
+        peer2.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::ReceiveConfigUpdates,
+        }));
         session_manager
             .add_peer(PeerId::from("collector2"), peer2)
             .unwrap();
 
         // Verify peers_with_role works
-        let collectors = session_manager.peers_with_role(&AuthRole::Collector);
+        let collectors =
+            session_manager.peers_with_role(&crate::permission_wrapper::PermissionWrapper {
+                permission: IntentConfigPermission::ReceiveConfigUpdates,
+            });
         assert_eq!(collectors.len(), 2);
 
         // ===== Create Database Actor with SessionManager =====
@@ -258,6 +275,7 @@ mod session_manager_integration_tests {
 mod auth_tests {
     use crate::builder::IntentConfigBuilder;
     use crate::network_messages::IntentConfigMessage;
+    use crate::permissions::IntentConfigPermission;
     use crate::role::IntentConfigRole;
     use std::net::IpAddr;
     use std::time::Duration;
@@ -273,7 +291,6 @@ mod auth_tests {
     async fn test_request_config_change_requires_admin_role() {
         use zznet_session::session_manager::SessionManager;
         use zznet_session::types::{PeerId, RoomId};
-        use zzping_auth::AuthRole;
 
         // Setup logging
         let _ = env_logger::builder()
@@ -286,22 +303,31 @@ mod auth_tests {
         let config_path = temp_file.path().to_path_buf();
 
         // ===== Create SessionManager with mixed peers =====
-        let mut session_manager =
-            SessionManager::<IntentConfigMessage, AuthRole>::new(vec![RoomId::from(
-                "intent-config",
-            )]);
+        let mut session_manager = SessionManager::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(vec![RoomId::from("intent-config")]);
 
         // Add admin peer (for initial config setup)
-        let mut admin_peer =
-            zznet_session::peer_session::PeerSession::new(PeerId::from("test-admin"));
-        admin_peer.set_role(Some(AuthRole::ClientAdmin));
+        let mut admin_peer = zznet_session::peer_session::PeerSession::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("test-admin"));
+        admin_peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::UpdateConfig,
+        }));
         session_manager
             .add_peer(PeerId::from("test-admin"), admin_peer)
             .unwrap();
 
         // Add peer with Collector role (NOT ClientAdmin - this is the attacker)
-        let mut peer = zznet_session::peer_session::PeerSession::new(PeerId::from("bad-actor"));
-        peer.set_role(Some(AuthRole::Collector)); // Wrong role for config changes
+        let mut peer = zznet_session::peer_session::PeerSession::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("bad-actor"));
+        peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::ReceiveConfigUpdates,
+        })); // Wrong role for config changes
         session_manager
             .add_peer(PeerId::from("bad-actor"), peer)
             .unwrap();
@@ -378,7 +404,6 @@ mod auth_tests {
     async fn test_config_update_only_sent_to_collectors() {
         use zznet_session::session_manager::SessionManager;
         use zznet_session::types::{PeerId, RoomId};
-        use zzping_auth::AuthRole;
 
         // Setup logging
         let _ = env_logger::builder()
@@ -391,29 +416,42 @@ mod auth_tests {
         let config_path = temp_file.path().to_path_buf();
 
         // ===== Create SessionManager with mixed roles =====
-        let mut session_manager =
-            SessionManager::<IntentConfigMessage, AuthRole>::new(vec![RoomId::from(
-                "intent-config",
-            )]);
+        let mut session_manager = SessionManager::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(vec![RoomId::from("intent-config")]);
 
         // Add 2 Collector peers
-        let mut collector1 =
-            zznet_session::peer_session::PeerSession::new(PeerId::from("collector1"));
-        collector1.set_role(Some(AuthRole::Collector));
+        let mut collector1 = zznet_session::peer_session::PeerSession::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("collector1"));
+        collector1.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::ReceiveConfigUpdates,
+        }));
         session_manager
             .add_peer(PeerId::from("collector1"), collector1)
             .unwrap();
 
-        let mut collector2 =
-            zznet_session::peer_session::PeerSession::new(PeerId::from("collector2"));
-        collector2.set_role(Some(AuthRole::Collector));
+        let mut collector2 = zznet_session::peer_session::PeerSession::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("collector2"));
+        collector2.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::ReceiveConfigUpdates,
+        }));
         session_manager
             .add_peer(PeerId::from("collector2"), collector2)
             .unwrap();
 
         // Add 1 ClientAdmin peer
-        let mut admin = zznet_session::peer_session::PeerSession::new(PeerId::from("admin-user"));
-        admin.set_role(Some(AuthRole::ClientAdmin));
+        let mut admin = zznet_session::peer_session::PeerSession::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("admin-user"));
+        admin.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::UpdateConfig,
+        }));
         session_manager
             .add_peer(PeerId::from("admin-user"), admin)
             .unwrap();
@@ -429,12 +467,18 @@ mod auth_tests {
         let all_peers = session_manager.peer_ids();
         assert_eq!(all_peers.len(), 4, "Should have 4 total peers");
 
-        let collectors = session_manager.peers_with_role(&AuthRole::Collector);
+        let collectors =
+            session_manager.peers_with_role(&crate::permission_wrapper::PermissionWrapper {
+                permission: IntentConfigPermission::ReceiveConfigUpdates,
+            });
         assert_eq!(collectors.len(), 2, "Should have exactly 2 Collector peers");
         assert!(collectors.contains(&PeerId::from("collector1")));
         assert!(collectors.contains(&PeerId::from("collector2")));
 
-        let admins = session_manager.peers_with_role(&AuthRole::ClientAdmin);
+        let admins =
+            session_manager.peers_with_role(&crate::permission_wrapper::PermissionWrapper {
+                permission: IntentConfigPermission::UpdateConfig,
+            });
         assert_eq!(admins.len(), 1, "Should have exactly 1 ClientAdmin peer");
         assert!(admins.contains(&PeerId::from("admin-user")));
 

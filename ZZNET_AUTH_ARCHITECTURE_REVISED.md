@@ -181,7 +181,7 @@ HandshakeFrame::Hello {
 3. Resolving `PeerIdentity` → application role
 4. Enforcing connection-level ACLs (who can connect)
 5. Enforcing room-level ACLs (who can access which rooms)
-6. Enforcing operation-level ACLs (who can perform which actions)
+6. Enforcing operation-level ACLs (who can perform which actions), using the trait-based permission model for reusable components (see Section 4.7).
 
 ### 4.2 ZZPing Authentication Flow
 
@@ -380,6 +380,74 @@ impl AuthRole {
     }
 }
 ```
+
+### 4.7 Component-Level Permissions (Trait-Based Model)
+
+While connection and room-level authorization are handled by coarse-grained checks on the `AuthRole` enum, fine-grained permissions required by reusable components must be handled differently to prevent tight coupling between a component and the application's specific roles.
+
+The standard pattern for this is to define a trait that represents the set of permissions a component requires. This makes the permissions **type-safe and compile-time checked**.
+
+This approach is the mandated replacement for string-based permissions, as it prevents typos and makes the component's requirements explicit through the type system.
+
+**1. Define a Permission Trait:**
+
+A component or a library of components should define a trait that clearly lists the permissions it needs as methods.
+
+```rust
+// In a reusable component library (e.g., zzintent-config)
+pub trait IntentPermissions {
+    fn can_read_intent(&self) -> bool;
+    fn can_write_intent(&self) -> bool;
+    fn can_delete_intent(&self) -> bool;
+}
+```
+
+**2. Implement the Trait for the Application's Role Enum:**
+
+The application (`zzping`) is responsible for implementing this trait for its concrete `AuthRole` enum, mapping its roles to the required permissions.
+
+```rust
+// In the zzping application's auth logic
+use zzintent_config::IntentPermissions; // Assuming the trait is in the component crate
+
+impl IntentPermissions for AuthRole {
+    fn can_read_intent(&self) -> bool {
+        matches!(self, AuthRole::ClientAdmin | AuthRole::ClientRo | AuthRole::Collector)
+    }
+
+    fn can_write_intent(&self) -> bool {
+        matches!(self, AuthRole::ClientAdmin)
+    }
+
+    fn can_delete_intent(&self) -> bool {
+        // Only admins can delete
+        matches!(self, AuthRole::ClientAdmin)
+    }
+}
+```
+
+**3. Use the Trait in the Component:**
+
+The component's logic is then generic over any type that implements the permission trait. This ensures the component is decoupled and reusable.
+
+```rust
+// In the reusable component
+pub struct IntentConfigService<R: IntentPermissions> {
+    _role_type: std::marker::PhantomData<R>,
+}
+
+impl<R: IntentPermissions> IntentConfigService<R> {
+    pub fn update_intent(&self, role: &R, intent: &str) -> Result<(), &'static str> {
+        if !role.can_write_intent() {
+            return Err("Permission Denied: cannot write intent");
+        }
+        // Proceed with update logic...
+        Ok(())
+    }
+}
+```
+
+This model provides the decoupling of a classic permission system while maintaining the safety and clarity of the Rust type system.
 
 ---
 

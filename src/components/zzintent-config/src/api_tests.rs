@@ -9,6 +9,42 @@ mod tests {
     use actix::prelude::*;
     use std::time::Duration;
 
+    use serde::{Deserialize, Serialize};
+    use zznet_auth::error::AuthError;
+    use zznet_auth::role::ApplicationRole;
+
+    #[allow(dead_code)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    pub enum MockRole {
+        Admin,
+        User,
+    }
+
+    impl ApplicationRole for MockRole {
+        fn from_cn(cn: &str) -> Result<Self, AuthError> {
+            match cn {
+                "admin" => Ok(Self::Admin),
+                "user" => Ok(Self::User),
+                _ => Err(AuthError::UnknownRole(cn.to_string())),
+            }
+        }
+
+        fn as_str(&self) -> &'static str {
+            match self {
+                Self::Admin => "admin",
+                Self::User => "user",
+            }
+        }
+
+        fn can_connect_to(&self, _target: &Self) -> bool {
+            true
+        }
+
+        fn can_access_room(&self, _room_name: &str) -> bool {
+            true
+        }
+    }
+
     fn setup() {
         let _ = env_logger::builder()
             .is_test(true)

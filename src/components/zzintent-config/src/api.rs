@@ -4,13 +4,14 @@ use crate::actor::IntentConfigActor;
 use crate::messages::{IntentConfigData, Subscribe, Unsubscribe, UpdateConfig};
 use actix::prelude::*;
 use anyhow::{Result, anyhow};
+use zznet_auth::role::ApplicationRole;
 
 /// The public API for the IntentConfig component.
 ///
 /// This trait provides a clean, method-based interface for interacting with the
 /// actor, hiding the underlying message types from the consumer.
 #[async_trait::async_trait]
-pub trait IntentConfigApi {
+pub trait IntentConfigApi<T: ApplicationRole> {
     /// Updates the configuration. This is a "tell" (fire-and-forget) operation.
     fn update_config(&self, config: IntentConfigData);
 
@@ -25,7 +26,10 @@ pub trait IntentConfigApi {
 /// Implements the public API for the actor's handle (`Addr`).
 /// This is where we translate the clean method calls into actual Actix messages.
 #[async_trait::async_trait]
-impl IntentConfigApi for Addr<IntentConfigActor> {
+impl<
+    T: ApplicationRole + 'static + Send + Clone + std::fmt::Debug + PartialEq + Eq + std::hash::Hash,
+> IntentConfigApi<T> for Addr<IntentConfigActor<T>>
+{
     /// Translates the `update_config` method call into a `do_send` of an `UpdateConfig` message.
     fn update_config(&self, config: IntentConfigData) {
         // `do_send` is used for "tell" patterns where no response is needed.

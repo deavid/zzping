@@ -26,8 +26,12 @@ pub mod api;
 pub mod builder;
 pub mod messages;
 pub mod network_messages;
+/// A wrapper around an ApplicationRole to be used by the IntentConfig component.
+pub mod permission_wrapper;
+pub mod permissions;
 pub mod role;
 
+/// The public API for the IntentConfig component.
 #[cfg(test)]
 mod api_tests;
 #[cfg(test)]
