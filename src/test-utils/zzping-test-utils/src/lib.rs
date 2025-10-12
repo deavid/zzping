@@ -103,6 +103,7 @@ pub struct MessageCaptureChannels<TMsg> {
 /// # Example
 /// ```rust,no_run
 /// use zzping_test_utils::MessageCaptureChannels;
+/// use zznet_session::types::RoomId;
 ///
 /// // Old way (boilerplate):
 /// // let (tx_out, mut rx_out) = mpsc::channel(10);
@@ -110,9 +111,11 @@ pub struct MessageCaptureChannels<TMsg> {
 /// // let pkt = timeout(Duration::from_millis(500), rx_out.recv()).await;
 ///
 /// // New way (simple):
-/// let channels = MessageCaptureChannels::new();
-/// let mut capture = channels.capture;
-/// let pkt = capture.recv_default_timeout().await;
+/// async fn example() {
+///     let channels: MessageCaptureChannels<String> = MessageCaptureChannels::new();
+///     let mut capture = channels.capture;
+///     let pkt = capture.recv_default_timeout().await;
+/// }
 /// ```
 pub struct MessageCapture<TMsg> {
     pub rx: mpsc::Receiver<(RoomId, TMsg)>,

@@ -1,0 +1,31 @@
+[package]
+name = "zzmem-db"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+# Workspace-wide linting: Since collaborators here (read, AI agents) are too happy to just allow a lint and move on, we
+# are adding here a workspace wide forbid on the lints that must not be overriden. Do not be even tempted to change this!
+# If you think you have a legitimate reason for one of these, think again: YOU DON'T. DO NOT TOUCH THESE LINT CONFIGS!
+[lints]
+# This makes the crate inherit all lints defined in [workspace.lints]
+workspace = true
+
+[dependencies]
+actix = { workspace = true }
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.8"
+tracing = "0.1"
+bincode = { workspace = true }
+thiserror = "1.0"
+log = { workspace = true }
+zznet-session = { path = "../../net/zznet-session" }
+zznet-auth = { workspace = true }
+
+[dev-dependencies]
+ntest = "0.9"
+zzping-test-utils = { path = "../../test-utils/zzping-test-utils" }

@@ -668,6 +668,12 @@ dependencies = [
 
 [[package]]
 name = "base64"
+version = "0.21.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
+
+[[package]]
+name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -3235,7 +3241,7 @@ version = "3.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38af38e8470ac9dee3ce1bae1af9c1671fffc44ddfd8bd1d0a3445bf349a8ef3"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "serde",
 ]
 
@@ -3788,11 +3794,23 @@ dependencies = [
 
 [[package]]
 name = "ron"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b91f7eff05f748767f183df4320a63d6936e9c6107d97c9e6bdd9784f4289c94"
+dependencies = [
+ "base64 0.21.7",
+ "bitflags 2.9.4",
+ "serde",
+ "serde_derive",
+]
+
+[[package]]
+name = "ron"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db09040cc89e461f1a265139777a2bde7f8d8c67c4936f700c63ce3e2904d468"
 dependencies = [
- "base64",
+ "base64 0.22.1",
  "bitflags 2.9.4",
  "serde",
  "serde_derive",
@@ -4640,7 +4658,7 @@ checksum = "eb7613188ce9f7df5bfe185db26c5814347d110db17920415cf2fbcad85e7203"
 dependencies = [
  "async-trait",
  "axum",
- "base64",
+ "base64 0.22.1",
  "bytes",
  "h2",
  "http",
@@ -6184,7 +6202,7 @@ dependencies = [
  "env_logger",
  "log",
  "ntest",
- "ron",
+ "ron 0.11.0",
  "serde",
  "tempfile",
  "tokio",
@@ -6192,6 +6210,24 @@ dependencies = [
  "zznet-auth",
  "zznet-hello",
  "zznet-room",
+ "zznet-session",
+ "zzping-test-utils",
+]
+
+[[package]]
+name = "zzmem-db"
+version = "0.2.2-beta2"
+dependencies = [
+ "actix",
+ "bincode",
+ "log",
+ "ntest",
+ "ron 0.8.1",
+ "serde",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "zznet-auth",
  "zznet-session",
  "zzping-test-utils",
 ]
@@ -6329,7 +6365,7 @@ version = "0.2.2-beta2"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64",
+ "base64 0.22.1",
  "bincode",
  "byteorder",
  "bytes",
@@ -6341,7 +6377,7 @@ dependencies = [
  "mockall",
  "ntest",
  "rand",
- "ron",
+ "ron 0.11.0",
  "serde",
  "serde_json",
  "serial_test",
@@ -6361,7 +6397,7 @@ name = "zzping-database"
 version = "0.2.2-beta2"
 dependencies = [
  "anyhow",
- "base64",
+ "base64 0.22.1",
  "bitflags 2.9.4",
  "byteorder",
  "bytes",
@@ -6373,7 +6409,7 @@ dependencies = [
  "futures-core",
  "log",
  "ntest",
- "ron",
+ "ron 0.11.0",
  "serde",
  "serde_json",
  "tempfile",
