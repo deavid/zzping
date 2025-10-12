@@ -29,10 +29,20 @@ pub trait PingBackend: Send + Sync + 'static {
 /// Ensures tests are fast, reliable, and don't require special privileges or network access.
 #[derive(Clone)]
 pub struct MockBackend {
+    /// The next RTT (round-trip time) in microseconds that this mock will return.
+    ///
+    /// - `Some(u32)`: the mock `ping` call will immediately return this RTT value.
+    /// - `None`: the mock `ping` call will simulate a timeout/failure and return `None`.
+    ///
+    /// This field enables deterministic unit tests by controlling the backend's response.
     pub next_rtt_us: Option<u32>,
 }
 
 impl MockBackend {
+    /// Create a new `MockBackend` that will return `next_rtt_us` for each ping.
+    ///
+    /// Use `Some(value)` to simulate a successful ping with the given RTT (microseconds),
+    /// or `None` to simulate failures/timeouts.
     pub fn new(next_rtt_us: Option<u32>) -> Self {
         Self { next_rtt_us }
     }
@@ -55,6 +65,10 @@ impl PingBackend for MockBackend {
 pub struct RealPingBackend {}
 
 impl RealPingBackend {
+    /// Create a new `RealPingBackend` using the default surge-ping configuration.
+    ///
+    /// This backend performs real ICMP operations and therefore requires appropriate
+    /// privileges (e.g. CAP_NET_RAW) and network connectivity when used.
     pub fn new() -> Self {
         Self {}
     }

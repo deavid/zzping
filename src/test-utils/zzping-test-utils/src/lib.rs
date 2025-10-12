@@ -1,3 +1,13 @@
+//! Test utilities for the zzping project.
+//!
+//! This crate provides small helpers used by unit and integration tests in the
+//! workspace. The helpers create in-memory session managers, message capture
+//! channels, and minimal room handles so tests can exercise session logic
+//! without real network or IO dependencies.
+//!
+//! These utilities are intentionally lightweight and synchronous-friendly so
+//! they can be composed easily in tests.
+
 use std::time::Duration;
 use tokio::sync::mpsc;
 use zznet_session::room_message_trait::RoomMessageTrait;
@@ -11,6 +21,10 @@ pub struct DummyRoomHandle {
 }
 
 impl DummyRoomHandle {
+    /// Create a new `DummyRoomHandle` with the provided `RoomId`.
+    ///
+    /// This handle does not process messages; it only provides a stable
+    /// `room_id()` implementation for use in tests where a `RoomHandle` is required.
     pub fn new(id: RoomId) -> Self {
         Self { id }
     }
@@ -89,8 +103,11 @@ where
 
 /// Return type for MessageCapture creation that bundles the capture handle with connection channels
 pub struct MessageCaptureChannels<TMsg> {
+    /// The capture handle used to receive messages from the connected peer.
     pub capture: MessageCapture<TMsg>,
+    /// Sender side for outbound messages into the peer under test.
     pub tx_out: mpsc::Sender<(RoomId, TMsg)>,
+    /// Receiver side for inbound messages that will be delivered to the peer.
     pub rx_in: mpsc::Receiver<(RoomId, TMsg)>,
 }
 
@@ -118,7 +135,11 @@ pub struct MessageCaptureChannels<TMsg> {
 /// }
 /// ```
 pub struct MessageCapture<TMsg> {
+    /// Receiver for captured messages. Tests can `.recv()` on this to observe
+    /// messages published by the peer under test.
     pub rx: mpsc::Receiver<(RoomId, TMsg)>,
+    // Internal sender kept alive so the channel remains open while the
+    // capture exists.
     _tx: mpsc::Sender<(RoomId, TMsg)>, // Keep alive
 }
 
