@@ -23,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sleep(Duration::from_secs(2)).await;
 
     let health = pinger.get_health().await?;
-    println!("Initial health (no targets): {:?}", health);
+    println!("Initial health (no targets): {health:?}");
 
     // Add first target
     pinger
@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sleep(Duration::from_secs(4)).await;
 
     let health = pinger.get_health().await?;
-    println!("Health after adding target: {:?}", health);
+    println!("Health after adding target: {health:?}");
 
     // Add more targets dynamically
     pinger
@@ -67,7 +67,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sleep(Duration::from_secs(6)).await;
 
     let health = pinger.get_health().await?;
-    println!("Final health with multiple targets: {:?}", health);
+    println!("Final health with multiple targets: {health:?}");
 
     // Disable pinging temporarily
     pinger.set_enabled(false).await?;
@@ -76,7 +76,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sleep(Duration::from_secs(2)).await;
 
     let health = pinger.get_health().await?;
-    println!("Health while disabled: {:?}", health);
+    println!("Health while disabled: {health:?}");
 
     // Re-enable pinging
     pinger.set_enabled(true).await?;
@@ -85,7 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sleep(Duration::from_secs(3)).await;
 
     let final_health = pinger.get_health().await?;
-    println!("Final health: {:?}", final_health);
+    println!("Final health: {final_health:?}");
 
     println!("Dynamic targets example completed!");
     Ok(())

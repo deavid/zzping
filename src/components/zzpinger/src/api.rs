@@ -8,47 +8,58 @@ use crate::error::PingerError;
 use crate::messages::{PingerHealth, TargetConfig};
 use actix::Addr;
 
-/// Handle for interacting with a running PingerActor. Wraps Addr and provides async convenience methods.
-/// Converts Actix send errors into PingerError for consistent error handling.
+/// A handle for interacting with a running `PingerActor`.
+///
+/// This struct provides a clean, asynchronous public API for controlling and monitoring
+/// the pinger. It wraps the `Addr<PingerActor>` and translates method calls into
+/// actor messages, abstracting away the underlying message-passing mechanism for the user.
 #[derive(Clone)]
 pub struct PingerHandle {
-    addr: Addr<PingerActor>,
+    pub(crate) addr: Addr<PingerActor>,
 }
 
 impl PingerHandle {
-    /// Creates a new handle from an actor address. Used internally by PingerBuilder.
+    /// Creates a new handle from an actor address.
+    ///
+    /// This is typically called by the `PingerBuilder` upon starting the actor.
     pub fn new(addr: Addr<PingerActor>) -> Self {
         Self { addr }
     }
 
-    /// Updates the list of ping targets. Sends UpdateTargets message and awaits response.
-    /// Validates targets before applying to prevent runtime errors.
+    /// Dynamically updates the list of targets being monitored.
+    ///
+    /// This will replace the entire set of existing targets with the new list. The actor
+    /// will gracefully stop pinging any removed targets and start pinging any new ones.
     pub async fn update_targets(&self, targets: Vec<TargetConfig>) -> Result<(), PingerError> {
-        self.addr
+        match self
+            .addr
             .send(crate::messages::UpdateTargets { targets })
             .await
-            .map_err(|e| PingerError::ActorError(format!("send failed: {}", e)))??;
-        Ok(())
+        {
+            Ok(inner_res) => inner_res,
+            Err(e) => Err(PingerError::ActorError(format!("send failed: {e}"))),
+        }
     }
 
-    /// Enables or disables pinging. Sends SetPingingEnabled message.
-    /// Allows runtime control of ping operations without reconfiguration.
+    /// Pauses or resumes all pinging operations.
+    ///
+    /// This provides a way to temporarily suspend monitoring without losing the current
+    /// target configuration. When re-enabled, the pinger will resume its tasks.
     pub async fn set_enabled(&self, enabled: bool) -> Result<(), PingerError> {
         self.addr
             .send(crate::messages::SetPingingEnabled { enabled })
             .await
-            .map_err(|e| PingerError::ActorError(format!("send failed: {}", e)))?;
-        Ok(())
+            .map_err(|e| PingerError::ActorError(format!("send failed: {e}")))
     }
 
-    /// Retrieves current health status. Sends GetHealth message and returns snapshot.
-    /// Provides operational metrics for monitoring without side effects.
+    /// Retrieves a snapshot of the pinger's current health and operational metrics.
+    ///
+    /// This is a read-only operation that provides insight into the actor's state,
+    /// such as the number of active targets and total pings sent.
     pub async fn get_health(&self) -> Result<PingerHealth, PingerError> {
-        let h = self
-            .addr
+        self.addr
             .send(crate::messages::GetHealth)
             .await
-            .map_err(|e| PingerError::ActorError(format!("send failed: {}", e)))?;
-        Ok(h)
+            .map_err(|e| PingerError::ActorError(format!("send failed: {e}")))
     }
 }

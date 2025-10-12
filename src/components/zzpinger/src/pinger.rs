@@ -29,10 +29,20 @@ pub trait PingBackend: Send + Sync + 'static {
 /// Ensures tests are fast, reliable, and don't require special privileges or network access.
 #[derive(Clone)]
 pub struct MockBackend {
+    /// The next RTT (round-trip time) in microseconds that this mock will return.
+    ///
+    /// - `Some(u32)`: the mock `ping` call will immediately return this RTT value.
+    /// - `None`: the mock `ping` call will simulate a timeout/failure and return `None`.
+    ///
+    /// This field enables deterministic unit tests by controlling the backend's response.
     pub next_rtt_us: Option<u32>,
 }
 
 impl MockBackend {
+    /// Create a new `MockBackend` that will return `next_rtt_us` for each ping.
+    ///
+    /// Use `Some(value)` to simulate a successful ping with the given RTT (microseconds),
+    /// or `None` to simulate failures/timeouts.
     pub fn new(next_rtt_us: Option<u32>) -> Self {
         Self { next_rtt_us }
     }
@@ -55,6 +65,10 @@ impl PingBackend for MockBackend {
 pub struct RealPingBackend {}
 
 impl RealPingBackend {
+    /// Create a new `RealPingBackend` using the default surge-ping configuration.
+    ///
+    /// This backend performs real ICMP operations and therefore requires appropriate
+    /// privileges (e.g. CAP_NET_RAW) and network connectivity when used.
     pub fn new() -> Self {
         Self {}
     }
@@ -108,20 +122,18 @@ impl PingBackend for RealPingBackend {
     }
 }
 
-/// Manages ping operations for a single target. Tracks sequence and timing.
-/// Uses injected backend for testability, ensuring no real ICMP in unit tests.
+/// Manages ping operations for a single target, tracking sequence numbers and timing.
+///
+/// Encapsulates all state for one ping target, including its configuration and the backend used for sending pings.
+/// This design allows each target to be managed independently in its own asynchronous task.
+/// By using an injectable `PingBackend`, it ensures that no real ICMP operations are performed during unit tests,
+/// making tests fast, reliable, and free of special privilege requirements.
 pub struct TargetPinger {
-    /// Target hostname or IP address
     target: String,
-    /// Rate in milliseconds between pings
     rate_ms: u64,
-    /// Timeout in milliseconds for ping responses
     timeout_ms: u64,
-    /// Sequence number for this target (increments per ping)
     sequence: AtomicU32,
-    /// Timestamp of last ping sent (milliseconds since epoch)
     last_ping_ms: AtomicU64,
-    /// Ping backend implementation (real or mock)
     backend: Arc<dyn PingBackend>,
 }
 
@@ -135,10 +147,11 @@ impl std::fmt::Debug for TargetPinger {
     }
 }
 
-/// Creates a new TargetPinger with default MockBackend. Safe for tests as it doesn't perform real ICMP.
-/// Use new_with_backend for production or custom backends.
 impl TargetPinger {
-    /// Convenience constructor that uses a MockBackend (safe for tests)
+    /// Creates a new pinger with a `MockBackend` for safe testing.
+    ///
+    /// This constructor is ideal for unit tests where real network operations are undesirable.
+    /// It guarantees that no actual ICMP packets will be sent, preventing test flakiness and the need for root privileges.
     pub fn new(target: String, rate_ms: u64, timeout_ms: u64) -> Self {
         Self::new_with_backend(
             target,
@@ -148,7 +161,11 @@ impl TargetPinger {
         )
     }
 
-    /// Create a new TargetPinger for the given target configuration using the default (mockable) backend
+    /// Creates a new pinger with a specified backend.
+    ///
+    /// This is the primary constructor for production use (with `RealPingBackend`) or for injecting
+    /// custom mock backends in advanced testing scenarios. It allows decoupling the pinging logic
+    /// from the underlying network implementation.
     pub fn new_with_backend(
         target: String,
         rate_ms: u64,
@@ -165,22 +182,28 @@ impl TargetPinger {
         }
     }
 
-    /// Get the target address
+    /// Returns the network target (hostname or IP address) for this pinger.
     pub fn target(&self) -> &str {
         &self.target
     }
 
-    /// Get the ping rate in milliseconds
+    /// Returns the configured rate in milliseconds at which pings are sent.
+    /// This value determines the delay between consecutive ping operations in the ping loop.
     pub fn rate_ms(&self) -> u64 {
         self.rate_ms
     }
 
-    /// Get the timeout in milliseconds
+    /// Returns the configured timeout in milliseconds for awaiting a ping response.
+    /// If a response is not received within this duration, the ping is considered lost.
     pub fn timeout_ms(&self) -> u64 {
         self.timeout_ms
     }
 
-    /// Perform a single ping operation
+    /// Performs a single ping, returning the result.
+    ///
+    /// This method increments the sequence number, records the current timestamp, and uses the configured
+    /// backend to send a ping. It's the core operation executed repeatedly by the pinging task.
+    /// The returned `PingResult` contains all information about the outcome of this specific operation.
     pub async fn ping(&self) -> PingResult {
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed);
         let timestamp_ms = SystemTime::now()
@@ -257,5 +280,21 @@ mod tests {
 
         assert_eq!(result1.sequence, 0);
         assert_eq!(result2.sequence, 1);
+    }
+
+    #[test]
+    fn test_real_ping_backend_default() {
+        let _backend = RealPingBackend::default();
+        // This test just ensures the default constructor can be called without panicking.
+    }
+
+    #[test]
+    fn test_target_pinger_debug_format() {
+        let pinger = TargetPinger::new("8.8.8.8".to_string(), 1000, 5000);
+        let debug_str = format!("{:?}", pinger);
+        assert!(debug_str.contains("TargetPinger"));
+        assert!(debug_str.contains(r#"target: "8.8.8.8""#));
+        assert!(debug_str.contains("rate_ms: 1000"));
+        assert!(debug_str.contains("timeout_ms: 5000"));
     }
 }

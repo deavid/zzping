@@ -76,11 +76,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check how many results were received
     let count = collector_instance.get_count();
-    println!("Collected {} ping results", count);
+    println!("Collected {count} ping results");
 
     // Check pinger health
     let health = pinger.get_health().await?;
-    println!("Pinger health: {:?}", health);
+    println!("Pinger health: {health:?}");
 
     println!("Recipient integration example completed!");
     Ok(())

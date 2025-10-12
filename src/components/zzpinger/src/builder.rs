@@ -15,8 +15,11 @@ use crate::messages::TargetConfig;
 use crate::pinger::PingBackend;
 use std::sync::Arc;
 
-/// Builder for PingerActor configuration. Allows step-by-step setup of ping targets, backends, and integration.
-/// Ensures proper initialization and validation before actor creation.
+/// A builder for configuring and starting a `PingerActor`.
+///
+/// This builder provides a fluent interface for setting up the pinger's initial state,
+/// including its targets, backend implementation, and integration with a results collector.
+/// It ensures that the actor is always created in a valid and consistent state.
 pub struct PingerBuilder {
     memdb_addr: Option<Addr<MemDBActor<MemDBPermission>>>,
     memdb_recipient: Option<actix::Recipient<zzmem_db::messages::StorePingResult>>,
@@ -26,7 +29,10 @@ pub struct PingerBuilder {
 }
 
 impl PingerBuilder {
-    /// Creates a new builder with default settings. Starts with no targets and MockBackend.
+    /// Creates a new `PingerBuilder` with default settings.
+    ///
+    /// By default, the pinger starts with no targets and uses a `MockBackend`, making it safe
+    /// for testing environments out-of-the-box.
     pub fn new() -> Self {
         Self {
             memdb_addr: None,
@@ -37,13 +43,18 @@ impl PingerBuilder {
         }
     }
 
-    /// Configures MemDB actor for result submission. Used in production with real MemDB instances.
+    /// Configures the address of a `MemDBActor` for result submission.
+    ///
+    /// This is the standard method for integrating with `zzmem-db` in a production environment.
     pub fn memdb_addr(mut self, addr: Addr<MemDBActor<MemDBPermission>>) -> Self {
         self.memdb_addr = Some(addr);
         self
     }
 
-    /// Configures MemDB recipient for testing. Allows injection of mock recipients without Addr requirement.
+    /// Configures a `Recipient` for result submission, intended for testing.
+    ///
+    /// This allows tests to provide a mock actor to receive `StorePingResult` messages,
+    /// enabling verification of the result submission logic without a real `MemDBActor`.
     pub fn memdb_recipient(
         mut self,
         recipient: actix::Recipient<zzmem_db::messages::StorePingResult>,
@@ -52,25 +63,36 @@ impl PingerBuilder {
         self
     }
 
-    /// Injects a PingBackend for testing. Allows MockBackend to avoid real ICMP in tests.
+    /// Injects a custom `PingBackend`.
+    ///
+    /// This is a key method for testing, allowing the injection of a `MockBackend` to prevent
+    /// real network operations and ensure deterministic test outcomes.
     pub fn backend(mut self, backend: Arc<dyn PingBackend>) -> Self {
         self.backend = Some(backend);
         self
     }
 
-    /// Sets initial ping targets. Defines which hosts to monitor and their timing parameters.
+    /// Sets the initial list of targets for the pinger to monitor.
+    ///
+    /// Each `TargetConfig` defines a host to be pinged, along with its specific rate and timeout.
     pub fn targets(mut self, targets: Vec<TargetConfig>) -> Self {
         self.initial_targets = targets;
         self
     }
 
-    /// Sets whether pinging starts immediately. Controls initial actor behavior.
+    /// Sets the initial enabled state of the pinger upon startup.
+    ///
+    /// If `true`, the pinger will start its monitoring tasks immediately. If `false`, it will
+    /// remain idle until explicitly enabled.
     pub fn enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
         self
     }
 
-    /// Builds and starts the PingerActor. Returns handle for interaction. Validates configuration before startup.
+    /// Consumes the builder to construct, start, and return a handle to the `PingerActor`.
+    ///
+    /// This method finalizes the configuration, starts the actor, and provides a `PingerHandle`
+    /// for interacting with the running actor instance.
     pub fn start(self) -> Result<PingerHandle, PingerError> {
         let mut actor = PingerActor::new();
 
