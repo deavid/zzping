@@ -128,7 +128,16 @@ where
                 .iter()
                 .map(|s| RoomId::from(s.as_str()))
                 .collect();
-            ConnectionManager::<TMsg, TRole>::new(rooms).start()
+
+            // Read optional limits from environment variables. If set, they take precedence
+            // and are passed to the ConnectionManager constructor. Values must be positive integers.
+            let max_peers = std::env::var_os("ZZPING_MAX_PEERS")
+                .and_then(|v| v.to_string_lossy().parse::<usize>().ok());
+            let max_rooms_per_peer = std::env::var_os("ZZPING_MAX_ROOMS_PER_PEER")
+                .and_then(|v| v.to_string_lossy().parse::<usize>().ok());
+
+            ConnectionManager::<TMsg, TRole>::new_with_limits(rooms, max_peers, max_rooms_per_peer)
+                .start()
         };
 
         // Create TCP server

@@ -44,3 +44,25 @@ cargo test -p zzintent-config --lib
 # due to the intentional security restrictions
 cargo test -p zzintent-config --lib --release  # May fail some tests
 ```
+
+## Component template
+
+See `COMPONENT_TEMPLATE_GUIDE.md` at the repository root for a short, practical template and examples to start new components.
+
+## Runtime limits (environment variables)
+
+You can configure SessionManager connection limits at runtime using environment variables. These are read automatically by the server builder and passed to the underlying `ConnectionManager`.
+
+- `ZZPING_MAX_PEERS` — optional integer. When set, the SessionManager will reject additional peer registrations once this many peers are present.
+- `ZZPING_MAX_ROOMS_PER_PEER` — optional integer. When set, adding a peer that has more than this number of rooms will be rejected.
+
+Example (bash):
+
+```bash
+# Allow at most 50 peers and at most 4 rooms per peer
+export ZZPING_MAX_PEERS=50
+export ZZPING_MAX_ROOMS_PER_PEER=4
+cargo run --bin some-server
+```
+
+If the variables are not set, no limits are enforced (legacy behavior).

@@ -66,7 +66,7 @@ mod tests {
         });
 
         // ACT
-        let addr = builder.start();
+        let addr = builder.start().expect("start failed");
 
         // ASSERT: Actor should start successfully
         assert!(addr.connected());
@@ -80,7 +80,7 @@ mod tests {
         let builder = IntentConfigBuilder::new().role(IntentConfigRole::Collector);
 
         // ACT
-        let addr = builder.start();
+        let addr = builder.start().expect("start failed");
 
         // ASSERT: Actor should start successfully
         assert!(addr.connected());
@@ -95,13 +95,11 @@ mod tests {
             config_file_path: PathBuf::new(),
         });
 
-        // ACT: Should panic
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            builder.start();
-        }));
+        // ACT: Should return Err for invalid role
+        let res = builder.start();
 
-        // ASSERT: Should have panicked
-        assert!(result.is_err(), "Builder should panic on invalid role");
+        // ASSERT: Should be an error
+        assert!(res.is_err(), "Builder should return Err on invalid role");
     }
 
     #[actix::test]
@@ -114,7 +112,8 @@ mod tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         // ASSERT
         assert!(addr.connected());

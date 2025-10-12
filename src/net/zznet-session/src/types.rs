@@ -76,6 +76,13 @@ pub enum SessionError {
     /// A peer with the same id was already registered.
     PeerAlreadyExists(PeerId),
 
+    #[error("Peer limit exceeded: max {max}")]
+    /// The configured maximum number of peers has been reached.
+    PeerLimitExceeded {
+        /// Maximum allowed peers.
+        max: usize,
+    },
+
     #[error("Peer already connected: {0}")]
     /// Peer is already connected.
     PeerAlreadyConnected(PeerId),
@@ -100,6 +107,18 @@ pub enum SessionError {
         peer_id: PeerId,
         /// The conflicting room id.
         room_id: RoomId,
+    },
+
+    #[error("Too many rooms for peer {peer_id}: max {max}")]
+    /// The peer has more rooms than the configured per-peer limit.
+    ///
+    /// `peer_id`: the peer with too many rooms.
+    /// `max`: maximum allowed rooms per peer.
+    RoomLimitExceeded {
+        /// The peer with too many rooms.
+        peer_id: PeerId,
+        /// Maximum allowed rooms per peer.
+        max: usize,
     },
 
     #[error("Room handler not registered: {room_id}")]

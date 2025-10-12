@@ -1,7 +1,10 @@
 //! Contains the private implementation of the IntentConfigActor, including its
 //! state and message handling logic.
 
-use crate::messages::{GetCurrentConfig, IntentConfigData, Subscribe, Unsubscribe, UpdateConfig};
+use crate::messages::{
+    GetCurrentConfig, GetHealth, IntentConfigData, IntentConfigHealth, Subscribe, Unsubscribe,
+    UpdateConfig,
+};
 use crate::network_messages::IntentConfigMessage;
 use crate::permission_wrapper::PermissionWrapper;
 use crate::permissions::PermissionCheck;
@@ -10,6 +13,10 @@ use actix::ResponseFuture;
 use actix::prelude::*;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
 use zznet_auth::role::ApplicationRole;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
@@ -31,6 +38,15 @@ pub struct IntentConfigActor<T: ApplicationRole + std::fmt::Debug> {
 
     /// SessionManager for network communication (Phase 3)
     session_manager: Option<Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>>,
+    /// Per-peer broadcast timeout used when sending messages via SessionManager
+    broadcast_timeout: std::time::Duration,
+    /// Health counters for operational visibility. These are atomic so background
+    /// tasks (spawned async sends) can update counts without accessing the
+    /// actor's single-threaded context directly.
+    successful_broadcasts: Arc<AtomicU64>,
+    failed_broadcasts: Arc<AtomicU64>,
+    /// Stored as unix millis (fits in u64)
+    last_broadcast_ms: Arc<AtomicU64>,
 }
 
 impl<T: ApplicationRole + std::fmt::Debug> Clone for IntentConfigActor<T> {
@@ -41,6 +57,10 @@ impl<T: ApplicationRole + std::fmt::Debug> Clone for IntentConfigActor<T> {
             next_id: self.next_id,
             role: self.role.clone(),
             session_manager: self.session_manager.clone(),
+            broadcast_timeout: self.broadcast_timeout,
+            successful_broadcasts: Arc::clone(&self.successful_broadcasts),
+            failed_broadcasts: Arc::clone(&self.failed_broadcasts),
+            last_broadcast_ms: Arc::clone(&self.last_broadcast_ms),
         }
     }
 }
@@ -70,6 +90,11 @@ impl PermissionCheck<crate::permissions::IntentConfigPermission>
 }
 
 impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
+    /// Set the per-peer broadcast timeout used for network sends
+    pub fn set_broadcast_timeout(&mut self, timeout: std::time::Duration) {
+        self.broadcast_timeout = timeout;
+    }
+
     /// Create a new IntentConfigActor with the specified role
     pub fn new_with_role(role: IntentConfigRole) -> Self {
         Self {
@@ -78,6 +103,10 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
             next_id: 0,
             role,
             session_manager: None,
+            broadcast_timeout: std::time::Duration::from_millis(500),
+            successful_broadcasts: Arc::new(AtomicU64::new(0)),
+            failed_broadcasts: Arc::new(AtomicU64::new(0)),
+            last_broadcast_ms: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -95,12 +124,24 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
     }
 
     /// The logic to broadcast the current configuration to all subscribers.
-    fn broadcast_config(&self) {
+    fn broadcast_config(&mut self) {
+        // Local synchronous broadcasts to registered subscribers.
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut sent = 0u64;
         for (id, recipient) in &self.subscribers {
             log::info!("Broadcasting update to subscriber {}", id);
             // `do_send` is a "tell" or fire-and-forget send. It does not wait for a response.
             recipient.do_send(self.current_config.clone());
+            sent += 1;
         }
+        // Update health counters: local broadcasts are assumed successful for now.
+        self.successful_broadcasts
+            .fetch_add(sent, Ordering::Relaxed);
+        self.last_broadcast_ms.store(now_ms, Ordering::Relaxed);
+        log::debug!("Broadcast completed to {} subscribers", sent);
     }
 
     /// Persist the current configuration to disk (Database role only)
@@ -120,8 +161,7 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
 
         // Serialize config data to RON format
         let config_string = ron::ser::to_string_pretty(&self.current_config, Default::default())
-            .map_err(std::io::Error::other)
-            .unwrap();
+            .map_err(std::io::Error::other)?;
 
         // Write to file atomically (write to temp file, then rename)
         let temp_path = config_path.with_extension("tmp");
@@ -138,6 +178,10 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
     fn send_config_update_to_peers(
         session_manager: Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>,
         config_update: IntentConfigMessage,
+        timeout: std::time::Duration,
+        successful_broadcasts: Arc<AtomicU64>,
+        failed_broadcasts: Arc<AtomicU64>,
+        last_broadcast_ms: Arc<AtomicU64>,
     ) -> ResponseFuture<()> {
         Box::pin(async move {
             let room_id = RoomId::from("intent-config");
@@ -146,25 +190,172 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
                 log::warn!("No peers connected - ConfigUpdate not sent to network");
                 return;
             }
+            // Use broadcast_to_room to send in parallel to peers matching the permission
+            let results = session_manager
+                .broadcast_to_room(
+                    &room_id,
+                    config_update,
+                    |role| role.permission.as_str() == "receive-config-updates",
+                    timeout,
+                )
+                .await;
 
-            for peer_id in peer_ids {
-                if let Some(peer_role) = session_manager.get_peer_role(&peer_id) {
-                    // Fallback: use permission string to identify collector-like peers
-                    if peer_role.permission.as_str() != "receive-config-updates" {
-                        continue;
+            // Update health counters based on per-peer results
+            let mut success_count: u64 = 0;
+            let mut fail_count: u64 = 0;
+            for (peer, res) in results {
+                match res {
+                    Ok(()) => {
+                        success_count = success_count.saturating_add(1);
+                        log::info!("Sent ConfigUpdate to {}", peer)
                     }
-
-                    if let Err(e) = session_manager
-                        .send_to_room(&peer_id, &room_id, config_update.clone())
-                        .await
-                    {
-                        log::warn!("Failed to send ConfigUpdate to {}: {}", peer_id, e);
-                    } else {
-                        log::info!("Sent ConfigUpdate to {}", peer_id);
+                    Err(e) => {
+                        fail_count = fail_count.saturating_add(1);
+                        log::warn!("Failed to send ConfigUpdate to {}: {}", peer, e)
                     }
                 }
             }
+
+            if success_count > 0 {
+                successful_broadcasts.fetch_add(success_count, Ordering::Relaxed);
+            }
+            if fail_count > 0 {
+                failed_broadcasts.fetch_add(fail_count, Ordering::Relaxed);
+            }
+            // Update last broadcast timestamp
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            last_broadcast_ms.store(now_ms, Ordering::Relaxed);
         })
+    }
+
+    /// Handle RequestConfigChange when the actor role is Database.
+    /// Extracted from the main `handle` match arm to improve readability.
+    fn handle_request_config_change_db(
+        &mut self,
+        sender_peer_id: String,
+        targets: Vec<std::net::IpAddr>,
+        ping_rate_pps: u64,
+    ) -> ResponseFuture<()>
+    where
+        Self: PermissionCheck<T>,
+    {
+        log::info!(
+            "Received RequestConfigChange from peer '{}': targets={:?}, rate={}",
+            sender_peer_id,
+            targets,
+            ping_rate_pps
+        );
+
+        // AUTHORIZATION CHECK: Only ClientAdmin can change config
+        if let Some(session_manager) = &self.session_manager {
+            // Look up the sender's role
+            let sender_role = session_manager
+                .get_peer_role(&zznet_session::types::PeerId::from(sender_peer_id.as_str()));
+
+            if let Some(sender_role) = sender_role {
+                if !self.has_update_permission(&sender_role.permission) {
+                    log::warn!(
+                        "✗ Config change REJECTED from peer '{}' - role {:?} is not authorized",
+                        sender_peer_id,
+                        sender_role
+                    );
+
+                    // Try to send an Error message back to the requester
+                    Self::spawn_send_error(
+                        Rc::clone(session_manager),
+                        sender_peer_id.clone(),
+                        "unauthorized: insufficient permission".to_string(),
+                    );
+
+                    return Box::pin(async {});
+                }
+            } else {
+                log::warn!(
+                    "✗ Config change REJECTED from peer '{}' - no role information available (ACL not configured?)",
+                    sender_peer_id
+                );
+
+                // Send explicit error if possible
+                Self::spawn_send_error(
+                    Rc::clone(session_manager),
+                    sender_peer_id.clone(),
+                    "no-role: ACL not configured".to_string(),
+                );
+
+                return Box::pin(async {});
+            }
+        } else {
+            // No SessionManager configured - this should only happen in unit tests
+            // NOTE: In debug builds we allow config changes when no SessionManager is
+            // configured to make unit testing easier (tests can exercise RequestConfigChange
+            // without wiring a full network stack). In production (release builds) this
+            // path is rejected to avoid accidental unauthenticated changes.
+            #[cfg(debug_assertions)]
+            log::warn!(
+                "⚠️  Config change allowed WITHOUT auth check (test mode - no SessionManager) - peer: '{}',",
+                sender_peer_id
+            );
+
+            #[cfg(not(debug_assertions))]
+            {
+                log::error!(
+                    "✗ Config change REJECTED from peer '{}' - SessionManager required in production",
+                    sender_peer_id
+                );
+                return Box::pin(async {});
+            }
+        }
+
+        // Proceed with configuration update
+        let new_config = IntentConfigData {
+            targets,
+            ping_rate_pps,
+        };
+        if new_config != self.current_config {
+            self.current_config = new_config;
+            if let Err(e) = self.persist_config() {
+                log::error!("Failed to persist config: {}", e);
+
+                // Try inform the requester of the persistence failure
+                if let Some(session_manager) = &self.session_manager {
+                    Self::spawn_send_error(
+                        Rc::clone(session_manager),
+                        sender_peer_id.clone(),
+                        format!("persist-failure: {}", e),
+                    );
+                }
+
+                Box::pin(async {})
+            } else {
+                self.broadcast_config();
+                // Send ConfigUpdate to each Collector via SessionManager (Phase 3)
+                if let Some(session_manager) = &self.session_manager {
+                    let session_manager = Rc::clone(session_manager);
+                    let config_update = IntentConfigMessage::ConfigUpdate {
+                        targets: self.current_config.targets.clone(),
+                        ping_rate_pps: self.current_config.ping_rate_pps,
+                    };
+
+                    Self::send_config_update_to_peers(
+                        session_manager,
+                        config_update,
+                        self.broadcast_timeout,
+                        Arc::clone(&self.successful_broadcasts),
+                        Arc::clone(&self.failed_broadcasts),
+                        Arc::clone(&self.last_broadcast_ms),
+                    )
+                } else {
+                    log::warn!("No SessionManager configured - ConfigUpdate not sent to network");
+                    Box::pin(async {})
+                }
+            }
+        } else {
+            log::info!("Config unchanged, no action needed");
+            Box::pin(async {})
+        }
     }
 
     /// Spawn a fire-and-forget task to send an Error message to a specific peer.
@@ -193,20 +384,44 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
     fn spawn_send_current_config_to_peers(
         session_manager: Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>,
         current_config: IntentConfigMessage,
+        timeout: std::time::Duration,
+        successful_broadcasts: Arc<AtomicU64>,
+        failed_broadcasts: Arc<AtomicU64>,
+        last_broadcast_ms: Arc<AtomicU64>,
     ) {
         actix::spawn(async move {
             let room_id = RoomId::from("intent-config");
 
-            for peer_id in session_manager.peer_ids() {
-                if let Err(e) = session_manager
-                    .send_to_room(&peer_id, &room_id, current_config.clone())
-                    .await
-                {
-                    log::warn!("Failed to send CurrentConfig to {}: {}", peer_id, e);
-                } else {
-                    log::debug!("Sent CurrentConfig to {}", peer_id);
+            // Broadcast current config to all connected peers
+            let results = session_manager
+                .broadcast_to_room(&room_id, current_config, |_role| true, timeout)
+                .await;
+
+            let mut success_count: u64 = 0;
+            let mut fail_count: u64 = 0;
+            for (peer, res) in results {
+                match res {
+                    Ok(()) => {
+                        success_count = success_count.saturating_add(1);
+                        log::debug!("Sent CurrentConfig to {}", peer)
+                    }
+                    Err(e) => {
+                        fail_count = fail_count.saturating_add(1);
+                        log::warn!("Failed to send CurrentConfig to {}: {}", peer, e)
+                    }
                 }
             }
+            if success_count > 0 {
+                successful_broadcasts.fetch_add(success_count, Ordering::Relaxed);
+            }
+            if fail_count > 0 {
+                failed_broadcasts.fetch_add(fail_count, Ordering::Relaxed);
+            }
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            last_broadcast_ms.store(now_ms, Ordering::Relaxed);
         });
     }
 
@@ -214,6 +429,10 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
     fn spawn_send_initial_updates(
         session_manager: Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>,
         cfg: IntentConfigData,
+        timeout: std::time::Duration,
+        successful_broadcasts: Arc<AtomicU64>,
+        failed_broadcasts: Arc<AtomicU64>,
+        last_broadcast_ms: Arc<AtomicU64>,
     ) {
         let cfg_clone = cfg.clone();
         actix::spawn(async move {
@@ -223,22 +442,41 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
                 ping_rate_pps: cfg_clone.ping_rate_pps,
             };
 
-            for peer_id in session_manager.peer_ids() {
-                if let Some(peer_role) = session_manager.get_peer_role(&peer_id) {
-                    if peer_role.permission.as_str() != "receive-config-updates" {
-                        continue;
-                    }
+            // Broadcast initial updates to peers that receive config updates
+            let results = session_manager
+                .broadcast_to_room(
+                    &room_id,
+                    config_update,
+                    |role| role.permission.as_str() == "receive-config-updates",
+                    timeout,
+                )
+                .await;
 
-                    if let Err(e) = session_manager
-                        .send_to_room(&peer_id, &room_id, config_update.clone())
-                        .await
-                    {
-                        log::warn!("Failed to send initial ConfigUpdate to {}: {}", peer_id, e);
-                    } else {
-                        log::info!("Sent initial ConfigUpdate to {}", peer_id);
+            let mut success_count: u64 = 0;
+            let mut fail_count: u64 = 0;
+            for (peer, res) in results {
+                match res {
+                    Ok(()) => {
+                        success_count = success_count.saturating_add(1);
+                        log::info!("Sent initial ConfigUpdate to {}", peer)
+                    }
+                    Err(e) => {
+                        fail_count = fail_count.saturating_add(1);
+                        log::warn!("Failed to send initial ConfigUpdate to {}: {}", peer, e)
                     }
                 }
             }
+            if success_count > 0 {
+                successful_broadcasts.fetch_add(success_count, Ordering::Relaxed);
+            }
+            if fail_count > 0 {
+                failed_broadcasts.fetch_add(fail_count, Ordering::Relaxed);
+            }
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            last_broadcast_ms.store(now_ms, Ordering::Relaxed);
         });
     }
 }
@@ -271,7 +509,14 @@ impl<T: ApplicationRole + std::fmt::Debug> Actor for IntentConfigActor<T> {
                                     // ConfigUpdate to Collector peers using helper
                                     if let Some(session_manager) = &self.session_manager {
                                         let session_manager = Rc::clone(session_manager);
-                                        Self::spawn_send_initial_updates(session_manager, cfg);
+                                        Self::spawn_send_initial_updates(
+                                            session_manager,
+                                            cfg,
+                                            self.broadcast_timeout,
+                                            Arc::clone(&self.successful_broadcasts),
+                                            Arc::clone(&self.failed_broadcasts),
+                                            Arc::clone(&self.last_broadcast_ms),
+                                        );
                                     }
                                 }
                                 Err(validation_error) => {
@@ -373,121 +618,7 @@ where
                     targets,
                     ping_rate_pps,
                 },
-            ) => {
-                log::info!(
-                    "Received RequestConfigChange from peer '{}': targets={:?}, rate={}",
-                    sender_peer_id,
-                    targets,
-                    ping_rate_pps
-                );
-
-                // AUTHORIZATION CHECK: Only ClientAdmin can change config
-                // Note: If no SessionManager is configured (e.g., unit tests), allow the request
-                // for backward compatibility
-                if let Some(session_manager) = &self.session_manager {
-                    // Look up the sender's role
-                    let sender_role = session_manager.get_peer_role(
-                        &zznet_session::types::PeerId::from(sender_peer_id.as_str()),
-                    );
-
-                    if let Some(sender_role) = sender_role {
-                        if !self.has_update_permission(&sender_role.permission) {
-                            log::warn!(
-                                "✗ Config change REJECTED from peer '{}' - role {:?} is not authorized",
-                                sender_peer_id,
-                                sender_role
-                            );
-
-                            // Try to send an Error message back to the requester
-                            Self::spawn_send_error(
-                                Rc::clone(session_manager),
-                                sender_peer_id.clone(),
-                                "unauthorized: insufficient permission".to_string(),
-                            );
-
-                            return Box::pin(async {});
-                        }
-                    } else {
-                        log::warn!(
-                            "✗ Config change REJECTED from peer '{}' - no role information available (ACL not configured?)",
-                            sender_peer_id
-                        );
-
-                        // Send explicit error if possible
-                        Self::spawn_send_error(
-                            Rc::clone(session_manager),
-                            sender_peer_id.clone(),
-                            "no-role: ACL not configured".to_string(),
-                        );
-
-                        return Box::pin(async {});
-                    }
-                } else {
-                    // No SessionManager configured - this should only happen in unit tests
-                    // Production deployments MUST configure SessionManager for security
-                    //
-                    // NOTE: This debug/release behavior is tested in integration tests.
-                    // Tests rely on permissive debug-mode behavior for ergonomics.
-                    // See CONTRIBUTING.md for details on running tests.
-                    #[cfg(debug_assertions)]
-                    log::warn!(
-                        "⚠️  Config change allowed WITHOUT auth check (test mode - no SessionManager) - peer: '{}',",
-                        sender_peer_id
-                    );
-
-                    #[cfg(not(debug_assertions))]
-                    {
-                        // In release builds, reject requests without SessionManager
-                        log::error!(
-                            "✗ Config change REJECTED from peer '{}' - SessionManager required in production",
-                            sender_peer_id
-                        );
-                        return Box::pin(async {});
-                    }
-                }
-
-                // Proceed with configuration update (existing code continues...)
-                let new_config = IntentConfigData {
-                    targets,
-                    ping_rate_pps,
-                };
-                if new_config != self.current_config {
-                    self.current_config = new_config;
-                    if let Err(e) = self.persist_config() {
-                        log::error!("Failed to persist config: {}", e);
-
-                        // Try inform the requester of the persistence failure
-                        if let Some(session_manager) = &self.session_manager {
-                            Self::spawn_send_error(
-                                Rc::clone(session_manager),
-                                sender_peer_id.clone(),
-                                format!("persist-failure: {}", e),
-                            );
-                        }
-
-                        Box::pin(async {})
-                    } else {
-                        self.broadcast_config();
-                        // Send ConfigUpdate to each Collector via SessionManager (Phase 3)
-                        if let Some(session_manager) = &self.session_manager {
-                            let session_manager = Rc::clone(session_manager);
-                            let config_update = IntentConfigMessage::ConfigUpdate {
-                                targets: self.current_config.targets.clone(),
-                                ping_rate_pps: self.current_config.ping_rate_pps,
-                            };
-                            Self::send_config_update_to_peers(session_manager, config_update)
-                        } else {
-                            log::warn!(
-                                "No SessionManager configured - ConfigUpdate not sent to network"
-                            );
-                            Box::pin(async {})
-                        }
-                    }
-                } else {
-                    log::info!("Config unchanged, no action needed");
-                    Box::pin(async {})
-                }
-            }
+            ) => self.handle_request_config_change_db(sender_peer_id, targets, ping_rate_pps),
 
             // --- Collector Role Behavior (RECEIVER) ---
             (IntentConfigRole::Collector, IntentConfigMessage::RequestConfigChange { .. }) => {
@@ -543,6 +674,10 @@ where
                     Self::spawn_send_current_config_to_peers(
                         Rc::clone(session_manager),
                         current_config,
+                        self.broadcast_timeout,
+                        Arc::clone(&self.successful_broadcasts),
+                        Arc::clone(&self.failed_broadcasts),
+                        Arc::clone(&self.last_broadcast_ms),
                     );
                 }
                 Box::pin(async {})
@@ -607,6 +742,26 @@ where
                 Box::pin(async {})
             }
         }
+    }
+}
+
+/// Handles the `GetHealth` message.
+impl<T: ApplicationRole + std::fmt::Debug> Handler<GetHealth> for IntentConfigActor<T> {
+    type Result = MessageResult<GetHealth>;
+
+    fn handle(&mut self, _msg: GetHealth, _ctx: &mut Context<Self>) -> Self::Result {
+        // Read atomic counters into primitive values for transport
+        let success = self.successful_broadcasts.load(Ordering::Relaxed);
+        let fail = self.failed_broadcasts.load(Ordering::Relaxed);
+        let last = self.last_broadcast_ms.load(Ordering::Relaxed) as u128;
+
+        let health = IntentConfigHealth {
+            subscriber_count: self.subscribers.len(),
+            successful_broadcasts: success,
+            failed_broadcasts: fail,
+            last_broadcast_ms: last,
+        };
+        MessageResult(health)
     }
 }
 
@@ -1151,5 +1306,98 @@ mod tests {
         // ASSERT: Config should remain default (file ignored)
         assert_eq!(actor.current_config, IntentConfigData::default());
         assert_ne!(actor.current_config, file_config);
+    }
+
+    // Test: GetHealth returns expected counters after a broadcast
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_get_health_after_broadcast() {
+        setup();
+        let mut actor = IntentConfigActor::<MockRole>::default();
+        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+
+        // Register one subscriber so broadcast_config has an effect
+        let (tx, mut rx) = tokio::sync::mpsc::channel(2);
+        let mock_subscriber = MockSubscriber { tx }.start();
+        let subscribe_msg = Subscribe {
+            recipient: mock_subscriber.recipient(),
+        };
+        actor.handle(subscribe_msg, &mut ctx);
+
+        // Trigger a local broadcast
+        actor.current_config = IntentConfigData {
+            targets: vec!["8.8.4.4".parse().unwrap()],
+            ping_rate_pps: 42,
+        };
+        actor.broadcast_config();
+
+        // Ensure subscriber received it
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(10), rx.recv())
+            .await
+            .expect("Expected subscriber to receive broadcast");
+
+        // Query health
+        let health = actor.handle(GetHealth, &mut ctx).0;
+        assert_eq!(health.subscriber_count, 1);
+        assert!(health.successful_broadcasts >= 1);
+        assert_eq!(health.failed_broadcasts, 0);
+        assert!(health.last_broadcast_ms > 0);
+    }
+
+    // Test: failed_broadcasts increments when network sends fail
+    #[actix::test]
+    #[ntest::timeout(200)]
+    async fn test_failed_broadcast_increments_on_network_error() {
+        setup();
+
+        // Create SessionManager and add a peer but DO NOT connect it (no sender)
+        use zznet_session::peer_session::PeerSession;
+        use zznet_session::types::PeerId;
+
+        let mut session_manager =
+            zznet_session::session_manager::SessionManager::<
+                IntentConfigMessage,
+                PermissionWrapper<MockRole>,
+            >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
+
+        let peer_id = PeerId::from("peer-fails");
+        let mut peer_session = PeerSession::new(peer_id.clone());
+        // Assign a role so broadcast_to_room considers this peer (get_peer_role returns Some)
+        peer_session.set_role(Some(PermissionWrapper {
+            permission: MockRole::User,
+        }));
+        session_manager
+            .add_peer(peer_id.clone(), peer_session)
+            .unwrap();
+
+        // Wrap in Rc and attach to actor
+        let rc_sm = Rc::new(session_manager);
+
+        let mut actor = IntentConfigActor::<MockRole>::default();
+        actor.set_session_manager(Rc::clone(&rc_sm));
+
+        // Ensure counters start at zero
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+
+        // Spawn a CurrentConfig broadcast which will attempt to send to the peer but fail
+        let current = IntentConfigMessage::CurrentConfig {
+            targets: actor.current_config.targets.clone(),
+            ping_rate_pps: actor.current_config.ping_rate_pps,
+        };
+
+        IntentConfigActor::<MockRole>::spawn_send_current_config_to_peers(
+            Rc::clone(&rc_sm),
+            current,
+            actor.broadcast_timeout,
+            Arc::clone(&actor.successful_broadcasts),
+            Arc::clone(&actor.failed_broadcasts),
+            Arc::clone(&actor.last_broadcast_ms),
+        );
+
+        // Give async tasks a moment to run
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // Now assert that failed_broadcasts incremented
+        assert!(actor.failed_broadcasts.load(Ordering::Relaxed) >= 1);
     }
 }

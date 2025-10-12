@@ -50,6 +50,16 @@
 //! // room.process_one().await.unwrap();
 //! ```
 
+//! ## Status
+//!
+//! This crate is currently a Proof-of-Concept (PoC). It provides a convenient
+//! in-memory `Room<T>` abstraction useful for local testing and component
+//! integration without involving the network layer. It is not yet hardened for
+//! production use: consider it a developer convenience rather than a stable
+//! delivery contract. If you plan to rely on it in production, open an issue so
+//! we can track hardening requirements (thread-safety, backpressure, tracing,
+//! and public API stability).
+
 /// Connector utilities to wire two `Room`s together.
 pub mod connector;
 

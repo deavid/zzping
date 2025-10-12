@@ -63,6 +63,24 @@ pub struct Unsubscribe(pub usize);
 #[rtype(result = "IntentConfigData")]
 pub struct GetCurrentConfig;
 
+/// Health information for the IntentConfigActor.
+#[derive(Message, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[rtype(result = "IntentConfigHealth")]
+pub struct GetHealth;
+
+/// A compact health struct exposing basic counters and last activity.
+#[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
+pub struct IntentConfigHealth {
+    /// Number of known subscribers
+    pub subscriber_count: usize,
+    /// Number of successful broadcasts attempted since actor start
+    pub successful_broadcasts: u64,
+    /// Number of broadcast failures observed since actor start
+    pub failed_broadcasts: u64,
+    /// Timestamp (unix millis) of last broadcast attempt, 0 if none
+    pub last_broadcast_ms: u128,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

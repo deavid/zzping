@@ -185,11 +185,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create a SessionManager for the server
     // This manages all peer connections and room message routing
-    let server_session_manager = ConnectionManager::<AppMessage, AuthRole>::new(vec![
-        RoomId::from("health"),
-        RoomId::from("data"),
-        RoomId::from("status"),
-    ])
+    let server_session_manager = ConnectionManager::<AppMessage, AuthRole>::new_with_limits(
+        vec![
+            RoomId::from("health"),
+            RoomId::from("data"),
+            RoomId::from("status"),
+        ],
+        None,
+        None,
+    )
     .start();
 
     // Create the server using ServerBuilder
@@ -225,10 +229,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔌 Setting up client...");
 
     // Create a SessionManager for the client
-    let client_session_manager = ConnectionManager::<AppMessage, AuthRole>::new(vec![
-        RoomId::from("health"),
-        RoomId::from("data"),
-    ])
+    let client_session_manager = ConnectionManager::<AppMessage, AuthRole>::new_with_limits(
+        vec![RoomId::from("health"), RoomId::from("data")],
+        None,
+        None,
+    )
     .start();
 
     // Create the client using ClientBuilder

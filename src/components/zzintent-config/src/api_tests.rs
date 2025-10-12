@@ -43,7 +43,8 @@ mod tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         let new_config = IntentConfigData {
             targets: vec!["1.1.1.1".parse().unwrap()],
@@ -70,7 +71,8 @@ mod tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
         let mock = MockReceiver { tx }.start();
@@ -102,7 +104,8 @@ mod tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         let (tx1, mut rx1) = tokio::sync::mpsc::channel(10);
         let mock1 = MockReceiver { tx: tx1 }.start();
@@ -134,7 +137,8 @@ mod tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
         let mock = MockReceiver { tx }.start();
@@ -172,7 +176,8 @@ mod tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
         let mock = MockReceiver { tx }.start();
@@ -206,7 +211,8 @@ mod tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
         let mock = MockReceiver { tx }.start();
@@ -242,7 +248,8 @@ mod tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         // ACT: Unsubscribe with non-existent ID
         addr.unsubscribe(999);
@@ -262,7 +269,8 @@ mod tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         let expected_config = IntentConfigData {
             targets: vec!["192.168.1.1".parse().unwrap()],

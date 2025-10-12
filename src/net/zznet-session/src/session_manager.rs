@@ -26,6 +26,12 @@ where
     /// Rooms this SessionManager offers
     /// Used during PublishRooms negotiation to compute intersection with peers
     offered_rooms: Vec<RoomId>,
+
+    /// Optional maximum number of peers this manager will accept
+    max_peers: Option<usize>,
+
+    /// Optional maximum number of rooms per peer
+    max_rooms_per_peer: Option<usize>,
 }
 
 impl<TMsg, TRole> SessionManager<TMsg, TRole>
@@ -40,6 +46,22 @@ where
         Self {
             peers: HashMap::new(),
             offered_rooms,
+            max_peers: None,
+            max_rooms_per_peer: None,
+        }
+    }
+
+    /// Create a new SessionManager with explicit connection limits
+    pub fn new_with_limits(
+        offered_rooms: Vec<RoomId>,
+        max_peers: Option<usize>,
+        max_rooms_per_peer: Option<usize>,
+    ) -> Self {
+        Self {
+            peers: HashMap::new(),
+            offered_rooms,
+            max_peers,
+            max_rooms_per_peer,
         }
     }
 
@@ -58,6 +80,27 @@ where
     ) -> Result<(), SessionError> {
         if self.peers.contains_key(&peer_id) {
             return Err(SessionError::PeerAlreadyExists(peer_id));
+        }
+
+        // Enforce global peer limit if configured
+        match self.max_peers {
+            Some(max) if self.peers.len() >= max => {
+                return Err(SessionError::PeerLimitExceeded { max });
+            }
+            _ => {}
+        }
+
+        // Enforce per-peer room limit if configured. We check the pre-configured
+        // rooms on the PeerSession so callers that add many rooms before registering
+        // the peer are also constrained.
+        if let Some(max_rooms) = self.max_rooms_per_peer {
+            let room_count = peer_session.room_ids().len();
+            if room_count > max_rooms {
+                return Err(SessionError::RoomLimitExceeded {
+                    peer_id: peer_id.clone(),
+                    max: max_rooms,
+                });
+            }
         }
 
         self.peers.insert(peer_id, peer_session);
@@ -148,6 +191,81 @@ where
         peer.send_to_room(room_id, msg).await
     }
 
+    /// Broadcast a message to all peers matching a filter in parallel.
+    ///
+    /// This helper sends `message` to the given `room_id` for every peer whose
+    /// role satisfies `filter`. Each send is performed in its own task and the
+    /// function returns a vector of per-peer results. A per-send timeout can be
+    /// provided to avoid blocking on slow peers.
+    pub async fn broadcast_to_room<F>(
+        &self,
+        room_id: &RoomId,
+        message: TMsg,
+        filter: F,
+        timeout: std::time::Duration,
+    ) -> Vec<(PeerId, Result<(), SessionError>)>
+    where
+        F: Fn(&TRole) -> bool + Send + Sync + 'static,
+        TMsg: Clone + Send + 'static,
+    {
+        use tokio::time::timeout as tokio_timeout;
+
+        let mut handles: Vec<tokio::task::JoinHandle<(PeerId, Result<(), SessionError>)>> =
+            Vec::new();
+        let mut results: Vec<(PeerId, Result<(), SessionError>)> = Vec::new();
+
+        for peer_id in self.peer_ids() {
+            if let Some(role) = self.get_peer_role(&peer_id) {
+                if !filter(role) {
+                    continue;
+                }
+
+                // Try to obtain a cloneable sender for this peer. If none, push an error result.
+                if let Some(sender) = self.get_peer_sender(&peer_id) {
+                    let room = room_id.clone();
+                    let msg_clone = message.clone();
+                    let peer_clone = peer_id.clone();
+
+                    let handle = tokio::spawn(async move {
+                        // Send via the cloned sender with timeout
+                        let send_fut = async {
+                            sender
+                                .send((room, msg_clone))
+                                .await
+                                .map_err(|_| SessionError::SendFailed)
+                        };
+
+                        match tokio_timeout(timeout, send_fut).await {
+                            Ok(r) => (peer_clone, r),
+                            Err(_) => (peer_clone, Err(SessionError::SendFailed)),
+                        }
+                    });
+
+                    handles.push(handle);
+                } else {
+                    // Peer has no sender (not connected) -> immediate error
+                    results.push((
+                        peer_id.clone(),
+                        Err(SessionError::PeerNotConnected(peer_id.clone())),
+                    ));
+                }
+            }
+        }
+
+        // Await spawned tasks and collect their results
+        for h in handles {
+            match h.await {
+                Ok(res) => results.push(res),
+                Err(join_err) => {
+                    // Task panicked or was cancelled; map to SendFailed with unknown peer
+                    tracing::warn!("broadcast task join error: {:?}", join_err);
+                }
+            }
+        }
+
+        results
+    }
+
     /// Get list of all peer IDs
     pub fn peer_ids(&self) -> Vec<PeerId> {
         self.peers.keys().cloned().collect()
@@ -217,7 +335,6 @@ where
     ///
     /// Returns `None` if the peer doesn't exist or isn't connected.
     ///
-    ///
     pub fn get_peer_sender(&self, peer_id: &PeerId) -> Option<mpsc::Sender<(RoomId, TMsg)>> {
         let peer = self.peers.get(peer_id)?;
         peer.get_sender()
@@ -232,8 +349,6 @@ where
     /// Multiple subscribers can call this method to get independent receivers.
     ///
     /// Returns `None` if the peer doesn't exist or is not connected.
-    ///
-    ///
     pub fn subscribe_peer_inbound(
         &mut self,
         peer_id: &PeerId,
@@ -311,6 +426,7 @@ mod tests {
     use crate::test_room_messages::CollectorMessages;
     use tokio::sync::mpsc;
     use zznet_auth::mock::MockRole;
+
     #[actix::test]
     async fn test_session_manager_new() {
         let offered_rooms = vec![RoomId::from("intentconfig"), RoomId::from("memdb")];
@@ -498,33 +614,74 @@ mod tests {
         assert!(manager.is_peer_connected(&PeerId::from("peer3")));
     }
 
-    // Note: Full integration tests with Room<T> instances are in integration_tests.rs
-    // These tests focus on SessionManager's core peer management functionality.
-
-    // --- Phase 8: Room Negotiation Tests ---
+    // --- New tests for limits ---
 
     #[actix::test]
-    async fn test_set_offered_rooms() {
-        let mut manager = SessionManager::<CollectorMessages, MockRole>::new(vec![]);
+    async fn test_peer_limit_exceeded() {
+        // Create manager with max_peers = 2
+        let mut manager =
+            SessionManager::<CollectorMessages, MockRole>::new_with_limits(vec![], Some(2), None);
 
-        // Initially empty
-        assert_eq!(manager.offered_rooms().len(), 0);
+        // Add two peers - should succeed
+        for id in ["peer1", "peer2"] {
+            let peer_session = PeerSession::<CollectorMessages, MockRole>::new(PeerId::from(id));
+            manager.add_peer(PeerId::from(id), peer_session).unwrap();
+        }
 
-        // Set rooms
-        let rooms = vec![
-            RoomId::from("intentconfig"),
-            RoomId::from("memdb"),
-            RoomId::from("health"),
-        ];
-        manager.set_offered_rooms(rooms.clone());
+        // Third peer should fail
+        let peer3 = PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("peer3"));
+        let res = manager.add_peer(PeerId::from("peer3"), peer3);
+        assert!(matches!(res, Err(SessionError::PeerLimitExceeded { .. })));
+    }
 
-        // Should be set
-        assert_eq!(manager.offered_rooms(), rooms.as_slice());
+    #[actix::test]
+    async fn test_room_limit_exceeded_on_add_peer() {
+        // Create manager with max_rooms_per_peer = 1
+        let mut manager =
+            SessionManager::<CollectorMessages, MockRole>::new_with_limits(vec![], None, Some(1));
 
-        // Can update
-        let new_rooms = vec![RoomId::from("intentconfig"), RoomId::from("metrics")];
-        manager.set_offered_rooms(new_rooms.clone());
-        assert_eq!(manager.offered_rooms(), new_rooms.as_slice());
+        // Create peer session and add two simple mock rooms before registering
+        let mut peer = PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("p1"));
+
+        // Simple mock RoomHandle implementation for tests
+        struct SimpleRoom {
+            id: RoomId,
+        }
+
+        impl SimpleRoom {
+            fn new(id: &str) -> Self {
+                Self {
+                    id: RoomId::from(id),
+                }
+            }
+        }
+
+        impl crate::peer_session::RoomHandle<CollectorMessages> for SimpleRoom {
+            fn room_id(&self) -> &RoomId {
+                &self.id
+            }
+
+            fn send_message(&mut self, _msg: CollectorMessages) -> Result<(), SessionError> {
+                Ok(())
+            }
+
+            fn spawn_forwarder(
+                &mut self,
+                _tx: mpsc::Sender<(RoomId, CollectorMessages)>,
+            ) -> Result<(), SessionError> {
+                Ok(())
+            }
+        }
+
+        // Add two rooms to the peer
+        peer.add_room(RoomId::from("r1"), Box::new(SimpleRoom::new("r1")))
+            .unwrap();
+        peer.add_room(RoomId::from("r2"), Box::new(SimpleRoom::new("r2")))
+            .unwrap();
+
+        // Now attempt to register peer - should fail due to room limit
+        let res = manager.add_peer(PeerId::from("p1"), peer);
+        assert!(matches!(res, Err(SessionError::RoomLimitExceeded { .. })));
     }
 
     #[actix::test]

@@ -51,7 +51,24 @@ where
     /// `offered_rooms`: Rooms this manager offers to peers
     pub fn new(offered_rooms: Vec<RoomId>) -> Self {
         Self {
-            session_manager: SessionManager::new(offered_rooms),
+            session_manager: SessionManager::new_with_limits(offered_rooms, None, None),
+            hello_actors: HashMap::new(),
+            acl: None,
+        }
+    }
+
+    /// Create a new ConnectionManager with explicit connection limits
+    pub fn new_with_limits(
+        offered_rooms: Vec<RoomId>,
+        max_peers: Option<usize>,
+        max_rooms_per_peer: Option<usize>,
+    ) -> Self {
+        Self {
+            session_manager: SessionManager::new_with_limits(
+                offered_rooms,
+                max_peers,
+                max_rooms_per_peer,
+            ),
             hello_actors: HashMap::new(),
             acl: None,
         }
@@ -63,7 +80,25 @@ where
         acl: Option<(Authorizer<TRole>, bool)>,
     ) -> Self {
         Self {
-            session_manager: SessionManager::new(offered_rooms),
+            session_manager: SessionManager::new_with_limits(offered_rooms, None, None),
+            hello_actors: HashMap::new(),
+            acl,
+        }
+    }
+
+    /// Create a ConnectionManager with ACL and explicit limits
+    pub fn new_with_limits_and_acl(
+        offered_rooms: Vec<RoomId>,
+        acl: Option<(Authorizer<TRole>, bool)>,
+        max_peers: Option<usize>,
+        max_rooms_per_peer: Option<usize>,
+    ) -> Self {
+        Self {
+            session_manager: SessionManager::new_with_limits(
+                offered_rooms,
+                max_peers,
+                max_rooms_per_peer,
+            ),
             hello_actors: HashMap::new(),
             acl,
         }

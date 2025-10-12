@@ -59,7 +59,8 @@ mod session_manager_integration_tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         // Send RequestConfigChange
         let targets = vec!["8.8.8.8".parse::<IpAddr>().unwrap()];
@@ -117,7 +118,8 @@ mod session_manager_integration_tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         // Create test subscriber
         let (tx, mut rx) = tokio::sync::broadcast::channel(10);
@@ -195,7 +197,8 @@ mod session_manager_integration_tests {
         // Create Collector actor (no SessionManager needed for receiving)
         let collector_addr = IntentConfigBuilder::<IntentConfigPermission>::new()
             .role(IntentConfigRole::Collector)
-            .start();
+            .start()
+            .expect("start failed");
 
         // Send ConfigUpdate (simulating network message from Database)
         let targets = vec![
@@ -329,13 +332,15 @@ mod session_manager_integration_tests {
                 config_file_path: db_config_path.clone(),
             })
             .session_manager(db_manager)
-            .start();
+            .start()
+            .expect("start failed");
 
         // Collector actor
         let _coll_addr = IntentConfigBuilder::new()
             .role(IntentConfigRole::Collector)
             .session_manager(collector_manager)
-            .start();
+            .start()
+            .expect("start failed");
 
         // Hook up a receiver to the collector's inbound broadcast to capture ConfigUpdate
         // We'll use SessionManager.subscribe_peer_inbound on the collector manager
@@ -382,7 +387,8 @@ mod session_manager_integration_tests {
             .role(IntentConfigRole::Database {
                 config_file_path: config_path.clone(),
             })
-            .start();
+            .start()
+            .expect("start failed");
 
         // Send config change
         let targets = vec!["9.9.9.9".parse::<IpAddr>().unwrap()];
@@ -537,7 +543,8 @@ mod session_manager_integration_tests {
                 config_file_path: config_path.clone(),
             })
             .session_manager(session_manager)
-            .start();
+            .start()
+            .expect("start failed");
 
         // ===== Send RequestConfigChange =====
         let targets = vec![
@@ -759,7 +766,8 @@ mod auth_tests {
                 config_file_path: config_path.clone(),
             })
             .session_manager(session_manager)
-            .start();
+            .start()
+            .expect("start failed");
 
         // Set initial known config
         let initial_targets = vec!["9.9.9.9".parse::<IpAddr>().unwrap()];
@@ -859,7 +867,8 @@ mod auth_tests {
                 config_file_path: config_path.clone(),
             })
             .session_manager(session_manager)
-            .start();
+            .start()
+            .expect("start failed");
 
         // Send RequestConfigChange from bad-actor (unauthorized)
         database_addr.do_send(IntentConfigMessage::RequestConfigChange {
@@ -988,7 +997,8 @@ mod auth_tests {
                 config_file_path: config_path,
             })
             .session_manager(session_manager)
-            .start();
+            .start()
+            .expect("start failed");
 
         // ===== Trigger ConfigUpdate =====
         let targets = vec!["7.7.7.7".parse::<IpAddr>().unwrap()];
@@ -1079,7 +1089,8 @@ mod auth_tests {
                 config_file_path: config_path.clone(),
             })
             .session_manager(session_manager)
-            .start();
+            .start()
+            .expect("start failed");
 
         // Send RequestConfigChange from the no-role peer
         database_addr.do_send(IntentConfigMessage::RequestConfigChange {
@@ -1134,7 +1145,8 @@ mod auth_tests {
                 config_file_path: config_path,
             })
             // Intentionally NOT setting session_manager
-            .start();
+            .start()
+            .expect("start failed");
 
         // In debug builds, this should succeed (no panic, config gets updated)
         // In release builds, this would be rejected early
@@ -1189,7 +1201,8 @@ mod additional_integration_tests {
                 config_file_path: config_path,
             })
             // Intentionally NOT setting session_manager
-            .start();
+            .start()
+            .expect("start failed");
 
         // Send multiple rapid config updates
         let updates = vec![
@@ -1265,7 +1278,8 @@ mod additional_integration_tests {
                 config_file_path: config_path.clone(),
             })
             // No session_manager initially
-            .start();
+            .start()
+            .expect("start failed");
 
         // Verify actor loaded initial config
         let initial_config = database_addr
