@@ -1,13 +1,15 @@
 //! Message types for the Pinger component.
 //!
 //! Defines commands for target management, health monitoring, and configuration updates.
+//! Validation prevents invalid states that could cause hangs or resource leaks.
 
 use actix::Message;
 use serde::{Deserialize, Serialize};
 
 use crate::error::PingerError;
 
-/// Command to update ping targets
+/// Updates the list of targets to ping. Replaces all existing targets and cancels tasks for removed ones.
+/// Ensures only valid configurations are accepted to maintain system stability and prevent resource leaks.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "Result<(), PingerError>")]
 pub struct UpdateTargets {
@@ -15,7 +17,8 @@ pub struct UpdateTargets {
     pub targets: Vec<TargetConfig>,
 }
 
-/// Configuration for a single ping target
+/// Configuration for a single ping target. Defines timing and addressing for ping operations.
+/// Validation prevents zero rates or timeouts that could cause infinite loops or hangs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TargetConfig {
     /// Target hostname or IP address
@@ -26,7 +29,8 @@ pub struct TargetConfig {
     pub timeout_ms: u64,
 }
 
-/// Command to pause or resume pinging
+/// Enables or disables all ping operations. Allows pausing monitoring without reconfiguration.
+/// Useful for maintenance windows or when network conditions require temporary suspension.
 #[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct SetPingingEnabled {
@@ -34,12 +38,14 @@ pub struct SetPingingEnabled {
     pub enabled: bool,
 }
 
-/// Get current pinger health status
+/// Retrieves current health status of the pinger. Provides operational metrics for monitoring.
+/// Enables external systems to track ping performance and target counts without side effects.
 #[derive(Message, Debug)]
 #[rtype(result = "PingerHealth")]
 pub struct GetHealth;
 
-/// Health status of the pinger component
+/// Health snapshot of the pinger's current state. Includes counters and operational flags.
+/// Used for monitoring and alerting on ping operation health and performance.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PingerHealth {
     /// Number of active targets being pinged

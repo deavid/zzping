@@ -6530,6 +6530,7 @@ name = "zzpinger"
 version = "0.1.0"
 dependencies = [
  "actix",
+ "futures",
  "ntest",
  "serde",
  "surge-ping",
