@@ -36,7 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Check health
     let health = pinger.get_health().await?;
-    println!("Health: {:?}", health);
+    println!("Health: {health:?}");
 
     // Update targets dynamically
     pinger
@@ -51,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     sleep(Duration::from_secs(3)).await;
 
     let final_health = pinger.get_health().await?;
-    println!("Final health: {:?}", final_health);
+    println!("Final health: {final_health:?}");
 
     println!("Example completed successfully!");
     Ok(())

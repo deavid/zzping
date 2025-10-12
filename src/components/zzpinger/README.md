@@ -1,143 +1,80 @@
-# zzpinger Component
+# `zzpinger` Component
 
-The `zzpinger` component manages ICMP ping operations for multiple network targets with configurable rates and timeouts. It submits ping results to `zzmem-db` for storage and analysis, enabling network monitoring and diagnostics.
+## Overview
 
-## Purpose
+The `zzpinger` component is a high-performance, concurrent ICMP ping engine for network monitoring. It is designed to ping multiple network targets simultaneously, each with its own configurable rate and timeout.
 
-This component provides the core ping engine for the zzping system. It handles:
-- Concurrent ping operations for multiple targets
-- Rate limiting to prevent network overload
-- Timeout detection and loss tracking
-- Result submission to the database for historical analysis
+Its primary responsibilities are:
+- Managing the lifecycle of ping operations for a dynamic list of targets.
+- Enforcing per-target rate limits to avoid flooding the network.
+- Detecting timeouts and tracking packet loss.
+- Submitting structured `PingResult` data to a collector component (e.g., `zzmem-db`).
+- Allowing for dynamic updates to the target list and operational state at runtime.
 
-The design emphasizes testability and reliability, ensuring no real network operations occur during testing.
-
-## Architecture
-
-- **Actor-based**: Uses Actix actors for concurrent target management
-- **Backend abstraction**: Supports pluggable ping backends (real ICMP or test mocks)
-- **Rate limiting**: Per-target tokio tasks with configurable intervals
-- **Result submission**: Sends `PingResult` messages to `zzmem-db` via Actix recipients
+The component is built using the Actix actor framework, with a dedicated asynchronous task for each target to ensure non-blocking, independent operation.
 
 ## Privilege Requirements
 
-**Requires CAP_NET_RAW capability** for ICMP socket operations on Linux. Without this, real ping operations will fail.
+To send ICMP packets, this component requires the `CAP_NET_RAW` capability. Without it, all ping attempts will fail.
 
-To run with privileges:
+You can grant this capability to the compiled binary using `setcap`:
 ```bash
-# Set capability on binary
-sudo setcap cap_net_raw=+ep target/debug/examples/basic_pinger
-
-# Or run as root
-sudo ./target/debug/examples/basic_pinger
+sudo setcap cap_net_raw=+ep /path/to/your/binary
 ```
+Alternatively, you can run the application as root, although this is not recommended for security reasons.
 
-## Usage
+## Target Configuration
 
-### Basic Setup
+Targets are defined using the `TargetConfig` struct, which includes:
+- `target`: The hostname or IP address to ping.
+- `rate_ms`: The interval in milliseconds between pings to this specific target.
+- `timeout_ms`: The duration in milliseconds to wait for a reply before considering the ping lost.
+
+## Rate Limiting Behavior
+
+Rate limiting is handled on a per-target basis. Each target has its own independent ping loop running in a dedicated task, which sleeps for the configured `rate_ms` between each ping attempt. This ensures that a slow or unresponsive target does not affect the monitoring of other targets.
+
+## Integration with `zzmem-db`
+
+`zzpinger` is designed to work with a collector component that accepts `StorePingResult` messages. The `PingerBuilder` allows you to configure the `Recipient` for this message, decoupling `zzpinger` from any specific collector implementation.
+
+## Usage Example
+
+Here is a basic example of how to create and run a pinger:
 
 ```rust
-use zzpinger::{PingerBuilder, TargetConfig};
+use zzpinger::builder::PingerBuilder;
+use zzpinger::messages::TargetConfig;
+use std::sync::Arc;
+use tokio::time::sleep;
+use std::time::Duration;
 
-let targets = vec![
-    TargetConfig {
-        target: "8.8.8.8".to_string(),
-        rate_ms: 1000,  // ping every second
-        timeout_ms: 5000,
-    }
-];
+#[tokio::main]
+async fn main() {
+    // Use the builder to configure the pinger
+    let pinger_handle = PingerBuilder::new()
+        .targets(vec![
+            TargetConfig {
+                target: "8.8.8.8".to_string(),
+                rate_ms: 1000, // Ping every 1 second
+                timeout_ms: 500, // 500ms timeout
+            },
+            TargetConfig {
+                target: "1.1.1.1".to_string(),
+                rate_ms: 2000, // Ping every 2 seconds
+                timeout_ms: 1000,
+            },
+        ])
+        .start()
+        .expect("Failed to start pinger");
 
-let pinger = PingerBuilder::new()
-    .targets(targets)
-    .enabled(true)
-    .start()
-    .expect("failed to start pinger");
+    println!("Pinger started. Monitoring targets...");
+    sleep(Duration::from_secs(10)).await;
+
+    // You can get health information at any time
+    let health = pinger_handle.get_health().await.unwrap();
+    println!("Current Pinger Health: {:?}", health);
+}
 ```
 
-### With MemDB Integration
-
-```rust
-use zzmem_db::actor::MemDBActor;
-use zzmem_db::permissions::MemDBPermission;
-
-let memdb = MemDBActor::new(/* config */).start();
-
-let pinger = PingerBuilder::new()
-    .memdb_addr(memdb)
-    .targets(targets)
-    .start()
-    .expect("failed to start pinger");
-```
-
-### Testing
-
-For tests, inject a mock backend to avoid real ICMP:
-
-```rust
-use zzpinger::pinger::MockBackend;
-
-let mock_backend = Arc::new(MockBackend::new(Some(1000))); // 1ms RTT
-
-let pinger = PingerBuilder::new()
-    .backend(mock_backend)
-    .targets(targets)
-    .start()
-    .expect("failed to start pinger");
-```
-
-## Configuration
-
-### TargetConfig
-
-- `target`: IP address or hostname to ping
-- `rate_ms`: Milliseconds between ping attempts (minimum 1)
-- `timeout_ms`: Maximum wait time for ping response (minimum 1)
-
-### Rate Limiting
-
-Pings are sent at fixed intervals per target. The component uses tokio `sleep` to respect rates, ensuring predictable timing without drift.
-
-## Integration with zzmem-db
-
-Results are submitted as `StorePingResult` messages containing:
-- `target`: The pinged address
-- `timestamp_ms`: Unix timestamp in milliseconds
-- `rtt_us`: Round-trip time in microseconds (None on timeout)
-- `sequence`: Per-target sequence number
-
-The component uses Actix `Recipient<StorePingResult>` for loose coupling, allowing tests to inject mock recipients.
-
-## Error Handling
-
-- Invalid targets (empty strings, zero rates/timeouts) are rejected at configuration time
-- Ping failures (timeouts, network errors) result in `rtt_us = None`
-- Submission failures to MemDB are logged but don't stop pinging
-- Actor panics are avoided through proper error propagation
-
-## Testing
-
-The component is designed for comprehensive testing:
-- All unit tests use `MockBackend` (no real network calls)
-- Integration tests verify end-to-end message flow
-- API tests exercise public interfaces
-- Coverage targets >85% for reliability
-
-Run tests:
-```bash
-cargo test -p zzpinger --lib
-```
-
-## Performance Considerations
-
-- Each target spawns a dedicated tokio task
-- Memory usage scales with number of targets
-- CPU overhead is minimal (mostly async waits)
-- Network I/O is bounded by configured rates
-
-## Limitations
-
-- ICMP requires elevated privileges on most systems
-- IPv6 support depends on underlying ping library
-- No built-in retry logic (single ping per interval)
-- Sequence numbers reset on target reconfiguration</content>
-<parameter name="filePath">/home/deavid/git/rust/zzping/src/components/zzpinger/README.md
+This example uses the `MockBackend` by default, so it will not perform real network operations. To use the real ICMP backend, you would omit the `.backend()` call when using the `PingerBuilder`.
