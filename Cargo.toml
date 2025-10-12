@@ -11,6 +11,7 @@ members = [
     "src/old/apps/zzping-gui",
     "src/components/zzintent-config",
     "src/components/zzmem-db",
+    "src/components/zzpinger",
     "src/test-utils/zzping-test-utils",
     "src/net/zznet-hello",
     "src/net/zznet-builder",
