@@ -1,0 +1,1 @@
+//! Defines the permissions for the `zzcollector-state` component.

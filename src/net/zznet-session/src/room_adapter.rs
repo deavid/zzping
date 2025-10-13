@@ -93,7 +93,7 @@ where
 impl<T, TMsg> RoomHandle<TMsg> for RoomAdapter<T, TMsg>
 where
     T: Send + Clone + TryFrom<TMsg> + Into<TMsg> + 'static,
-    TMsg: RoomMessageTrait,
+    TMsg: RoomMessageTrait + Sync,
 {
     fn room_id(&self) -> &RoomId {
         &self.room_id

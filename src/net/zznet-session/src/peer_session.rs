@@ -13,7 +13,7 @@ use zznet_auth::ApplicationRole;
 /// This trait allows PeerSession to store rooms with different component message types
 /// (Room<IntentConfigMessage>, Room<MemDBMessage>, etc.) in a single collection.
 /// All rooms share the same application message type TMsg.
-pub trait RoomHandle<TMsg>: Send
+pub trait RoomHandle<TMsg>: Send + Sync
 where
     TMsg: RoomMessageTrait,
 {
