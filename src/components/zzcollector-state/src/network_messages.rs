@@ -46,6 +46,18 @@ pub enum CStateMessage {
         collectors: Vec<CollectorInfo>,
     },
 
+    /// Database -> Collector: Indicates registration/rejection when database is at capacity
+    RegistrationRejected {
+        /// Human-readable reason for rejection
+        reason: String,
+    },
+
+    /// Database -> Peer: Indicates requester is unauthorized to perform the action
+    Unauthorized {
+        /// Human-readable reason for denial
+        reason: String,
+    },
+
     /// Admin -> Database: Request collector list.
     QueryCollectors,
 }
@@ -78,10 +90,7 @@ impl RoomMessageTrait for CStateMessage {
             .map_err(|e| SerializationError::Failed(e.to_string()))
     }
 
-    fn deserialize_for_room(
-        room_id: &RoomId,
-        bytes: &[u8],
-    ) -> Result<Self, DeserializationError> {
+    fn deserialize_for_room(room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError> {
         if room_id.as_str() != CSTATE_ROOM {
             return Err(DeserializationError::UnknownRoom(room_id.clone()));
         }

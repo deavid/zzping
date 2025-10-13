@@ -42,4 +42,10 @@ where
         room_id: &RoomId,
         msg: TMsg,
     ) -> Result<(), SessionError>;
+
+    /// Get the authenticated role for a peer, cloned out of the session manager.
+    ///
+    /// Implementers should return `None` when role information is not available
+    /// (for example, ACL not configured or role resolution failed).
+    fn get_peer_role(&self, peer_id: &PeerId) -> Option<TRole>;
 }
