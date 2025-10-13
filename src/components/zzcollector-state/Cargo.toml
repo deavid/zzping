@@ -1,0 +1,31 @@
+[package]
+name = "zzcollector-state"
+version = "0.1.0"
+edition = "2021"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = { workspace = true }
+actix = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+ron = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true, features = ["v4", "serde"] }
+async-trait = { workspace = true }
+
+zznet-api = { path = "../../net/zznet-api" }
+zznet-auth = { path = "../../net/zznet-auth" }
+zznet-session = { path = "../../net/zznet-session" }
+
+[dev-dependencies]
+ntest = { workspace = true }
+tempfile = { workspace = true }
+zzping-test-utils = { path = "../../test-utils/zzping-test-utils" }

@@ -133,7 +133,10 @@ impl Pinger {
         loop {
             tokio::select! {
                 // This arm is only enabled when the pinger is active and ping_rate_pps > 0.
-                _ = ping_interval.tick(), if self.is_active && self.ping_rate_pps > 0 => {
+                _ = ping_interval.tick(), if self.ping_rate_pps > 0 => {
+                    if !self.is_active {
+                        continue;
+                    }
                     let permit = match semaphore.clone().try_acquire_owned() {
                         Ok(p) => p,
                         Err(_) => {

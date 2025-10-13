@@ -5,8 +5,50 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 
 // NEW: Auth imports
+use crate::session_manager_like::SessionManagerLike;
+use async_trait::async_trait;
 use zznet_api::types::PeerIdentity;
 use zznet_auth::ApplicationRole;
+
+const DEFAULT_BROADCAST_TIMEOUT_MS: u64 = 5000;
+
+#[async_trait]
+impl<TMsg, TRole> SessionManagerLike<TMsg, TRole> for SessionManager<TMsg, TRole>
+where
+    TMsg: RoomMessageTrait + Clone + Send + 'static,
+    TRole: ApplicationRole + std::fmt::Debug,
+{
+    async fn broadcast_to_room<F>(
+        &self,
+        room_id: &RoomId,
+        message: TMsg,
+        filter: F,
+        timeout: Option<std::time::Duration>,
+    ) -> Vec<(PeerId, Result<(), SessionError>)>
+    where
+        F: Fn(&TRole) -> bool + Send + Sync + 'static,
+    {
+        let timeout_duration = timeout.unwrap_or(std::time::Duration::from_millis(
+            DEFAULT_BROADCAST_TIMEOUT_MS,
+        ));
+        <Self>::broadcast_to_room(self, room_id, message, filter, timeout_duration).await
+    }
+
+    async fn send_to_room(
+        &self,
+        peer_id: &PeerId,
+        room_id: &RoomId,
+        msg: TMsg,
+    ) -> Result<(), SessionError> {
+        <Self>::send_to_room(self, peer_id, room_id, msg).await
+    }
+
+    fn get_peer_role(&self, peer_id: &PeerId) -> Option<TRole> {
+        // Return a cloned role if present. This requires TRole: Clone which is
+        // enforced on the trait declaration of SessionManagerLike.
+        self.get_peer_role_cloned(peer_id)
+    }
+}
 
 /// Manages all peer sessions for this process
 ///
@@ -281,6 +323,18 @@ where
     /// * `peer_id` - The peer to query
     pub fn get_peer_role(&self, peer_id: &PeerId) -> Option<&TRole> {
         self.peers.get(peer_id)?.role()
+    }
+
+    /// Convenience clone-returning wrapper for SessionManagerLike consumers.
+    ///
+    /// This returns an owned TRole if present. It is primarily intended for
+    /// places where the underlying SessionManagerLike trait is used and a
+    /// simple ownership-semantics helper is handy.
+    pub fn get_peer_role_cloned(&self, peer_id: &PeerId) -> Option<TRole>
+    where
+        TRole: Clone,
+    {
+        self.get_peer_role(peer_id).cloned()
     }
 
     /// Get the full identity information for a peer

@@ -12,6 +12,7 @@ members = [
     "src/components/zzintent-config",
     "src/components/zzmem-db",
     "src/components/zzpinger",
+    "src/components/zzcollector-state",
     "src/test-utils/zzping-test-utils",
     "src/net/zznet-hello",
     "src/net/zznet-builder",
@@ -90,6 +91,7 @@ rustls-pemfile = "2.2"
 rustls-native-certs = "0.8"
 rmp-serde = "1.3"
 actix = "0.13"
+uuid = { version = "1.8", features = ["v4", "serde"] }
 
 # Dependencies for specific crates that haven't been centralized yet
 rerun = "0.25"
