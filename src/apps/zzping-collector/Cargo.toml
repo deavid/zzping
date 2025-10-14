@@ -1,0 +1,53 @@
+[package]
+name = "zzping-collector"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "zzping-collector"
+path = "src/main.rs"
+
+[dependencies]
+# Component dependencies (our Phase 1-3 work)
+zzintent-config = { path = "../../components/zzintent-config" }
+zzpinger = { path = "../../components/zzpinger" }
+zzmem-db = { path = "../../components/zzmem-db" }
+zzcollector-state = { path = "../../components/zzcollector-state" }
+
+# Network layer dependencies
+zznet-session = { path = "../../net/zznet-session" }
+zznet-builder = { path = "../../net/zznet-builder" }
+zznet-transport-tcp = { path = "../../net/zznet-transport-tcp" }
+zznet-auth = { path = "../../net/zznet-auth" }
+zznet-api = { path = "../../net/zznet-api" }
+
+# Runtime dependencies
+tokio = { version = "1.0", features = ["full", "macros", "rt-multi-thread", "signal"] }
+actix = "0.13"
+
+# Configuration and serialization
+serde = { version = "1.0", features = ["derive"] }
+ron = "0.8"
+
+# CLI argument parsing
+clap = { version = "4.0", features = ["derive"] }
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# TLS/crypto
+rustls = "0.21"
+rustls-pemfile = "1.0"
+tokio-rustls = "0.24"
+
+# Utilities
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3.0"
+tokio-test = "0.4"
