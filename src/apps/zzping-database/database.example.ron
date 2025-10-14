@@ -1,0 +1,27 @@
+// Example ZZPing Database Configuration
+// Copy this to database.ron and customize for your environment
+
+DatabaseConfig(
+    // Network binding settings (server listens on this address)
+    bind_host: "0.0.0.0",
+    bind_port: 8443,
+
+    // TLS certificate paths for mTLS server
+    tls: TlsConfig(
+        // CA certificate for verifying collector certificates
+        ca_cert_path: "test_certs/ca.pem",
+        // Server certificate (this database's identity)
+        server_cert_path: "test_certs/database.pem",
+        // Server private key
+        server_key_path: "test_certs/database.key",
+    ),
+
+    // Component-specific configuration
+    components: ComponentConfig(
+        // How long before a collector is considered stale (in seconds)
+        stale_timeout_secs: 30,
+
+        // Maximum number of collectors to accept
+        max_collectors: 100,
+    ),
+)

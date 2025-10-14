@@ -1220,20 +1220,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
-name = "dashmap"
-version = "6.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
-dependencies = [
- "cfg-if",
- "crossbeam-utils",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
-]
-
-[[package]]
 name = "data-encoding"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2006,12 +1992,6 @@ dependencies = [
  "crunchy",
  "num-traits",
 ]
-
-[[package]]
-name = "hashbrown"
-version = "0.14.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5274423e17b7c9fc20b6e7e208532f9b19825d82dfd615708b70edd83df41f1"
 
 [[package]]
 name = "hashbrown"
@@ -6478,31 +6458,31 @@ dependencies = [
 
 [[package]]
 name = "zzping-database"
-version = "0.2.2-beta2"
+version = "0.1.0"
 dependencies = [
+ "actix",
  "anyhow",
- "base64 0.22.1",
- "bitflags 2.9.4",
- "byteorder",
- "bytes",
  "chrono",
- "constriction",
- "crc32fast",
- "dashmap",
- "env_logger",
- "futures-core",
- "log",
- "ntest",
- "ron 0.11.0",
+ "clap",
+ "ron 0.8.1",
+ "rustls 0.21.12",
+ "rustls-pemfile 1.0.4",
  "serde",
- "serde_json",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
- "tokio-stream",
- "tonic",
- "zzping-database",
- "zzping-lib",
- "zzping-proto",
+ "tokio-rustls 0.24.1",
+ "tokio-test",
+ "tracing",
+ "tracing-subscriber",
+ "zzcollector-state",
+ "zzintent-config",
+ "zzmem-db",
+ "zznet-api",
+ "zznet-auth",
+ "zznet-builder",
+ "zznet-session",
+ "zznet-transport-tcp",
 ]
 
 [[package]]
@@ -6523,7 +6503,6 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tonic",
- "zzping-database",
  "zzping-lib",
  "zzping-proto",
 ]

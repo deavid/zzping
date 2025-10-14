@@ -5,7 +5,6 @@ members = [
     "src/old/common/zzping-proto",
     "src/net/zznet-api",
     "src/net/zznet-auth",
-    "src/old/apps/zzping-database",
     "src/old/apps/zzping-cli",
     "src/old/apps/zzping-gui",
     "src/components/zzintent-config",
@@ -22,6 +21,7 @@ members = [
     "examples/simple-network-example",
     "examples/message-exchange-example",
     "examples/tls-example",
+    "src/apps/zzping-database",
 ]
 
 [workspace.package]
@@ -40,7 +40,6 @@ description = "Tools to monitor home network latency and packet loss"
 zzping-lib = { path = "src/old/common/zzping-lib" }
 zzping-proto = { path = "src/old/common/zzping-proto" }
 zznet-auth = { path = "src/net/zznet-auth" }
-zzping-database = { path = "src/old/apps/zzping-database" }
 zzping-test-utils = { path = "src/test-utils/zzping-test-utils" }
 
 # External dependencies
