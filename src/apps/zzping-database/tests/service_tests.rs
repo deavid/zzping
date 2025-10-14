@@ -17,7 +17,7 @@ fn create_test_config() -> DatabaseConfig {
         bind_host: "0.0.0.0".into(),
         bind_port: 8443,
         tls: TlsConfig {
-            ca_cert_path: certs_dir.join("ca.pem").to_str().unwrap().to_string(),
+            ca_cert_paths: vec![certs_dir.join("ca.pem").to_str().unwrap().to_string()],
             server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
             server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
         },
@@ -55,7 +55,7 @@ fn test_tls_config_loads_valid_certs() {
         .unwrap();
     let certs_dir = workspace_root.join("test_certs");
     let tls_config = TlsConfig {
-        ca_cert_path: certs_dir.join("ca.pem").to_str().unwrap().to_string(),
+        ca_cert_paths: vec![certs_dir.join("ca.pem").to_str().unwrap().to_string()],
         server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
         server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
     };
@@ -75,7 +75,7 @@ fn test_tls_config_fails_missing_ca() {
         .unwrap();
     let certs_dir = workspace_root.join("test_certs");
     let tls_config = TlsConfig {
-        ca_cert_path: "nonexistent.pem".into(),
+        ca_cert_paths: vec!["nonexistent.pem".into()],
         server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
         server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
     };

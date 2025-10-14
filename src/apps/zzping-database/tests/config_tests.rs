@@ -20,7 +20,7 @@ fn create_valid_config() -> DatabaseConfig {
         bind_host: "0.0.0.0".into(),
         bind_port: 8443,
         tls: TlsConfig {
-            ca_cert_path: certs_dir.join("ca.pem").to_str().unwrap().to_string(),
+            ca_cert_paths: vec![certs_dir.join("ca.pem").to_str().unwrap().to_string()],
             server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
             server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
         },
@@ -93,7 +93,7 @@ fn test_load_valid_config_file() {
         bind_host: "0.0.0.0",
         bind_port: 8443,
         tls: TlsConfig(
-            ca_cert_path: "{}",
+            ca_cert_paths: ["{}"],
             server_cert_path: "{}",
             server_key_path: "{}",
         ),

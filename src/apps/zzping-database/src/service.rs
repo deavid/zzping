@@ -456,25 +456,44 @@ impl DatabaseService {
 
     /// Load TLS configuration for mTLS server
     pub fn load_tls_config(tls: &crate::config::TlsConfig) -> Result<Arc<ServerConfig>> {
-        // 1. Load CA certificate (to verify client certificates from collectors)
-        let ca_file = File::open(&tls.ca_cert_path)
-            .map_err(|e| DatabaseError::Config(format!("Failed to open CA file: {}", e)))?;
-        let mut ca_reader = BufReader::new(ca_file);
-        let ca_certs: Vec<Certificate> = certs(&mut ca_reader)
-            .map_err(|e| DatabaseError::Config(format!("Failed to parse CA certs: {}", e)))?
-            .into_iter()
-            .map(Certificate)
-            .collect();
+        // 1. Load CA certificates (to verify client certificates from collectors)
+        let mut root_store = RootCertStore::empty();
 
-        if ca_certs.is_empty() {
-            return Err(DatabaseError::Config("No CA certificates found".into()));
+        if tls.ca_cert_paths.is_empty() {
+            return Err(DatabaseError::Config(
+                "At least one CA certificate path required".into(),
+            ));
         }
 
-        let mut root_store = RootCertStore::empty();
-        for cert in ca_certs {
-            root_store
-                .add(&cert)
-                .map_err(|e| DatabaseError::Config(format!("Failed to add CA cert: {}", e)))?;
+        for ca_path in &tls.ca_cert_paths {
+            let ca_file = File::open(ca_path).map_err(|e| {
+                DatabaseError::Config(format!("Failed to open CA file {}: {}", ca_path, e))
+            })?;
+            let mut ca_reader = BufReader::new(ca_file);
+            let ca_certs: Vec<Certificate> = certs(&mut ca_reader)
+                .map_err(|e| {
+                    DatabaseError::Config(format!(
+                        "Failed to parse CA certs from {}: {}",
+                        ca_path, e
+                    ))
+                })?
+                .into_iter()
+                .map(Certificate)
+                .collect();
+
+            if ca_certs.is_empty() {
+                return Err(DatabaseError::Config(format!(
+                    "No CA certificates in {}",
+                    ca_path
+                )));
+            }
+
+            for cert in ca_certs {
+                root_store
+                    .add(&cert)
+                    .map_err(|e| DatabaseError::Config(format!("Failed to add CA cert: {}", e)))?;
+            }
+            tracing::info!("Loaded CA certificates from: {}", ca_path);
         }
 
         // 2. Load server certificate

@@ -48,6 +48,8 @@ base64 = "0.22"
 dashmap = "6.1.0"
 futures-core = "0.3"
 prost = "0.14"
+
+
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
 tonic-build = "0.14"
@@ -91,6 +93,7 @@ rustls-native-certs = "0.8"
 rmp-serde = "1.3"
 actix = "0.13"
 uuid = { version = "1.8", features = ["v4", "serde"] }
+
 
 # Dependencies for specific crates that haven't been centralized yet
 rerun = "0.25"

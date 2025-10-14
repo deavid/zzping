@@ -1,0 +1,14 @@
+CollectorConfig(
+    collector_id: "collector-new-ca",
+    database_host: "127.0.0.1",
+    database_port: 9444,
+    tls: TlsConfig(
+        ca_cert_paths: ["test_certs_rotation/ca2.pem"],
+        client_cert_path: "test_certs_rotation/collector-new.pem",
+        client_key_path: "test_certs_rotation/collector-new.key",
+    ),
+    components: ComponentConfig(
+        heartbeat_interval_secs: 5,
+        memdb_batch_size: 50,
+    ),
+)

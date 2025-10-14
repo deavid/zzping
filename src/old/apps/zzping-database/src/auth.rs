@@ -29,7 +29,7 @@ impl UserIdentity {
     /// # Example
     /// ```
     /// # use std::collections::HashSet;
-    /// # use zzping_database::auth::UserIdentity;
+    /// # use zzping_old_database::auth::UserIdentity;
     /// let identity = UserIdentity {
     ///     id: "test".to_string(),
     ///     roles: vec!["reader".to_string()].into_iter().collect(),

@@ -18,8 +18,9 @@ pub struct DatabaseConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TlsConfig {
-    /// CA certificate for verifying client certificates (from collectors)
-    pub ca_cert_path: String,
+    /// CA certificates for verifying client certificates (from collectors)
+    /// Multiple paths supported to allow certificate rotation (dual-CA)
+    pub ca_cert_paths: Vec<String>,
     /// Server certificate (this database's identity)
     pub server_cert_path: String,
     /// Server private key
@@ -87,12 +88,20 @@ impl DatabaseConfig {
             ));
         }
 
-        // Validate TLS file paths exist
-        if !std::path::Path::new(&self.tls.ca_cert_path).exists() {
-            return Err(crate::error::DatabaseError::Config(format!(
-                "CA certificate not found: {}",
-                self.tls.ca_cert_path
-            )));
+        // Validate TLS file paths exist (support multiple CA certs)
+        if self.tls.ca_cert_paths.is_empty() {
+            return Err(crate::error::DatabaseError::Config(
+                "At least one CA certificate path is required".into(),
+            ));
+        }
+
+        for ca_path in &self.tls.ca_cert_paths {
+            if !std::path::Path::new(ca_path).exists() {
+                return Err(crate::error::DatabaseError::Config(format!(
+                    "CA certificate not found: {}",
+                    ca_path
+                )));
+            }
         }
 
         if !std::path::Path::new(&self.tls.server_cert_path).exists() {

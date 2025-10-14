@@ -98,9 +98,9 @@ Phase 6 is successful when ALL of the following are verified:
 
 | Day | Goal | Key Deliverables |
 |-----|------|------------------|
-| 1 | E2E Harness | Integration test framework, automated cert gen |
-| 2 | Certificate Rotation | Multi-CA support, rotation without downtime |
-| 3 | 24h Stability | Long-running test, restart recovery, leak detection |
+| 1 | E2E Harness | Integration test framework, automated cert gen ✅ (implemented: tests/e2e_smoke.rs, tests/fixtures, scripts/generate_multi_certs.sh) |
+| 2 | Certificate Rotation | Multi-CA support, rotation without downtime ✅ (implemented: TlsConfig.ca_cert_paths, scripts/generate_two_cas.sh, tests/cert_rotation_test.rs with explicit TLS handshake + tonic Heartbeat RPC) |
+| 3 | 24h Stability | Long-running test, restart recovery, leak detection (in-progress: stability test scaffold added, memory monitoring to be wired) |
 | 4 | Performance Baseline | Load testing, profiling, optimization |
 | 5 | Chaos Testing | Network partitions, process kills, resilience |
 | 6 | Documentation | README, runbook, troubleshooting, postmortem |
