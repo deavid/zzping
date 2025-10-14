@@ -1,5 +1,5 @@
 [package]
-name = "zzping-cli"
+name = "zzping-old-cli"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

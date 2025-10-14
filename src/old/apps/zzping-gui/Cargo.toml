@@ -1,5 +1,5 @@
 [package]
-name = "zzping-gui"
+name = "zzping-old-gui"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -35,3 +35,4 @@ egui.workspace = true
 tokio-stream = { workspace = true }
 env_logger = { workspace = true }
 ntest = { workspace = true }
+zzping-old-database = { path = "../zzping-database", features = ["test-utils"] }

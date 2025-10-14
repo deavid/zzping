@@ -1,5 +1,5 @@
 [package]
-name = "zzping-database"
+name = "zzping-old-database"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -51,4 +51,4 @@ test-utils = []
 
 [dev-dependencies]
 tempfile.workspace = true
-zzping-database = { path = ".", features = ["test-utils"] }
+zzping-old-database = { path = ".", features = ["test-utils"] }

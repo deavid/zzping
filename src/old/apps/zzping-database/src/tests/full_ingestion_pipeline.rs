@@ -23,7 +23,7 @@ async fn test_full_ingestion_pipeline() -> Result<()> {
 
     // 2. Execution: Simulate a client sending data for two different minutes.
     let mut client = IngestionClient::connect(format!("http://{addr}")).await?;
-    let token = zzping_database::auth::generate_test_token("test-collector", &["collector"]);
+    let token = crate::auth::generate_test_token("test-collector", &["collector"]);
 
     // First batch: records for minute 1
     let records_minute_1 = vec![
@@ -112,18 +112,17 @@ async fn spawn_full_server_for_test(
 
     let (item_tx, item_rx) = mpsc::channel(1024);
 
-    tokio::spawn(zzping_database::storage_engine::storage_task(
+    tokio::spawn(crate::storage_engine::storage_task(
         item_rx,
         data_dir.clone(),
     ));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let service =
-        zzping_database::grpc_server::IngestionServiceImpl::new(item_tx, data_dir.clone());
+    let service = crate::grpc_server::IngestionServiceImpl::new(item_tx, data_dir.clone());
     let server = zzping_proto::zzping::ingestion_server::IngestionServer::with_interceptor(
         service,
-        zzping_database::grpc_server::check_auth,
+        crate::grpc_server::check_auth,
     );
 
     let handle = tokio::spawn(async move {

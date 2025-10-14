@@ -182,6 +182,11 @@ struct ComponentBuilders {
 
 /// Started components (running actors)
 /// These addresses are cloned for each connection handler
+/// Started components (running actors).
+///
+/// These addresses are cloned for each connection handler and will be used
+/// in Phase 6 to route messages to components via Actix messaging.
+#[allow(dead_code)]
 #[derive(Clone)]
 struct StartedComponents {
     intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
@@ -192,10 +197,13 @@ struct StartedComponents {
 }
 
 /// Per-connection handler for collector connections
+/// Per-connection handler for collector connections
 struct ConnectionHandler {
     peer_addr: SocketAddr,
     peer_role: DatabaseRole,
     stream: TlsStream<TcpStream>,
+    /// Component addresses for message routing (will be actively used in Phase 6)
+    #[allow(dead_code)]
     components: StartedComponents,
 }
 
@@ -235,7 +243,11 @@ impl ConnectionHandler {
                     break;
                 }
                 Err(e) => {
-                    tracing::error!("Failed to read message length from {}: {}", self.peer_addr, e);
+                    tracing::error!(
+                        "Failed to read message length from {}: {}",
+                        self.peer_addr,
+                        e
+                    );
                     break;
                 }
             }

@@ -1,5 +1,5 @@
 [package]
-name = "zzping-collector"
+name = "zzping-old-collector"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true

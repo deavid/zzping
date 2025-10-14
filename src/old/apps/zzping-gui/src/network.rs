@@ -74,7 +74,7 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::mpsc;
     use tokio::{net::TcpListener, task::JoinHandle};
-    use zzping_database::{
+    use zzping_old_database::{
         auth::generate_test_token, grpc_server::IngestionServiceImpl, grpc_server::check_auth,
     };
     use zzping_proto::zzping::ingestion_server::IngestionServer;
