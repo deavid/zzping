@@ -18,16 +18,8 @@ fn create_test_config() -> DatabaseConfig {
         bind_port: 8443,
         tls: TlsConfig {
             ca_cert_path: certs_dir.join("ca.pem").to_str().unwrap().to_string(),
-            server_cert_path: certs_dir
-                .join("database.pem")
-                .to_str()
-                .unwrap()
-                .to_string(),
-            server_key_path: certs_dir
-                .join("database.key")
-                .to_str()
-                .unwrap()
-                .to_string(),
+            server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
+            server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
         },
         components: ComponentConfig {
             stale_timeout_secs: 30,
@@ -64,16 +56,8 @@ fn test_tls_config_loads_valid_certs() {
     let certs_dir = workspace_root.join("test_certs");
     let tls_config = TlsConfig {
         ca_cert_path: certs_dir.join("ca.pem").to_str().unwrap().to_string(),
-        server_cert_path: certs_dir
-            .join("database.pem")
-            .to_str()
-            .unwrap()
-            .to_string(),
-        server_key_path: certs_dir
-            .join("database.key")
-            .to_str()
-            .unwrap()
-            .to_string(),
+        server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
+        server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
     };
 
     let result = DatabaseService::load_tls_config(&tls_config);
@@ -92,16 +76,8 @@ fn test_tls_config_fails_missing_ca() {
     let certs_dir = workspace_root.join("test_certs");
     let tls_config = TlsConfig {
         ca_cert_path: "nonexistent.pem".into(),
-        server_cert_path: certs_dir
-            .join("database.pem")
-            .to_str()
-            .unwrap()
-            .to_string(),
-        server_key_path: certs_dir
-            .join("database.key")
-            .to_str()
-            .unwrap()
-            .to_string(),
+        server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
+        server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
     };
 
     let result = DatabaseService::load_tls_config(&tls_config);

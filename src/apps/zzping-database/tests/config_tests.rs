@@ -21,16 +21,8 @@ fn create_valid_config() -> DatabaseConfig {
         bind_port: 8443,
         tls: TlsConfig {
             ca_cert_path: certs_dir.join("ca.pem").to_str().unwrap().to_string(),
-            server_cert_path: certs_dir
-                .join("database.pem")
-                .to_str()
-                .unwrap()
-                .to_string(),
-            server_key_path: certs_dir
-                .join("database.key")
-                .to_str()
-                .unwrap()
-                .to_string(),
+            server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
+            server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
         },
         components: ComponentConfig {
             stale_timeout_secs: 30,
