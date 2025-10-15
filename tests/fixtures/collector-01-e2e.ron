@@ -3,9 +3,9 @@ CollectorConfig(
     database_host: "127.0.0.1",
     database_port: 9443,
     tls: TlsConfig(
-        ca_cert_paths: ["test_certs/ca.pem"],
-        client_cert_path: "test_certs/collector.pem",
-        client_key_path: "test_certs/collector.key",
+        ca_cert_path: "test_certs/ca.pem",
+        client_cert_path: "test_certs/collector-01.pem",
+        client_key_path: "test_certs/collector-01.key",
     ),
     components: ComponentConfig(
         heartbeat_interval_secs: 5,

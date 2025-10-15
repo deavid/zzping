@@ -18,6 +18,7 @@ members = [
     "src/net/zznet-session",
     "src/net/zznet-transport-tcp",
     "src/apps/zzping-collector",
+    "src/integration-tests",
     "examples/simple-network-example",
     "examples/message-exchange-example",
     "examples/tls-example",
