@@ -109,9 +109,9 @@ async fn test_tls_mutual_authentication() {
     // Create TLS configs with explicit certs directory
     let certs_dir = get_certs_dir();
     let certs_path = certs_dir.to_str().expect("Invalid certs path");
-    let server_tls = TlsConfig::from_role(Role::Database, Some(certs_path))
+    let server_tls = TlsConfig::from_role_name(Role::Database.cert_name(), Some(certs_path))
         .expect("Failed to create server TLS config");
-    let client_tls = TlsConfig::from_role(Role::Collector, Some(certs_path))
+    let client_tls = TlsConfig::from_role_name(Role::Collector.cert_name(), Some(certs_path))
         .expect("Failed to create client TLS config");
 
     // Create server with TLS
@@ -156,7 +156,7 @@ async fn test_tls_mutual_authentication() {
 async fn test_tls_multiple_clients() {
     let certs_dir = get_certs_dir();
     let certs_path = certs_dir.to_str().expect("Invalid certs path");
-    let server_tls = TlsConfig::from_role(Role::Database, Some(certs_path))
+    let server_tls = TlsConfig::from_role_name(Role::Database.cert_name(), Some(certs_path))
         .expect("Failed to create server TLS config");
 
     let server_manager =
@@ -176,7 +176,7 @@ async fn test_tls_multiple_clients() {
 
     // Connect 3 clients
     for i in 1..=3 {
-        let client_tls = TlsConfig::from_role(Role::Collector, Some(certs_path))
+        let client_tls = TlsConfig::from_role_name(Role::Collector.cert_name(), Some(certs_path))
             .expect("Failed to create client TLS config");
 
         let client_manager =
@@ -204,10 +204,10 @@ async fn test_tls_multiple_clients() {
 async fn test_tls_different_roles() {
     let certs_dir = get_certs_dir();
     let certs_path = certs_dir.to_str().expect("Invalid certs path");
-    let server_tls = TlsConfig::from_role(Role::Database, Some(certs_path))
+    let server_tls = TlsConfig::from_role_name(Role::Database.cert_name(), Some(certs_path))
         .expect("Failed to create server TLS config");
 
-    let client_tls = TlsConfig::from_role(Role::ClientRo, Some(certs_path))
+    let client_tls = TlsConfig::from_role_name(Role::ClientRo.cert_name(), Some(certs_path))
         .expect("Failed to create client TLS config");
 
     let server_manager =
@@ -254,7 +254,7 @@ fn test_tls_config_from_role() {
     ];
 
     for role in roles {
-        let config = TlsConfig::from_role(role, None);
+        let config = TlsConfig::from_role_name(role.cert_name(), None);
         assert!(
             config.is_ok(),
             "Failed to create TLS config for role {:?}",
@@ -266,7 +266,7 @@ fn test_tls_config_from_role() {
 /// Test 5: TLS config with custom certs directory
 #[test]
 fn test_tls_config_custom_dir() {
-    let config = TlsConfig::from_role(Role::Collector, Some("certs"));
+    let config = TlsConfig::from_role_name(Role::Collector.cert_name(), Some("certs"));
     assert!(config.is_ok());
 
     let config = config.unwrap();
@@ -308,7 +308,7 @@ async fn test_plain_and_tls_coexist() {
     // Start TLS server
     let certs_dir = get_certs_dir();
     let certs_path = certs_dir.to_str().expect("Invalid certs path");
-    let tls_server_config = TlsConfig::from_role(Role::Database, Some(certs_path))
+    let tls_server_config = TlsConfig::from_role_name(Role::Database.cert_name(), Some(certs_path))
         .expect("Failed to create TLS config");
 
     let tls_manager =
@@ -342,8 +342,8 @@ async fn test_plain_and_tls_coexist() {
         .expect("Failed to connect plain client");
 
     // Connect TLS client to TLS server
-    let tls_client_config =
-        TlsConfig::from_role(Role::Collector, None).expect("Failed to create TLS config");
+    let tls_client_config = TlsConfig::from_role_name(Role::Collector.cert_name(), None)
+        .expect("Failed to create TLS config");
 
     let tls_client_manager =
         ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();

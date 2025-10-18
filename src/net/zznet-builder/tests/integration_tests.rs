@@ -50,9 +50,8 @@ impl zznet_auth::ApplicationRole for TestRole {
 }
 
 // Keep existing test code compiling which still references `AuthRole` by
-// providing a local alias to the test role. This keeps the crate free of any
-// runtime dependency on the application's `zzping-auth` while avoiding many
-// mechanical edits in tests.
+// providing a local alias to the test role. This demonstrates that zznet-builder
+// is generic and works with any ApplicationRole implementation.
 type AuthRole = TestRole;
 
 // Test message type for integration tests

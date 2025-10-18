@@ -13,8 +13,6 @@
 //! - **TLS Support**: Optional mutual TLS authentication
 //! - **Automatic Connection Management**: Spawn HelloActors, manage lifecycle
 //! - **SessionManager Integration**: Seamless integration with typed message routing
-//!
-//! ## Example: Server / Client
 
 pub mod client_builder;
 pub mod error;
