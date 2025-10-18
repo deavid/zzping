@@ -128,11 +128,11 @@ timeout 5 cargo run --release --bin zzping-collector -- --config src/apps/zzping
 
 After running the above checks, answer these questions:
 
-- [ ] **Certificates:** Do test certs exist and have SAN extensions?
-- [ ] **Build:** Does `cargo build` succeed?
-- [ ] **Dependencies:** Are component dependencies correct?
-- [ ] **Configs:** Do config files exist for each app?
-- [ ] **Tests:** Are integration tests present?
+- [x] **Certificates:** Do test certs exist and have SAN extensions?
+- [x] **Build:** Does `cargo build` succeed?
+- [x] **Dependencies:** Are component dependencies correct?
+- [x] **Configs:** Do config files exist for each app?
+- [x] **Tests:** Are integration tests present?
 - [ ] **Connectivity:** Can the apps attempt TLS connection?
 
 ---
