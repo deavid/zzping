@@ -583,44 +583,84 @@ impl<T: ApplicationRole + std::fmt::Debug> Actor for IntentConfigActor<T> {
             // If a SessionManager is configured, try sending initial
             // ConfigUpdate to Collector peers using helper
             if let Some(session_manager) = &self.session_manager {
-                let session_manager = Rc::clone(session_manager);
+                // Clone a handle for use by the immediate initial broadcast and
+                // retain a clone for the background watcher.
+                let session_manager_rc = Rc::clone(session_manager);
                 let cfg = self.current_config.clone();
+                // Spawn initial broadcast using one clone
                 Self::spawn_send_initial_updates(
-                    session_manager,
+                    Rc::clone(&session_manager_rc),
                     cfg,
                     self.broadcast_timeout,
                     Arc::clone(&self.successful_broadcasts),
                     Arc::clone(&self.failed_broadcasts),
                     Arc::clone(&self.last_broadcast_ms),
                 );
+
+                // Additionally, spawn a background watcher that notifies any
+                // newly-joined peers for the `intent-config` room. This ensures
+                // that if a Collector connects and the room becomes joined after
+                // actor startup, the Database will proactively send the current
+                // ConfigUpdate to that specific peer when the room appears.
+                let session_manager_w = session_manager_rc.clone();
+                let cfg_w = self.current_config.clone();
+                actix::spawn(async move {
+                    use std::collections::HashSet;
+                    use tokio::time::Duration as TokioDuration;
+                    let mut notified: HashSet<zznet_session::types::PeerId> = HashSet::new();
+                    let room_id = RoomId::from("intent-config");
+                    loop {
+                        // Iterate peers and send to those that have just joined
+                        for peer in session_manager_w.peer_ids() {
+                            // If we've already notified this peer, skip
+                            if notified.contains(&peer) {
+                                continue;
+                            }
+
+                            // Check if this peer has the room joined
+                            let joined = session_manager_w
+                                .is_room_joined_with_peer(&peer, &room_id)
+                                .unwrap_or(false);
+                            if !joined {
+                                continue;
+                            }
+
+                            // Check role: only send to peers that receive config updates
+                            if let Some(role) = session_manager_w.get_peer_role(&peer)
+                                && role.as_str() == "receive-config-updates"
+                            {
+                                // Only send proactive ConfigUpdate for non-default configs.
+                                // Avoid sending empty/default ConfigUpdate which can
+                                // race with request handling in tests.
+                                if cfg_w.targets.is_empty() && cfg_w.ping_rate_pps == 0 {
+                                    continue;
+                                }
+                                // Send ConfigUpdate to this single peer
+                                let em = IntentConfigMessage::ConfigUpdate {
+                                    targets: cfg_w.targets.clone(),
+                                    ping_rate_pps: cfg_w.ping_rate_pps,
+                                };
+                                if let Err(e) =
+                                    session_manager_w.send_to_room(&peer, &room_id, em).await
+                                {
+                                    log::warn!("Failed to send ConfigUpdate to {}: {}", peer, e);
+                                } else {
+                                    log::info!("Sent ConfigUpdate to newly-joined peer {}", peer);
+                                    notified.insert(peer.clone());
+                                }
+                            }
+                        }
+
+                        // Sleep briefly to avoid busy-looping
+                        tokio::time::sleep(TokioDuration::from_millis(100)).await;
+                    }
+                });
             }
         }
-        // If Collector role and a SessionManager is configured, proactively
-        // query peers for current config. This ensures a collector that
-        // connects after the DB startup will request the DB's current state.
-        if let (IntentConfigRole::Collector, Some(session_manager)) = (&self.role, &self.session_manager) {
-            let session_manager = Rc::clone(session_manager);
-            // Fire-and-forget async task to broadcast a QueryCurrentConfig to
-            // peers that are authorized to respond (admin/update-config role).
-            // Retry a few times with short delays to tolerate ordering/race
-            // conditions in tests and real networks where the SessionManager
-            // may not have fully established channels when the actor starts.
-            actix::spawn(async move {
-                let room_id = RoomId::from("intent-config");
-                let query = IntentConfigMessage::QueryCurrentConfig;
-                let timeout = std::time::Duration::from_millis(500);
-                // Try several times to improve reliability
-                for _attempt in 0..3 {
-                    let _ = session_manager
-                        .broadcast_to_room(&room_id, query.clone(), |role| {
-                            role.permission.as_str() == "update-config"
-                        }, timeout)
-                        .await;
-                    // Small backoff between attempts
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-            });
-        }
+        // Collector role should NOT proactively query peers on startup. Instead,
+        // Database actors are responsible for sending ConfigUpdate/CurrentConfig
+        // when their rooms become available. This avoids unnecessary traffic and
+        // relies on the database to push state when it has joined rooms.
     }
 }
 
