@@ -81,6 +81,35 @@ impl TlsCertAndKey {
             },
         }
     }
+
+    /// Derives certificate paths from a role name string.
+    ///
+    /// This is the generic, reusable API that doesn't depend on the concrete `Role` enum.
+    /// Applications can use any role name they want, as long as matching certificates exist.
+    ///
+    /// # Arguments
+    /// * `role_name` - The role identifier as a string (e.g., "collector", "database", "my-custom-role")
+    /// * `certs_dir` - Optional directory path, defaults to "certs"
+    ///
+    /// # Example
+    /// ```
+    /// use zznet_transport_tcp::TlsCertAndKey;
+    ///
+    /// // Works with any role name - no dependency on zzping's Role enum
+    /// let cert = TlsCertAndKey::from_role_name("collector", None);
+    /// assert_eq!(cert.pem_path.to_str().unwrap(), "certs/collector.pem");
+    ///
+    /// // New applications can use their own role names
+    /// let cert = TlsCertAndKey::from_role_name("my-custom-service", Some("/etc/certs"));
+    /// assert_eq!(cert.pem_path.to_str().unwrap(), "/etc/certs/my-custom-service.pem");
+    /// ```
+    pub fn from_role_name(role_name: &str, certs_dir: Option<&str>) -> Self {
+        let dir = certs_dir.unwrap_or("certs");
+        TlsCertAndKey {
+            pem_path: format!("{dir}/{role_name}.pem").into(),
+            key_path: format!("{dir}/{role_name}.key").into(),
+        }
+    }
 }
 
 /// Complete TLS configuration for rustls connections.
@@ -100,22 +129,34 @@ pub struct TlsConfig {
 }
 
 impl TlsConfig {
-    /// Pre-configures TLS for a role, using zzping's security conventions.
+    /// Creates TLS configuration from a role name string (generic, reusable API).
+    ///
+    /// This is the preferred way to create TLS configuration. It doesn't depend on
+    /// the concrete `Role` enum, allowing the transport layer to be used by any application.
     ///
     /// # Arguments
-    /// * `role` - The component role
+    /// * `role_name` - The role identifier as a string (e.g., "collector", "database")
     /// * `certs_dir` - Optional directory path, defaults to "certs"
     ///
     /// # Returns
     /// A TlsConfig ready to build client or server configurations
-    pub fn from_role(role: Role, certs_dir: Option<&str>) -> Result<Self, TlsError> {
+    ///
+    /// # Example
+    /// ```no_run
+    /// use zznet_transport_tcp::TlsConfig;
+    ///
+    /// // Generic API - works with any application
+    /// let config = TlsConfig::from_role_name("collector", None)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn from_role_name(role_name: &str, certs_dir: Option<&str>) -> Result<Self, TlsError> {
         let dir = certs_dir.unwrap_or("certs");
         // Ensure a rustls CryptoProvider is installed for the process.
         let _ = rustls::crypto::ring::default_provider().install_default();
 
         // Build initial config
         let mut config = Self {
-            cert: TlsCertAndKey::from_role(role, certs_dir),
+            cert: TlsCertAndKey::from_role_name(role_name, certs_dir),
             ca_cert_path: Some(format!("{}/ca.pem", dir).into()),
             add_native_ca_certs: false,
             server_name: "zzping".into(),
@@ -147,21 +188,8 @@ impl TlsConfig {
                 .map(|p| p.to_path_buf())
             {
                 let alt_dir = workspace_root.join(provided_dir);
-
-                let alt_pem = alt_dir.join(
-                    config
-                        .cert
-                        .pem_path
-                        .file_name()
-                        .unwrap_or_else(|| std::ffi::OsStr::new("")),
-                );
-                let alt_key = alt_dir.join(
-                    config
-                        .cert
-                        .key_path
-                        .file_name()
-                        .unwrap_or_else(|| std::ffi::OsStr::new("")),
-                );
+                let alt_pem = alt_dir.join(format!("{role_name}.pem"));
+                let alt_key = alt_dir.join(format!("{role_name}.key"));
                 let alt_ca = alt_dir.join("ca.pem");
 
                 if alt_pem.exists() && alt_key.exists() && alt_ca.exists() {
@@ -173,6 +201,26 @@ impl TlsConfig {
         }
 
         Ok(config)
+    }
+
+    /// Pre-configures TLS for a role, using zzping's security conventions.
+    ///
+    /// # Deprecated
+    /// Use `from_role_name()` instead. This method is maintained for backward compatibility
+    /// but couples this library to zzping's specific role definitions.
+    ///
+    /// # Arguments
+    /// * `role` - The component role
+    /// * `certs_dir` - Optional directory path, defaults to "certs"
+    ///
+    /// # Returns
+    /// A TlsConfig ready to build client or server configurations
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use `from_role_name()` instead to decouple from zzping's Role enum"
+    )]
+    pub fn from_role(role: Role, certs_dir: Option<&str>) -> Result<Self, TlsError> {
+        Self::from_role_name(role.cert_name(), certs_dir)
     }
 
     /// Builds a rustls ClientConfig with mutual TLS authentication.
@@ -307,7 +355,33 @@ mod tests {
     }
 
     #[test]
+    fn test_tls_cert_and_key_from_role_name() {
+        // Test the new generic API
+        let cert = TlsCertAndKey::from_role_name("collector", None);
+        assert_eq!(cert.pem_path.to_str().unwrap(), "certs/collector.pem");
+        assert_eq!(cert.key_path.to_str().unwrap(), "certs/collector.key");
+
+        // Works with any role name
+        let cert = TlsCertAndKey::from_role_name("database", Some("test_certs"));
+        assert_eq!(cert.pem_path.to_str().unwrap(), "test_certs/database.pem");
+        assert_eq!(cert.key_path.to_str().unwrap(), "test_certs/database.key");
+
+        // Custom role names work too
+        let cert = TlsCertAndKey::from_role_name("my-custom-service", None);
+        assert_eq!(
+            cert.pem_path.to_str().unwrap(),
+            "certs/my-custom-service.pem"
+        );
+        assert_eq!(
+            cert.key_path.to_str().unwrap(),
+            "certs/my-custom-service.key"
+        );
+    }
+
+    #[test]
+    #[allow(deprecated)]
     fn test_tls_config_from_role() {
+        // Test backward compatibility - from_role() is deprecated but should still work
         let config = TlsConfig::from_role(Role::ClientRo, None).unwrap();
         assert_eq!(
             config.cert.pem_path.to_str().unwrap(),
@@ -320,6 +394,29 @@ mod tests {
         assert_eq!(config.server_name, "zzping");
     }
 
-    // Note: Can't test build_client_config/build_server_config without real certs
-    // Those will be tested in integration tests with generated test certificates
+    #[test]
+    fn test_tls_config_from_role_name() {
+        // Test the new generic API
+        let config = TlsConfig::from_role_name("client-ro", None).unwrap();
+        assert_eq!(
+            config.cert.pem_path.to_str().unwrap(),
+            "certs/client-ro.pem"
+        );
+        assert_eq!(
+            config.ca_cert_path.unwrap().to_str().unwrap(),
+            "certs/ca.pem"
+        );
+        assert_eq!(config.server_name, "zzping");
+
+        // Generic API works with any role name
+        let config = TlsConfig::from_role_name("my-service", Some("test_certs")).unwrap();
+        assert_eq!(
+            config.cert.pem_path.to_str().unwrap(),
+            "test_certs/my-service.pem"
+        );
+        assert_eq!(
+            config.ca_cert_path.unwrap().to_str().unwrap(),
+            "test_certs/ca.pem"
+        );
+    }
 }
