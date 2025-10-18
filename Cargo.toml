@@ -3,26 +3,27 @@ resolver = "2"
 members = [
     "src/old/common/zzping-lib",
     "src/old/common/zzping-proto",
-    "src/net/zznet-api",
-    "src/net/zznet-auth",
     "src/old/apps/zzping-cli",
     "src/old/apps/zzping-gui",
-    "src/components/zzintent-config",
-    "src/components/zzmem-db",
-    "src/components/zzpinger",
-    "src/components/zzcollector-state",
+
     "src/test-utils/zzping-test-utils",
+
+    "src/net/zznet-api",
+    "src/net/zznet-auth",
     "src/net/zznet-hello",
     "src/net/zznet-builder",
     "src/net/zznet-room",
     "src/net/zznet-session",
     "src/net/zznet-transport-tcp",
+
+    "src/components/zzintent-config",
+    "src/components/zzmem-db",
+    "src/components/zzpinger",
+    "src/components/zzcollector-state",
+
     "src/apps/zzping-collector",
-    "src/integration-tests",
-    "examples/simple-network-example",
-    "examples/message-exchange-example",
-    "examples/tls-example",
     "src/apps/zzping-database",
+
 ]
 
 [workspace.package]

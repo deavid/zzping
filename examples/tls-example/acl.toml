@@ -1,2 +1,0 @@
-allowed_peers = ["collector", "database"]
-insecure_trust_hello = false
