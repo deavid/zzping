@@ -22,11 +22,11 @@ use zzcollector_state::builder::CStateBuilder;
 use zzcollector_state::network_messages::CStateMessage;
 use zzcollector_state::role::CStateRole;
 
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 
 // Add these imports at top
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::{danger::ClientCertVerifier, NoClientAuth};
+use rustls::server::{NoClientAuth, danger::ClientCertVerifier};
 use rustls::{RootCertStore, ServerConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::fs::File;
@@ -43,8 +43,8 @@ use zznet_session::{
 // Add these imports after existing imports
 use std::net::SocketAddr;
 use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::server::TlsStream;
 use tokio_rustls::TlsAcceptor;
+use tokio_rustls::server::TlsStream;
 
 // Application roles for database
 #[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
@@ -678,6 +678,11 @@ mod tests {
 
     #[test]
     fn test_tls_config_loads_valid_certs() {
+        // Initialize Rustls default CryptoProvider
+        let _ = rustls::crypto::CryptoProvider::install_default(
+            rustls::crypto::ring::default_provider(),
+        );
+
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()

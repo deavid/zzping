@@ -17,7 +17,7 @@ use zzmem_db::actor::MemDBActor;
 use zzmem_db::permissions::MemDBPermission;
 use zzmem_db::role::MemDBRole;
 
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 use rustls::{ClientConfig, RootCertStore};
@@ -320,6 +320,11 @@ mod tests {
 
     #[test]
     fn test_tls_config_loads_valid_certs() {
+        // Initialize Rustls default CryptoProvider
+        let _ = rustls::crypto::CryptoProvider::install_default(
+            rustls::crypto::ring::default_provider(),
+        );
+
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
