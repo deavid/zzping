@@ -41,8 +41,19 @@ description = "Tools to monitor home network latency and packet loss"
 # Internal dependencies
 zzping-lib = { path = "src/old/common/zzping-lib" }
 zzping-proto = { path = "src/old/common/zzping-proto" }
-zznet-auth = { path = "src/net/zznet-auth" }
+
 zzping-test-utils = { path = "src/test-utils/zzping-test-utils" }
+
+zznet-auth = { path = "src/net/zznet-auth" }
+zznet-session = { path = "src/net/zznet-session" }
+zznet-builder = { path = "src/net/zznet-builder" }
+zznet-transport-tcp = { path = "src/net/zznet-transport-tcp" }
+zznet-api = { path = "src/net/zznet-api" }
+
+zzintent-config = { path = "src/components/zzintent-config" }
+zzpinger = { path = "src/components/zzpinger" }
+zzmem-db = { path = "src/components/zzmem-db" }
+zzcollector-state = { path = "src/components/zzcollector-state" }
 
 # External dependencies
 anyhow = "1.0"
@@ -62,8 +73,8 @@ bincode = { version = "2.0", features = ["serde"] }
 byteorder = "1.5"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
-eframe = "0.32"
-egui = "0.32"
+eframe = "0.33"
+egui = "0.33"
 env_logger = "0.11"
 lazy_static = "1.5"
 log = "0.4"
@@ -81,24 +92,34 @@ serde = { version = "1.0", features = ["derive"] }
 surge-ping = "0.8"
 tempfile = "3.23"
 thiserror = "2.0"
-tokio = { version = "1", features = ["full", "test-util"] }
+tokio = { version = "1", features = [
+    "full",
+    "macros",
+    "rt-multi-thread",
+    "signal",
+    "test-util",
+] }
 tonic-health = "0.14"
 toml = "0.9"
 tracing = "0.1"
-futures = "0.3"                                                           # Moved back to [workspace.dependencies]
+futures = "0.3" # Moved back to [workspace.dependencies]
 mockall = "0.13"
 ntest = "0.9"
-rustls = { version = "0.23.32", features = ["ring"] }
+rustls = { version = "0.23", features = ["ring"] }
 tokio-rustls = "0.26.4"
 rustls-pemfile = "2.2"
 rustls-native-certs = "0.8"
 rmp-serde = "1.3"
 actix = "0.13"
-uuid = { version = "1.8", features = ["v4", "serde"] }
+uuid = { version = "1.18", features = ["v4", "serde"] }
+
+# Additional external dependencies
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tokio-test = "0.4"
 
 
 # Dependencies for specific crates that haven't been centralized yet
-rerun = "0.25"
+rerun = "0.26"
 constriction = "0.4"
 bitflags = "2.9"
 crc32fast = "1.5"

@@ -8,10 +8,5 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+/// Service module.
 pub mod service;
-
-// Re-exports for convenience
-pub use cli::CliArgs;
-pub use config::CollectorConfig;
-pub use error::CollectorError;
-pub use service::CollectorService;

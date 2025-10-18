@@ -21,7 +21,7 @@ zznet-auth = { path = "../../net/zznet-auth" }
 zznet-api = { path = "../../net/zznet-api" }
 
 # Runtime dependencies
-tokio = { version = "1.0", features = ["full", "macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1.48", features = ["full", "macros", "rt-multi-thread", "signal"] }
 actix = "0.13"
 
 # Configuration and serialization
@@ -29,7 +29,7 @@ serde = { version = "1.0", features = ["derive"] }
 ron = "0.8"
 
 # CLI argument parsing
-clap = { version = "4.0", features = ["derive"] }
+clap = { version = "4.5", features = ["derive"] }
 
 # Logging and tracing
 tracing = "0.1"
@@ -48,5 +48,5 @@ tokio-rustls = "0.24"
 chrono = "0.4"
 
 [dev-dependencies]
-tempfile = "3.0"
+tempfile = "3.23"
 tokio-test = "0.4"

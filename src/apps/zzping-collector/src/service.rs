@@ -19,7 +19,8 @@ use zzmem_db::role::MemDBRole;
 
 use tokio::signal::unix::{signal, SignalKind};
 
-use rustls::{Certificate, ClientConfig, PrivateKey, RootCertStore};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, ServerName};
+use rustls::{ClientConfig, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::fs::File;
 use std::io::BufReader;
@@ -40,16 +41,20 @@ struct StartedComponents {
     memdb_addr: Addr<MemDBActor<MemDBPermission>>,
 }
 
+#[derive(Debug)]
+/// Collector service that orchestrates all components.
 pub struct CollectorService {
     config: CollectorConfig,
 }
 
 impl CollectorService {
+    /// Creates a new collector service.
     pub fn new(config: CollectorConfig) -> Result<Self> {
         config.validate()?;
         Ok(Self { config })
     }
 
+    /// Runs the collector service.
     pub async fn run(self) -> Result<()> {
         tracing::info!("Collector service starting");
 
@@ -154,20 +159,21 @@ impl CollectorService {
         let ca_file = File::open(&tls.ca_cert_path)
             .map_err(|e| CollectorError::Config(format!("Failed to open CA file: {}", e)))?;
         let mut ca_reader = BufReader::new(ca_file);
-        let ca_certs: Vec<Certificate> = certs(&mut ca_reader)
-            .map_err(|e| CollectorError::Config(format!("Failed to parse CA certs: {}", e)))?
-            .into_iter()
-            .map(Certificate)
-            .collect();
+        let ca_certs: Vec<_> = certs(&mut ca_reader)
+            .map(|r| {
+                r.map_err(|e| CollectorError::Config(format!("Failed to parse CA certs: {}", e)))
+                    .map(|c| Box::leak(c.as_ref().to_vec().into_boxed_slice()))
+            })
+            .collect::<std::result::Result<_, _>>()?;
 
         if ca_certs.is_empty() {
             return Err(CollectorError::Config("No CA certificates found".into()));
         }
 
         let mut root_store = RootCertStore::empty();
-        for cert in ca_certs {
+        for cert in &ca_certs {
             root_store
-                .add(&cert)
+                .add(CertificateDer::from(&**cert))
                 .map_err(|e| CollectorError::Config(format!("Failed to add CA cert: {}", e)))?;
         }
 
@@ -175,11 +181,12 @@ impl CollectorService {
         let cert_file = File::open(&tls.client_cert_path)
             .map_err(|e| CollectorError::Config(format!("Failed to open client cert: {}", e)))?;
         let mut cert_reader = BufReader::new(cert_file);
-        let cert_chain: Vec<Certificate> = certs(&mut cert_reader)
-            .map_err(|e| CollectorError::Config(format!("Failed to parse client cert: {}", e)))?
-            .into_iter()
-            .map(Certificate)
-            .collect();
+        let cert_chain: Vec<_> = certs(&mut cert_reader)
+            .map(|r| {
+                r.map_err(|e| CollectorError::Config(format!("Failed to parse client cert: {}", e)))
+                    .map(|c| Box::leak(c.as_ref().to_vec().into_boxed_slice()))
+            })
+            .collect::<std::result::Result<_, _>>()?;
 
         if cert_chain.is_empty() {
             return Err(CollectorError::Config("No client certificate found".into()));
@@ -189,22 +196,29 @@ impl CollectorService {
         let key_file = File::open(&tls.client_key_path)
             .map_err(|e| CollectorError::Config(format!("Failed to open client key: {}", e)))?;
         let mut key_reader = BufReader::new(key_file);
-        let mut keys: Vec<PrivateKey> = pkcs8_private_keys(&mut key_reader)
-            .map_err(|e| CollectorError::Config(format!("Failed to parse private key: {}", e)))?
-            .into_iter()
-            .map(PrivateKey)
-            .collect();
+        let keys: Vec<_> = pkcs8_private_keys(&mut key_reader)
+            .map(|r| {
+                r.map_err(|e| CollectorError::Config(format!("Failed to parse private key: {}", e)))
+                    .map(|k| Box::leak(k.secret_pkcs8_der().to_vec().into_boxed_slice()))
+            })
+            .collect::<std::result::Result<_, _>>()?;
 
         if keys.is_empty() {
             return Err(CollectorError::Config("No private key found".into()));
         }
-        let private_key = keys.remove(0);
+        let private_key = PrivateKeyDer::try_from(unsafe { &*(keys[0] as *const [u8]) })
+            .map_err(|e| CollectorError::Config(format!("Invalid private key: {}", e)))?;
+        drop(keys);
 
         // 4. Build client config
+        let cert_chain_der: Vec<_> = cert_chain
+            .iter()
+            .map(|c| CertificateDer::from(unsafe { &*(*c as *const [u8]) }))
+            .collect();
+        drop(cert_chain);
         let config = ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(root_store)
-            .with_client_auth_cert(cert_chain, private_key)
+            .with_client_auth_cert(cert_chain_der, private_key)
             .map_err(|e| CollectorError::Config(format!("Failed to build TLS config: {}", e)))?;
 
         Ok(Arc::new(config))
@@ -229,7 +243,7 @@ impl CollectorService {
 
         // Perform TLS handshake
         let connector = TlsConnector::from(tls_config);
-        let domain = rustls::ServerName::try_from(host)
+        let domain = ServerName::try_from(host.to_owned())
             .map_err(|e| CollectorError::Config(format!("Invalid server name: {}", e)))?;
 
         let tls_stream = connector

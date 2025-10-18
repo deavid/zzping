@@ -25,7 +25,3 @@ test-utils = []
 [dev-dependencies]
 tempfile.workspace = true
 criterion = { version = "0.7", features = ["html_reports"] }
-
-[[bench]]
-name = "auth_benchmarks"
-harness = false

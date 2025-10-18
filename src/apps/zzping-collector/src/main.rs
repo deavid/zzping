@@ -5,10 +5,9 @@
 //! via mTLS and performs network monitoring.
 
 use anyhow::{Context, Result};
-use clap::Parser;
 use tokio::task::LocalSet;
 use tracing_subscriber::EnvFilter;
-use zzping_collector::{CliArgs, CollectorConfig, CollectorService};
+use zzping_collector::{cli::CliArgs, config::CollectorConfig, service::CollectorService};
 
 fn main() -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
@@ -17,6 +16,8 @@ fn main() -> Result<()> {
 }
 
 async fn async_main() -> Result<()> {
+    use clap::Parser as _;
+
     // Parse command-line arguments
     let args = CliArgs::parse();
 

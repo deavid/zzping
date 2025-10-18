@@ -8,46 +8,52 @@ name = "zzping-collector"
 path = "src/main.rs"
 
 [dependencies]
-# Component dependencies (our Phase 1-3 work)
-zzintent-config = { path = "../../components/zzintent-config" }
-zzpinger = { path = "../../components/zzpinger" }
-zzmem-db = { path = "../../components/zzmem-db" }
-zzcollector-state = { path = "../../components/zzcollector-state" }
+zzintent-config.workspace = true
+zzpinger.workspace = true
+zzmem-db.workspace = true
+zzcollector-state.workspace = true
 
 # Network layer dependencies
-zznet-session = { path = "../../net/zznet-session" }
-zznet-builder = { path = "../../net/zznet-builder" }
-zznet-transport-tcp = { path = "../../net/zznet-transport-tcp" }
-zznet-auth = { path = "../../net/zznet-auth" }
-zznet-api = { path = "../../net/zznet-api" }
+zznet-session.workspace = true
+zznet-builder.workspace = true
+zznet-transport-tcp.workspace = true
+zznet-auth.workspace = true
+zznet-api.workspace = true
 
 # Runtime dependencies
-tokio = { version = "1.0", features = ["full", "macros", "rt-multi-thread", "signal"] }
-actix = "0.13"
+tokio.workspace = true
+actix.workspace = true
 
 # Configuration and serialization
-serde = { version = "1.0", features = ["derive"] }
-ron = "0.8"
+serde.workspace = true
+ron.workspace = true
 
 # CLI argument parsing
-clap = { version = "4.0", features = ["derive"] }
+clap.workspace = true
 
 # Logging and tracing
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
 
 # Error handling
-anyhow = "1.0"
-thiserror = "1.0"
+anyhow.workspace = true
+thiserror.workspace = true
 
 # TLS/crypto
-rustls = "0.21"
-rustls-pemfile = "1.0"
-tokio-rustls = "0.24"
+rustls.workspace = true
+rustls-pemfile.workspace = true
+tokio-rustls.workspace = true
 
 # Utilities
-chrono = "0.4"
+chrono.workspace = true
 
 [dev-dependencies]
-tempfile = "3.0"
-tokio-test = "0.4"
+tempfile.workspace = true
+tokio-test.workspace = true
+
+# Workspace-wide linting: Since collaborators here (read, AI agents) are too happy to just allow a lint and move on, we
+# are adding here a workspace wide forbid on the lints that must not be overriden. Do not be even tempted to change this!
+# If you think you have a legitimate reason for one of these, think again: YOU DON'T. DO NOT TOUCH THESE LINT CONFIGS!
+[lints]
+# This makes the crate inherit all lints defined in [workspace.lints]
+workspace = true

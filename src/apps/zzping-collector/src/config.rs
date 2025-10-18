@@ -10,6 +10,7 @@ pub struct CollectorConfig {
 
     /// Database connection settings
     pub database_host: String,
+    /// Database connection port.
     pub database_port: u16,
 
     /// TLS configuration for mTLS connection
@@ -20,6 +21,7 @@ pub struct CollectorConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// TLS configuration for mTLS.
 pub struct TlsConfig {
     /// CA certificate for verifying server (database)
     pub ca_cert_path: String,
@@ -30,6 +32,7 @@ pub struct TlsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Component-specific configuration.
 pub struct ComponentConfig {
     /// Heartbeat interval in seconds for collector state
     pub heartbeat_interval_secs: u64,
