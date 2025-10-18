@@ -78,7 +78,9 @@ impl AclConfig {
 
         // Warn if the ACL is overly permissive (role-only entries exist)
         if self.allowed_peers.iter().any(|p| !p.contains('@')) {
-            tracing::warn!("ACL contains role-only entries which allow any user with that role; consider using user@role entries for better security");
+            tracing::warn!(
+                "ACL contains role-only entries which allow any user with that role; consider using user@role entries for better security"
+            );
         }
 
         Ok(())

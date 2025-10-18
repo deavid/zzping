@@ -4,8 +4,8 @@
 //! Uses backend abstraction to enable testing without real network operations.
 
 use futures::future::BoxFuture;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 use surge_ping::{Client, Config, PingIdentifier, PingSequence};
 use tokio::time::timeout;

@@ -157,9 +157,10 @@ async fn test_database_role_sends_ack_and_query_response() {
     // Ensure an ack was sent
     {
         let sent = send_log.lock().unwrap();
-        assert!(sent
-            .iter()
-            .any(|m| matches!(m, CStateMessage::HeartbeatAck { .. })));
+        assert!(
+            sent.iter()
+                .any(|m| matches!(m, CStateMessage::HeartbeatAck { .. }))
+        );
     }
 
     // Now send QueryCollectors from admin peer and ensure CollectorList response
@@ -172,9 +173,10 @@ async fn test_database_role_sends_ack_and_query_response() {
 
     {
         let sent = send_log.lock().unwrap();
-        assert!(sent
-            .iter()
-            .any(|m| matches!(m, CStateMessage::CollectorList { .. })));
+        assert!(
+            sent.iter()
+                .any(|m| matches!(m, CStateMessage::CollectorList { .. }))
+        );
     }
 }
 

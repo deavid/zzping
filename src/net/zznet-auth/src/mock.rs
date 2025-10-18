@@ -3,7 +3,7 @@
 //! This module provides simple mock role implementations that can be used
 //! in tests without depending on application-specific roles.
 
-use super::{error::AuthError, ApplicationRole};
+use super::{ApplicationRole, error::AuthError};
 use serde::{Deserialize, Serialize};
 
 /// Simple mock role enum for testing purposes.
