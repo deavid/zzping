@@ -11,24 +11,26 @@
 
 set -e
 
-# Create certs directory if it doesn't exist
-mkdir -p certs
+CERTS_FOLDER="test_certs"
 
-CA_KEY="certs/ca.key"
-CA_CERT="certs/ca.pem"
-COLLECTOR_KEY="certs/collector.key"
-COLLECTOR_CERT="certs/collector.pem"
-COLLECTOR_CSR="certs/collector.csr"
-DATABASE_KEY="certs/database.key"
-DATABASE_CERT="certs/database.pem"
-DATABASE_CSR="certs/database.csr"
-CLIENT_RO_KEY="certs/client-ro.key"
-CLIENT_RO_CERT="certs/client-ro.pem"
-CLIENT_RO_CSR="certs/client-ro.csr"
-CLIENT_ADMIN_KEY="certs/client-admin.key"
-CLIENT_ADMIN_CERT="certs/client-admin.pem"
-CLIENT_ADMIN_CSR="certs/client-admin.csr"
-CA_SERIAL="certs/ca.srl"
+# Create certs directory if it doesn't exist
+mkdir -p "$CERTS_FOLDER"
+
+CA_KEY="$CERTS_FOLDER/ca.key"
+CA_CERT="$CERTS_FOLDER/ca.pem"
+COLLECTOR_KEY="$CERTS_FOLDER/collector.key"
+COLLECTOR_CERT="$CERTS_FOLDER/collector.pem"
+COLLECTOR_CSR="$CERTS_FOLDER/collector.csr"
+DATABASE_KEY="$CERTS_FOLDER/database.key"
+DATABASE_CERT="$CERTS_FOLDER/database.pem"
+DATABASE_CSR="$CERTS_FOLDER/database.csr"
+CLIENT_RO_KEY="$CERTS_FOLDER/client-ro.key"
+CLIENT_RO_CERT="$CERTS_FOLDER/client-ro.pem"
+CLIENT_RO_CSR="$CERTS_FOLDER/client-ro.csr"
+CLIENT_ADMIN_KEY="$CERTS_FOLDER/client-admin.key"
+CLIENT_ADMIN_CERT="$CERTS_FOLDER/client-admin.pem"
+CLIENT_ADMIN_CSR="$CERTS_FOLDER/client-admin.csr"
+CA_SERIAL="$CERTS_FOLDER/ca.srl"
 
 # Function to generate CA
 generate_ca() {
