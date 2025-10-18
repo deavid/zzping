@@ -26,7 +26,7 @@ use tokio::signal::unix::{SignalKind, signal};
 
 // Add these imports at top
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
-use rustls::server::{NoClientAuth, danger::ClientCertVerifier};
+use rustls::server::WebPkiClientVerifier;
 use rustls::{RootCertStore, ServerConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::fs::File;
@@ -537,8 +537,12 @@ impl DatabaseService {
         drop(keys);
 
         // 4. Build server config (NOT client config!)
-        let client_verifier = NoClientAuth;
-        let verifier: Arc<dyn ClientCertVerifier> = Arc::new(client_verifier);
+        // Use WebPkiClientVerifier builder to create a verifier that requests
+        // client certificates and validates them against the provided root_store (mTLS).
+        let roots = Arc::new(root_store);
+        let verifier = WebPkiClientVerifier::builder(roots).build().map_err(|e| {
+            DatabaseError::Config(format!("Failed to build client verifier: {}", e))
+        })?;
         let cert_chain_der: Vec<_> = cert_chain
             .iter()
             .map(|c| CertificateDer::from(unsafe { &*(*c as *const [u8]) }))
