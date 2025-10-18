@@ -69,6 +69,28 @@ DatabaseConfig(
         max_collectors: 100,           // Maximum concurrent collectors
     ),
 )
+
+Note on relative paths
+---------------------
+
+Relative filesystem paths in RON configuration files (for example, `server_cert_path`,
+`server_key_path`, and `data_dir`) are resolved relative to the directory that contains
+the RON file itself, not the process current working directory. This makes it safe to
+move/copy the RON file and keep runtime paths local to the config location.
+
+Recommended data_dir
+--------------------
+
+For local development we recommend using a data directory next to the repository root
+so that runtime state isn't mixed with config files. For the database example above
+we suggest:
+
+```
+data_dir: "../data/database/"
+```
+
+Place files that the database should read/write at runtime (for example `intent.ron`)
+under this data directory.
 ```
 
 ### Collector Config

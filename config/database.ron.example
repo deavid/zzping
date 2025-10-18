@@ -9,12 +9,19 @@ DatabaseConfig(
     // TLS certificate paths for mTLS server
     tls: TlsConfig(
         // CA certificate for verifying collector certificates
-            ca_cert_paths: ["test_certs/ca.pem"],
+            ca_cert_paths: ["../test_certs/ca.pem"],
         // Server certificate (this database's identity)
-        server_cert_path: "test_certs/database.pem",
+        server_cert_path: "../test_certs/database.pem",
         // Server private key
-        server_key_path: "test_certs/database.key",
+        server_key_path: "../test_certs/database.key",
     ),
+
+    // Directory where runtime data files are stored (relative paths are
+    // resolved relative to the location of this RON file). This directory
+    // should contain files like `intent.ron` which the database reads/writes
+    // at runtime. For local development we recommend placing runtime data in
+    // `../data/database/` (relative to the `config/` directory).
+    data_dir: "../data/database/",
 
     // Component-specific configuration
     components: ComponentConfig(

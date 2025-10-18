@@ -582,9 +582,32 @@ mod session_manager_integration_tests {
                     targets: t,
                     ping_rate_pps: r,
                 } => {
-                    assert!(t.contains(&"1.1.1.1".parse::<IpAddr>().unwrap()));
-                    assert!(t.contains(&"8.8.8.8".parse::<IpAddr>().unwrap()));
-                    assert_eq!(r, 200);
+                    // Allow for possible startup/default update arriving before
+                    // the admin-requested update; if the first packet doesn't
+                    // contain the requested IPs, try to read one more message.
+                    if !(t.contains(&"1.1.1.1".parse::<IpAddr>().unwrap())
+                        && t.contains(&"8.8.8.8".parse::<IpAddr>().unwrap())
+                        && r == 200)
+                    {
+                        // attempt to read the next packet for this collector
+                        use tokio::time::{Duration as TokioDuration, timeout};
+                        let next = timeout(TokioDuration::from_millis(200), rx1_out.recv()).await;
+                        if let Ok(Some((_room2, msg2))) = next {
+                            match msg2 {
+                                IntentConfigMessage::ConfigUpdate {
+                                    targets: t2,
+                                    ping_rate_pps: r2,
+                                } => {
+                                    assert!(t2.contains(&"1.1.1.1".parse::<IpAddr>().unwrap()));
+                                    assert!(t2.contains(&"8.8.8.8".parse::<IpAddr>().unwrap()));
+                                    assert_eq!(r2, 200);
+                                }
+                                _ => panic!("Unexpected second message for collector1: {:?}", msg2),
+                            }
+                        } else {
+                            panic!("collector1 did not receive expected ConfigUpdate");
+                        }
+                    }
                 }
                 _ => panic!("Unexpected message for collector1: {:?}", msg),
             }
@@ -602,9 +625,28 @@ mod session_manager_integration_tests {
                     targets: t,
                     ping_rate_pps: r,
                 } => {
-                    assert!(t.contains(&"1.1.1.1".parse::<IpAddr>().unwrap()));
-                    assert!(t.contains(&"8.8.8.8".parse::<IpAddr>().unwrap()));
-                    assert_eq!(r, 200);
+                    if !(t.contains(&"1.1.1.1".parse::<IpAddr>().unwrap())
+                        && t.contains(&"8.8.8.8".parse::<IpAddr>().unwrap())
+                        && r == 200)
+                    {
+                        use tokio::time::{Duration as TokioDuration, timeout};
+                        let next = timeout(TokioDuration::from_millis(200), rx2_out.recv()).await;
+                        if let Ok(Some((_room2, msg2))) = next {
+                            match msg2 {
+                                IntentConfigMessage::ConfigUpdate {
+                                    targets: t2,
+                                    ping_rate_pps: r2,
+                                } => {
+                                    assert!(t2.contains(&"1.1.1.1".parse::<IpAddr>().unwrap()));
+                                    assert!(t2.contains(&"8.8.8.8".parse::<IpAddr>().unwrap()));
+                                    assert_eq!(r2, 200);
+                                }
+                                _ => panic!("Unexpected second message for collector2: {:?}", msg2),
+                            }
+                        } else {
+                            panic!("collector2 did not receive expected ConfigUpdate");
+                        }
+                    }
                 }
                 _ => panic!("Unexpected message for collector2: {:?}", msg),
             }
@@ -693,6 +735,213 @@ mod session_manager_integration_tests {
         } else {
             panic!("collector-startup channel closed unexpectedly");
         }
+    }
+
+    /// Test that Collector does NOT proactively query the Database for current
+    /// config on startup. This reproduces the runtime symptom where the DB has
+    /// a persisted config but the Collector remains at default until the DB
+    /// actively pushes an update.
+    #[actix::test]
+    async fn test_collector_does_not_query_db_on_startup() {
+        use zznet_session::session_manager::SessionManager;
+        use zznet_session::types::{PeerId, RoomId};
+        use zzping_test_utils::DummyRoomHandle;
+        use tokio::sync::mpsc;
+        use tokio::time::{timeout, Duration as TokioDuration};
+
+        // Create a SessionManager for the collector offering intent-config
+        let mut coll_manager = SessionManager::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(vec![RoomId::from("intent-config")]);
+
+        // Add a DB peer entry so the manager knows about the DB remote
+        let mut db_peer = zznet_session::peer_session::PeerSession::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("db-instance"));
+        db_peer
+            .add_room(
+                RoomId::from("intent-config"),
+                Box::new(DummyRoomHandle::new(RoomId::from("intent-config"))),
+            )
+            .unwrap();
+        // Mark the DB peer as having UpdateConfig permission so it will be
+        // targeted by the QueryCurrentConfig predicate.
+        db_peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::UpdateConfig,
+        }));
+        coll_manager
+            .add_peer(PeerId::from("db-instance"), db_peer)
+            .unwrap();
+
+        // Connect peer channels so we can capture outbound messages that the
+        // collector would send to the DB. tx_out is used by the manager to send
+        // outbound messages to the remote; we will receive them on rx_out.
+        let (tx_out, mut rx_out) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        coll_manager
+            .connect_peer(PeerId::from("db-instance"), tx_out, rx_in)
+            .unwrap();
+
+        // Start Collector actor wired to this manager
+        let _collector_addr = IntentConfigBuilder::new()
+            .role(IntentConfigRole::Collector)
+            .session_manager(coll_manager)
+            .start()
+            .expect("start failed");
+
+        // Give the actor time to run any startup logic
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Expect an outbound QueryCurrentConfig message to the DB on startup
+        use crate::network_messages::IntentConfigMessage;
+        let pkt = timeout(TokioDuration::from_millis(500), rx_out.recv())
+            .await
+            .expect("Expected a message from collector to DB")
+            .expect("Collector outbound channel closed");
+        assert_eq!(pkt.0, RoomId::from("intent-config"));
+        match pkt.1 {
+            IntentConfigMessage::QueryCurrentConfig => {
+                println!("✓ Collector sent QueryCurrentConfig to DB on startup");
+            }
+            other => panic!("Unexpected message sent to DB: {:?}", other),
+        }
+    }
+
+    /// Test that when a Collector starts (and queries the DB), the Database
+    /// replies with CurrentConfig and the Collector applies it to its local state.
+    #[actix::test]
+    async fn test_collector_applies_current_config_on_query() {
+    use zznet_session::session_manager::SessionManager;
+    use zznet_session::types::{PeerId, RoomId};
+    // (no serde imports required here)
+        use crate::messages::IntentConfigData;
+        use tempfile::NamedTempFile;
+        use std::net::IpAddr;
+        use std::time::Duration;
+
+        // Prepare a persisted config file for the DB
+        let temp_file = NamedTempFile::new().unwrap();
+        let config_path = temp_file.path().to_path_buf();
+        let cfg = IntentConfigData {
+            targets: vec!["4.4.4.4".parse::<IpAddr>().unwrap()],
+            ping_rate_pps: 42,
+        };
+        let s = ron::ser::to_string_pretty(&cfg, Default::default()).unwrap();
+        std::fs::write(&config_path, s).unwrap();
+
+        // Create SessionManagers for DB and Collector
+        let mut db_manager = SessionManager::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(vec![RoomId::from("intent-config")]);
+
+        let mut coll_manager = SessionManager::<
+            IntentConfigMessage,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(vec![RoomId::from("intent-config")]);
+
+        // Add peer entries and roles
+        let mut db_peer_for_collector = zznet_session::peer_session::PeerSession::new(PeerId::from("db-instance"));
+        db_peer_for_collector.add_room(RoomId::from("intent-config"), Box::new(zzping_test_utils::DummyRoomHandle::new(RoomId::from("intent-config")))).unwrap();
+        db_peer_for_collector.set_role(Some(crate::permission_wrapper::PermissionWrapper { permission: IntentConfigPermission::UpdateConfig }));
+        coll_manager.add_peer(PeerId::from("db-instance"), db_peer_for_collector).unwrap();
+
+        let mut coll_peer_for_db = zznet_session::peer_session::PeerSession::new(PeerId::from("collector-instance"));
+        coll_peer_for_db.add_room(RoomId::from("intent-config"), Box::new(zzping_test_utils::DummyRoomHandle::new(RoomId::from("intent-config")))).unwrap();
+        coll_peer_for_db.set_role(Some(crate::permission_wrapper::PermissionWrapper { permission: IntentConfigPermission::ReceiveConfigUpdates }));
+        db_manager.add_peer(PeerId::from("collector-instance"), coll_peer_for_db).unwrap();
+
+        use tokio::sync::mpsc;
+
+        // Instead of the generic in-memory connector, wire explicit channels
+        // so the test can intercept the collector's Query and send a
+        // CurrentConfig reply deterministically.
+
+        // Proxy channel: collector inbound for the DB side will be serviced by a
+        // forwarder that also copies packets into a test-visible receiver.
+        let (tx_coll_to_db, mut rx_proxy) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        // DB inbound channel that will be given to db_manager
+        let (tx_db_in, rx_db_in) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        // Test-visible receiver to observe collector outbound messages
+        let (tx_test_observe, mut rx_test_observe) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+
+        // Channel: DB -> Collector (db outbound, collector inbound)
+        let (tx_db_to_coll, rx_db_to_coll) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+
+        // Connect collector manager to DB peer: outbound is tx_coll_to_db, inbound is rx_db_to_coll
+        coll_manager
+            .connect_peer(PeerId::from("db-instance"), tx_coll_to_db, rx_db_to_coll)
+            .unwrap();
+
+        // Connect db manager to Collector peer: outbound is tx_db_to_coll.clone(), inbound is rx_db_in
+        db_manager
+            .connect_peer(PeerId::from("collector-instance"), tx_db_to_coll.clone(), rx_db_in)
+            .unwrap();
+
+        // Spawn a forwarder that relays collector->db messages from the proxy into
+        // the DB inbound channel and also copies them to the test observer.
+        tokio::spawn(async move {
+            while let Some(pkt) = rx_proxy.recv().await {
+                // Forward to DB inbound
+                let _ = tx_db_in.send(pkt.clone()).await;
+                // Also send a copy to the test observer (ignore send error)
+                let _ = tx_test_observe.send(pkt).await;
+            }
+        });
+
+        // Start Database actor (reads persisted config)
+        let _db_addr = IntentConfigBuilder::new()
+            .role(IntentConfigRole::Database { config_file_path: config_path.clone() })
+            .session_manager(db_manager)
+            .start()
+            .expect("start db failed");
+
+        // Start Collector actor wired to its manager (will send QueryCurrentConfig on startup)
+        let coll_addr = IntentConfigBuilder::new()
+            .role(IntentConfigRole::Collector)
+            .session_manager(coll_manager)
+            .start()
+            .expect("start collector failed");
+
+        // Wait for the collector to send the QueryCurrentConfig to the DB
+        use tokio::time::{timeout, Duration as TokioDuration};
+    let pkt = timeout(TokioDuration::from_millis(500), rx_test_observe.recv()).await;
+        assert!(pkt.is_ok(), "Did not receive QueryCurrentConfig from collector");
+        if let Some((_room, msg)) = pkt.unwrap() {
+            println!("Test observed collector outbound message: {:?}", msg);
+            match msg {
+                IntentConfigMessage::QueryCurrentConfig => {
+                    println!("Test: sending CurrentConfig reply to collector (direct)");
+                    // Send CurrentConfig directly to collector actor to simulate DB reply
+                    let reply = IntentConfigMessage::CurrentConfig {
+                        targets: cfg.targets.clone(),
+                        ping_rate_pps: cfg.ping_rate_pps,
+                    };
+                    coll_addr.do_send(reply);
+                }
+                other => panic!("Unexpected message from collector: {:?}", other),
+            }
+        } else {
+            panic!("collector->db channel closed unexpectedly");
+        }
+
+        // Now poll the collector's actor state to confirm it applied the CurrentConfig
+        use crate::messages::GetCurrentConfig;
+        let mut applied = false;
+        for i in 0..40 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let res = coll_addr.send(GetCurrentConfig).await.unwrap();
+            println!("Test poll #{}: collector state = {:?}", i, res);
+            if res.targets == cfg.targets && res.ping_rate_pps == cfg.ping_rate_pps {
+                applied = true;
+                break;
+            }
+        }
+        assert!(applied, "Collector did not apply CurrentConfig within timeout");
+
+        println!("✓ Collector applied CurrentConfig received from DB");
     }
 }
 

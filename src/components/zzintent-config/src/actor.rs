@@ -350,6 +350,13 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
                         ping_rate_pps: self.current_config.ping_rate_pps,
                     };
 
+                    // Log the payload we are about to send to peers for debugging
+                    log::info!(
+                        "Sending ConfigUpdate to peers: targets={:?}, ping_rate_pps={} ",
+                        self.current_config.targets,
+                        self.current_config.ping_rate_pps
+                    );
+
                     Self::send_config_update_to_peers(
                         session_manager,
                         config_update,
@@ -499,53 +506,120 @@ impl<T: ApplicationRole + std::fmt::Debug> Actor for IntentConfigActor<T> {
     fn started(&mut self, _ctx: &mut Context<Self>) {
         log::info!("IntentConfigActor has started.");
 
-        // On startup as Database: if a config file exists, load it and broadcast
-        match &self.role {
-            IntentConfigRole::Database { config_file_path } if config_file_path.exists() => {
-                match std::fs::read_to_string(config_file_path) {
-                    Ok(s) => match ron::de::from_str::<IntentConfigData>(&s) {
-                        Ok(cfg) => {
-                            // Validate the loaded config
-                            match cfg.validate() {
-                                Ok(()) => {
-                                    log::info!(
-                                        "Loaded and validated persisted IntentConfig from {}",
-                                        config_file_path.display()
-                                    );
-                                    self.current_config = cfg.clone();
-                                    // Broadcast locally so subscribers get initial state
-                                    self.broadcast_config();
+        // On startup as Database: attempt to load existing config; regardless of
+        // load outcome, ensure a canonical `intent.ron` exists by persisting the
+        // current_config (loaded or default) to disk. This guarantees that a
+        // DB started with no file will create it, and a DB started with an
+        // existing file will overwrite it with validated/canonical RON.
+        if let IntentConfigRole::Database { config_file_path } = &self.role {
+            // Clone the configured path so we don't hold an immutable borrow
+            // of `self` across operations that require mutable borrows later.
+            let config_path = config_file_path.clone();
 
-                                    // If a SessionManager is configured, try sending initial
-                                    // ConfigUpdate to Collector peers using helper
-                                    if let Some(session_manager) = &self.session_manager {
-                                        let session_manager = Rc::clone(session_manager);
-                                        Self::spawn_send_initial_updates(
-                                            session_manager,
-                                            cfg,
-                                            self.broadcast_timeout,
-                                            Arc::clone(&self.successful_broadcasts),
-                                            Arc::clone(&self.failed_broadcasts),
-                                            Arc::clone(&self.last_broadcast_ms),
-                                        );
-                                    }
-                                }
-                                Err(validation_error) => {
-                                    log::error!(
-                                        "Loaded config from {} is invalid: {}. Using default config.",
-                                        config_file_path.display(),
-                                        validation_error
-                                    );
-                                    // Keep default config, don't broadcast invalid config
-                                }
+            let mut loaded_cfg: Option<IntentConfigData> = None;
+
+            if config_path.exists() {
+                match std::fs::read_to_string(&config_path) {
+                    Ok(s) => match ron::de::from_str::<IntentConfigData>(&s) {
+                        Ok(cfg) => match cfg.validate() {
+                            Ok(()) => {
+                                log::info!(
+                                    "Loaded and validated persisted IntentConfig from {}",
+                                    config_path.display()
+                                );
+                                // Log the concrete values we parsed so it's obvious
+                                // what the database will use (targets + rate)
+                                log::info!(
+                                    "Parsed IntentConfig: targets={:?}, ping_rate_pps={} ",
+                                    cfg.targets,
+                                    cfg.ping_rate_pps
+                                );
+                                loaded_cfg = Some(cfg);
                             }
-                        }
+                            Err(validation_error) => {
+                                log::error!(
+                                    "Loaded config from {} is invalid: {}. Using default config.",
+                                    config_path.display(),
+                                    validation_error
+                                );
+                            }
+                        },
                         Err(e) => log::warn!("Failed to parse persisted IntentConfig: {}", e),
                     },
                     Err(e) => log::warn!("Failed to read persisted IntentConfig file: {}", e),
                 }
+            } else {
+                log::info!(
+                    "No existing IntentConfig file at {}, will create default.",
+                    config_path.display()
+                );
             }
-            _ => {}
+
+            // If we loaded a valid config, adopt it
+            if let Some(cfg) = loaded_cfg {
+                self.current_config = cfg.clone();
+            }
+
+            // Broadcast locally so subscribers get initial state (loaded or default)
+            self.broadcast_config();
+
+            // Always attempt to persist the current (canonical) config to disk.
+            // Log errors but do not prevent the actor from starting.
+            if let Err(e) = self.persist_config() {
+                log::error!(
+                    "Failed to persist IntentConfig to {}: {}",
+                    config_path.display(),
+                    e
+                );
+            } else {
+                // If persist succeeded, log the canonical config we wrote.
+                log::info!(
+                    "Startup persisted canonical IntentConfig: targets={:?}, ping_rate_pps={}",
+                    self.current_config.targets,
+                    self.current_config.ping_rate_pps
+                );
+            }
+
+            // If a SessionManager is configured, try sending initial
+            // ConfigUpdate to Collector peers using helper
+            if let Some(session_manager) = &self.session_manager {
+                let session_manager = Rc::clone(session_manager);
+                let cfg = self.current_config.clone();
+                Self::spawn_send_initial_updates(
+                    session_manager,
+                    cfg,
+                    self.broadcast_timeout,
+                    Arc::clone(&self.successful_broadcasts),
+                    Arc::clone(&self.failed_broadcasts),
+                    Arc::clone(&self.last_broadcast_ms),
+                );
+            }
+        }
+        // If Collector role and a SessionManager is configured, proactively
+        // query peers for current config. This ensures a collector that
+        // connects after the DB startup will request the DB's current state.
+        if let (IntentConfigRole::Collector, Some(session_manager)) = (&self.role, &self.session_manager) {
+            let session_manager = Rc::clone(session_manager);
+            // Fire-and-forget async task to broadcast a QueryCurrentConfig to
+            // peers that are authorized to respond (admin/update-config role).
+            // Retry a few times with short delays to tolerate ordering/race
+            // conditions in tests and real networks where the SessionManager
+            // may not have fully established channels when the actor starts.
+            actix::spawn(async move {
+                let room_id = RoomId::from("intent-config");
+                let query = IntentConfigMessage::QueryCurrentConfig;
+                let timeout = std::time::Duration::from_millis(500);
+                // Try several times to improve reliability
+                for _attempt in 0..3 {
+                    let _ = session_manager
+                        .broadcast_to_room(&room_id, query.clone(), |role| {
+                            role.permission.as_str() == "update-config"
+                        }, timeout)
+                        .await;
+                    // Small backoff between attempts
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+            });
         }
     }
 }
@@ -732,14 +806,35 @@ where
                 Box::pin(async {})
             }
 
-            (IntentConfigRole::Collector, IntentConfigMessage::CurrentConfig { .. }) => {
-                log::warn!("Collector received CurrentConfig - invalid for this role");
-                if let Some(session_manager) = &self.session_manager {
-                    Self::spawn_send_error(
-                        Rc::clone(session_manager),
-                        "unknown".to_string(),
-                        "invalid-role: Collector should not send config responses".to_string(),
+            (
+                IntentConfigRole::Collector,
+                IntentConfigMessage::CurrentConfig {
+                    targets,
+                    ping_rate_pps,
+                },
+            ) => {
+                // Collector accepts CurrentConfig responses from Database (used for
+                // queries on connect/recovery). Treat the payload like a ConfigUpdate
+                // so local state is updated and subscribers are notified.
+                log::info!(
+                    "Collector received CurrentConfig: targets={:?}, pps={}",
+                    targets,
+                    ping_rate_pps
+                );
+                let new_config = IntentConfigData {
+                    targets,
+                    ping_rate_pps,
+                };
+                if new_config != self.current_config {
+                    log::info!(
+                        "IntentConfig update (CurrentConfig): previous={:?} -> new={:?}",
+                        self.current_config,
+                        new_config
                     );
+                    self.current_config = new_config;
+                    self.broadcast_config();
+                } else {
+                    log::debug!("Received CurrentConfig identical to current config - no-op");
                 }
                 Box::pin(async {})
             }

@@ -410,9 +410,16 @@ impl DatabaseService {
 
     fn create_builders(&self) -> Result<ComponentBuilders> {
         // Create IntentConfig builder - DATABASE ROLE
+        // Use configured data_dir (resolved by DatabaseConfig::load) to compute
+        // the path for intent.ron so relative paths in RON are interpreted
+        // relative to the config file location.
+        // `data_dir` is mandatory and already resolved by DatabaseConfig::load()
+        let data_dir = std::path::PathBuf::from(&self.config.data_dir);
+        let config_path = data_dir.join("intent.ron");
+
         let intent_config =
             IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Database {
-                config_file_path: "intent.ron".into(),
+                config_file_path: config_path,
             });
 
         // Create MemDB actor - DATABASE ROLE (no builder pattern!)
@@ -665,6 +672,7 @@ mod tests {
                 stale_timeout_secs: 30,
                 max_collectors: 100,
             },
+            data_dir: String::from("."),
         }
     }
 
