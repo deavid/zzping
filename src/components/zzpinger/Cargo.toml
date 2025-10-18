@@ -1,26 +1,11 @@
 [package]
 name = "zzpinger"
-version = "0.1.0"
-edition = "2021"
-
-[dependencies]
-actix = "0.13"
-tokio = { version = "1.48", features = ["full", "time"] }
-serde = { version = "1.0", features = ["derive"] }
-tracing = "0.1"
-thiserror = "1.0"
-
-# For ICMP ping
-surge-ping = "0.8"
-
-# Our components
-zzmem-db = { path = "../zzmem-db" }
-
-futures = "0.3"
-
-[dev-dependencies]
-ntest = "0.9"
-tokio-test = "0.4"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
 
 # Workspace-wide linting: Since collaborators here (read, AI agents) are too happy to just allow a lint and move on, we
 # are adding here a workspace wide forbid on the lints that must not be overriden. Do not be even tempted to change this!
@@ -28,3 +13,22 @@ tokio-test = "0.4"
 [lints]
 # This makes the crate inherit all lints defined in [workspace.lints]
 workspace = true
+
+[dependencies]
+actix.workspace = true
+tokio.workspace = true
+serde.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+
+# For ICMP ping
+surge-ping.workspace = true
+
+# Our components
+zzmem-db.workspace = true
+
+futures.workspace = true
+
+[dev-dependencies]
+ntest.workspace = true
+tokio-test.workspace = true

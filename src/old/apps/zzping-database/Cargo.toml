@@ -28,7 +28,7 @@ tokio-stream = { workspace = true }
 tonic = { workspace = true }
 byteorder.workspace = true
 bytes.workspace = true
-chrono = { version = "0.4", features = ["serde"] }
+chrono.workspace = true
 constriction.workspace = true
 crc32fast.workspace = true
 env_logger.workspace = true

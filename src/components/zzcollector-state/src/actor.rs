@@ -5,7 +5,7 @@ use crate::{
         CStateError, CStateHealth, ForceHeartbeat, GetCollectorState, GetHealth,
         UpdateHealthMetrics, WrappedCStateMessage,
     },
-    network_messages::{CStateMessage, CSTATE_ROOM},
+    network_messages::{CSTATE_ROOM, CStateMessage},
     role::CStateRole,
     state::{CollectorStateData, DatabaseStateData, TrackedCollector},
 };
@@ -14,8 +14,8 @@ use log::{debug, info, warn};
 use std::{
     marker::PhantomData,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::Duration,
 };
@@ -248,7 +248,10 @@ where
                             }
 
                             if reject {
-                                warn!("Rejecting collector registration due to max_collectors limit: {}", collector_id);
+                                warn!(
+                                    "Rejecting collector registration due to max_collectors limit: {}",
+                                    collector_id
+                                );
                                 // TODO: Consider eviction policy here (LRU/oldest eviction) instead of rejecting.
                                 // Current behavior: reject new registrations when at capacity.
                                 // Future work: choose and implement eviction strategy and tests.
@@ -388,11 +391,10 @@ where
                     timestamp_ms: _ts,
                     server_time_ms,
                 } = msg.message
+                    && let Some(state) = &mut self.collector_state
                 {
-                    if let Some(state) = &mut self.collector_state {
-                        state.last_heartbeat_ack_ms = server_time_ms;
-                        self.heartbeats_acked.fetch_add(1, Ordering::Relaxed);
-                    }
+                    state.last_heartbeat_ack_ms = server_time_ms;
+                    self.heartbeats_acked.fetch_add(1, Ordering::Relaxed);
                 }
             }
             CStateRole::Admin => {
@@ -420,27 +422,26 @@ where
         if let CStateRole::Database {
             stale_timeout_secs, ..
         } = &self.role
+            && let Some(state) = &mut self.database_state
         {
-            if let Some(state) = &mut self.database_state {
-                // If caller configured 0 seconds, treat as immediate removal of all collectors
-                if *stale_timeout_secs == 0 {
-                    state.collectors.clear();
-                } else {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    let timeout_ms = stale_timeout_secs.saturating_mul(1000);
-                    state.collectors.retain(|id, c| {
-                        let age = now.saturating_sub(c.last_seen_ms);
-                        if age > timeout_ms {
-                            debug!("Removing stale collector: {} (age_ms={})", id, age);
-                            false
-                        } else {
-                            true
-                        }
-                    });
-                }
+            // If caller configured 0 seconds, treat as immediate removal of all collectors
+            if *stale_timeout_secs == 0 {
+                state.collectors.clear();
+            } else {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                let timeout_ms = stale_timeout_secs.saturating_mul(1000);
+                state.collectors.retain(|id, c| {
+                    let age = now.saturating_sub(c.last_seen_ms);
+                    if age > timeout_ms {
+                        debug!("Removing stale collector: {} (age_ms={})", id, age);
+                        false
+                    } else {
+                        true
+                    }
+                });
             }
         }
     }

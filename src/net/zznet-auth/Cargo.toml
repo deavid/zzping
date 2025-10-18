@@ -1,9 +1,11 @@
 [package]
 name = "zznet-auth"
-version = "0.2.2-beta2"
-edition = "2021"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Application-layer authorization for ZZPing"
-license = "MIT OR Apache-2.0"
 
 # Workspace-wide linting: Since collaborators here (read, AI agents) are too happy to just allow a lint and move on, we
 # are adding here a workspace wide forbid on the lints that must not be overriden. Do not be even tempted to change this!
@@ -17,11 +19,11 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 tracing = { workspace = true }
-zznet-api = { path = "../zznet-api" }
+zznet-api = { workspace = true }
 
 [features]
 test-utils = []
 
 [dev-dependencies]
 tempfile.workspace = true
-criterion = { version = "0.7", features = ["html_reports"] }
+criterion = { workspace = true, features = ["html_reports"] }

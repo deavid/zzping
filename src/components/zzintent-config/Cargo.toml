@@ -24,16 +24,17 @@ serde = { workspace = true }
 env_logger = { workspace = true }
 ntest = { workspace = true }
 tokio-stream = { workspace = true }
-ron = "0.11"
-bincode = { version = "2.0", features = ["serde"] }
-zznet-session = { path = "../../net/zznet-session" }
+ron = { workspace = true }
+bincode = { workspace = true }
+zznet-session = { workspace = true }
 zznet-auth = { workspace = true }
-zznet-hello = { path = "../../net/zznet-hello" }
+zznet-hello = { workspace = true }
+
 [features]
 default = ["permissions"]
 permissions = []
 
 [dev-dependencies]
-tempfile = "3.23"
-zznet-room = { path = "../../net/zznet-room" }
-zzping-test-utils = { path = "../../test-utils/zzping-test-utils" }
+tempfile = { workspace = true }
+zznet-room = { workspace = true }
+zzping-test-utils = { workspace = true }

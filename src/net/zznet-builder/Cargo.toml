@@ -15,13 +15,13 @@ description = "High-level builder API for ZZPing network servers and clients"
 workspace = true
 
 [dependencies]
-zznet-api = { path = "../zznet-api" }
-zznet-hello = { path = "../zznet-hello" }
-zznet-session = { path = "../zznet-session" }
-zznet-transport-tcp = { path = "../zznet-transport-tcp" }
+zznet-api = { workspace = true }
+zznet-hello = { workspace = true }
+zznet-session = { workspace = true }
+zznet-transport-tcp = { workspace = true }
 actix.workspace = true
 tokio.workspace = true
-tracing = "0.1"
+tracing.workspace = true
 thiserror.workspace = true
 zznet-auth = { workspace = true }
 

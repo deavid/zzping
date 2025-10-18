@@ -15,10 +15,10 @@ description = "A command-line tool for inspecting zzping data files."
 workspace = true
 
 [dependencies]
-zzping-lib = { workspace = true }
-clap = { version = "4.5", features = ["derive"] }
-tokio = { workspace = true, features = ["full"] }
+zzping-lib.workspace = true
+clap.workspace = true
+tokio.workspace = true
 anyhow.workspace = true
 log.workspace = true
-chrono = { version = "0.4", features = ["serde"] }
+chrono.workspace = true
 env_logger.workspace = true

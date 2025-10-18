@@ -665,12 +665,6 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.21.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
-
-[[package]]
-name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -3186,7 +3180,7 @@ version = "3.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d30c53c26bc5b31a98cd02d20f25a7c8567146caf63ed593a9d87b2775291be"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "serde_core",
 ]
 
@@ -3713,23 +3707,11 @@ dependencies = [
 
 [[package]]
 name = "ron"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b91f7eff05f748767f183df4320a63d6936e9c6107d97c9e6bdd9784f4289c94"
-dependencies = [
- "base64 0.21.7",
- "bitflags 2.9.4",
- "serde",
- "serde_derive",
-]
-
-[[package]]
-name = "ron"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "db09040cc89e461f1a265139777a2bde7f8d8c67c4936f700c63ce3e2904d468"
 dependencies = [
- "base64 0.22.1",
+ "base64",
  "bitflags 2.9.4",
  "serde",
  "serde_derive",
@@ -4409,7 +4391,6 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
- "tokio-util",
 ]
 
 [[package]]
@@ -4497,7 +4478,7 @@ checksum = "eb7613188ce9f7df5bfe185db26c5814347d110db17920415cf2fbcad85e7203"
 dependencies = [
  "async-trait",
  "axum",
- "base64 0.22.1",
+ "base64",
  "bytes",
  "h2",
  "http",
@@ -6076,7 +6057,7 @@ dependencies = [
 
 [[package]]
 name = "zzcollector-state"
-version = "0.1.0"
+version = "0.2.2-beta2"
 dependencies = [
  "actix",
  "anyhow",
@@ -6085,7 +6066,7 @@ dependencies = [
  "log",
  "ntest",
  "rand",
- "ron 0.11.0",
+ "ron",
  "serde",
  "tempfile",
  "thiserror 2.0.17",
@@ -6110,7 +6091,7 @@ dependencies = [
  "env_logger",
  "log",
  "ntest",
- "ron 0.11.0",
+ "ron",
  "serde",
  "tempfile",
  "tokio",
@@ -6130,9 +6111,9 @@ dependencies = [
  "bincode",
  "log",
  "ntest",
- "ron 0.8.1",
+ "ron",
  "serde",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tracing",
  "zznet-auth",
@@ -6247,13 +6228,13 @@ dependencies = [
 
 [[package]]
 name = "zzping-collector"
-version = "0.1.0"
+version = "0.2.2-beta2"
 dependencies = [
  "actix",
  "anyhow",
  "chrono",
  "clap",
- "ron 0.11.0",
+ "ron",
  "rustls",
  "rustls-pemfile",
  "serde",
@@ -6277,13 +6258,13 @@ dependencies = [
 
 [[package]]
 name = "zzping-database"
-version = "0.1.0"
+version = "0.2.2-beta2"
 dependencies = [
  "actix",
  "anyhow",
  "chrono",
  "clap",
- "ron 0.11.0",
+ "ron",
  "rustls",
  "rustls-pemfile",
  "serde",
@@ -6349,7 +6330,7 @@ name = "zzping-old-database"
 version = "0.2.2-beta2"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
+ "base64",
  "bitflags 2.9.4",
  "byteorder",
  "bytes",
@@ -6361,7 +6342,7 @@ dependencies = [
  "futures-core",
  "log",
  "ntest",
- "ron 0.11.0",
+ "ron",
  "serde",
  "serde_json",
  "tempfile",
@@ -6408,7 +6389,7 @@ dependencies = [
 
 [[package]]
 name = "zzping-test-utils"
-version = "0.1.0"
+version = "0.2.2-beta2"
 dependencies = [
  "tokio",
  "zznet-auth",
@@ -6417,14 +6398,14 @@ dependencies = [
 
 [[package]]
 name = "zzpinger"
-version = "0.1.0"
+version = "0.2.2-beta2"
 dependencies = [
  "actix",
  "futures",
  "ntest",
  "serde",
  "surge-ping",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio",
  "tokio-test",
  "tracing",

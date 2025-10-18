@@ -15,12 +15,12 @@ description = "ZZPing Network Layer PoC #1.5: SessionManager for typed message r
 workspace = true
 
 [dependencies]
-zznet-room = { path = "../zznet-room" }
-zznet-api = { path = "../zznet-api" }
+zznet-room = { workspace = true }
+zznet-api = { workspace = true }
 zznet-auth = { workspace = true }
 actix.workspace = true
 tokio.workspace = true
-tracing = "0.1"
+tracing.workspace = true
 thiserror.workspace = true
 async-trait = { workspace = true }
 

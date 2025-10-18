@@ -8,9 +8,9 @@ repository.workspace = true
 description.workspace = true
 
 [dependencies]
-tonic = { workspace = true }
-prost = { workspace = true }
-tonic-prost = "0.14"
+tonic.workspace = true
+prost.workspace = true
+tonic-prost.workspace = true
 
 [build-dependencies]
-tonic-prost-build = { workspace = true }
+tonic-prost-build.workspace = true

@@ -16,7 +16,7 @@ workspace = true
 
 [dependencies]
 # Internal dependencies
-zznet-api = { path = "../zznet-api" }
+zznet-api = { workspace = true }
 
 # Async runtime
 tokio.workspace = true
@@ -29,7 +29,7 @@ rustls-pemfile.workspace = true
 rustls-native-certs.workspace = true
 
 # Certificate parsing
-x509-parser = "0.18"
+x509-parser.workspace = true
 
 # Data handling
 bytes.workspace = true
@@ -51,4 +51,4 @@ tokio = { workspace = true, features = [
     "rt-multi-thread",
 ] }
 tempfile.workspace = true
-rcgen = "0.14"
+rcgen.workspace = true

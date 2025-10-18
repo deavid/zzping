@@ -49,6 +49,8 @@ zznet-session = { path = "src/net/zznet-session" }
 zznet-builder = { path = "src/net/zznet-builder" }
 zznet-transport-tcp = { path = "src/net/zznet-transport-tcp" }
 zznet-api = { path = "src/net/zznet-api" }
+zznet-hello = { path = "src/net/zznet-hello" }
+zznet-room = { path = "src/net/zznet-room" }
 
 zzintent-config = { path = "src/components/zzintent-config" }
 zzpinger = { path = "src/components/zzpinger" }
@@ -66,6 +68,7 @@ prost = "0.14"
 tokio-stream = { version = "0.1", features = ["net"] }
 tonic = { version = "0.14", features = ["tls-ring", "tls-native-roots"] }
 tonic-build = "0.14"
+tonic-prost = "0.14"
 tonic-prost-build = "0.14"
 async-std = { version = "1.13", features = ["unstable"] }
 async-trait = "0.1"
@@ -126,6 +129,9 @@ crc32fast = "1.5"
 crossbeam-channel = "0.5"
 bytes = "1"
 serde_json = "1.0"
+x509-parser = "0.18"
+rcgen = "0.14"
+criterion = "0.7"
 
 
 [profile.dev]

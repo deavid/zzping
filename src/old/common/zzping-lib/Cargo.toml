@@ -2,7 +2,7 @@
 name = "zzping-lib"
 version.workspace = true
 authors.workspace = true
-edition = "2024"
+edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Shared library for zzping services"
@@ -26,12 +26,12 @@ crc32fast.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio = { workspace = true, features = ["full"] }
-chrono = { version = "0.4", features = ["serde"] }
+chrono.workspace = true
 log.workspace = true
 crossbeam-channel = { workspace = true, optional = true }
 bytes = { workspace = true, optional = true }
 surge-ping = { workspace = true, optional = true }
-clap = { version = "4.5", features = ["derive"], optional = true }
+clap = { workspace = true, optional = true }
 eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
@@ -39,7 +39,7 @@ rand = { workspace = true, optional = true }
 env_logger = { workspace = true, optional = true }
 
 [dev-dependencies]
-criterion = { version = "0.7", features = ["html_reports"] }
+criterion = { workspace = true, features = ["html_reports"] }
 
 [[bench]]
 name = "chunked_v1_benches"

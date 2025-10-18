@@ -1,17 +1,20 @@
 [package]
 name = "zzping-test-utils"
-version = "0.1.0"
-edition = "2024"
-authors = ["zzping-dev"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
 
 [lib]
 name = "zzping_test_utils"
 path = "src/lib.rs"
 
 [dependencies]
-zznet-session = { path = "../../net/zznet-session" }
-tokio = { workspace = true }
-zznet-auth = { workspace = true }
+zznet-session.workspace = true
+tokio.workspace = true
+zznet-auth.workspace = true
 
 [dev-dependencies]
 # none
