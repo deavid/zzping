@@ -88,6 +88,17 @@ impl CollectorService {
             Err(e) => tracing::error!("TCP connection failed: {}", e),
         }
 
+        // Debug: ask local IntentConfigActor for its current config and log it
+        // This helps verify the collector's local state at connect time.
+        {
+            use zzintent_config::messages::GetCurrentConfig;
+            let intent_addr = _started.intent_config.clone();
+            match intent_addr.send(GetCurrentConfig).await {
+                Ok(cfg) => tracing::info!("IntentConfig local state at connect: {:?}", cfg),
+                Err(e) => tracing::warn!("Failed to get IntentConfig state: {}", e),
+            }
+        }
+
         // Step 4: Setup signal handlers
         let mut sigterm = signal(SignalKind::terminate())
             .map_err(|e| CollectorError::Service(format!("Failed to setup SIGTERM: {}", e)))?;
@@ -113,9 +124,22 @@ impl CollectorService {
     }
 
     fn create_builders(&self) -> Result<ComponentBuilders> {
-        // Create IntentConfig builder - NO SESSION MANAGER
-        let intent_config =
-            IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Collector);
+        // Create a SessionManager and IntentConfig builder wired to it.
+        // This enables networked ConfigUpdate broadcasts/receives (mTLS+SessionManager).
+        use zznet_session::types::RoomId;
+
+        // Offered rooms: intent-config room name used by the component
+        let offered_rooms = vec![RoomId::from("intent-config")];
+
+        let session_manager = zznet_session::session_manager::SessionManager::<
+            zzintent_config::network_messages::IntentConfigMessage,
+            zzintent_config::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(offered_rooms);
+
+        // Create IntentConfig builder and attach session manager
+        let intent_config = IntentConfigBuilder::<IntentConfigPermission>::new()
+            .role(IntentConfigRole::Collector)
+            .session_manager(session_manager);
 
         // Create Pinger builder
         let pinger = PingerBuilder::new().enabled(true);

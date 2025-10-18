@@ -110,6 +110,17 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
         }
     }
 
+    /// Convenience constructor that logs initial state for debugging.
+    pub fn new_with_role_and_log(role: IntentConfigRole) -> Self {
+        let actor = Self::new_with_role(role);
+        log::info!(
+            "IntentConfigActor starting. role={:?}, initial_config={:?}",
+            actor.role,
+            actor.current_config
+        );
+        actor
+    }
+
     /// Get the current role
     pub fn role(&self) -> &IntentConfigRole {
         &self.role
@@ -645,8 +656,15 @@ where
                     ping_rate_pps,
                 };
                 if new_config != self.current_config {
+                    log::info!(
+                        "IntentConfig update: previous={:?} -> new={:?}",
+                        self.current_config,
+                        new_config
+                    );
                     self.current_config = new_config;
                     self.broadcast_config();
+                } else {
+                    log::debug!("Received ConfigUpdate identical to current config - no-op");
                 }
                 Box::pin(async {})
             }

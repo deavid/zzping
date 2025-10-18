@@ -96,6 +96,11 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigBuilder<T> {
 
         // Create and start actor with role
         let mut actor = IntentConfigActor::new_with_role(self.role);
+        // Log actor initial state for debugging (role only)
+        log::info!(
+            "Starting IntentConfigActor via builder. role={:?}",
+            actor.role()
+        );
 
         // Configure broadcast timeout on actor
         actor.set_broadcast_timeout(self.broadcast_timeout);
