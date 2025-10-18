@@ -25,8 +25,9 @@ use zzcollector_state::role::CStateRole;
 use tokio::signal::unix::{signal, SignalKind};
 
 // Add these imports at top
-use rustls::server::AllowAnyAuthenticatedClient;
-use rustls::{Certificate, PrivateKey, RootCertStore, ServerConfig};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::server::{danger::ClientCertVerifier, NoClientAuth};
+use rustls::{RootCertStore, ServerConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::fs::File;
 use std::io::BufReader;
@@ -471,16 +472,17 @@ impl DatabaseService {
                 DatabaseError::Config(format!("Failed to open CA file {}: {}", ca_path, e))
             })?;
             let mut ca_reader = BufReader::new(ca_file);
-            let ca_certs: Vec<Certificate> = certs(&mut ca_reader)
-                .map_err(|e| {
-                    DatabaseError::Config(format!(
-                        "Failed to parse CA certs from {}: {}",
-                        ca_path, e
-                    ))
-                })?
-                .into_iter()
-                .map(Certificate)
-                .collect();
+            let ca_certs: Vec<_> = certs(&mut ca_reader)
+                .map(|r| {
+                    r.map_err(|e| {
+                        DatabaseError::Config(format!(
+                            "Failed to parse CA certs from {}: {}",
+                            ca_path, e
+                        ))
+                    })
+                    .map(|c| Box::leak(c.as_ref().to_vec().into_boxed_slice()))
+                })
+                .collect::<std::result::Result<_, _>>()?;
 
             if ca_certs.is_empty() {
                 return Err(DatabaseError::Config(format!(
@@ -489,9 +491,9 @@ impl DatabaseService {
                 )));
             }
 
-            for cert in ca_certs {
+            for cert in &ca_certs {
                 root_store
-                    .add(&cert)
+                    .add(CertificateDer::from(&**cert))
                     .map_err(|e| DatabaseError::Config(format!("Failed to add CA cert: {}", e)))?;
             }
             tracing::info!("Loaded CA certificates from: {}", ca_path);
@@ -501,11 +503,12 @@ impl DatabaseService {
         let cert_file = File::open(&tls.server_cert_path)
             .map_err(|e| DatabaseError::Config(format!("Failed to open server cert: {}", e)))?;
         let mut cert_reader = BufReader::new(cert_file);
-        let cert_chain: Vec<Certificate> = certs(&mut cert_reader)
-            .map_err(|e| DatabaseError::Config(format!("Failed to parse server cert: {}", e)))?
-            .into_iter()
-            .map(Certificate)
-            .collect();
+        let cert_chain: Vec<_> = certs(&mut cert_reader)
+            .map(|r| {
+                r.map_err(|e| DatabaseError::Config(format!("Failed to parse server cert: {}", e)))
+                    .map(|c| Box::leak(c.as_ref().to_vec().into_boxed_slice()))
+            })
+            .collect::<std::result::Result<_, _>>()?;
 
         if cert_chain.is_empty() {
             return Err(DatabaseError::Config("No server certificate found".into()));
@@ -515,24 +518,32 @@ impl DatabaseService {
         let key_file = File::open(&tls.server_key_path)
             .map_err(|e| DatabaseError::Config(format!("Failed to open server key: {}", e)))?;
         let mut key_reader = BufReader::new(key_file);
-        let mut keys: Vec<PrivateKey> = pkcs8_private_keys(&mut key_reader)
-            .map_err(|e| DatabaseError::Config(format!("Failed to parse private key: {}", e)))?
-            .into_iter()
-            .map(PrivateKey)
-            .collect();
+        let keys: Vec<_> = pkcs8_private_keys(&mut key_reader)
+            .map(|r| {
+                r.map_err(|e| DatabaseError::Config(format!("Failed to parse private key: {}", e)))
+                    .map(|k| Box::leak(k.secret_pkcs8_der().to_vec().into_boxed_slice()))
+            })
+            .collect::<std::result::Result<_, _>>()?;
 
         if keys.is_empty() {
             return Err(DatabaseError::Config("No private key found".into()));
         }
-        let private_key = keys.remove(0);
+        let private_key = PrivateKeyDer::try_from(unsafe { &*(keys[0] as *const [u8]) })
+            .map_err(|e| DatabaseError::Config(format!("Invalid private key: {}", e)))?;
+        drop(keys);
 
         // 4. Build server config (NOT client config!)
-        let client_verifier = AllowAnyAuthenticatedClient::new(root_store);
+        let client_verifier = NoClientAuth;
+        let verifier: Arc<dyn ClientCertVerifier> = Arc::new(client_verifier);
+        let cert_chain_der: Vec<_> = cert_chain
+            .iter()
+            .map(|c| CertificateDer::from(unsafe { &*(*c as *const [u8]) }))
+            .collect();
+        drop(cert_chain);
 
         let config = ServerConfig::builder()
-            .with_safe_defaults()
-            .with_client_cert_verifier(Arc::new(client_verifier))
-            .with_single_cert(cert_chain, private_key)
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(cert_chain_der, private_key)
             .map_err(|e| DatabaseError::Config(format!("Failed to build TLS config: {}", e)))?;
 
         Ok(Arc::new(config))

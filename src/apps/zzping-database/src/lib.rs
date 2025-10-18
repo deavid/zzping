@@ -9,9 +9,3 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod service;
-
-// Re-exports for convenience (acceptable for binary crates)
-pub use cli::CliArgs;
-pub use config::DatabaseConfig;
-pub use error::DatabaseError;
-pub use service::DatabaseService;

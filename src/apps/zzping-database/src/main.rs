@@ -4,10 +4,10 @@
 //! and distributes configuration updates.
 
 use anyhow::{Context, Result};
-use clap::Parser;
+
 use tokio::task::LocalSet;
 use tracing_subscriber::EnvFilter;
-use zzping_database::{CliArgs, DatabaseConfig, DatabaseService};
+use zzping_database::{cli::CliArgs, config::DatabaseConfig, service::DatabaseService};
 
 fn main() -> Result<()> {
     // CRITICAL: Use LocalSet for Actix compatibility (spawn_local support)
@@ -17,6 +17,7 @@ fn main() -> Result<()> {
 }
 
 async fn async_main() -> Result<()> {
+    use clap::Parser as _;
     // Parse command-line arguments
     let args = CliArgs::parse();
 
