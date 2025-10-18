@@ -7,6 +7,7 @@
 //! - Routes messages between HelloActors and application components
 
 use crate::actor::{HelloActor, HelloConfig, start_hello_actor_with_session_manager};
+use crate::session_bridge::SessionBridge;
 use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
 use std::collections::HashMap;
@@ -304,6 +305,8 @@ where
 }
 
 /// Handler for HandshakeComplete - Called when HelloActor completes handshake
+///
+/// Simplified: Delegates complex message wiring to SessionBridge actor.
 impl<TMsg, TRole> Handler<HandshakeComplete> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
@@ -348,12 +351,7 @@ where
             None
         };
 
-        // 1. Create bidirectional channels for message flow
-        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(100);
-        let (conn_to_session_tx, conn_to_session_rx) = tokio::sync::mpsc::channel(100);
-        let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
-
-        // 2. Create PeerSession for this peer and set auth context
+        // Create PeerSession for this peer and set auth context
         let mut peer_session =
             PeerSession::new(zznet_session::types::PeerId::from(peer_id.as_str()));
         peer_session.set_role(resolved_role);
@@ -368,7 +366,12 @@ where
             return;
         }
 
-        // 3. Connect peer in SessionManager
+        // Create channels for SessionBridge
+        let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(100);
+        let (conn_to_session_tx, conn_to_session_rx) = tokio::sync::mpsc::channel(100);
+        let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
+
+        // Connect peer in SessionManager
         if let Err(e) = self.session_manager.connect_peer(
             zznet_session::types::PeerId::from(peer_id.as_str()),
             outbound_tx,
@@ -382,43 +385,13 @@ where
             return;
         }
 
-        // 3. Store HelloActor address for future use
+        // Store HelloActor address for future use
         self.hello_actors.insert(
             zznet_session::types::PeerId::from(peer_id.as_str()),
             msg.hello_actor.clone(),
         );
 
-        // 4. Spawn task: SessionManager outbound → HelloActor
-        let hello_actor_outbound = msg.hello_actor.clone();
-        let peer_id_clone1 = peer_id.clone();
-        tokio::spawn(async move {
-            while let Some((room_id, message)) = outbound_rx.recv().await {
-                // Serialize message using RoomMessageTrait
-                let payload = match message.serialize_inner() {
-                    Ok(data) => data,
-                    Err(e) => {
-                        tracing::error!("Failed to serialize message: {:?}", e);
-                        continue;
-                    }
-                };
-
-                // Create SendMessage for HelloActor
-                let send_msg = crate::actor::SendMessage {
-                    from_room: room_id.as_str().to_string(),
-                    to_room: room_id.as_str().to_string(),
-                    payload,
-                };
-
-                // Send to HelloActor
-                if let Err(e) = hello_actor_outbound.send(send_msg).await {
-                    tracing::error!("Failed to send message to HelloActor: {:?}", e);
-                    break;
-                }
-            }
-            tracing::debug!("Outbound forwarding task for peer {} ended", peer_id_clone1);
-        });
-
-        // 5. Give HelloActor the channel for forwarding received messages
+        // Give HelloActor the channel for forwarding received messages
         let set_inbound_msg = crate::actor::SetInboundChannel {
             tx: hello_to_conn_tx,
         };
@@ -427,33 +400,24 @@ where
             return;
         }
 
-        // 6. Spawn task: HelloActor inbound → SessionManager
-        let peer_id_clone2 = peer_id.clone();
-        tokio::spawn(async move {
-            let mut hello_to_conn_rx = hello_to_conn_rx;
-            while let Some((room_name, payload)) = hello_to_conn_rx.recv().await {
-                // Deserialize message using RoomMessageTrait
-                let room_id = zznet_session::types::RoomId::from(room_name.as_str());
-                match TMsg::deserialize_for_room(&room_id, &payload) {
-                    Ok(message) => {
-                        // Send to SessionManager
-                        if let Err(e) = conn_to_session_tx.try_send((room_id, message)) {
-                            tracing::error!(
-                                "Failed to send inbound message to SessionManager: {:?}",
-                                e
-                            );
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to deserialize inbound message: {:?}", e);
-                    }
-                }
-            }
-            tracing::debug!("Inbound forwarding task for peer {} ended", peer_id_clone2);
-        });
+        // Spawn SessionBridge actor to handle all the complex wiring
+        // This replaces the two manual tokio::spawn tasks that were previously here
+        let bridge_peer_id = peer_id.clone();
+        let bridge = SessionBridge::new(
+            bridge_peer_id,
+            msg.hello_actor.clone(),
+            outbound_rx,
+            conn_to_session_tx,
+            hello_to_conn_rx,
+        );
 
-        tracing::info!("Successfully wired channels for peer {}", peer_id);
+        // Start the SessionBridge in the actor system
+        let _bridge_addr = bridge.start();
+
+        tracing::info!(
+            "Successfully started SessionBridge for peer {} - message forwarding active",
+            peer_id
+        );
     }
 }
 

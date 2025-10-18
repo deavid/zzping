@@ -40,6 +40,7 @@ pub mod error;
 pub mod handshake;
 pub mod protocol;
 pub mod serialize;
+pub mod session_bridge;
 pub mod session_messages;
 
 #[cfg(test)]
