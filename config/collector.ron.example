@@ -1,0 +1,30 @@
+// Example ZZPing Collector Configuration
+// Copy this to collector.ron and customize for your environment
+
+CollectorConfig(
+    // Unique identifier for this collector instance
+    // Should match the CN in the client TLS certificate
+    collector_id: "collector-01",
+
+    // Database server connection settings
+    // NOTE: Use "localhost" hostname to match certificate SAN (DNS:localhost).
+    // This allows TLS validation to succeed when connecting to the database.
+    database_host: "localhost",
+    database_port: 8443,
+
+    // TLS certificate paths for mTLS authentication
+    tls: TlsConfig(
+        ca_cert_path: "test_certs/ca.pem",
+        client_cert_path: "test_certs/collector.pem",
+        client_key_path: "test_certs/collector.key",
+    ),
+
+    // Component-specific configuration
+    components: ComponentConfig(
+        // How often to send heartbeat to database (in seconds)
+        heartbeat_interval_secs: 5,
+
+        // How many ping results to batch before sending to database
+        memdb_batch_size: 50,
+    ),
+)

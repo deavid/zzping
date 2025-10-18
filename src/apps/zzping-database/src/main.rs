@@ -13,11 +13,14 @@ fn main() -> Result<()> {
     // CRITICAL: Use LocalSet for Actix compatibility (spawn_local support)
     let rt = tokio::runtime::Runtime::new()?;
     let local = LocalSet::new();
-    local.block_on(&rt, async_main())
+    rt.block_on(local.run_until(async_main()))
 }
 
 async fn async_main() -> Result<()> {
     use clap::Parser as _;
+    // Install crypto provider early
+    let _ =
+        rustls::crypto::CryptoProvider::install_default(rustls::crypto::ring::default_provider());
     // Parse command-line arguments
     let args = CliArgs::parse();
 

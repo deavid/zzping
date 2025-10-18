@@ -458,6 +458,10 @@ impl DatabaseService {
 
     /// Load TLS configuration for mTLS server
     pub fn load_tls_config(tls: &crate::config::TlsConfig) -> Result<Arc<ServerConfig>> {
+        // Install default crypto provider for rustls (ignore if already installed)
+        let _ = rustls::crypto::CryptoProvider::install_default(
+            rustls::crypto::ring::default_provider(),
+        );
         // 1. Load CA certificates (to verify client certificates from collectors)
         let mut root_store = RootCertStore::empty();
 

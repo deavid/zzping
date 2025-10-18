@@ -30,5 +30,15 @@ GEMINI_*md
 !/src/integration-tests/test_certs_rotation/.gitkeep
 /test_certs/
 /tmp/
+
+# Configuration files
+# Track .example files for reference, ignore actual .ron config files
+config/*.ron
+!config/*.ron.example
+!config/README.md
+
+# Don't allow config directories in src/ (configs go in repo root)
+src/apps/*/config/
+
 # keep CA public cert if intentionally committed (add exception if needed)
 # e.g. !/test_certs/ca.pem

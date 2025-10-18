@@ -1,10 +1,20 @@
 #!/bin/bash
 
 # Script to generate CA and certificates for zzping components
+#
+# NOTE: Service certificates use SAN=DNS:localhost because:
+#  - The collector connects to the database at 127.0.0.1 (localhost)
+#  - TLS certificate validation requires the SAN (Subject Alternative Name) to match the
+#    hostname/IP used during connection. Using DNS:localhost allows connections via
+#    "localhost" hostname, which is standard for local development and testing.
+#  - This is more flexible than hardcoding to a specific IP and allows both:
+#    * Connection via "localhost" hostname (recommended for testing)
+#    * Connection via 127.0.0.1 when hostname resolution is not available
+#
 # Usage:
 #   ./generate_certs.sh --ca                          # Generate CA certificate
-#   ./generate_certs.sh --collector                   # Generate collector certificate (CN=collector, SAN=DNS:root)
-#   ./generate_certs.sh --database                    # Generate database certificate (CN=database, SAN=DNS:root)
+#   ./generate_certs.sh --collector                   # Generate collector certificate (CN=collector, SAN=DNS:localhost)
+#   ./generate_certs.sh --database                    # Generate database certificate (CN=database, SAN=DNS:localhost)
 #   ./generate_certs.sh --client-ro [username]        # Generate client-ro certificate (CN=client-ro, SAN=DNS:<username>)
 #   ./generate_certs.sh --client-admin [username]     # Generate client-admin certificate (CN=client-admin, SAN=DNS:<username>)
 #   ./generate_certs.sh --all                         # Generate CA and all service certificates
@@ -58,13 +68,16 @@ generate_collector() {
     openssl req -subj "/CN=collector" -new -key "$COLLECTOR_KEY" -out "$COLLECTOR_CSR"
 
     echo "Signing collector certificate with CA..."
+    # SAN=DNS:localhost allows TLS connections to "localhost" hostname.
+    # This is required because the collector initiates TLS connections to the database
+    # using "localhost" as the hostname, and the certificate SAN must match.
     openssl x509 -req -days 365 -in "$COLLECTOR_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
         -out "$COLLECTOR_CERT" -sha256 -CAcreateserial \
         -extfile <(cat <<EOF
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:root
+subjectAltName=DNS:localhost
 EOF
 )
 
@@ -88,13 +101,16 @@ generate_database() {
     openssl req -subj "/CN=database" -new -key "$DATABASE_KEY" -out "$DATABASE_CSR"
 
     echo "Signing database certificate with CA..."
+    # SAN=DNS:localhost allows TLS connections to "localhost" hostname.
+    # This is required because the collector initiates TLS connections to the database
+    # using "localhost" as the hostname, and the certificate SAN must match.
     openssl x509 -req -days 365 -in "$DATABASE_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
         -out "$DATABASE_CERT" -sha256 -CAcreateserial \
         -extfile <(cat <<EOF
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:root
+subjectAltName=DNS:localhost
 EOF
 )
 
@@ -203,8 +219,8 @@ case "$1" in
     *)
         echo "Usage: $0 {--ca|--collector|--database|--client-ro|--client-admin|--all}"
         echo "  --ca                    Generate CA certificate"
-        echo "  --collector             Generate collector certificate (CN=collector, SAN=DNS:root)"
-        echo "  --database              Generate database certificate (CN=database, SAN=DNS:root)"
+        echo "  --collector             Generate collector certificate (CN=collector, SAN=DNS:localhost)"
+        echo "  --database              Generate database certificate (CN=database, SAN=DNS:localhost)"
         echo "  --client-ro <username>  Generate client-ro certificate (CN=client-ro, SAN=DNS:<username>)"
         echo "  --client-admin <username> Generate client-admin certificate (CN=client-admin, SAN=DNS:<username>)"
         echo "  --all                   Generate CA and all service certificates"
