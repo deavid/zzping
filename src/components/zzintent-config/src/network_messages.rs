@@ -39,6 +39,7 @@
 //! ```
 
 use actix::prelude::*;
+use log;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use zznet_session::room_message_trait::{
@@ -201,8 +202,13 @@ impl RoomMessageTrait for IntentConfigNetworkMsg {
     fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
         // For now, use bincode for serialization
         // In production, this might use a more efficient format
-        bincode::encode_to_vec(self, bincode::config::standard())
-            .map_err(|e| SerializationError::BincodeError(e.to_string()))
+        log::debug!("[INTENT-CONFIG SEND] Serializing message: {:?}", self);
+        let result = bincode::encode_to_vec(self, bincode::config::standard())
+            .map_err(|e| SerializationError::BincodeError(e.to_string()));
+        if let Ok(ref bytes) = result {
+            log::debug!("[INTENT-CONFIG SEND] Serialized to {} bytes", bytes.len());
+        }
+        result
     }
 
     fn deserialize_for_room(room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError> {
@@ -211,9 +217,20 @@ impl RoomMessageTrait for IntentConfigNetworkMsg {
             return Err(DeserializationError::UnknownRoom(room_id.clone()));
         }
 
-        bincode::decode_from_slice(bytes, bincode::config::standard())
+        log::debug!(
+            "[INTENT-CONFIG RECV] Deserializing {} bytes from room {:?}",
+            bytes.len(),
+            room_id
+        );
+        let result = bincode::decode_from_slice(bytes, bincode::config::standard())
             .map(|(value, _)| value)
-            .map_err(|e| DeserializationError::BincodeError(e.to_string()))
+            .map_err(|e| DeserializationError::BincodeError(e.to_string()));
+        if let Ok(ref msg) = result {
+            log::debug!("[INTENT-CONFIG RECV] Deserialized message: {:?}", msg);
+        } else {
+            log::warn!("[INTENT-CONFIG RECV] Deserialization failed");
+        }
+        result
     }
 
     fn supported_rooms() -> Vec<RoomId> {
