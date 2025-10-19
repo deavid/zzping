@@ -2450,7 +2450,7 @@ checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
 
 [[package]]
 name = "zzcollector-state"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "anyhow",
@@ -2475,7 +2475,7 @@ dependencies = [
 
 [[package]]
 name = "zzintent-config"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "anyhow",
@@ -2498,7 +2498,7 @@ dependencies = [
 
 [[package]]
 name = "zzmem-db"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "bincode",
@@ -2516,7 +2516,7 @@ dependencies = [
 
 [[package]]
 name = "zznet-api"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2528,7 +2528,7 @@ dependencies = [
 
 [[package]]
 name = "zznet-auth"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "criterion",
  "serde",
@@ -2541,7 +2541,7 @@ dependencies = [
 
 [[package]]
 name = "zznet-builder"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "bincode",
@@ -2558,7 +2558,7 @@ dependencies = [
 
 [[package]]
 name = "zznet-hello"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "bincode",
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "zznet-room"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "thiserror 2.0.17",
@@ -2584,7 +2584,7 @@ dependencies = [
 
 [[package]]
 name = "zznet-session"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "async-trait",
@@ -2600,7 +2600,7 @@ dependencies = [
 
 [[package]]
 name = "zznet-transport-tcp"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "async-trait",
  "bincode",
@@ -2621,7 +2621,7 @@ dependencies = [
 
 [[package]]
 name = "zzping-collector"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "anyhow",
@@ -2651,7 +2651,7 @@ dependencies = [
 
 [[package]]
 name = "zzping-database"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "anyhow",
@@ -2680,7 +2680,7 @@ dependencies = [
 
 [[package]]
 name = "zzping-test-utils"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "tokio",
  "zznet-auth",
@@ -2689,7 +2689,7 @@ dependencies = [
 
 [[package]]
 name = "zzpinger"
-version = "0.2.2-beta2"
+version = "0.3.0-dev"
 dependencies = [
  "actix",
  "futures",
