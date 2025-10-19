@@ -22,6 +22,9 @@ pub enum DatabaseError {
 
     #[error("Persistence error: {0}")]
     Persistence(String),
+
+    #[error("Message frame timeout: {0}")]
+    MessageFrameTimeout(String),
 }
 
 /// Result type alias for database operations.

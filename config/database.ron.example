@@ -30,5 +30,10 @@ DatabaseConfig(
 
         // Maximum number of collectors to accept
         max_collectors: 100,
+
+        // Timeout in milliseconds for reading a single message frame from a connection.
+        // If no data is received within this time, the connection is closed.
+        // Set to 0 to disable (not recommended). Default: 500ms
+        message_frame_timeout_ms: 500,
     ),
 )

@@ -40,6 +40,16 @@ pub struct ComponentConfig {
 
     /// Maximum number of collectors to accept
     pub max_collectors: usize,
+
+    /// Timeout in milliseconds for reading a single message frame from a connection.
+    /// If no data is received within this time, the connection is closed.
+    /// Defaults to 500ms. Set to 0 to disable timeout (not recommended).
+    #[serde(default = "default_message_frame_timeout_ms")]
+    pub message_frame_timeout_ms: u64,
+}
+
+fn default_message_frame_timeout_ms() -> u64 {
+    500
 }
 
 impl DatabaseConfig {
@@ -133,6 +143,9 @@ impl DatabaseConfig {
             ));
         }
 
+        // message_frame_timeout_ms can be 0 to disable (though not recommended),
+        // but we don't validate it here to allow that option if needed
+
         if self.data_dir.is_empty() {
             return Err(crate::error::DatabaseError::Config(
                 "data_dir cannot be empty; set to '.' to use config directory".into(),
@@ -202,6 +215,7 @@ mod tests {
             components: ComponentConfig {
                 stale_timeout_secs: 30,
                 max_collectors: 100,
+                message_frame_timeout_ms: 500,
             },
             data_dir: String::from("."),
         }

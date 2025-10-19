@@ -207,6 +207,8 @@ struct ConnectionHandler {
     /// Component addresses for message routing (will be actively used in Phase 6)
     #[allow(dead_code)]
     components: StartedComponents,
+    /// Timeout for reading a single message frame (in milliseconds)
+    message_frame_timeout_ms: u64,
 }
 
 impl ConnectionHandler {
@@ -216,33 +218,53 @@ impl ConnectionHandler {
         peer_role: DatabaseRole,
         stream: TlsStream<TcpStream>,
         components: StartedComponents,
+        message_frame_timeout_ms: u64,
     ) -> Self {
         Self {
             peer_addr,
             peer_role,
             stream,
             components,
+            message_frame_timeout_ms,
         }
     }
 
     /// Run the connection message loop
     async fn run(mut self) -> Result<()> {
         tracing::info!(
-            "Connection handler started for {} (role: {:?})",
+            "Connection handler started for {} (role: {:?}) - timeout: {}ms",
             self.peer_addr,
-            self.peer_role
+            self.peer_role,
+            self.message_frame_timeout_ms
         );
 
         let mut buffer = vec![0u8; 8192]; // 8KB buffer
+        let timeout = if self.message_frame_timeout_ms > 0 {
+            Some(std::time::Duration::from_millis(
+                self.message_frame_timeout_ms,
+            ))
+        } else {
+            None
+        };
 
         loop {
-            // Read message length (4 bytes, big-endian)
+            // Read message length (4 bytes, big-endian) with timeout
             let mut len_bytes = [0u8; 4];
-            match self.stream.read_exact(&mut len_bytes).await {
+            match self.read_with_timeout(&mut len_bytes, timeout).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                     tracing::info!("Client {} disconnected", self.peer_addr);
                     break;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    tracing::error!(
+                        "Message frame timeout while reading length from {} - closing connection",
+                        self.peer_addr
+                    );
+                    return Err(DatabaseError::MessageFrameTimeout(format!(
+                        "Timeout waiting for message length from {}",
+                        self.peer_addr
+                    )));
                 }
                 Err(e) => {
                     tracing::error!(
@@ -266,8 +288,11 @@ impl ConnectionHandler {
                 buffer.resize(msg_len, 0);
             }
 
-            // Read message body
-            match self.stream.read_exact(&mut buffer[..msg_len]).await {
+            // Read message body with timeout
+            match self
+                .read_with_timeout(&mut buffer[..msg_len], timeout)
+                .await
+            {
                 Ok(_) => {
                     tracing::debug!("Received {} bytes from {}", msg_len, self.peer_addr);
 
@@ -276,6 +301,17 @@ impl ConnectionHandler {
                         tracing::error!("Failed to handle message from {}: {}", self.peer_addr, e);
                         // Continue processing other messages
                     }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    tracing::error!(
+                        "Message frame timeout while reading {} bytes from {} - closing connection",
+                        msg_len,
+                        self.peer_addr
+                    );
+                    return Err(DatabaseError::MessageFrameTimeout(format!(
+                        "Timeout waiting for message body from {}",
+                        self.peer_addr
+                    )));
                 }
                 Err(e) => {
                     tracing::error!("Failed to read message body from {}: {}", self.peer_addr, e);
@@ -286,6 +322,24 @@ impl ConnectionHandler {
 
         tracing::info!("Connection handler stopping for {}", self.peer_addr);
         Ok(())
+    }
+
+    /// Read with optional timeout
+    async fn read_with_timeout(
+        &mut self,
+        buf: &mut [u8],
+        timeout: Option<std::time::Duration>,
+    ) -> std::io::Result<()> {
+        match timeout {
+            Some(dur) => match tokio::time::timeout(dur, self.stream.read_exact(buf)).await {
+                Ok(result) => result.map(|_| ()),
+                Err(_) => Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Message frame read timeout",
+                )),
+            },
+            None => self.stream.read_exact(buf).await.map(|_| ()),
+        }
     }
 
     /// Handle a single received message
@@ -377,10 +431,11 @@ impl DatabaseService {
                             // Clone for move into spawned task
                             let acceptor = acceptor.clone();
                             let started = started.clone();
+                            let timeout_ms = self.config.components.message_frame_timeout_ms;
 
                             // Spawn connection handler (non-blocking)
                             tokio::spawn(async move {
-                                if let Err(e) = Self::handle_connection(stream, peer_addr, acceptor, started).await {
+                                if let Err(e) = Self::handle_connection(stream, peer_addr, acceptor, started, timeout_ms).await {
                                     tracing::error!("Connection handler error for {}: {}", peer_addr, e);
                                 }
                             });
@@ -589,6 +644,7 @@ impl DatabaseService {
         peer_addr: SocketAddr,
         acceptor: TlsAcceptor,
         components: StartedComponents,
+        message_frame_timeout_ms: u64,
     ) -> Result<()> {
         tracing::debug!("Starting TLS handshake with {}", peer_addr);
 
@@ -609,7 +665,13 @@ impl DatabaseService {
         );
 
         // Create and run connection handler
-        let handler = ConnectionHandler::new(peer_addr, peer_role, tls_stream, components);
+        let handler = ConnectionHandler::new(
+            peer_addr,
+            peer_role,
+            tls_stream,
+            components,
+            message_frame_timeout_ms,
+        );
         handler.run().await?;
 
         tracing::info!("Connection closed for {}", peer_addr);
@@ -671,6 +733,7 @@ mod tests {
             components: ComponentConfig {
                 stale_timeout_secs: 30,
                 max_collectors: 100,
+                message_frame_timeout_ms: 500,
             },
             data_dir: String::from("."),
         }
