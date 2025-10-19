@@ -8,5 +8,7 @@
 pub mod cli;
 pub mod config;
 pub mod error;
+/// Network wiring module (collector)
+pub mod network;
 /// Service module.
 pub mod service;

@@ -449,4 +449,20 @@ mod tests {
         let result = DatabaseService::load_tls_config(&tls_config);
         assert!(result.is_err(), "Should fail with missing CA");
     }
+
+    #[actix::test]
+    async fn test_database_network_creation() {
+        use actix::Actor;
+
+        // Create a temporary service to get ConnectionManager
+        let config = create_test_config();
+        let service = DatabaseService::new(config).unwrap();
+        let cm = service.create_connection_manager().unwrap();
+        let cm_addr = cm.start();
+
+        // Test network creation without TLS (TLS config creation is complex and tested elsewhere)
+        let network_result =
+            crate::network::DatabaseNetwork::new("127.0.0.1:8443", None, cm_addr).await;
+        assert!(network_result.is_ok(), "Network creation should succeed");
+    }
 }
