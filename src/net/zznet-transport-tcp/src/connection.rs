@@ -330,7 +330,7 @@ mod tests {
         let mut transport = TcpTransport::plain(stream, peer);
 
         // Try to receive - should get None (connection closed)
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
         let result = transport.recv().await.unwrap();
         assert!(result.is_none());
     }

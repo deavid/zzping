@@ -437,7 +437,7 @@ mod tests {
             .expect("failed to start pinger");
 
         // Allow some time for the background task to run at least once
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
         // Verify that the mock MemDB received at least one StorePingResult
         let results = collected.lock().unwrap();
@@ -507,7 +507,7 @@ mod tests {
             .expect("failed to start pinger");
 
         // Wait for some pings to accumulate
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
         let initial_counts = ping_counts.lock().unwrap().clone();
         assert!(
@@ -532,7 +532,7 @@ mod tests {
             .expect("update failed");
 
         // Wait again
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
 
         let final_counts = ping_counts.lock().unwrap().clone();
         let initial_target1 = *initial_counts.get("target1").unwrap_or(&0);

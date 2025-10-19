@@ -179,7 +179,7 @@ async fn test_server_client_basic_connection() {
     println!("Server started successfully");
 
     // Give server time to bind
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 
     // Start client
     println!("Starting client connecting to 127.0.0.1:18080...");
@@ -196,7 +196,7 @@ async fn test_server_client_basic_connection() {
     println!("Client started successfully");
 
     // Wait for connection and handshake
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
     println!("✓ Connection established and handshake completed");
 
@@ -204,7 +204,7 @@ async fn test_server_client_basic_connection() {
     server.do_send(zznet_builder::server_builder::StopServer);
     client.do_send(zznet_builder::client_builder::Disconnect);
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 
     println!("=== Test Complete ===\n");
 }
@@ -232,7 +232,7 @@ async fn test_multiple_clients() {
     println!("Server started successfully");
 
     // Give server time to bind
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     // Start 3 clients
     let mut clients = Vec::new();
@@ -256,13 +256,13 @@ async fn test_multiple_clients() {
         println!("Client {} connected", i);
 
         // Brief delay between connections
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
     }
 
     println!("All 3 clients connected successfully");
 
     // Wait for all handshakes
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     println!("✓ Multiple concurrent connections working");
 
@@ -273,7 +273,7 @@ async fn test_multiple_clients() {
         client.do_send(zznet_builder::client_builder::Disconnect);
     }
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     println!("=== Test Complete ===\n");
 }
@@ -299,7 +299,7 @@ async fn test_client_reconnection() {
         .expect("Failed to start server");
 
     println!("Server started successfully");
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 
     // Start client with auto-reconnect enabled
     println!("Starting client with auto-reconnect...");
@@ -318,12 +318,12 @@ async fn test_client_reconnection() {
         .expect("Failed to start client");
 
     println!("Client connected");
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
     // Stop server to simulate disconnect
     println!("Stopping server to simulate disconnect...");
     server.do_send(zznet_builder::server_builder::StopServer);
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
     // Restart server
     println!("Restarting server...");
@@ -337,7 +337,7 @@ async fn test_client_reconnection() {
         .expect("Failed to restart server");
 
     println!("Server restarted, waiting for client to reconnect...");
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
 
     println!("✓ Client should have reconnected automatically");
 
@@ -345,7 +345,7 @@ async fn test_client_reconnection() {
     server2.do_send(zznet_builder::server_builder::StopServer);
     client.do_send(zznet_builder::client_builder::Disconnect);
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 
     println!("=== Test Complete ===\n");
 }
@@ -373,7 +373,7 @@ async fn test_graceful_shutdown() {
         .await
         .expect("Failed to start server");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     // Start client
     println!("Starting client...");
@@ -388,15 +388,15 @@ async fn test_graceful_shutdown() {
         .expect("Failed to start client");
 
     println!("Connection established");
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     // Graceful shutdown
     println!("Initiating graceful shutdown...");
     client.do_send(zznet_builder::client_builder::Disconnect);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     server.do_send(zznet_builder::server_builder::StopServer);
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     println!("✓ Graceful shutdown completed");
 
@@ -450,13 +450,13 @@ async fn test_client_connection_failure() {
     println!("Client actor started (will fail to connect)");
 
     // Wait to see if it tries to connect
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     println!("✓ Connection failure handled gracefully");
 
     // Cleanup
     client.do_send(zznet_builder::client_builder::Disconnect);
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     println!("=== Test Complete ===\n");
 }
@@ -480,7 +480,7 @@ async fn test_different_auth_roles() {
         .await
         .expect("Failed to start server");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 
     // Client as Collector (allowed to connect to Database)
     let client1_rooms = vec![RoomId::from("health")];
@@ -498,7 +498,7 @@ async fn test_different_auth_roles() {
         .expect("Failed to start collector client");
 
     println!("Collector connected successfully");
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
     println!("✓ Authentication roles working correctly");
 
@@ -506,7 +506,7 @@ async fn test_different_auth_roles() {
     server.do_send(zznet_builder::server_builder::StopServer);
     client1.do_send(zznet_builder::client_builder::Disconnect);
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 
     println!("=== Test Complete ===\n");
 }
@@ -537,7 +537,7 @@ async fn test_end_to_end_message_exchange() {
     println!("Server started successfully");
 
     // Give server time to bind
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     // Start client
     println!("Starting client connecting to 127.0.0.1:18085...");
@@ -555,7 +555,7 @@ async fn test_end_to_end_message_exchange() {
 
     // Wait for connection and handshake - increase timeout
     println!("Waiting for handshake to complete...");
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     println!("Connection established, now testing message exchange...");
 
@@ -578,7 +578,7 @@ async fn test_end_to_end_message_exchange() {
     if server_peers.is_empty() || client_peers.is_empty() {
         println!("Handshake not completed, checking if connection is established...");
         // Let's wait a bit more and try again
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
 
         let server_peers = server_manager
             .send(zznet_hello::connection_manager::GetPeers)
@@ -657,7 +657,8 @@ async fn test_end_to_end_message_exchange() {
 
     // Receive message on server side
     println!("Waiting for message on server side...");
-    let receive_result = tokio::time::timeout(Duration::from_secs(5), server_receiver.recv()).await;
+    let receive_result =
+        tokio::time::timeout(Duration::from_millis(50), server_receiver.recv()).await;
 
     match receive_result {
         Ok(Ok((received_room_id, received_message))) => {
@@ -693,7 +694,8 @@ async fn test_end_to_end_message_exchange() {
 
     // Receive response on client side
     println!("Waiting for response on client side...");
-    let receive_result = tokio::time::timeout(Duration::from_secs(2), client_receiver.recv()).await;
+    let receive_result =
+        tokio::time::timeout(Duration::from_millis(50), client_receiver.recv()).await;
 
     match receive_result {
         Ok(Ok((received_room_id, received_message))) => {
@@ -714,7 +716,7 @@ async fn test_end_to_end_message_exchange() {
     server.do_send(zznet_builder::server_builder::StopServer);
     client.do_send(zznet_builder::client_builder::Disconnect);
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     println!("=== Test Complete ===\n");
 }

@@ -813,14 +813,7 @@ mod tests {
         );
     }
 
-    // TODO: Reconnection currently not supported because Room::spawn_receiver()
-    // can only be called once. To support reconnection, we need to either:
-    // 1. Track room receiver tasks and abort them on disconnect
-    // 2. Add Room::stop_receiver() method
-    // 3. Recreate Room instances on reconnect
-    // For now, this is deferred as it adds complexity and is not required for PoC integration.
     #[actix::test]
-    #[ignore = "Reconnection not yet supported - Room receivers can't be respawned"]
     async fn test_peer_session_reconnect_after_disconnect() {
         let mut session =
             PeerSession::<CollectorMessages, MockRole>::new(PeerId::from("test_peer"));

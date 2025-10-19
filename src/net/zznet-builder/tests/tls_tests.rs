@@ -128,7 +128,7 @@ async fn test_tls_mutual_authentication() {
         .await
         .expect("Failed to start TLS server");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 
     // Create client with TLS
     let client_manager =
@@ -146,7 +146,7 @@ async fn test_tls_mutual_authentication() {
         .expect("Failed to connect TLS client");
 
     // Wait for TLS handshake and HELLO
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 
     // If we get here, TLS connection succeeded
 }
@@ -172,7 +172,7 @@ async fn test_tls_multiple_clients() {
         .await
         .expect("Failed to start server");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 
     // Connect 3 clients
     for i in 1..=3 {
@@ -193,10 +193,10 @@ async fn test_tls_multiple_clients() {
             .await
             .unwrap_or_else(|_| panic!("Failed to connect client {}", i));
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(5)).await;
 }
 
 /// Test 3: TLS with different roles (Database server, ClientRo client)
@@ -223,7 +223,7 @@ async fn test_tls_different_roles() {
         .await
         .expect("Failed to start server");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
     let client_manager =
         ConnectionManager::<TestMessage, TestRole>::new(vec![RoomId::from("test")]).start();
@@ -239,7 +239,7 @@ async fn test_tls_different_roles() {
         .await
         .expect("Failed to connect with ClientRo role");
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
 }
 
 /// Test 4: TLS configuration validation
@@ -324,7 +324,7 @@ async fn test_plain_and_tls_coexist() {
         .await
         .expect("Failed to start TLS server");
 
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(10)).await;
 
     // Connect plain client to plain server
     let plain_client_manager =
@@ -359,5 +359,5 @@ async fn test_plain_and_tls_coexist() {
         .await
         .expect("Failed to connect TLS client");
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(20)).await;
 }

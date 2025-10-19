@@ -183,6 +183,34 @@ where
     type Context = Context<Self>;
 }
 
+/// Message for handing a transport connection to the ConnectionManager.
+#[derive(Message)]
+#[rtype(result = "Result<(), String>")]
+pub struct HandleTransport {
+    /// The transport connection to manage (boxed trait object).
+    pub transport: Box<dyn zznet_api::transport::TransportConnection>,
+    /// HelloActor configuration for this connection.
+    pub config: crate::actor::HelloConfig,
+}
+
+impl<TMsg, TRole> Handler<HandleTransport> for ConnectionManager<TMsg, TRole>
+where
+    TMsg: RoomMessageTrait,
+    TRole: ApplicationRole,
+{
+    type Result = Result<(), String>;
+
+    fn handle(&mut self, msg: HandleTransport, ctx: &mut Context<Self>) -> Self::Result {
+        // Use peer_addr string as a temporary peer id until handshake provides canonical id
+        let peer_identity = msg.transport.peer_identity();
+        let peer_id = PeerId::from(peer_identity.peer_addr.as_str());
+
+        // Spawn HelloActor managed by this ConnectionManager (it will wire to SessionManager)
+        let _addr = self.spawn_hello_actor(peer_id, msg.transport, msg.config, ctx);
+        Ok(())
+    }
+}
+
 /// Message to get list of connected peer IDs
 #[derive(Message)]
 #[rtype(result = "Vec<PeerId>")]

@@ -82,7 +82,6 @@ use std::time::Duration;
 /// - TLS handshake succeeds
 /// - No fatal errors in either service
 #[test]
-#[ignore] // Ignored by default; run with `cargo test -- --ignored --test-threads=1`
 fn test_connectivity_database_to_collector() {
     println!("\n=== Connectivity Integration Test ===\n");
 
@@ -104,7 +103,7 @@ fn test_connectivity_database_to_collector() {
 
     // Give database time to start and bind to port
     println!("Waiting for database to bind to port...");
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(Duration::from_millis(50));
 
     // Verify database is running
     match db_process.try_wait() {
@@ -141,9 +140,9 @@ fn test_connectivity_database_to_collector() {
         .spawn()
         .expect("Failed to spawn collector process");
 
-    // Give collector time to attempt connection
-    println!("Waiting for connection attempt...");
-    thread::sleep(Duration::from_secs(2));
+    // Give collector time to attempt connection and complete handshake
+    println!("Waiting for connection attempt and handshake completion...");
+    thread::sleep(Duration::from_millis(300));
 
     // Terminate collector (should exit gracefully soon anyway)
     println!("Terminating collector...");

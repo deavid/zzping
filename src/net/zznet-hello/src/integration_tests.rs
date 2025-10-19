@@ -51,14 +51,14 @@ mod hello_session_integration {
         let client_config = HelloConfig {
             our_role: "collector".to_string(),
             offered_rooms: vec!["intentconfig".to_string(), "health".to_string()],
-            handshake_timeout: Duration::from_secs(5),
+            handshake_timeout: Duration::from_millis(10),
             hostname: "client-host".to_string(),
         };
 
         let server_config = HelloConfig {
             our_role: "database".to_string(),
             offered_rooms: vec!["intentconfig".to_string(), "memdb".to_string()],
-            handshake_timeout: Duration::from_secs(5),
+            handshake_timeout: Duration::from_millis(10),
             hostname: "server-host".to_string(),
         };
 
@@ -73,7 +73,7 @@ mod hello_session_integration {
         let _server_actor = start_hello_actor(Box::new(server_transport), server_config);
 
         // Wait for handshake to complete and verify SessionManager was notified
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
 
         // Try receiving the HandshakeComplete from the mock session manager
         if let Some(handshake) = handshake_rx.recv().await {
@@ -100,14 +100,14 @@ mod hello_session_integration {
         let client_config = HelloConfig {
             our_role: "collector".to_string(),
             offered_rooms: vec!["intentconfig".to_string()],
-            handshake_timeout: Duration::from_secs(5),
+            handshake_timeout: Duration::from_millis(10),
             hostname: "client-host".to_string(),
         };
 
         let server_config = HelloConfig {
             our_role: "database".to_string(),
             offered_rooms: vec!["intentconfig".to_string()],
-            handshake_timeout: Duration::from_secs(5),
+            handshake_timeout: Duration::from_millis(10),
             hostname: "server-host".to_string(),
         };
 
@@ -115,7 +115,7 @@ mod hello_session_integration {
         let _server_actor = start_hello_actor(Box::new(server_transport), server_config);
 
         // Wait for handshake
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
 
         // Try to send InboundRoomMessage to HelloActor
         let msg = InboundRoomMessage {

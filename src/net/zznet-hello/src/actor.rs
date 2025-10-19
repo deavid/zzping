@@ -646,14 +646,14 @@ mod tests {
         let config1 = HelloConfig {
             our_role: "collector".to_string(),
             offered_rooms: vec!["memdb".to_string(), "query".to_string()],
-            handshake_timeout: Duration::from_secs(5),
+            handshake_timeout: Duration::from_millis(10),
             hostname: "host1".to_string(),
         };
 
         let config2 = HelloConfig {
             our_role: "database".to_string(),
             offered_rooms: vec!["memdb".to_string(), "stats".to_string()],
-            handshake_timeout: Duration::from_secs(5),
+            handshake_timeout: Duration::from_millis(10),
             hostname: "host2".to_string(),
         };
 
@@ -662,7 +662,7 @@ mod tests {
 
         // Wait for handshake to complete (both should finish)
         // In reality, they should complete quickly
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
 
         // Try sending a message (this tests the full flow)
         let result = addr1
@@ -688,7 +688,7 @@ mod tests {
         addr.do_send(Disconnect);
 
         // Wait a bit for disconnect to process
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
 
         // Actor should have stopped
     }

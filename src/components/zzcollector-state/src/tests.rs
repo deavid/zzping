@@ -114,7 +114,7 @@ async fn test_collector_role_heartbeat() {
     let _actor = builder.build();
 
     // Wait for a heartbeat to be sent
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(2)).await;
     actix::System::current().stop();
 
     let log = broadcast_log.lock().unwrap();

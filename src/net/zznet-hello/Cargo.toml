@@ -29,3 +29,4 @@ bytes.workspace = true
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "sync", "macros"] }
 zznet-auth = { workspace = true, features = ["test-utils"] }
+zznet-transport-tcp = { workspace = true }

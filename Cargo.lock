@@ -2570,6 +2570,7 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-session",
+ "zznet-transport-tcp",
 ]
 
 [[package]]
