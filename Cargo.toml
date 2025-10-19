@@ -1,10 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "src/old/common/zzping-lib",
-    "src/old/common/zzping-proto",
-    "src/old/apps/zzping-cli",
-    "src/old/apps/zzping-gui",
+    # "src/old/common/zzping-lib",
+    # "src/old/common/zzping-proto",
+    # "src/old/apps/zzping-cli",
+    # "src/old/apps/zzping-gui",
 
     "src/test-utils/zzping-test-utils",
 
@@ -39,8 +39,8 @@ description = "Tools to monitor home network latency and packet loss"
 # ...   and instead use "cratename.workspace = true" to refer to it.
 
 # Internal dependencies
-zzping-lib = { path = "src/old/common/zzping-lib" }
-zzping-proto = { path = "src/old/common/zzping-proto" }
+# zzping-lib = { path = "src/old/common/zzping-lib" }
+# zzping-proto = { path = "src/old/common/zzping-proto" }
 
 zzping-test-utils = { path = "src/test-utils/zzping-test-utils" }
 
