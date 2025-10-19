@@ -256,11 +256,44 @@ impl DatabaseService {
         &self,
     ) -> Result<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, DatabaseRole>>
     {
+        use zznet_auth::acl::GenericAuthorizer;
         use zznet_session::types::RoomId;
 
         let offered_rooms = vec![RoomId::from("memdb"), RoomId::from("query")];
+
+        // Create an authorizer that validates peer identity from TLS certificate
+        // and resolves it to a DatabaseRole.
+        // This ensures EVERY connection is authorized - there is no code path for unauthenticated access.
+        let authorizer: GenericAuthorizer<DatabaseRole> = Box::new(|peer_identity| {
+            tracing::debug!(
+                "Database authorizer checking peer identity: {}",
+                peer_identity.full_identity()
+            );
+
+            // Validate CN against allowed roles
+            match DatabaseRole::from_cn(&peer_identity.common_name) {
+                Ok(role) => {
+                    tracing::debug!(
+                        "Authorizer resolved {} → {:?}",
+                        peer_identity.full_identity(),
+                        role
+                    );
+                    Some(role)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Authorizer rejected {} - unknown role: {}",
+                        peer_identity.full_identity(),
+                        e
+                    );
+                    None
+                }
+            }
+        });
+
         Ok(zznet_hello::connection_manager::ConnectionManager::new(
             offered_rooms,
+            authorizer,
         ))
     }
 

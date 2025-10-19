@@ -3,6 +3,7 @@ use crate::config::{CollectorConfig, ComponentConfig, TlsConfig};
 use crate::error::{CollectorError, Result};
 
 use actix::{Actor, Addr};
+use zznet_auth::ApplicationRole;
 
 // Component imports
 use zzintent_config::actor::IntentConfigActor;
@@ -269,13 +270,45 @@ impl CollectorService {
             zzintent_config::permissions::IntentConfigPermission,
         >,
     > {
+        use zznet_auth::acl::GenericAuthorizer;
         use zznet_session::types::RoomId;
 
         // Collector offers intent-config related rooms
         let offered_rooms = vec![RoomId::from("intent-config")];
 
+        // Create an authorizer that validates peer identity from TLS certificate
+        // and resolves it to IntentConfigPermission.
+        // This ensures EVERY connection is authorized - there is no code path for unauthenticated access.
+        let authorizer: GenericAuthorizer<IntentConfigPermission> = Box::new(|peer_identity| {
+            tracing::debug!(
+                "Collector authorizer checking peer identity: {}",
+                peer_identity.full_identity()
+            );
+
+            // Validate CN against allowed roles
+            match IntentConfigPermission::from_cn(&peer_identity.common_name) {
+                Ok(role) => {
+                    tracing::debug!(
+                        "Collector authorizer resolved {} → {:?}",
+                        peer_identity.full_identity(),
+                        role
+                    );
+                    Some(role)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Collector authorizer rejected {} - unknown role: {}",
+                        peer_identity.full_identity(),
+                        e
+                    );
+                    None
+                }
+            }
+        });
+
         Ok(zznet_hello::connection_manager::ConnectionManager::new(
             offered_rooms,
+            authorizer,
         ))
     }
 

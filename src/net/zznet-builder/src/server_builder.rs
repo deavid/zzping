@@ -7,7 +7,6 @@ use zznet_auth::ApplicationRole;
 use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::RoomMessageTrait;
-use zznet_session::types::RoomId;
 use zznet_transport_tcp::config::TlsConfig;
 use zznet_transport_tcp::server::TcpTransportServer;
 
@@ -119,26 +118,16 @@ where
 
         let bind_addr = self.bind_addr.unwrap();
 
-        // Create ConnectionManager if not provided
-        let connection_manager = if let Some(cm) = self.connection_manager {
-            cm
-        } else {
-            let rooms: Vec<RoomId> = self
-                .offered_rooms
-                .iter()
-                .map(|s| RoomId::from(s.as_str()))
-                .collect();
-
-            // Read optional limits from environment variables. If set, they take precedence
-            // and are passed to the ConnectionManager constructor. Values must be positive integers.
-            let max_peers = std::env::var_os("ZZPING_MAX_PEERS")
-                .and_then(|v| v.to_string_lossy().parse::<usize>().ok());
-            let max_rooms_per_peer = std::env::var_os("ZZPING_MAX_ROOMS_PER_PEER")
-                .and_then(|v| v.to_string_lossy().parse::<usize>().ok());
-
-            ConnectionManager::<TMsg, TRole>::new_with_limits(rooms, max_peers, max_rooms_per_peer)
-                .start()
-        };
+        // SECURITY: ConnectionManager is REQUIRED and must be provided with an authorizer.
+        // Applications must create and configure the ConnectionManager themselves,
+        // then pass it via with_connection_manager(). This ensures:
+        // - Authorizer is always configured (no unauthenticated connections possible)
+        // - Application controls authorization policy
+        let connection_manager = self.connection_manager.ok_or_else(|| {
+            BuilderError::MissingConfig(
+                "ConnectionManager with authorizer is REQUIRED. Use with_connection_manager() to provide one.".to_string(),
+            )
+        })?;
 
         // Create TCP server
         let tcp_server = TcpTransportServer::new(&bind_addr, self.tls_config)

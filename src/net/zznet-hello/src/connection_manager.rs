@@ -24,6 +24,10 @@ type Authorizer<TRole> =
 
 /// ConnectionManager coordinates HelloActors and SessionManager
 ///
+/// SECURITY: ConnectionManager REQUIRES an authorizer function.
+/// There is no code path that allows connections without authorization.
+/// Every peer must be explicitly authorized before gaining access.
+///
 /// Generic over TMsg: the application's message enum type
 /// Generic over TRole: the application's role type
 pub struct ConnectionManager<TMsg, TRole>
@@ -37,9 +41,15 @@ where
     /// Maps PeerId to HelloActor address
     /// Used to send InboundRoomMessage to the correct HelloActor
     hello_actors: HashMap<PeerId, Addr<HelloActor>>,
-    /// Optional ACL manager and insecure_trust flag.
-    /// Optional authorizer: takes PeerIdentity and returns resolved AuthRole if allowed
-    acl: Option<(Authorizer<TRole>, bool)>,
+    /// REQUIRED: Authorizer function to resolve peer identity to role.
+    /// This is NOT optional - every connection must be authorized.
+    /// Takes PeerIdentity (from TLS certificate) and returns role if allowed.
+    authorizer: Authorizer<TRole>,
+    /// Flag for insecure mode (trusts HELLO claims when TLS unavailable).
+    /// In normal operation, should be false (always verify via TLS cert).
+    /// Currently unused as we require TLS, but kept for future insecure mode support.
+    #[allow(dead_code)]
+    insecure_trust_hello: bool,
 }
 
 impl<TMsg, TRole> ConnectionManager<TMsg, TRole>
@@ -47,22 +57,38 @@ where
     TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
-    /// Create a new ConnectionManager
+    /// Create a new ConnectionManager with a REQUIRED authorizer function.
     ///
-    /// `offered_rooms`: Rooms this manager offers to peers
-    pub fn new(offered_rooms: Vec<RoomId>) -> Self {
+    /// SECURITY: An authorizer is MANDATORY.
+    /// There is no code path that allows connections without authorization.
+    ///
+    /// # Arguments
+    /// - `offered_rooms`: Rooms this manager offers to peers
+    /// - `authorizer`: Function that maps PeerIdentity → Option<Role>
+    ///   Returns Some(role) if authorized, None to reject
+    pub fn new(offered_rooms: Vec<RoomId>, authorizer: Authorizer<TRole>) -> Self {
         Self {
             session_manager: SessionManager::new_with_limits(offered_rooms, None, None),
             hello_actors: HashMap::new(),
-            acl: None,
+            authorizer,
+            insecure_trust_hello: false,
         }
     }
 
-    /// Create a new ConnectionManager with explicit connection limits
+    /// Create a new ConnectionManager with explicit connection limits.
+    ///
+    /// SECURITY: An authorizer is MANDATORY.
+    ///
+    /// # Arguments
+    /// - `offered_rooms`: Rooms this manager offers to peers
+    /// - `max_peers`: Maximum concurrent peer connections
+    /// - `max_rooms_per_peer`: Maximum rooms per peer
+    /// - `authorizer`: Function that maps PeerIdentity → Option<Role>
     pub fn new_with_limits(
         offered_rooms: Vec<RoomId>,
         max_peers: Option<usize>,
         max_rooms_per_peer: Option<usize>,
+        authorizer: Authorizer<TRole>,
     ) -> Self {
         Self {
             session_manager: SessionManager::new_with_limits(
@@ -71,28 +97,49 @@ where
                 max_rooms_per_peer,
             ),
             hello_actors: HashMap::new(),
-            acl: None,
+            authorizer,
+            insecure_trust_hello: false,
         }
     }
 
-    /// Create a ConnectionManager with an optional AclManager and insecure_trust flag
-    pub fn new_with_acl(
+    /// Create a new ConnectionManager with optional insecure trust mode.
+    ///
+    /// SECURITY: An authorizer is MANDATORY.
+    ///
+    /// # Arguments
+    /// - `offered_rooms`: Rooms this manager offers to peers
+    /// - `authorizer`: Function that maps PeerIdentity → Option<Role>
+    /// - `insecure_trust_hello`: If true, trust HELLO messages in non-TLS mode.
+    ///   Default should be false (always require TLS/certificate verification).
+    pub fn new_with_insecure_trust(
         offered_rooms: Vec<RoomId>,
-        acl: Option<(Authorizer<TRole>, bool)>,
+        authorizer: Authorizer<TRole>,
+        insecure_trust_hello: bool,
     ) -> Self {
         Self {
             session_manager: SessionManager::new_with_limits(offered_rooms, None, None),
             hello_actors: HashMap::new(),
-            acl,
+            authorizer,
+            insecure_trust_hello,
         }
     }
 
-    /// Create a ConnectionManager with ACL and explicit limits
-    pub fn new_with_limits_and_acl(
+    /// Create a new ConnectionManager with all options.
+    ///
+    /// SECURITY: An authorizer is MANDATORY.
+    ///
+    /// # Arguments
+    /// - `offered_rooms`: Rooms this manager offers to peers
+    /// - `max_peers`: Maximum concurrent peer connections
+    /// - `max_rooms_per_peer`: Maximum rooms per peer
+    /// - `authorizer`: Function that maps PeerIdentity → Option<Role>
+    /// - `insecure_trust_hello`: If true, trust HELLO messages in non-TLS mode.
+    pub fn new_with_limits_and_insecure(
         offered_rooms: Vec<RoomId>,
-        acl: Option<(Authorizer<TRole>, bool)>,
         max_peers: Option<usize>,
         max_rooms_per_peer: Option<usize>,
+        authorizer: Authorizer<TRole>,
+        insecure_trust_hello: bool,
     ) -> Self {
         Self {
             session_manager: SessionManager::new_with_limits(
@@ -101,7 +148,8 @@ where
                 max_rooms_per_peer,
             ),
             hello_actors: HashMap::new(),
-            acl,
+            authorizer,
+            insecure_trust_hello,
         }
     }
 
@@ -334,7 +382,8 @@ where
 
 /// Handler for HandshakeComplete - Called when HelloActor completes handshake
 ///
-/// Simplified: Delegates complex message wiring to SessionBridge actor.
+/// SECURITY: Every connection goes through the mandatory authorizer.
+/// No code path allows unauthenticated connections.
 impl<TMsg, TRole> Handler<HandshakeComplete> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
@@ -345,107 +394,107 @@ where
     fn handle(&mut self, msg: HandshakeComplete, _ctx: &mut Context<Self>) {
         let peer_id = msg.peer_id.clone();
         tracing::info!(
-            "Handshake completed - peer_id: {}, peer_role: {}, active_rooms: {:?}",
+            "Handshake completed - peer_id: {}, peer_role_from_hello: {}, active_rooms: {:?}",
             peer_id,
             msg.peer_role_str,
             msg.active_rooms
         );
 
-        // Resolve the peer's role using the ACL authorizer
-        let resolved_role = if let Some((authorizer, _insecure_flag)) = &self.acl {
-            match authorizer(&msg.peer_identity) {
-                Some(role) => {
-                    tracing::info!(
-                        "Peer {} authorized by ACL as {:?} (identity: {})",
-                        peer_id,
-                        role,
-                        msg.peer_identity.full_identity()
-                    );
-                    Some(role)
-                }
-                None => {
-                    tracing::warn!(
-                        "Peer {} denied by ACL - disconnecting (identity: {})",
-                        peer_id,
-                        msg.peer_identity.full_identity()
-                    );
-                    msg.hello_actor.do_send(crate::actor::Disconnect);
+        // SECURITY: Authorizer is MANDATORY. Resolve peer role from PeerIdentity (TLS cert).
+        // peer_role_str from HELLO is logged but not used for authorization.
+        // Authorization decisions are based on cryptographically verified TLS certificate only.
+        match (self.authorizer)(&msg.peer_identity) {
+            Some(role) => {
+                tracing::info!(
+                    "Peer {} ({}) authorized as {:?} (identity: {})",
+                    peer_id,
+                    msg.peer_role_str,
+                    role,
+                    msg.peer_identity.full_identity()
+                );
+
+                // Create PeerSession for this peer and set auth context
+                let mut peer_session =
+                    PeerSession::new(zznet_session::types::PeerId::from(peer_id.as_str()));
+                peer_session.set_role(Some(role));
+                peer_session.set_identity(msg.peer_identity.clone());
+
+                // Add the peer to SessionManager
+                if let Err(e) = self.session_manager.add_peer(
+                    zznet_session::types::PeerId::from(peer_id.as_str()),
+                    peer_session,
+                ) {
+                    tracing::error!("Failed to add peer {} to SessionManager: {:?}", peer_id, e);
                     return;
                 }
+
+                // Create channels for SessionBridge
+                let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(100);
+                let (conn_to_session_tx, conn_to_session_rx) = tokio::sync::mpsc::channel(100);
+                let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
+
+                // Connect peer in SessionManager
+                if let Err(e) = self.session_manager.connect_peer(
+                    zznet_session::types::PeerId::from(peer_id.as_str()),
+                    outbound_tx,
+                    conn_to_session_rx,
+                ) {
+                    tracing::error!(
+                        "Failed to connect peer {} in SessionManager: {:?}",
+                        peer_id,
+                        e
+                    );
+                    return;
+                }
+
+                // Store HelloActor address for future use
+                self.hello_actors.insert(
+                    zznet_session::types::PeerId::from(peer_id.as_str()),
+                    msg.hello_actor.clone(),
+                );
+
+                // Give HelloActor the channel for forwarding received messages
+                let set_inbound_msg = crate::actor::SetInboundChannel {
+                    tx: hello_to_conn_tx,
+                };
+                if let Err(e) = msg.hello_actor.try_send(set_inbound_msg) {
+                    tracing::error!("Failed to set inbound channel on HelloActor: {:?}", e);
+                    return;
+                }
+
+                // Spawn SessionBridge actor to handle all the complex wiring
+                let bridge_peer_id = peer_id.clone();
+                let bridge = SessionBridge::new(
+                    bridge_peer_id,
+                    msg.hello_actor.clone(),
+                    outbound_rx,
+                    conn_to_session_tx,
+                    hello_to_conn_rx,
+                );
+
+                // Start the SessionBridge in the actor system
+                let _bridge_addr = bridge.start();
+
+                tracing::info!(
+                    "Successfully authorized and started SessionBridge for peer {} - message forwarding active",
+                    peer_id
+                );
             }
-        } else {
-            // No ACL configured - allow connection but no role
-            tracing::debug!("Peer {} connected without ACL (no role assigned)", peer_id);
-            None
-        };
-
-        // Create PeerSession for this peer and set auth context
-        let mut peer_session =
-            PeerSession::new(zznet_session::types::PeerId::from(peer_id.as_str()));
-        peer_session.set_role(resolved_role);
-        peer_session.set_identity(msg.peer_identity.clone());
-
-        // Add the peer to SessionManager
-        if let Err(e) = self.session_manager.add_peer(
-            zznet_session::types::PeerId::from(peer_id.as_str()),
-            peer_session,
-        ) {
-            tracing::error!("Failed to add peer {} to SessionManager: {:?}", peer_id, e);
-            return;
+            None => {
+                // SECURITY: Authorization FAILED. Loud logging and immediate disconnect.
+                tracing::error!(
+                    "!!! SECURITY REJECTION !!!: Peer {} REJECTED by authorizer",
+                    peer_id
+                );
+                tracing::error!(
+                    "    Identity: {} | HELLO claimed role: {}",
+                    msg.peer_identity.full_identity(),
+                    msg.peer_role_str
+                );
+                tracing::warn!("Disconnecting unauthorized peer {}", peer_id);
+                msg.hello_actor.do_send(crate::actor::Disconnect);
+            }
         }
-
-        // Create channels for SessionBridge
-        let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(100);
-        let (conn_to_session_tx, conn_to_session_rx) = tokio::sync::mpsc::channel(100);
-        let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
-
-        // Connect peer in SessionManager
-        if let Err(e) = self.session_manager.connect_peer(
-            zznet_session::types::PeerId::from(peer_id.as_str()),
-            outbound_tx,
-            conn_to_session_rx,
-        ) {
-            tracing::error!(
-                "Failed to connect peer {} in SessionManager: {:?}",
-                peer_id,
-                e
-            );
-            return;
-        }
-
-        // Store HelloActor address for future use
-        self.hello_actors.insert(
-            zznet_session::types::PeerId::from(peer_id.as_str()),
-            msg.hello_actor.clone(),
-        );
-
-        // Give HelloActor the channel for forwarding received messages
-        let set_inbound_msg = crate::actor::SetInboundChannel {
-            tx: hello_to_conn_tx,
-        };
-        if let Err(e) = msg.hello_actor.try_send(set_inbound_msg) {
-            tracing::error!("Failed to set inbound channel on HelloActor: {:?}", e);
-            return;
-        }
-
-        // Spawn SessionBridge actor to handle all the complex wiring
-        // This replaces the two manual tokio::spawn tasks that were previously here
-        let bridge_peer_id = peer_id.clone();
-        let bridge = SessionBridge::new(
-            bridge_peer_id,
-            msg.hello_actor.clone(),
-            outbound_rx,
-            conn_to_session_tx,
-            hello_to_conn_rx,
-        );
-
-        // Start the SessionBridge in the actor system
-        let _bridge_addr = bridge.start();
-
-        tracing::info!(
-            "Successfully started SessionBridge for peer {} - message forwarding active",
-            peer_id
-        );
     }
 }
 
@@ -505,7 +554,12 @@ mod tests {
         let _b = TestMessages::MemDB;
         let _c = TestMessages::Health;
 
-        let _manager = ConnectionManager::<TestMessages, zznet_auth::mock::MockRole>::new(rooms);
+        // Create a mock authorizer that accepts all peers as MockRole::Admin
+        let authorizer: Authorizer<zznet_auth::mock::MockRole> =
+            Box::new(|_peer_identity| Some(zznet_auth::mock::MockRole::Admin));
+
+        let _manager =
+            ConnectionManager::<TestMessages, zznet_auth::mock::MockRole>::new(rooms, authorizer);
         // Just test it compiles and constructs
     }
 }
