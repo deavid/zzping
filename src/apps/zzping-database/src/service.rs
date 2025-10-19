@@ -663,6 +663,11 @@ impl DatabaseService {
     }
 
     fn create_builders(&self) -> Result<ComponentBuilders> {
+        // Create SessionManager for database components
+        // Database offers "memdb" and "query" rooms (matching HELLO handshake)
+        use zznet_session::types::RoomId;
+        let offered_rooms = vec![RoomId::from("memdb"), RoomId::from("query")];
+
         // Create IntentConfig builder - DATABASE ROLE
         // Use configured data_dir (resolved by DatabaseConfig::load) to compute
         // the path for intent.ron so relative paths in RON are interpreted
@@ -671,10 +676,16 @@ impl DatabaseService {
         let data_dir = std::path::PathBuf::from(&self.config.data_dir);
         let config_path = data_dir.join("intent.ron");
 
-        let intent_config =
-            IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Database {
+        let intent_config_session_manager = zznet_session::session_manager::SessionManager::<
+            zzintent_config::network_messages::IntentConfigNetworkMsg,
+            zzintent_config::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(offered_rooms.clone());
+
+        let intent_config = IntentConfigBuilder::<IntentConfigPermission>::new()
+            .role(IntentConfigRole::Database {
                 config_file_path: config_path,
-            });
+            })
+            .session_manager(intent_config_session_manager);
 
         // Create MemDB actor - DATABASE ROLE (no builder pattern!)
         let memdb_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
@@ -684,6 +695,11 @@ impl DatabaseService {
         let memdb_addr = memdb_actor.start();
 
         // Create CState builder - DATABASE ROLE
+        let cstate_session_manager = zznet_session::session_manager::SessionManager::<
+            DatabaseMessage,
+            DatabaseRole,
+        >::new(offered_rooms);
+
         let cstate = CStateBuilder::<
             DatabaseMessage,
             DatabaseRole,
@@ -691,7 +707,8 @@ impl DatabaseService {
         >::new(CStateRole::Database {
             stale_timeout_secs: self.config.components.stale_timeout_secs,
             max_collectors: Some(self.config.components.max_collectors),
-        });
+        })
+        .session_manager(Arc::new(cstate_session_manager));
 
         Ok(ComponentBuilders {
             intent_config,
