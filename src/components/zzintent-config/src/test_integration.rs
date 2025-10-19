@@ -1,35 +1,16 @@
-//! SessionManager integration tests (Phase 3)
+//! SessionManager integration tests (Phase 3 & 4)
 //!
-//! These tests verify IntentConfigActor behavior with SessionManager stubs.
+//! These tests verify IntentConfigActor behavior with SessionManager integration,
+//! including both actor-side behavior AND network communication between SessionManagers.
 //!
-//! ⚠️ LIMITATION: These are NOT true end-to-end integration tests.
-//! They test actor behavior but do NOT validate actual network communication
-//! between two SessionManager instances.
+//! ## Test Infrastructure
 //!
-//! ## Missing Critical Test (from ZZPing_Network_Layer_Vision.md)
-//!
-//! The Vision document requires this validation:
-//! ```text
-//! #[test]
-//! fn test_session_manager_communication() {
-//!     // Create two SessionManagers (simulating two processes in-memory)
-//!     let database_manager = SessionManager::new(...);
-//!     let collector_manager = SessionManager::new(...);
-//!
-//!     // Connect them via mock channels (no network I/O)
-//!     // Create Database actor with database_manager
-//!     // Create Collector actor with collector_manager
-//!
-//!     // Database sends ConfigUpdate
-//!     // Verify Collector receives and applies it
-//! }
-//! ```
-//!
-//! This test is blocked on:
-//! 1. Mock transport implementation for SessionManager
-//! 2. Test utilities for connecting two SessionManagers in-memory
-//!
-//! TODO: Implement when SessionManager mock utilities are available.
+//! The following utilities from `zzping-test-utils` enable these tests:
+//! - `connect_managers_in_memory()` - Wires two SessionManagers together
+//! - `DummyRoomHandle` - Provides room stubs for testing
+//! - `create_and_add_peer()` - Configures test peers with roles and rooms
+//! - `create_peer_with_message_capture()` - Captures peer outbound messages
+//! - `MessageCaptureChannels` - Helper for async message interception
 
 #[cfg(test)]
 mod session_manager_integration_tests {

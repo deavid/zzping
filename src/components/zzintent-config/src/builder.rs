@@ -17,9 +17,6 @@ use zznet_auth::role::ApplicationRole;
 /// This is the primary public entry point for creating the actor.
 /// It follows the 'Builder -> Start' pattern, ensuring that the actor
 /// is constructed and started in a controlled manner.
-///
-/// # Example
-///
 pub struct IntentConfigBuilder<T: ApplicationRole + std::fmt::Debug = IntentConfigPermission> {
     role: IntentConfigRole,
     session_manager: Option<Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>>,
