@@ -4,6 +4,7 @@ use crate::error::{CollectorError, Result};
 
 use actix::{Actor, Addr};
 use zznet_auth::ApplicationRole;
+use zzping_auth::AuthRole;
 
 // Component imports
 use zzintent_config::actor::IntentConfigActor;
@@ -267,26 +268,26 @@ impl CollectorService {
     ) -> Result<
         zznet_hello::connection_manager::ConnectionManager<
             zzintent_config::network_messages::IntentConfigNetworkMsg,
-            zzintent_config::permissions::IntentConfigPermission,
+            AuthRole,
         >,
     > {
-        use zznet_auth::acl::GenericAuthorizer;
         use zznet_session::types::RoomId;
 
         // Collector offers intent-config related rooms
         let offered_rooms = vec![RoomId::from("intent-config")];
 
         // Create an authorizer that validates peer identity from TLS certificate
-        // and resolves it to IntentConfigPermission.
+        // and resolves it to AuthRole (connection-level authorization).
+        // Components will later map this to component-specific permissions using AuthRoleMapper.
         // This ensures EVERY connection is authorized - there is no code path for unauthenticated access.
-        let authorizer: GenericAuthorizer<IntentConfigPermission> = Box::new(|peer_identity| {
+        let authorizer: zzping_auth::Authorizer = Box::new(|peer_identity| {
             tracing::debug!(
                 "Collector authorizer checking peer identity: {}",
                 peer_identity.full_identity()
             );
 
-            // Validate CN against allowed roles
-            match IntentConfigPermission::from_cn(&peer_identity.common_name) {
+            // Validate CN against allowed service roles
+            match AuthRole::from_cn(&peer_identity.common_name) {
                 Ok(role) => {
                     tracing::debug!(
                         "Collector authorizer resolved {} → {:?}",
@@ -317,7 +318,7 @@ impl CollectorService {
     ) -> actix::Addr<
         zznet_hello::connection_manager::ConnectionManager<
             zzintent_config::network_messages::IntentConfigNetworkMsg,
-            zzintent_config::permissions::IntentConfigPermission,
+            AuthRole,
         >,
     > {
         use actix::prelude::*;

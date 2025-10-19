@@ -2,7 +2,7 @@
 //!
 use std::collections::HashSet;
 use zznet_api::types::PeerIdentity;
-use zzping_auth::{config::AclConfig, AclManagerDefault};
+use zzping_auth::{AclManagerDefault, config::AclConfig};
 
 #[test]
 fn reject_missing_cn_or_san_moved() {

@@ -25,76 +25,20 @@ use zzcollector_state::role::CStateRole;
 // signal handling is done by higher-level process manager; unused here
 
 // Add these imports at top
-use zznet_auth::{error::AuthError, role::ApplicationRole};
+use zznet_auth::role::ApplicationRole;
 use zznet_session::{
     room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError},
     session_manager::SessionManager,
     types::RoomId,
 };
+use zzping_auth::AuthRole;
 
 // Add these imports after existing imports
 use std::sync::Arc;
 
-// Application roles for database
-#[derive(Debug, Clone, PartialEq, Eq, Copy, Serialize, Deserialize)]
-pub enum DatabaseRole {
-    Database,
-    Collector,
-    Admin,
-}
-
-impl ApplicationRole for DatabaseRole {
-    fn as_str(&self) -> &'static str {
-        match self {
-            DatabaseRole::Database => "database",
-            DatabaseRole::Collector => "collector",
-            DatabaseRole::Admin => "admin",
-        }
-    }
-
-    fn from_cn(cn: &str) -> std::result::Result<Self, AuthError> {
-        // Extract role from CN (format: "role-name" or "name-role")
-        let cn_lower = cn.to_lowercase();
-
-        if cn_lower.contains("database") {
-            Ok(DatabaseRole::Database)
-        } else if cn_lower.contains("collector") {
-            Ok(DatabaseRole::Collector)
-        } else if cn_lower.contains("admin") {
-            Ok(DatabaseRole::Admin)
-        } else {
-            Err(AuthError::UnknownRole(cn.to_string()))
-        }
-    }
-
-    fn can_connect_to(&self, other: &Self) -> bool {
-        match (self, other) {
-            // Collectors connect to database
-            (DatabaseRole::Collector, DatabaseRole::Database) => true,
-            // Database accepts collectors
-            (DatabaseRole::Database, DatabaseRole::Collector) => true,
-            // Admin can connect to anything
-            (DatabaseRole::Admin, _) => true,
-            (_, DatabaseRole::Admin) => true,
-            // Same role can connect (testing)
-            (a, b) if a == b => true,
-            _ => false,
-        }
-    }
-
-    fn can_access_room(&self, room_id: &str) -> bool {
-        match self {
-            DatabaseRole::Admin => true,    // Admin has full access
-            DatabaseRole::Database => true, // Database has full access
-            DatabaseRole::Collector => {
-                // Collectors can access their own rooms
-                room_id.starts_with("collector_")
-                    || room_id.starts_with("ping_")
-                    || room_id.starts_with("config_")
-            }
-        }
-    }
-}
+// Database uses AuthRole directly from zzping-auth for connection-level authorization.
+// Component-specific permissions (IntentConfigPermission, MemDBPermission, etc.) are
+// mapped from this AuthRole by each component using the AuthRoleMapper trait.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DatabaseMessage {
@@ -167,8 +111,7 @@ impl RoomMessageTrait for DatabaseMessage {
 struct ComponentBuilders {
     intent_config: IntentConfigBuilder<IntentConfigPermission>,
     memdb_addr: Addr<MemDBActor<MemDBPermission>>,
-    cstate:
-        CStateBuilder<DatabaseMessage, DatabaseRole, SessionManager<DatabaseMessage, DatabaseRole>>,
+    cstate: CStateBuilder<DatabaseMessage, AuthRole, SessionManager<DatabaseMessage, AuthRole>>,
 }
 
 /// Started components (running actors).
@@ -180,9 +123,7 @@ struct ComponentBuilders {
 struct StartedComponents {
     intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
     memdb_addr: Addr<MemDBActor<MemDBPermission>>,
-    cstate: Addr<
-        CStateActor<DatabaseMessage, DatabaseRole, SessionManager<DatabaseMessage, DatabaseRole>>,
-    >,
+    cstate: Addr<CStateActor<DatabaseMessage, AuthRole, SessionManager<DatabaseMessage, AuthRole>>>,
 }
 
 // Per-connection handler for collector connections
@@ -254,24 +195,23 @@ impl DatabaseService {
 
     fn create_connection_manager(
         &self,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, DatabaseRole>>
-    {
-        use zznet_auth::acl::GenericAuthorizer;
+    ) -> Result<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, AuthRole>> {
         use zznet_session::types::RoomId;
 
         let offered_rooms = vec![RoomId::from("memdb"), RoomId::from("query")];
 
         // Create an authorizer that validates peer identity from TLS certificate
-        // and resolves it to a DatabaseRole.
+        // and resolves it to AuthRole (connection-level authorization).
+        // Components will later map this to component-specific permissions using AuthRoleMapper.
         // This ensures EVERY connection is authorized - there is no code path for unauthenticated access.
-        let authorizer: GenericAuthorizer<DatabaseRole> = Box::new(|peer_identity| {
+        let authorizer: zzping_auth::Authorizer = Box::new(|peer_identity| {
             tracing::debug!(
                 "Database authorizer checking peer identity: {}",
                 peer_identity.full_identity()
             );
 
-            // Validate CN against allowed roles
-            match DatabaseRole::from_cn(&peer_identity.common_name) {
+            // Validate CN against allowed service roles
+            match AuthRole::from_cn(&peer_identity.common_name) {
                 Ok(role) => {
                     tracing::debug!(
                         "Authorizer resolved {} → {:?}",
@@ -300,9 +240,8 @@ impl DatabaseService {
     /// Start ConnectionManager as an actix actor and return its address.
     fn start_connection_manager(
         &self,
-    ) -> actix::Addr<
-        zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, DatabaseRole>,
-    > {
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, AuthRole>>
+    {
         use actix::prelude::*;
 
         // Reuse create_connection_manager() so it's used and kept in sync
@@ -345,16 +284,16 @@ impl DatabaseService {
         });
         let memdb_addr = memdb_actor.start();
 
-        // Create CState builder - DATABASE ROLE
+        // Create CState builder - maps AuthRole to CStatePermission component role
         let cstate_session_manager = zznet_session::session_manager::SessionManager::<
             DatabaseMessage,
-            DatabaseRole,
+            AuthRole,
         >::new(offered_rooms);
 
         let cstate = CStateBuilder::<
             DatabaseMessage,
-            DatabaseRole,
-            SessionManager<DatabaseMessage, DatabaseRole>,
+            AuthRole,
+            SessionManager<DatabaseMessage, AuthRole>,
         >::new(CStateRole::Database {
             stale_timeout_secs: self.config.components.stale_timeout_secs,
             max_collectors: Some(self.config.components.max_collectors),

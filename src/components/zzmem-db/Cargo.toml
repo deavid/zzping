@@ -25,6 +25,7 @@ thiserror.workspace = true
 log.workspace = true
 zznet-session.workspace = true
 zznet-auth.workspace = true
+zzping-auth.workspace = true
 
 [dev-dependencies]
 ntest.workspace = true

@@ -23,7 +23,7 @@ use actix::prelude::*;
 use bytes::Bytes;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportConnection;
@@ -238,8 +238,8 @@ impl HelloActor {
             Frame::deserialize(&data)
             && self.peer_role.is_none()
         {
+            debug!("Received peer role string: {:?}", role_str);
             self.peer_role = Some(role_str);
-            debug!("Received peer role string");
         }
 
         match self.handshake.process_frame(&data) {
@@ -376,7 +376,7 @@ impl HelloActor {
                 tokio::select! {
                     // Handle outbound frames (from actor to transport)
                     Some(frame) = io_rx.recv() => {
-                        debug!("I/O task sending {} bytes", frame.len());
+                        trace!("I/O task sending {} bytes", frame.len());
                         if let Err(e) = transport.send(frame).await {
                             error!("Transport send error: {}", e);
                             actor_addr.do_send(IoError {
@@ -390,7 +390,7 @@ impl HelloActor {
                     result = transport.recv() => {
                         match result {
                             Ok(Some(bytes)) => {
-                                debug!("I/O task received {} bytes", bytes.len());
+                                trace!("I/O task received {} bytes", bytes.len());
                                 actor_addr.do_send(ReceivedFrame {
                                     data: bytes.to_vec(),
                                 });

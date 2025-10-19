@@ -3,15 +3,13 @@ use zznet_api::transport::TransportClient as _; // bring connect() into scope
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
+use zzping_auth::AuthRole;
 
 /// CollectorNetwork now holds a client and the ConnectionManager actor address.
 pub struct CollectorNetwork {
     client: TcpTransportClient,
     connection_manager: actix::Addr<
-        ConnectionManager<
-            zzintent_config::network_messages::IntentConfigNetworkMsg,
-            zzintent_config::permissions::IntentConfigPermission,
-        >,
+        ConnectionManager<zzintent_config::network_messages::IntentConfigNetworkMsg, AuthRole>,
     >,
 }
 
@@ -24,10 +22,7 @@ impl CollectorNetwork {
         addr: &str,
         tls: Option<TlsConfig>,
         connection_manager: actix::Addr<
-            ConnectionManager<
-                zzintent_config::network_messages::IntentConfigNetworkMsg,
-                zzintent_config::permissions::IntentConfigPermission,
-            >,
+            ConnectionManager<zzintent_config::network_messages::IntentConfigNetworkMsg, AuthRole>,
         >,
     ) -> Result<Self, TransportError> {
         let client = if let Some(cfg) = tls {

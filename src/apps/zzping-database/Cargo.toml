@@ -13,6 +13,9 @@ zzintent-config.workspace = true
 zzmem-db.workspace = true
 zzcollector-state.workspace = true
 
+# Common dependencies
+zzping-auth.workspace = true
+
 # Network layer dependencies
 zznet-session.workspace = true
 zznet-builder.workspace = true

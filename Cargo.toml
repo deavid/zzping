@@ -8,6 +8,8 @@ members = [
 
     "src/test-utils/zzping-test-utils",
 
+    "src/common/zzping-auth",
+
     "src/net/zznet-api",
     "src/net/zznet-auth",
     "src/net/zznet-hello",
@@ -43,6 +45,8 @@ description = "Tools to monitor home network latency and packet loss"
 # zzping-proto = { path = "src/old/common/zzping-proto" }
 
 zzping-test-utils = { path = "src/test-utils/zzping-test-utils" }
+
+zzping-auth = { path = "src/common/zzping-auth" }
 
 zznet-auth = { path = "src/net/zznet-auth" }
 zznet-session = { path = "src/net/zznet-session" }

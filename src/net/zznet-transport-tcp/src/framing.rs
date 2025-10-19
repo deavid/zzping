@@ -8,7 +8,7 @@
 use bytes::{Bytes, BytesMut};
 use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, trace};
+use tracing::trace;
 
 /// Maximum frame size (16 MB) - matches zznet-api mock transport limit.
 pub const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
@@ -55,7 +55,7 @@ where
     buffer.resize(frame_len, 0);
     stream.read_exact(&mut buffer).await?;
 
-    debug!("Read frame: {} bytes", frame_len);
+    trace!("Read frame: {} bytes", frame_len);
     Ok(buffer.freeze())
 }
 
@@ -101,7 +101,7 @@ where
     stream.write_all(data).await?;
     stream.flush().await?;
 
-    debug!("Wrote frame: {} bytes", frame_len);
+    trace!("Wrote frame: {} bytes", frame_len);
     Ok(())
 }
 

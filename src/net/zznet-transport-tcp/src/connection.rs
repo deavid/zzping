@@ -7,6 +7,7 @@ use bytes::Bytes;
 use std::io;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
+use tracing::trace;
 use tracing::{debug, error};
 use x509_parser::prelude::*;
 
@@ -215,7 +216,7 @@ impl TcpTransport {
 #[async_trait]
 impl TransportConnection for TcpTransport {
     async fn send(&mut self, data: Bytes) -> Result<(), TransportError> {
-        debug!("Sending {} bytes to {}", data.len(), self.peer_addr);
+        trace!("Sending {} bytes to {}", data.len(), self.peer_addr);
 
         let result = match &mut self.stream {
             TcpTransportStream::Plain(stream) => framing::write_frame(stream, &data).await,
@@ -232,7 +233,7 @@ impl TransportConnection for TcpTransport {
     }
 
     async fn recv(&mut self) -> Result<Option<Bytes>, TransportError> {
-        debug!("Waiting to receive frame from {}", self.peer_addr);
+        trace!("Waiting to receive frame from {}", self.peer_addr);
 
         let result = match &mut self.stream {
             TcpTransportStream::Plain(stream) => framing::read_frame(stream).await,
@@ -242,7 +243,7 @@ impl TransportConnection for TcpTransport {
 
         match result {
             Ok(bytes) => {
-                debug!("Received {} bytes from {}", bytes.len(), self.peer_addr);
+                trace!("Received {} bytes from {}", bytes.len(), self.peer_addr);
                 Ok(Some(bytes))
             }
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {

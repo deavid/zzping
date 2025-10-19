@@ -24,6 +24,7 @@ async-trait = { workspace = true }
 zznet-api = { workspace = true }
 zznet-auth = { workspace = true }
 zznet-session = { workspace = true }
+zzping-auth = { workspace = true }
 
 [dev-dependencies]
 ntest = { workspace = true }

@@ -1,21 +1,22 @@
-use crate::service::{DatabaseMessage, DatabaseRole};
+use crate::service::DatabaseMessage;
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportServer as _;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_hello::connection_manager::HandleTransport;
 use zznet_transport_tcp::config::TlsConfig;
 use zznet_transport_tcp::server::TcpTransportServer;
+use zzping_auth::AuthRole;
 
 pub struct DatabaseNetwork {
     server: TcpTransportServer,
-    connection_manager: actix::Addr<ConnectionManager<DatabaseMessage, DatabaseRole>>,
+    connection_manager: actix::Addr<ConnectionManager<DatabaseMessage, AuthRole>>,
 }
 
 impl DatabaseNetwork {
     pub async fn new(
         bind_addr: &str,
         tls: Option<TlsConfig>,
-        connection_manager: actix::Addr<ConnectionManager<DatabaseMessage, DatabaseRole>>,
+        connection_manager: actix::Addr<ConnectionManager<DatabaseMessage, AuthRole>>,
     ) -> Result<Self, TransportError> {
         let server = if let Some(cfg) = tls {
             TcpTransportServer::with_tls(bind_addr, cfg).await?

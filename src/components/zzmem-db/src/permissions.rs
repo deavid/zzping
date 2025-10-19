@@ -1,8 +1,10 @@
 //! Defines the permissions for the zzmem-db component.
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use zznet_auth::error::AuthError;
 use zznet_auth::role::ApplicationRole;
+use zzping_auth::{AuthRole, AuthRoleMapper};
 
 /// Permissions for the zzmem-db component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -47,6 +49,38 @@ impl ApplicationRole for MemDBPermission {
     fn can_access_room(&self, room_name: &str) -> bool {
         // All memdb permissions can access the "memdb" room
         room_name == "memdb"
+    }
+}
+
+impl fmt::Display for MemDBPermission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl AuthRoleMapper for MemDBPermission {
+    /// Maps connection-level AuthRole to component-level MemDBPermission.
+    ///
+    /// Authorization mapping:
+    /// - `AuthRole::Database` → All MemDB permissions (can read, write, acknowledge)
+    /// - `AuthRole::Collector` → `SubmitBatch + ReceiveBatchAck` (can submit data and receive acks)
+    /// - `AuthRole::ClientRo` → `QueryData + ReceiveQueryResponse` (read-only queries)
+    /// - `AuthRole::ClientAdmin` → All permissions (full access)
+    /// - Other roles → `None` (denied access to this component)
+    ///
+    /// Note: The mapper returns a primary permission; components using this should check
+    /// if the mapped permission allows the specific operation needed.
+    fn from_auth_role(role: AuthRole) -> Option<Self> {
+        match role {
+            // Database can do everything
+            AuthRole::Database => Some(MemDBPermission::QueryData),
+            // Collectors submit batch data
+            AuthRole::Collector => Some(MemDBPermission::SubmitBatch),
+            // Read-only clients can query
+            AuthRole::ClientRo => Some(MemDBPermission::QueryData),
+            // Admin can do everything
+            AuthRole::ClientAdmin => Some(MemDBPermission::QueryData),
+        }
     }
 }
 

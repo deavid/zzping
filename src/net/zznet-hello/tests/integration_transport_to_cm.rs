@@ -76,7 +76,14 @@ async fn transport_accept_and_send_to_connection_manager() {
             // Start ConnectionManager actor
             use actix::prelude::*;
             let offered_rooms = vec![];
-            let mgr = ConnectionManager::<EmptyMsg, MockRole>::new(offered_rooms).start();
+            // Simple authorizer that accepts all peers as Admin
+            let authorizer =
+                Box::new(|_peer_id: &zznet_api::types::PeerIdentity| Some(MockRole::Admin))
+                    as Box<
+                        dyn Fn(&zznet_api::types::PeerIdentity) -> Option<MockRole> + Send + Sync,
+                    >;
+            let mgr =
+                ConnectionManager::<EmptyMsg, MockRole>::new(offered_rooms, authorizer).start();
 
             // Send transport using HandleTransport, ensure try_send succeeds
             let config = HelloConfig::default();

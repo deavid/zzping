@@ -1,5 +1,11 @@
 //! Defines the permissions for the zzintent-config component.
 
+use serde::{Deserialize, Serialize};
+use std::fmt;
+use zznet_auth::error::AuthError;
+use zznet_auth::role::ApplicationRole;
+use zzping_auth::{AuthRole, AuthRoleMapper};
+
 /// Permissions for the zzintent-config component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum IntentConfigPermission {
@@ -18,10 +24,6 @@ pub trait PermissionCheck<T> {
     /// Returns a string representation of the permission.
     fn to_string(&self, role: &T) -> String;
 }
-
-use serde::{Deserialize, Serialize};
-use zznet_auth::error::AuthError;
-use zznet_auth::role::ApplicationRole;
 
 // Implement ApplicationRole for the concrete permission enum.
 impl ApplicationRole for IntentConfigPermission {
@@ -48,6 +50,29 @@ impl ApplicationRole for IntentConfigPermission {
     fn can_access_room(&self, _room_name: &str) -> bool {
         // Both roles can access the intent-config room in our tests.
         true
+    }
+}
+
+impl fmt::Display for IntentConfigPermission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl AuthRoleMapper for IntentConfigPermission {
+    /// Maps connection-level AuthRole to component-level IntentConfigPermission.
+    ///
+    /// Authorization mapping:
+    /// - `AuthRole::Database` → `IntentConfigPermission::UpdateConfig` (can update configuration)
+    /// - `AuthRole::Collector` → `IntentConfigPermission::ReceiveConfigUpdates` (receives updates)
+    /// - Other roles → `None` (denied access to this component)
+    fn from_auth_role(role: AuthRole) -> Option<Self> {
+        match role {
+            AuthRole::Database => Some(IntentConfigPermission::UpdateConfig),
+            AuthRole::Collector => Some(IntentConfigPermission::ReceiveConfigUpdates),
+            AuthRole::ClientRo => Some(IntentConfigPermission::ReceiveConfigUpdates),
+            AuthRole::ClientAdmin => Some(IntentConfigPermission::UpdateConfig),
+        }
     }
 }
 
