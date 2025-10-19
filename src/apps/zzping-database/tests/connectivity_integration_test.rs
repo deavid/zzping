@@ -96,11 +96,11 @@ fn create_database_config_ron(port: u16, workspace_root: &std::path::Path) -> St
         r#"DatabaseConfig(
     bind_host: "127.0.0.1",
     bind_port: {},
-    tls: TlsConfig(
+    tls: Some(TlsConfig(
         ca_cert_paths: ["{}"],
         server_cert_path: "{}",
         server_key_path: "{}",
-    ),
+    )),
     data_dir: "{}",
     components: ComponentConfig(
         stale_timeout_secs: 30,
@@ -126,13 +126,13 @@ fn create_collector_config_ron(db_port: u16, workspace_root: &std::path::Path) -
     collector_id: "test-collector",
     database_host: "127.0.0.1",
     database_port: {},
-    tls: TlsConfig(
+    tls: Some(TlsConfig(
         ca_cert_path: "{}",
         client_cert_path: "{}",
         client_key_path: "{}",
-    ),
+    )),
     components: ComponentConfig(
-        heartbeat_interval_secs: 5,
+        heartbeat_interval_ms: 5000,
         memdb_batch_size: 50,
     ),
 )

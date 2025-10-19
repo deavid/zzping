@@ -108,22 +108,32 @@ impl RoomMessageTrait for DatabaseMessage {
 }
 
 /// Builders for all components (before wiring)
-struct ComponentBuilders {
-    intent_config: IntentConfigBuilder<IntentConfigPermission>,
-    memdb_addr: Addr<MemDBActor<MemDBPermission>>,
-    cstate: CStateBuilder<DatabaseMessage, AuthRole, SessionManager<DatabaseMessage, AuthRole>>,
+///
+/// Contains the builders for each component, used internally during service initialization.
+pub struct ComponentBuilders {
+    /// Builder for IntentConfig component
+    pub intent_config: IntentConfigBuilder<IntentConfigPermission>,
+    /// Address of the running MemDB actor
+    pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
+    /// Builder for CState component (database role)
+    pub cstate: CStateBuilder<DatabaseMessage, AuthRole, SessionManager<DatabaseMessage, AuthRole>>,
 }
 
 /// Started components (running actors).
 ///
 /// These addresses are cloned for each connection handler and will be used
 /// in Phase 6 to route messages to components via Actix messaging.
+/// Useful for testing, embedding, and custom service composition.
 #[allow(dead_code)]
 #[derive(Clone)]
-struct StartedComponents {
-    intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
-    memdb_addr: Addr<MemDBActor<MemDBPermission>>,
-    cstate: Addr<CStateActor<DatabaseMessage, AuthRole, SessionManager<DatabaseMessage, AuthRole>>>,
+pub struct StartedComponents {
+    /// Address of the running IntentConfig actor
+    pub intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
+    /// Address of the running MemDB actor
+    pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
+    /// Address of the running CState actor (database role)
+    pub cstate:
+        Addr<CStateActor<DatabaseMessage, AuthRole, SessionManager<DatabaseMessage, AuthRole>>>,
 }
 
 // Per-connection handler for collector connections
@@ -153,8 +163,14 @@ impl DatabaseService {
 
         let cm_addr = self.start_connection_manager();
 
-        // Build TLS configuration for the transport server
-        let tls_cfg = Self::build_transport_tls_config(&self.config.tls)?;
+        // Build TLS configuration for the transport server (if enabled)
+        let tls_cfg = if let Some(tls) = &self.config.tls {
+            tracing::info!("TLS enabled - using mTLS server");
+            Self::build_transport_tls_config(tls)?
+        } else {
+            tracing::warn!("TLS disabled - using plain TCP server");
+            None
+        };
 
         let bind = format!("{}:{}", self.config.bind_host, self.config.bind_port);
         let mut network = crate::network::DatabaseNetwork::new(&bind, tls_cfg, cm_addr)
@@ -252,7 +268,19 @@ impl DatabaseService {
         mgr.start()
     }
 
-    fn create_builders(&self) -> Result<ComponentBuilders> {
+    /// Creates component builders for all database components.
+    ///
+    /// This method prepares the builders for IntentConfig, MemDB, and CState components
+    /// without starting them. Useful for custom component wiring or testing scenarios.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let service = DatabaseService::new(config)?;
+    /// let builders = service.create_builders()?;
+    /// let components = DatabaseService::start_components(builders).await?;
+    /// ```
+    pub fn create_builders(&self) -> Result<ComponentBuilders> {
         // Create SessionManager for database components
         // Database offers "memdb" and "query" rooms (matching HELLO handshake)
         use zznet_session::types::RoomId;
@@ -307,7 +335,19 @@ impl DatabaseService {
         })
     }
 
-    async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
+    /// Starts all database components from their builders.
+    ///
+    /// This method takes component builders and starts them, returning their addresses.
+    /// Typically called after `create_builders()`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let service = DatabaseService::new(config)?;
+    /// let builders = service.create_builders()?;
+    /// let components = DatabaseService::start_components(builders).await?;
+    /// ```
+    pub async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
         // Start IntentConfig
         let intent_addr = builders
             .intent_config
@@ -322,6 +362,15 @@ impl DatabaseService {
             memdb_addr: builders.memdb_addr,
             cstate: cstate_addr,
         })
+    }
+
+    /// Creates and starts all database components in one call.
+    ///
+    /// This is a convenience method that combines `create_builders()` and `start_components()`.
+    /// Useful for simple scenarios where you don't need to customize builder configuration.
+    pub async fn start_all_components(&self) -> Result<StartedComponents> {
+        let builders = self.create_builders()?;
+        Self::start_components(builders).await
     }
     // Manual TLS and per-connection handler code removed per refactor plan.
 }
@@ -344,11 +393,11 @@ mod tests {
         DatabaseConfig {
             bind_host: "0.0.0.0".into(),
             bind_port: 8443,
-            tls: TlsConfig {
+            tls: Some(TlsConfig {
                 ca_cert_paths: vec![certs_dir.join("ca.pem").to_str().unwrap().to_string()],
                 server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
                 server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
-            },
+            }),
             components: ComponentConfig {
                 stale_timeout_secs: 30,
                 max_collectors: 100,

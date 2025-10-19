@@ -2694,6 +2694,7 @@ dependencies = [
  "zznet-session",
  "zznet-transport-tcp",
  "zzping-auth",
+ "zzping-collector",
 ]
 
 [[package]]

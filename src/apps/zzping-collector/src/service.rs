@@ -29,18 +29,29 @@ use std::io::BufReader;
 use std::sync::Arc;
 
 /// Builders for all components (before wiring)
-struct ComponentBuilders {
-    intent_config: IntentConfigBuilder<IntentConfigPermission>,
-    pinger: PingerBuilder,
-    memdb_addr: Addr<MemDBActor<MemDBPermission>>,
+///
+/// Contains the builders for each component, used internally during service initialization.
+pub struct ComponentBuilders {
+    /// Builder for IntentConfig component
+    pub intent_config: IntentConfigBuilder<IntentConfigPermission>,
+    /// Builder for Pinger component
+    pub pinger: PingerBuilder,
+    /// Address of the running MemDB actor
+    pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
 }
 
 /// Started components (running actors)
+///
+/// Contains all the running component actors after they have been started.
+/// Useful for testing, embedding, and custom service composition.
 #[allow(dead_code)]
-struct StartedComponents {
-    intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
-    pinger: PingerHandle,
-    memdb_addr: Addr<MemDBActor<MemDBPermission>>,
+pub struct StartedComponents {
+    /// Address of the running IntentConfig actor
+    pub intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
+    /// Handle to the running Pinger actor
+    pub pinger: PingerHandle,
+    /// Address of the running MemDB actor
+    pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
 }
 
 #[derive(Debug)]
@@ -70,11 +81,17 @@ impl CollectorService {
 
         let cm_addr = self.start_connection_manager();
 
-        // Load TLS configuration for transport layer
+        // Load TLS configuration for transport layer (if enabled)
         tracing::info!("Loading TLS configuration for transport layer");
-        let tls_cfg = Some(Self::convert_tls_config(&self.config.tls).map_err(|e| {
-            CollectorError::Service(format!("Failed to convert TLS config: {}", e))
-        })?);
+        let tls_cfg = if let Some(tls) = &self.config.tls {
+            tracing::info!("TLS enabled - using mTLS connection");
+            Some(Self::convert_tls_config(tls).map_err(|e| {
+                CollectorError::Service(format!("Failed to convert TLS config: {}", e))
+            })?)
+        } else {
+            tracing::warn!("TLS disabled - using plain TCP connection");
+            None
+        };
 
         let addr = format!(
             "{}:{}",
@@ -125,7 +142,19 @@ impl CollectorService {
         Ok(())
     }
 
-    fn create_builders(&self) -> Result<ComponentBuilders> {
+    /// Creates component builders for all collector components.
+    ///
+    /// This method prepares the builders for IntentConfig, Pinger, and MemDB components
+    /// without starting them. Useful for custom component wiring or testing scenarios.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let service = CollectorService::new(config)?;
+    /// let builders = service.create_builders()?;
+    /// let components = CollectorService::start_components(builders).await?;
+    /// ```
+    pub fn create_builders(&self) -> Result<ComponentBuilders> {
         // Components no longer create SessionManager here; ConnectionManager will manage sessions
         // Create IntentConfig builder with role only
         let intent_config =
@@ -150,7 +179,28 @@ impl CollectorService {
         })
     }
 
-    async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
+    /// Creates and starts all collector components in one call.
+    ///
+    /// This is a convenience method that combines `create_builders()` and `start_components()`.
+    /// Useful for simple scenarios where you don't need to customize builder configuration.
+    pub async fn start_all_components(&self) -> Result<StartedComponents> {
+        let builders = self.create_builders()?;
+        Self::start_components(builders).await
+    }
+
+    /// Starts all collector components from their builders.
+    ///
+    /// This method takes component builders and starts them, returning their addresses.
+    /// Typically called after `create_builders()`.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// let service = CollectorService::new(config)?;
+    /// let builders = service.create_builders()?;
+    /// let components = CollectorService::start_components(builders).await?;
+    /// ```
+    pub async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
         // Start IntentConfig
         let intent_addr = builders
             .intent_config
@@ -350,7 +400,7 @@ mod tests {
             collector_id: "test-collector".into(),
             database_host: "127.0.0.1".into(),
             database_port: 8443,
-            tls: TlsConfig {
+            tls: Some(TlsConfig {
                 ca_cert_path: certs_dir.join("ca.pem").to_str().unwrap().to_string(),
                 client_cert_path: certs_dir
                     .join("collector.pem")
@@ -362,9 +412,9 @@ mod tests {
                     .to_str()
                     .unwrap()
                     .to_string(),
-            },
+            }),
             components: ComponentConfig {
-                heartbeat_interval_secs: 5,
+                heartbeat_interval_ms: 5000,
                 memdb_batch_size: 50,
             },
         }
@@ -486,12 +536,14 @@ mod tests {
         assert!(network_result.is_ok(), "Network creation should succeed");
 
         // Test network creation with TLS
-        let tls_config = CollectorService::convert_tls_config(&create_test_config().tls).unwrap();
-        let network_result_with_tls =
-            crate::network::CollectorNetwork::new("127.0.0.1:8443", Some(tls_config), cm_addr);
-        assert!(
-            network_result_with_tls.is_ok(),
-            "Network creation with TLS should succeed"
-        );
+        if let Some(tls) = &create_test_config().tls {
+            let tls_config = CollectorService::convert_tls_config(tls).unwrap();
+            let network_result_with_tls =
+                crate::network::CollectorNetwork::new("127.0.0.1:8443", Some(tls_config), cm_addr);
+            assert!(
+                network_result_with_tls.is_ok(),
+                "Network creation with TLS should succeed"
+            );
+        }
     }
 }

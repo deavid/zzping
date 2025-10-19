@@ -8,8 +8,8 @@ pub enum CStateRole {
     Collector {
         /// A unique identifier for this collector.
         collector_id: String,
-        /// The interval in seconds at which to send heartbeats.
-        heartbeat_interval_secs: u64,
+        /// The interval in milliseconds at which to send heartbeats.
+        heartbeat_interval_ms: u64,
     },
     /// The Database role tracks the status and health of multiple collectors.
     Database {
@@ -48,7 +48,7 @@ mod tests {
     fn test_is_collector() {
         let collector_role = CStateRole::Collector {
             collector_id: "test".to_string(),
-            heartbeat_interval_secs: 5,
+            heartbeat_interval_ms: 5000,
         };
         let database_role = CStateRole::Database {
             stale_timeout_secs: 15,
@@ -66,7 +66,7 @@ mod tests {
     fn test_is_database() {
         let collector_role = CStateRole::Collector {
             collector_id: "test".to_string(),
-            heartbeat_interval_secs: 5,
+            heartbeat_interval_ms: 5000,
         };
         let database_role = CStateRole::Database {
             stale_timeout_secs: 15,
@@ -84,7 +84,7 @@ mod tests {
     fn test_is_admin() {
         let collector_role = CStateRole::Collector {
             collector_id: "test".to_string(),
-            heartbeat_interval_secs: 5,
+            heartbeat_interval_ms: 5000,
         };
         let database_role = CStateRole::Database {
             stale_timeout_secs: 15,

@@ -54,3 +54,4 @@ chrono.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio-test.workspace = true
+zzping-collector = { path = "../zzping-collector" }

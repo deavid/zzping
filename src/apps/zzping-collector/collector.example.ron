@@ -19,8 +19,8 @@ CollectorConfig(
 
     // Component-specific configuration
     components: ComponentConfig(
-        // How often to send heartbeat to database (in seconds)
-        heartbeat_interval_secs: 5,
+        // How often to send heartbeat to database (in milliseconds)
+        heartbeat_interval_ms: 5000,
 
         // How many ping results to batch before sending to database
         memdb_batch_size: 50,

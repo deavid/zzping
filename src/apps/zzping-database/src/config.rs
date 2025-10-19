@@ -9,8 +9,8 @@ pub struct DatabaseConfig {
     pub bind_host: String,
     pub bind_port: u16,
 
-    /// TLS configuration for mTLS server
-    pub tls: TlsConfig,
+    /// TLS configuration for mTLS server (optional for TCP-only mode)
+    pub tls: Option<TlsConfig>,
 
     /// Component-specific settings
     pub components: ComponentConfig,
@@ -48,11 +48,61 @@ pub struct ComponentConfig {
     pub message_frame_timeout_ms: u64,
 }
 
+impl ComponentConfig {
+    /// Create component configuration with faster timing suitable for testing/demos.
+    ///
+    /// Uses shorter intervals than production defaults:
+    /// - Stale timeout: 1s instead of 30s
+    /// - Frame timeout: 100ms instead of 500ms
+    /// - Max collectors: 10 instead of 100
+    ///
+    /// # Example
+    /// ```ignore
+    /// let config = ComponentConfig::fast_timing();
+    /// assert_eq!(config.stale_timeout_secs, 1);
+    /// ```
+    pub fn fast_timing() -> Self {
+        Self {
+            stale_timeout_secs: 1,
+            max_collectors: 10,
+            message_frame_timeout_ms: 100,
+        }
+    }
+}
+
 fn default_message_frame_timeout_ms() -> u64 {
     500
 }
 
 impl DatabaseConfig {
+    /// Create a minimal configuration suitable for testing, demos, or development.
+    ///
+    /// This configuration uses:
+    /// - TCP-only (no TLS)
+    /// - localhost binding
+    /// - OS-assigned port (port 0) for parallel tests
+    /// - Fast timing intervals for testing
+    /// - Minimal resource usage
+    /// - Current directory for data storage
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zzping_database::config::DatabaseConfig;
+    ///
+    /// let config = DatabaseConfig::for_testing();
+    /// assert!(config.tls.is_none()); // No TLS in test mode
+    /// assert_eq!(config.bind_port, 0); // OS assigns port
+    /// ```
+    pub fn for_testing() -> Self {
+        Self {
+            bind_host: "127.0.0.1".into(),
+            bind_port: 0, // OS assigns port (useful for parallel tests)
+            tls: None,    // TCP-only
+            components: ComponentConfig::fast_timing(),
+            data_dir: ".".into(),
+        }
+    }
+
     /// Load configuration from a RON file.
     ///
     /// Reads and parses the RON configuration file. Fails if the file
@@ -88,16 +138,13 @@ impl DatabaseConfig {
             }
         };
 
-        // Resolve CA certs and server cert/key paths
+        // Resolve CA certs and server cert/key paths (if TLS enabled)
         let mut resolved = config.clone();
-        resolved.tls.ca_cert_paths = resolved
-            .tls
-            .ca_cert_paths
-            .iter()
-            .map(|p| resolve(p))
-            .collect();
-        resolved.tls.server_cert_path = resolve(&resolved.tls.server_cert_path);
-        resolved.tls.server_key_path = resolve(&resolved.tls.server_key_path);
+        if let Some(tls) = &mut resolved.tls {
+            tls.ca_cert_paths = tls.ca_cert_paths.iter().map(|p| resolve(p)).collect();
+            tls.server_cert_path = resolve(&tls.server_cert_path);
+            tls.server_key_path = resolve(&tls.server_key_path);
+        }
 
         // Resolve data_dir (mandatory) relative to the config file directory
         let d = resolved.data_dir.clone();
@@ -152,34 +199,38 @@ impl DatabaseConfig {
             ));
         }
 
-        // Validate TLS file paths exist (support multiple CA certs)
-        if self.tls.ca_cert_paths.is_empty() {
-            return Err(crate::error::DatabaseError::Config(
-                "At least one CA certificate path is required".into(),
-            ));
-        }
+        // Validate TLS file paths exist (only if TLS is enabled)
+        if let Some(tls) = &self.tls {
+            if tls.ca_cert_paths.is_empty() {
+                return Err(crate::error::DatabaseError::Config(
+                    "At least one CA certificate path is required".into(),
+                ));
+            }
 
-        for ca_path in &self.tls.ca_cert_paths {
-            if !std::path::Path::new(ca_path).exists() {
+            for ca_path in &tls.ca_cert_paths {
+                if !std::path::Path::new(ca_path).exists() {
+                    return Err(crate::error::DatabaseError::Config(format!(
+                        "CA certificate not found: {}",
+                        ca_path
+                    )));
+                }
+            }
+
+            if !std::path::Path::new(&tls.server_cert_path).exists() {
                 return Err(crate::error::DatabaseError::Config(format!(
-                    "CA certificate not found: {}",
-                    ca_path
+                    "Server certificate not found: {}",
+                    tls.server_cert_path
                 )));
             }
-        }
 
-        if !std::path::Path::new(&self.tls.server_cert_path).exists() {
-            return Err(crate::error::DatabaseError::Config(format!(
-                "Server certificate not found: {}",
-                self.tls.server_cert_path
-            )));
-        }
-
-        if !std::path::Path::new(&self.tls.server_key_path).exists() {
-            return Err(crate::error::DatabaseError::Config(format!(
-                "Server private key not found: {}",
-                self.tls.server_key_path
-            )));
+            if !std::path::Path::new(&tls.server_key_path).exists() {
+                return Err(crate::error::DatabaseError::Config(format!(
+                    "Server private key not found: {}",
+                    tls.server_key_path
+                )));
+            }
+        } else {
+            tracing::warn!("Running without TLS - connections will use plain TCP");
         }
 
         Ok(())
@@ -207,11 +258,11 @@ mod tests {
         DatabaseConfig {
             bind_host: "0.0.0.0".into(),
             bind_port: 8443,
-            tls: TlsConfig {
+            tls: Some(TlsConfig {
                 ca_cert_paths: vec![certs_dir.join("ca.pem").to_str().unwrap().to_string()],
                 server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
                 server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
-            },
+            }),
             components: ComponentConfig {
                 stale_timeout_secs: 30,
                 max_collectors: 100,
@@ -282,11 +333,11 @@ mod tests {
     DatabaseConfig(
         bind_host: "0.0.0.0",
         bind_port: 8443,
-        tls: TlsConfig(
+        tls: Some(TlsConfig(
             ca_cert_paths: ["{}"],
             server_cert_path: "{}",
             server_key_path: "{}",
-        ),
+        )),
         data_dir: ".",
         components: ComponentConfig(
             stale_timeout_secs: 30,

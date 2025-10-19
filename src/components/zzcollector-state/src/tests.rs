@@ -106,7 +106,7 @@ async fn test_collector_role_heartbeat() {
 
     let role = CStateRole::Collector {
         collector_id: "test-collector".to_string(),
-        heartbeat_interval_secs: 1,
+        heartbeat_interval_ms: 1000,
     };
 
     let builder =
@@ -356,7 +356,7 @@ async fn test_database_role_receives_heartbeat() {
 async fn test_update_health_metrics() {
     let role = CStateRole::Collector {
         collector_id: "test-collector".to_string(),
-        heartbeat_interval_secs: 999,
+        heartbeat_interval_ms: 999000,
     };
 
     let builder =
@@ -416,7 +416,7 @@ async fn test_collector_receives_ack_increments_counter() {
 
     let role = CStateRole::Collector {
         collector_id: "test-collector".to_string(),
-        heartbeat_interval_secs: 1,
+        heartbeat_interval_ms: 1000,
     };
 
     let builder =

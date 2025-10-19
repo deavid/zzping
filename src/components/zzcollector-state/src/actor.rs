@@ -88,11 +88,11 @@ where
 {
     fn start_heartbeat(&self, ctx: &mut Context<Self>) {
         if let CStateRole::Collector {
-            heartbeat_interval_secs,
+            heartbeat_interval_ms,
             ..
         } = self.role
         {
-            let interval = Duration::from_secs(heartbeat_interval_secs);
+            let interval = Duration::from_millis(heartbeat_interval_ms);
             ctx.add_stream(IntervalStream::new(tokio::time::interval(interval)));
         }
     }

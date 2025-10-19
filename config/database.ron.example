@@ -7,14 +7,15 @@ DatabaseConfig(
     bind_port: 8443,
 
     // TLS certificate paths for mTLS server
-    tls: TlsConfig(
+    // Set to None() to disable TLS and use plain TCP
+    tls: Some(TlsConfig(
         // CA certificate for verifying collector certificates
             ca_cert_paths: ["../test_certs/ca.pem"],
         // Server certificate (this database's identity)
         server_cert_path: "../test_certs/database.pem",
         // Server private key
         server_key_path: "../test_certs/database.key",
-    ),
+    )),
 
     // Directory where runtime data files are stored (relative paths are
     // resolved relative to the location of this RON file). This directory

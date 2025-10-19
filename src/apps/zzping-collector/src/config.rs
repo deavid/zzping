@@ -13,8 +13,8 @@ pub struct CollectorConfig {
     /// Database connection port.
     pub database_port: u16,
 
-    /// TLS configuration for mTLS connection
-    pub tls: TlsConfig,
+    /// TLS configuration for mTLS connection (optional for TCP-only mode)
+    pub tls: Option<TlsConfig>,
 
     /// Component-specific settings
     pub components: ComponentConfig,
@@ -34,14 +34,60 @@ pub struct TlsConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Component-specific configuration.
 pub struct ComponentConfig {
-    /// Heartbeat interval in seconds for collector state
-    pub heartbeat_interval_secs: u64,
+    /// Heartbeat interval in milliseconds for collector state
+    pub heartbeat_interval_ms: u64,
 
     /// Batch size for mem-db
     pub memdb_batch_size: usize,
 }
 
+impl ComponentConfig {
+    /// Create component configuration with faster timing suitable for testing/demos.
+    ///
+    /// Uses shorter intervals than production defaults:
+    /// - Heartbeat: 100ms instead of 5000ms
+    /// - Batch size: 5 instead of 50
+    ///
+    /// # Example
+    /// ```ignore
+    /// let config = ComponentConfig::fast_timing();
+    /// assert_eq!(config.heartbeat_interval_ms, 100);
+    /// ```
+    pub fn fast_timing() -> Self {
+        Self {
+            heartbeat_interval_ms: 100,
+            memdb_batch_size: 5,
+        }
+    }
+}
+
 impl CollectorConfig {
+    /// Create a minimal configuration suitable for testing, demos, or development.
+    ///
+    /// This configuration uses:
+    /// - TCP-only (no TLS)
+    /// - localhost database connection
+    /// - Fast timing intervals for testing
+    /// - Minimal resource usage
+    ///
+    /// # Example
+    /// ```ignore
+    /// use zzping_collector::config::CollectorConfig;
+    ///
+    /// let config = CollectorConfig::for_testing("test-collector-01");
+    /// assert_eq!(config.collector_id, "test-collector-01");
+    /// assert!(config.tls.is_none()); // No TLS in test mode
+    /// ```
+    pub fn for_testing(collector_id: impl Into<String>) -> Self {
+        Self {
+            collector_id: collector_id.into(),
+            database_host: "127.0.0.1".into(),
+            database_port: 8443,
+            tls: None, // TCP-only
+            components: ComponentConfig::fast_timing(),
+        }
+    }
+
     /// Load configuration from a RON file.
     ///
     /// # Errors
@@ -72,9 +118,9 @@ impl CollectorConfig {
             ));
         }
 
-        if self.components.heartbeat_interval_secs == 0 {
+        if self.components.heartbeat_interval_ms == 0 {
             return Err(crate::error::CollectorError::Config(
-                "heartbeat_interval_secs cannot be 0".into(),
+                "heartbeat_interval_ms cannot be 0".into(),
             ));
         }
 
@@ -90,26 +136,30 @@ impl CollectorConfig {
             ));
         }
 
-        // Validate TLS file paths exist
-        if !std::path::Path::new(&self.tls.ca_cert_path).exists() {
-            return Err(crate::error::CollectorError::Config(format!(
-                "CA certificate not found: {}",
-                self.tls.ca_cert_path
-            )));
-        }
+        // Validate TLS file paths exist (only if TLS is enabled)
+        if let Some(tls) = &self.tls {
+            if !std::path::Path::new(&tls.ca_cert_path).exists() {
+                return Err(crate::error::CollectorError::Config(format!(
+                    "CA certificate not found: {}",
+                    tls.ca_cert_path
+                )));
+            }
 
-        if !std::path::Path::new(&self.tls.client_cert_path).exists() {
-            return Err(crate::error::CollectorError::Config(format!(
-                "Client certificate not found: {}",
-                self.tls.client_cert_path
-            )));
-        }
+            if !std::path::Path::new(&tls.client_cert_path).exists() {
+                return Err(crate::error::CollectorError::Config(format!(
+                    "Client certificate not found: {}",
+                    tls.client_cert_path
+                )));
+            }
 
-        if !std::path::Path::new(&self.tls.client_key_path).exists() {
-            return Err(crate::error::CollectorError::Config(format!(
-                "Client private key not found: {}",
-                self.tls.client_key_path
-            )));
+            if !std::path::Path::new(&tls.client_key_path).exists() {
+                return Err(crate::error::CollectorError::Config(format!(
+                    "Client private key not found: {}",
+                    tls.client_key_path
+                )));
+            }
+        } else {
+            tracing::warn!("Running without TLS - connections will use plain TCP");
         }
 
         Ok(())
@@ -123,50 +173,49 @@ mod tests {
     use std::path::Path;
     use tempfile::NamedTempFile;
 
-    /// Helper to create a valid test configuration.
-    fn create_valid_config() -> CollectorConfig {
-        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+    fn create_test_config() -> CollectorConfig {
+        let certs_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .unwrap()
             .parent()
             .unwrap()
             .parent()
-            .unwrap();
-        let certs_dir = workspace_root.join("test_certs");
-
+            .unwrap()
+            .join("test_certs");
+        let ca_cert_path = certs_dir.join("ca.pem").to_string_lossy().to_string();
+        let client_cert_path = certs_dir
+            .join("collector.pem")
+            .to_string_lossy()
+            .to_string();
+        let client_key_path = certs_dir
+            .join("collector.key")
+            .to_string_lossy()
+            .to_string();
         CollectorConfig {
-            collector_id: "test-collector-01".into(),
-            database_host: "127.0.0.1".into(),
+            collector_id: "test-collector".into(),
+            database_host: "localhost".into(),
             database_port: 8443,
-            tls: TlsConfig {
-                ca_cert_path: certs_dir.join("ca.pem").to_str().unwrap().to_string(),
-                client_cert_path: certs_dir
-                    .join("collector.pem")
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-                client_key_path: certs_dir
-                    .join("collector.key")
-                    .to_str()
-                    .unwrap()
-                    .to_string(),
-            },
             components: ComponentConfig {
-                heartbeat_interval_secs: 5,
-                memdb_batch_size: 100,
+                heartbeat_interval_ms: 5000,
+                memdb_batch_size: 50,
             },
+            tls: Some(TlsConfig {
+                ca_cert_path,
+                client_cert_path,
+                client_key_path,
+            }),
         }
     }
 
     #[test]
     fn test_valid_config_validates() {
-        let config = create_valid_config();
+        let config = create_test_config();
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_empty_collector_id_fails_validation() {
-        let mut config = create_valid_config();
+        let mut config = create_test_config();
         config.collector_id = String::new();
 
         let result = config.validate();
@@ -176,7 +225,7 @@ mod tests {
 
     #[test]
     fn test_zero_port_fails_validation() {
-        let mut config = create_valid_config();
+        let mut config = create_test_config();
         config.database_port = 0;
 
         let result = config.validate();
@@ -186,8 +235,8 @@ mod tests {
 
     #[test]
     fn test_zero_heartbeat_interval_fails_validation() {
-        let mut config = create_valid_config();
-        config.components.heartbeat_interval_secs = 0;
+        let mut config = create_test_config();
+        config.components.heartbeat_interval_ms = 0;
 
         let result = config.validate();
         assert!(result.is_err());
@@ -210,13 +259,13 @@ mod tests {
         collector_id: "test-collector",
         database_host: "127.0.0.1",
         database_port: 8443,
-        tls: TlsConfig(
+        tls: Some(TlsConfig(
             ca_cert_path: "{}",
             client_cert_path: "{}",
             client_key_path: "{}",
-        ),
+        )),
         components: ComponentConfig(
-            heartbeat_interval_secs: 5,
+            heartbeat_interval_ms: 5000,
             memdb_batch_size: 100,
         ),
     )

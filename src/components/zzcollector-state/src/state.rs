@@ -1,7 +1,7 @@
 //! Defines the internal state structures for the `CStateActor`.
 
 use std::collections::HashMap;
-use std::time::Instant;
+use tokio::time::Instant;
 
 /// Contains the state specific to a `Collector` role instance.
 #[derive(Debug, Clone)]
