@@ -7,7 +7,7 @@ use crate::messages::{
 };
 use crate::network_messages::IntentConfigMessage;
 use crate::permission_wrapper::PermissionWrapper;
-use crate::permissions::PermissionCheck;
+use crate::permissions::{IntentConfigPermission, PermissionCheck};
 use crate::role::IntentConfigRole;
 use actix::ResponseFuture;
 use actix::prelude::*;
@@ -49,22 +49,6 @@ pub struct IntentConfigActor<T: ApplicationRole + std::fmt::Debug> {
     last_broadcast_ms: Arc<AtomicU64>,
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> Clone for IntentConfigActor<T> {
-    fn clone(&self) -> Self {
-        Self {
-            current_config: self.current_config.clone(),
-            subscribers: self.subscribers.clone(),
-            next_id: self.next_id,
-            role: self.role.clone(),
-            session_manager: self.session_manager.clone(),
-            broadcast_timeout: self.broadcast_timeout,
-            successful_broadcasts: Arc::clone(&self.successful_broadcasts),
-            failed_broadcasts: Arc::clone(&self.failed_broadcasts),
-            last_broadcast_ms: Arc::clone(&self.last_broadcast_ms),
-        }
-    }
-}
-
 impl<T: ApplicationRole + std::fmt::Debug> Default for IntentConfigActor<T> {
     fn default() -> Self {
         Self::new_with_role(IntentConfigRole::default())
@@ -73,18 +57,16 @@ impl<T: ApplicationRole + std::fmt::Debug> Default for IntentConfigActor<T> {
 
 // Provide PermissionCheck implementation for the concrete IntentConfigPermission
 // so that tests and SessionManager integration using the concrete enum work.
-impl PermissionCheck<crate::permissions::IntentConfigPermission>
-    for IntentConfigActor<crate::permissions::IntentConfigPermission>
-{
-    fn has_update_permission(&self, role: &crate::permissions::IntentConfigPermission) -> bool {
-        *role == crate::permissions::IntentConfigPermission::UpdateConfig
+impl PermissionCheck<IntentConfigPermission> for IntentConfigActor<IntentConfigPermission> {
+    fn has_update_permission(&self, role: &IntentConfigPermission) -> bool {
+        *role == IntentConfigPermission::UpdateConfig
     }
 
-    fn has_receive_permission(&self, role: &crate::permissions::IntentConfigPermission) -> bool {
-        *role == crate::permissions::IntentConfigPermission::ReceiveConfigUpdates
+    fn has_receive_permission(&self, role: &IntentConfigPermission) -> bool {
+        *role == IntentConfigPermission::ReceiveConfigUpdates
     }
 
-    fn to_string(&self, role: &crate::permissions::IntentConfigPermission) -> String {
+    fn to_string(&self, role: &IntentConfigPermission) -> String {
         format!("{:?}", role)
     }
 }
@@ -108,17 +90,6 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
             failed_broadcasts: Arc::new(AtomicU64::new(0)),
             last_broadcast_ms: Arc::new(AtomicU64::new(0)),
         }
-    }
-
-    /// Convenience constructor that logs initial state for debugging.
-    pub fn new_with_role_and_log(role: IntentConfigRole) -> Self {
-        let actor = Self::new_with_role(role);
-        log::info!(
-            "IntentConfigActor starting. role={:?}, initial_config={:?}",
-            actor.role,
-            actor.current_config
-        );
-        actor
     }
 
     /// Get the current role
@@ -425,7 +396,7 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
                     }
                     Err(e) => {
                         fail_count = fail_count.saturating_add(1);
-                        log::warn!("Failed to send CurrentConfig to {}: {}", peer, e)
+                        log::warn!("Failed to send CurrentConfig to {}: {}", peer, e);
                     }
                 }
             }
@@ -956,11 +927,10 @@ mod tests {
 
         fn as_str(&self) -> &'static str {
             match self {
-                Self::Admin => "admin",
-                Self::User => "user",
+                Self::Admin => "update-config",
+                Self::User => "receive-config-updates",
             }
         }
-
         fn can_connect_to(&self, _target: &Self) -> bool {
             true
         }
@@ -1552,5 +1522,424 @@ mod tests {
 
         // Now assert that failed_broadcasts incremented
         assert!(actor.failed_broadcasts.load(Ordering::Relaxed) >= 1);
+    }
+
+    // Test: successful_broadcasts increments when network sends succeed
+    #[actix::test]
+    #[ntest::timeout(200)]
+    async fn test_successful_broadcast_increments_on_network_success() {
+        setup();
+
+        // Create SessionManager and add/connect peers that will succeed
+        use zznet_session::peer_session::PeerSession;
+        use zznet_session::types::PeerId;
+
+        let mut session_manager =
+            zznet_session::session_manager::SessionManager::<
+                IntentConfigMessage,
+                PermissionWrapper<MockRole>,
+            >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
+
+        // Add first peer with User role (should receive config updates)
+        let peer_id1 = PeerId::from("peer-succeeds-1");
+        let mut peer_session1 = PeerSession::new(peer_id1.clone());
+        peer_session1.set_role(Some(PermissionWrapper {
+            permission: MockRole::User,
+        }));
+
+        // Create channels for peer1 and connect it
+        let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
+        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+
+        // Spawn task to drain peer1's outbound channel so sends don't block
+        tokio::spawn(async move {
+            while (outbound_rx1.recv().await).is_some() {
+                // Just drain the messages
+            }
+        });
+
+        session_manager
+            .add_peer(peer_id1.clone(), peer_session1)
+            .unwrap();
+
+        // Add second peer with Admin role (should NOT receive config updates due to permission filter)
+        let peer_id2 = PeerId::from("peer-succeeds-2");
+        let mut peer_session2 = PeerSession::new(peer_id2.clone());
+        peer_session2.set_role(Some(PermissionWrapper {
+            permission: MockRole::Admin,
+        }));
+
+        // Create channels for peer2 and connect it
+        let (_inbound_tx2, _inbound_rx2) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx2, mut outbound_rx2) = tokio::sync::mpsc::channel(10);
+        peer_session2.connect(outbound_tx2, _inbound_rx2).unwrap();
+
+        // Spawn task to drain peer2's outbound channel
+        tokio::spawn(async move {
+            while (outbound_rx2.recv().await).is_some() {
+                // Just drain the messages
+            }
+        });
+
+        session_manager
+            .add_peer(peer_id2.clone(), peer_session2)
+            .unwrap();
+
+        // Wrap in Rc and attach to actor
+        let rc_sm = Rc::new(session_manager);
+
+        let mut actor = IntentConfigActor::<MockRole>::default();
+        actor.set_session_manager(Rc::clone(&rc_sm));
+
+        // Ensure counters start at zero
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 0);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+        let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+
+        // Create config update to send
+        let config_update = IntentConfigMessage::ConfigUpdate {
+            targets: vec!["1.2.3.4".parse().unwrap()],
+            ping_rate_pps: 100,
+        };
+
+        // Call send_config_update_to_peers directly
+        IntentConfigActor::<MockRole>::send_config_update_to_peers(
+            Rc::clone(&rc_sm),
+            config_update,
+            actor.broadcast_timeout,
+            Arc::clone(&actor.successful_broadcasts),
+            Arc::clone(&actor.failed_broadcasts),
+            Arc::clone(&actor.last_broadcast_ms),
+        )
+        .await;
+
+        // Give async tasks a moment to run
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // Assert that successful_broadcasts incremented (only peer1 should receive due to permission filter)
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 1);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+
+        // Assert timestamp was updated
+        let final_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+        assert!(final_timestamp > initial_timestamp);
+    }
+
+    // Test: spawn_send_current_config_to_peers sends to all peers regardless of permission
+    #[actix::test]
+    #[ntest::timeout(200)]
+    async fn test_spawn_send_current_config_to_peers_success() {
+        setup();
+
+        // Create SessionManager and add/connect peers
+        use zznet_session::peer_session::PeerSession;
+        use zznet_session::types::PeerId;
+
+        let mut session_manager =
+            zznet_session::session_manager::SessionManager::<
+                IntentConfigMessage,
+                PermissionWrapper<MockRole>,
+            >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
+
+        // Add peer with User role
+        let peer_id1 = PeerId::from("peer-current-1");
+        let mut peer_session1 = PeerSession::new(peer_id1.clone());
+        peer_session1.set_role(Some(PermissionWrapper {
+            permission: MockRole::User,
+        }));
+
+        let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
+        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+
+        tokio::spawn(async move { while (outbound_rx1.recv().await).is_some() {} });
+
+        session_manager
+            .add_peer(peer_id1.clone(), peer_session1)
+            .unwrap();
+
+        // Add peer with Admin role
+        let peer_id2 = PeerId::from("peer-current-2");
+        let mut peer_session2 = PeerSession::new(peer_id2.clone());
+        peer_session2.set_role(Some(PermissionWrapper {
+            permission: MockRole::Admin,
+        }));
+
+        let (_inbound_tx2, _inbound_rx2) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx2, mut outbound_rx2) = tokio::sync::mpsc::channel(10);
+        peer_session2.connect(outbound_tx2, _inbound_rx2).unwrap();
+
+        tokio::spawn(async move { while (outbound_rx2.recv().await).is_some() {} });
+
+        session_manager
+            .add_peer(peer_id2.clone(), peer_session2)
+            .unwrap();
+
+        // Wrap in Rc and attach to actor
+        let rc_sm = Rc::new(session_manager);
+
+        let mut actor = IntentConfigActor::<MockRole>::default();
+        actor.set_session_manager(Rc::clone(&rc_sm));
+
+        // Set custom config
+        actor.current_config = IntentConfigData {
+            targets: vec!["5.6.7.8".parse().unwrap()],
+            ping_rate_pps: 250,
+        };
+
+        // Ensure counters start at zero
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 0);
+        let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+
+        // Create current config message to send
+        let current_config = IntentConfigMessage::CurrentConfig {
+            targets: actor.current_config.targets.clone(),
+            ping_rate_pps: actor.current_config.ping_rate_pps,
+        };
+
+        // Call spawn_send_current_config_to_peers
+        IntentConfigActor::<MockRole>::spawn_send_current_config_to_peers(
+            Rc::clone(&rc_sm),
+            current_config,
+            actor.broadcast_timeout,
+            Arc::clone(&actor.successful_broadcasts),
+            Arc::clone(&actor.failed_broadcasts),
+            Arc::clone(&actor.last_broadcast_ms),
+        );
+
+        // Give async tasks a moment to run
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // Assert that successful_broadcasts incremented for BOTH peers (no permission filter)
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 2);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+
+        // Assert timestamp was updated
+        let final_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+        assert!(final_timestamp > initial_timestamp);
+    }
+
+    // Test: spawn_send_initial_updates sends to peers with receive permission
+    #[actix::test]
+    #[ntest::timeout(200)]
+    async fn test_spawn_send_initial_updates_success() {
+        setup();
+
+        // Create SessionManager and add/connect peers
+        use zznet_session::peer_session::PeerSession;
+        use zznet_session::types::PeerId;
+
+        let mut session_manager =
+            zznet_session::session_manager::SessionManager::<
+                IntentConfigMessage,
+                PermissionWrapper<MockRole>,
+            >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
+
+        // Add peer with User role (should receive)
+        let peer_id1 = PeerId::from("peer-initial-1");
+        let mut peer_session1 = PeerSession::new(peer_id1.clone());
+        peer_session1.set_role(Some(PermissionWrapper {
+            permission: MockRole::User,
+        }));
+
+        let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
+        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+
+        tokio::spawn(async move { while (outbound_rx1.recv().await).is_some() {} });
+
+        session_manager
+            .add_peer(peer_id1.clone(), peer_session1)
+            .unwrap();
+
+        // Add peer with Admin role (should NOT receive due to permission filter)
+        let peer_id2 = PeerId::from("peer-initial-2");
+        let mut peer_session2 = PeerSession::new(peer_id2.clone());
+        peer_session2.set_role(Some(PermissionWrapper {
+            permission: MockRole::Admin,
+        }));
+
+        let (_inbound_tx2, _inbound_rx2) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx2, mut outbound_rx2) = tokio::sync::mpsc::channel(10);
+        peer_session2.connect(outbound_tx2, _inbound_rx2).unwrap();
+
+        tokio::spawn(async move { while (outbound_rx2.recv().await).is_some() {} });
+
+        session_manager
+            .add_peer(peer_id2.clone(), peer_session2)
+            .unwrap();
+
+        // Wrap in Rc and attach to actor
+        let rc_sm = Rc::new(session_manager);
+
+        let mut actor = IntentConfigActor::<MockRole>::default();
+        actor.set_session_manager(Rc::clone(&rc_sm));
+
+        // Set custom config for initial updates
+        let initial_config = IntentConfigData {
+            targets: vec!["9.10.11.12".parse().unwrap()],
+            ping_rate_pps: 500,
+        };
+
+        // Ensure counters start at zero
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 0);
+        let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+
+        // Call spawn_send_initial_updates
+        IntentConfigActor::<MockRole>::spawn_send_initial_updates(
+            Rc::clone(&rc_sm),
+            initial_config.clone(),
+            actor.broadcast_timeout,
+            Arc::clone(&actor.successful_broadcasts),
+            Arc::clone(&actor.failed_broadcasts),
+            Arc::clone(&actor.last_broadcast_ms),
+        );
+
+        // Give async tasks a moment to run
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // Assert that successful_broadcasts incremented for only peer1 (permission filtered)
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 1);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+
+        // Assert timestamp was updated
+        let final_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+        assert!(final_timestamp > initial_timestamp);
+    }
+
+    // Test: send_config_update_to_peers returns early when no peers connected
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_send_config_update_to_peers_empty_peer_list() {
+        setup();
+
+        // Create SessionManager with no peers
+        let session_manager =
+            zznet_session::session_manager::SessionManager::<
+                IntentConfigMessage,
+                PermissionWrapper<MockRole>,
+            >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
+
+        let rc_sm = Rc::new(session_manager);
+        let actor = IntentConfigActor::<MockRole>::default();
+
+        // Ensure counters start at zero
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 0);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+        let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+
+        // Create config update to send
+        let config_update = IntentConfigMessage::ConfigUpdate {
+            targets: vec!["1.2.3.4".parse().unwrap()],
+            ping_rate_pps: 100,
+        };
+
+        // Call send_config_update_to_peers
+        IntentConfigActor::<MockRole>::send_config_update_to_peers(
+            Rc::clone(&rc_sm),
+            config_update,
+            actor.broadcast_timeout,
+            Arc::clone(&actor.successful_broadcasts),
+            Arc::clone(&actor.failed_broadcasts),
+            Arc::clone(&actor.last_broadcast_ms),
+        )
+        .await;
+
+        // Counters should remain unchanged
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 0);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+
+        // Timestamp should remain unchanged (no broadcast occurred)
+        let final_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+        assert_eq!(final_timestamp, initial_timestamp);
+    }
+
+    // Test: partial success when some peers succeed and some fail
+    #[actix::test]
+    #[ntest::timeout(200)]
+    async fn test_partial_success_broadcast() {
+        setup();
+
+        // Create SessionManager and add mixed peers (some connected, some not)
+        use zznet_session::peer_session::PeerSession;
+        use zznet_session::types::PeerId;
+
+        let mut session_manager =
+            zznet_session::session_manager::SessionManager::<
+                IntentConfigMessage,
+                PermissionWrapper<MockRole>,
+            >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
+
+        // Add connected peer with User role (should succeed)
+        let peer_id1 = PeerId::from("peer-partial-success");
+        let mut peer_session1 = PeerSession::new(peer_id1.clone());
+        peer_session1.set_role(Some(PermissionWrapper {
+            permission: MockRole::User,
+        }));
+
+        let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
+        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+
+        tokio::spawn(async move { while (outbound_rx1.recv().await).is_some() {} });
+
+        session_manager
+            .add_peer(peer_id1.clone(), peer_session1)
+            .unwrap();
+
+        // Add disconnected peer with User role (should fail)
+        let peer_id2 = PeerId::from("peer-partial-fail");
+        let mut peer_session2 = PeerSession::new(peer_id2.clone());
+        peer_session2.set_role(Some(PermissionWrapper {
+            permission: MockRole::User,
+        }));
+        // Note: NOT calling connect() - this peer will fail to send
+
+        session_manager
+            .add_peer(peer_id2.clone(), peer_session2)
+            .unwrap();
+
+        // Wrap in Rc and attach to actor
+        let rc_sm = Rc::new(session_manager);
+
+        let mut actor = IntentConfigActor::<MockRole>::default();
+        actor.set_session_manager(Rc::clone(&rc_sm));
+
+        // Ensure counters start at zero
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 0);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+        let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+
+        // Create config update to send
+        let config_update = IntentConfigMessage::ConfigUpdate {
+            targets: vec!["2.3.4.5".parse().unwrap()],
+            ping_rate_pps: 200,
+        };
+
+        // Call send_config_update_to_peers directly
+        IntentConfigActor::<MockRole>::send_config_update_to_peers(
+            Rc::clone(&rc_sm),
+            config_update,
+            actor.broadcast_timeout,
+            Arc::clone(&actor.successful_broadcasts),
+            Arc::clone(&actor.failed_broadcasts),
+            Arc::clone(&actor.last_broadcast_ms),
+        )
+        .await;
+
+        // Should complete successfully
+        // result.expect("send_config_update_to_peers should succeed");
+
+        // Give async tasks a moment to run
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // Assert partial success: 1 success, 1 failure
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 1);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 1);
+
+        // Assert timestamp was updated
+        let final_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+        assert!(final_timestamp > initial_timestamp);
     }
 }
