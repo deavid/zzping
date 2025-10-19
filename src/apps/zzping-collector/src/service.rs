@@ -25,6 +25,8 @@ use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use zznet_hello::protocol::{Frame, HandshakeFrame};
 
 /// Builders for all components (before wiring)
 struct ComponentBuilders {
@@ -69,24 +71,28 @@ impl CollectorService {
         let tls_config = Self::load_tls_config(&self.config.tls)?;
         tracing::info!("TLS configuration loaded successfully");
 
-        // Step 3: Connect to database
+        // Step 3: Connect to database and start connection handler
         tracing::info!(
             "Connecting to database at {}:{}...",
             self.config.database_host,
             self.config.database_port
         );
 
-        let connection = Self::connect_to_database(
+        let tls_stream = Self::connect_to_database(
             &self.config.database_host,
             self.config.database_port,
             tls_config,
         )
-        .await;
+        .await?;
 
-        match connection {
-            Ok(_) => tracing::info!("✅ Connected to database successfully"),
-            Err(e) => tracing::error!("TCP connection failed: {}", e),
-        }
+        tracing::info!("✅ Connected to database successfully");
+
+        // Spawn connection handler task
+        let connection_task = tokio::spawn(async move {
+            if let Err(e) = Self::run_connection_handler(tls_stream).await {
+                tracing::error!("Connection handler failed: {}", e);
+            }
+        });
 
         // Debug: ask local IntentConfigActor for its current config and log it
         // This helps verify the collector's local state at connect time.
@@ -107,13 +113,16 @@ impl CollectorService {
 
         tracing::info!("Collector service running - press Ctrl+C to stop");
 
-        // Step 5: Main loop - wait for shutdown signal
+        // Step 5: Main loop - wait for shutdown signal or connection failure
         tokio::select! {
             _ = sigterm.recv() => {
                 tracing::info!("Received SIGTERM, shutting down gracefully");
             }
             _ = sigint.recv() => {
                 tracing::info!("Received SIGINT (Ctrl+C), shutting down gracefully");
+            }
+            _ = connection_task => {
+                tracing::info!("Connection handler task completed");
             }
         }
 
@@ -253,7 +262,7 @@ impl CollectorService {
         host: &str,
         port: u16,
         tls_config: Arc<ClientConfig>,
-    ) -> Result<tokio::net::TcpStream> {
+    ) -> Result<tokio_rustls::client::TlsStream<tokio::net::TcpStream>> {
         use tokio::net::TcpStream;
         use tokio_rustls::TlsConnector;
 
@@ -277,13 +286,198 @@ impl CollectorService {
 
         tracing::debug!("TLS handshake completed successfully");
 
-        // For Phase 4, we just prove the connection works
-        // Phase 5 will add SessionManager and message routing
+        Ok(tls_stream)
+    }
 
-        // Extract the underlying TCP stream for now
-        let (tcp_stream, _tls_session) = tls_stream.into_inner();
+    /// Run the connection handler with HELLO handshake and message loop
+    async fn run_connection_handler(
+        stream: tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+    ) -> Result<()> {
+        tracing::info!("Starting collector connection handler");
 
-        Ok(tcp_stream)
+        // Perform HELLO handshake
+        if let Err(e) = Self::perform_hello_handshake(stream).await {
+            tracing::error!("HELLO handshake failed: {}", e);
+            return Err(e);
+        }
+
+        tracing::info!("HELLO handshake completed, entering message loop");
+
+        // TODO: Implement message loop for Phase 3
+        // For now, just keep the connection alive
+        tokio::time::sleep(std::time::Duration::from_secs(3600)).await; // Keep alive for 1 hour
+
+        tracing::info!("Connection handler stopping");
+        Ok(())
+    }
+
+    /// Perform HELLO handshake as the collector (initiator)
+    async fn perform_hello_handshake(
+        mut stream: tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+    ) -> Result<()> {
+        tracing::info!("Starting HELLO handshake as collector");
+
+        // Collector offers "memdb" room
+        let offered_rooms = vec!["memdb".to_string()];
+
+        // 1. Send HELLO frame
+        let hello_frame = Frame::Handshake(HandshakeFrame::Hello {
+            version: "1.0".to_string(),
+            role_str: "collector".to_string(),
+            hostname: "collector".to_string(), // TODO: get actual hostname
+        });
+        Self::send_frame(&mut stream, &hello_frame).await?;
+        tracing::debug!("Sent HELLO frame as collector");
+
+        // 2. Receive HELLO frame from database
+        let db_hello = Self::receive_frame(&mut stream).await?;
+        match db_hello {
+            Frame::Handshake(HandshakeFrame::Hello {
+                version,
+                role_str,
+                hostname,
+            }) => {
+                tracing::info!(
+                    "Received HELLO from database: version={}, role={}, hostname={}",
+                    version,
+                    role_str,
+                    hostname
+                );
+            }
+            _ => {
+                return Err(CollectorError::Service(format!(
+                    "Expected HELLO frame, got {:?}",
+                    db_hello
+                )));
+            }
+        }
+
+        // 3. Receive OFFER frame from database
+        let db_offer = Self::receive_frame(&mut stream).await?;
+        let db_offered_rooms = match db_offer {
+            Frame::Handshake(HandshakeFrame::Offer { rooms }) => {
+                tracing::info!("Received OFFER from database with rooms {:?}", rooms);
+                rooms
+            }
+            _ => {
+                return Err(CollectorError::Service(format!(
+                    "Expected OFFER frame, got {:?}",
+                    db_offer
+                )));
+            }
+        };
+
+        // 4. Send OFFER frame
+        let offer_frame = Frame::Handshake(HandshakeFrame::Offer {
+            rooms: offered_rooms.clone(),
+        });
+        Self::send_frame(&mut stream, &offer_frame).await?;
+        tracing::debug!(
+            "Sent OFFER frame with rooms {:?} as collector",
+            offered_rooms
+        );
+
+        // 5. Calculate intersection of rooms
+        let mut selected_rooms = Vec::new();
+        for room in &offered_rooms {
+            if db_offered_rooms.contains(room) {
+                selected_rooms.push(room.clone());
+            }
+        }
+
+        // 6. Receive ACK frame from database
+        let db_ack = Self::receive_frame(&mut stream).await?;
+        let db_selected_rooms = match db_ack {
+            Frame::Handshake(HandshakeFrame::Ack { rooms }) => {
+                tracing::info!("Received ACK from database with rooms {:?}", rooms);
+                rooms
+            }
+            _ => {
+                return Err(CollectorError::Service(format!(
+                    "Expected ACK frame, got {:?}",
+                    db_ack
+                )));
+            }
+        };
+
+        // 7. Send ACK frame
+        let ack_frame = Frame::Handshake(HandshakeFrame::Ack {
+            rooms: selected_rooms.clone(),
+        });
+        Self::send_frame(&mut stream, &ack_frame).await?;
+        tracing::debug!(
+            "Sent ACK frame with rooms {:?} as collector",
+            selected_rooms
+        );
+
+        // Verify both sides agreed on the same rooms
+        if selected_rooms != db_selected_rooms {
+            return Err(CollectorError::Service(format!(
+                "Room negotiation failed: local={:?}, remote={:?}",
+                selected_rooms, db_selected_rooms
+            )));
+        }
+
+        tracing::info!(
+            "HELLO handshake completed successfully as collector - negotiated rooms: {:?}",
+            selected_rooms
+        );
+        Ok(())
+    }
+
+    /// Send a HELLO frame over the connection
+    async fn send_frame(
+        stream: &mut tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+        frame: &Frame,
+    ) -> Result<()> {
+        let data = frame
+            .serialize()
+            .map_err(|e| CollectorError::Service(format!("Failed to serialize frame: {}", e)))?;
+
+        // Send length prefix (4 bytes, big-endian)
+        let len_bytes = (data.len() as u32).to_be_bytes();
+        stream
+            .write_all(&len_bytes)
+            .await
+            .map_err(|e| CollectorError::Service(format!("Failed to send frame length: {}", e)))?;
+
+        // Send frame data
+        stream
+            .write_all(&data)
+            .await
+            .map_err(|e| CollectorError::Service(format!("Failed to send frame data: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Receive a HELLO frame from the connection
+    async fn receive_frame(
+        stream: &mut tokio_rustls::client::TlsStream<tokio::net::TcpStream>,
+    ) -> Result<Frame> {
+        // Read length prefix (4 bytes, big-endian)
+        let mut len_bytes = [0u8; 4];
+        stream
+            .read_exact(&mut len_bytes)
+            .await
+            .map_err(|e| CollectorError::Service(format!("Failed to read frame length: {}", e)))?;
+
+        let frame_len = u32::from_be_bytes(len_bytes) as usize;
+        if frame_len == 0 {
+            return Err(CollectorError::Service(
+                "Received zero-length frame".to_string(),
+            ));
+        }
+
+        // Read frame data
+        let mut frame_data = vec![0u8; frame_len];
+        stream
+            .read_exact(&mut frame_data)
+            .await
+            .map_err(|e| CollectorError::Service(format!("Failed to read frame data: {}", e)))?;
+
+        // Deserialize frame
+        Frame::deserialize(&frame_data)
+            .map_err(|e| CollectorError::Service(format!("Failed to deserialize frame: {}", e)))
     }
 }
 

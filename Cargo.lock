@@ -2644,6 +2644,7 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-builder",
+ "zznet-hello",
  "zznet-session",
  "zznet-transport-tcp",
  "zzpinger",
@@ -2674,6 +2675,7 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-builder",
+ "zznet-hello",
  "zznet-session",
  "zznet-transport-tcp",
 ]

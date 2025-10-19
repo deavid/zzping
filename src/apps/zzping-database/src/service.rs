@@ -32,8 +32,9 @@ use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use zznet_auth::{error::AuthError, role::ApplicationRole};
+use zznet_hello::protocol::{Frame, HandshakeFrame};
 use zznet_session::{
     room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError},
     session_manager::SessionManager,
@@ -182,13 +183,10 @@ struct ComponentBuilders {
         CStateBuilder<DatabaseMessage, DatabaseRole, SessionManager<DatabaseMessage, DatabaseRole>>,
 }
 
-/// Started components (running actors)
-/// These addresses are cloned for each connection handler
 /// Started components (running actors).
 ///
 /// These addresses are cloned for each connection handler and will be used
 /// in Phase 6 to route messages to components via Actix messaging.
-#[allow(dead_code)]
 #[derive(Clone)]
 struct StartedComponents {
     intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
@@ -205,7 +203,6 @@ struct ConnectionHandler {
     peer_role: DatabaseRole,
     stream: TlsStream<TcpStream>,
     /// Component addresses for message routing (will be actively used in Phase 6)
-    #[allow(dead_code)]
     components: StartedComponents,
     /// Timeout for reading a single message frame (in milliseconds)
     message_frame_timeout_ms: u64,
@@ -237,6 +234,12 @@ impl ConnectionHandler {
             self.peer_role,
             self.message_frame_timeout_ms
         );
+
+        // Perform HELLO handshake before entering message loop
+        if let Err(e) = self.perform_hello_handshake().await {
+            tracing::error!("HELLO handshake failed for {}: {}", self.peer_addr, e);
+            return Err(e);
+        }
 
         let mut buffer = vec![0u8; 8192]; // 8KB buffer
         let timeout = if self.message_frame_timeout_ms > 0 {
@@ -324,6 +327,180 @@ impl ConnectionHandler {
         Ok(())
     }
 
+    /// Perform HELLO handshake protocol
+    async fn perform_hello_handshake(&mut self) -> Result<()> {
+        tracing::info!("Starting HELLO handshake with {}", self.peer_addr);
+
+        // Database offers "memdb" and "query" rooms
+        let offered_rooms = vec!["memdb".to_string(), "query".to_string()];
+
+        // 1. Send HELLO frame
+        let hello_frame = Frame::Handshake(HandshakeFrame::Hello {
+            version: "1.0".to_string(),
+            role_str: "database".to_string(),
+            hostname: "database".to_string(), // TODO: get actual hostname
+        });
+        self.send_frame(&hello_frame).await?;
+        tracing::debug!("Sent HELLO frame to {}", self.peer_addr);
+
+        // 2. Receive HELLO frame from peer
+        let _peer_hello = self.receive_frame().await?;
+        match _peer_hello {
+            Frame::Handshake(HandshakeFrame::Hello {
+                version,
+                role_str,
+                hostname,
+            }) => {
+                tracing::info!(
+                    "Received HELLO from {}: version={}, role={}, hostname={}",
+                    self.peer_addr,
+                    version,
+                    role_str,
+                    hostname
+                );
+            }
+            _ => {
+                return Err(DatabaseError::Service(format!(
+                    "Expected HELLO frame, got {:?}",
+                    _peer_hello
+                )));
+            }
+        };
+
+        // 3. Send OFFER frame
+        let offer_frame = Frame::Handshake(HandshakeFrame::Offer {
+            rooms: offered_rooms.clone(),
+        });
+        self.send_frame(&offer_frame).await?;
+        tracing::debug!(
+            "Sent OFFER frame with rooms {:?} to {}",
+            offered_rooms,
+            self.peer_addr
+        );
+
+        // 4. Receive OFFER frame from peer
+        let peer_offer = self.receive_frame().await?;
+        let peer_offered_rooms = match peer_offer {
+            Frame::Handshake(HandshakeFrame::Offer { rooms }) => {
+                tracing::info!(
+                    "Received OFFER from {} with rooms {:?}",
+                    self.peer_addr,
+                    rooms
+                );
+                rooms
+            }
+            _ => {
+                return Err(DatabaseError::Service(format!(
+                    "Expected OFFER frame, got {:?}",
+                    peer_offer
+                )));
+            }
+        };
+
+        // 5. Calculate intersection of rooms (both sides must agree)
+        let mut selected_rooms = Vec::new();
+        for room in &offered_rooms {
+            if peer_offered_rooms.contains(room) {
+                selected_rooms.push(room.clone());
+            }
+        }
+
+        // 6. Send ACK frame
+        let ack_frame = Frame::Handshake(HandshakeFrame::Ack {
+            rooms: selected_rooms.clone(),
+        });
+        self.send_frame(&ack_frame).await?;
+        tracing::debug!(
+            "Sent ACK frame with rooms {:?} to {}",
+            selected_rooms,
+            self.peer_addr
+        );
+
+        // 7. Receive ACK frame from peer
+        let peer_ack = self.receive_frame().await?;
+        let peer_selected_rooms = match peer_ack {
+            Frame::Handshake(HandshakeFrame::Ack { rooms }) => {
+                tracing::info!(
+                    "Received ACK from {} with rooms {:?}",
+                    self.peer_addr,
+                    rooms
+                );
+                rooms
+            }
+            _ => {
+                return Err(DatabaseError::Service(format!(
+                    "Expected ACK frame, got {:?}",
+                    peer_ack
+                )));
+            }
+        };
+
+        // Verify both sides agreed on the same rooms
+        if selected_rooms != peer_selected_rooms {
+            return Err(DatabaseError::Service(format!(
+                "Room negotiation failed: local={:?}, peer={:?}",
+                selected_rooms, peer_selected_rooms
+            )));
+        }
+
+        tracing::info!(
+            "HELLO handshake completed successfully with {} - negotiated rooms: {:?}",
+            self.peer_addr,
+            selected_rooms
+        );
+        Ok(())
+    }
+
+    /// Send a HELLO frame over the connection
+    async fn send_frame(&mut self, frame: &Frame) -> Result<()> {
+        let data = frame
+            .serialize()
+            .map_err(|e| DatabaseError::Service(format!("Failed to serialize frame: {}", e)))?;
+
+        // Send length prefix (4 bytes, big-endian)
+        let len_bytes = (data.len() as u32).to_be_bytes();
+        self.stream
+            .write_all(&len_bytes)
+            .await
+            .map_err(|e| DatabaseError::Service(format!("Failed to send frame length: {}", e)))?;
+
+        // Send frame data
+        self.stream
+            .write_all(&data)
+            .await
+            .map_err(|e| DatabaseError::Service(format!("Failed to send frame data: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Receive a HELLO frame from the connection
+    async fn receive_frame(&mut self) -> Result<Frame> {
+        // Read length prefix (4 bytes, big-endian)
+        let mut len_bytes = [0u8; 4];
+        self.stream
+            .read_exact(&mut len_bytes)
+            .await
+            .map_err(|e| DatabaseError::Service(format!("Failed to read frame length: {}", e)))?;
+
+        let frame_len = u32::from_be_bytes(len_bytes) as usize;
+        if frame_len == 0 {
+            return Err(DatabaseError::Service(
+                "Received zero-length frame".to_string(),
+            ));
+        }
+
+        // Read frame data
+        let mut frame_data = vec![0u8; frame_len];
+        self.stream
+            .read_exact(&mut frame_data)
+            .await
+            .map_err(|e| DatabaseError::Service(format!("Failed to read frame data: {}", e)))?;
+
+        // Deserialize frame
+        Frame::deserialize(&frame_data)
+            .map_err(|e| DatabaseError::Service(format!("Failed to deserialize frame: {}", e)))
+    }
+
     /// Read with optional timeout
     async fn read_with_timeout(
         &mut self,
@@ -348,34 +525,51 @@ impl ConnectionHandler {
         let msg: DatabaseMessage = ron::de::from_bytes(data)
             .map_err(|e| DatabaseError::Service(format!("Failed to deserialize message: {}", e)))?;
 
-        self.route_message(msg).await
+        self.route_message(msg, &self.peer_addr.to_string()).await
     }
 
     /// Route incoming message to appropriate component
-    async fn route_message(&self, msg: DatabaseMessage) -> Result<()> {
+    async fn route_message(&self, msg: DatabaseMessage, peer_id: &str) -> Result<()> {
         tracing::debug!("Routing message: {:?}", msg);
 
         match msg {
             DatabaseMessage::Intent(intent_msg) => {
                 tracing::debug!("Routing to IntentConfig: {:?}", intent_msg);
-                // self.components.intent_config.send(intent_msg).await
-                //     .map_err(|e| DatabaseError::Component(format!("IntentConfig send failed: {}", e)))?;
-                // For now, just log
-                tracing::info!("Would send to IntentConfig component");
+                self.components
+                    .intent_config
+                    .send(intent_msg)
+                    .await
+                    .map_err(|e| {
+                        DatabaseError::Component(format!("IntentConfig send failed: {}", e))
+                    })?;
+                tracing::info!("✓ Sent to IntentConfig component");
             }
             DatabaseMessage::MemDB(memdb_msg) => {
                 tracing::debug!("Routing to MemDB: {:?}", memdb_msg);
-                // self.components.memdb_addr.send(memdb_msg).await
-                //     .map_err(|e| DatabaseError::Component(format!("MemDB send failed: {}", e)))?;
-                // For now, just log
-                tracing::info!("Would send to MemDB component");
+                self.components
+                    .memdb_addr
+                    .send(memdb_msg)
+                    .await
+                    .map_err(|e| DatabaseError::Component(format!("MemDB send failed: {}", e)))?;
+                tracing::info!("✓ Sent to MemDB component");
             }
             DatabaseMessage::CState(cstate_msg) => {
                 tracing::debug!("Routing to CState: {:?}", cstate_msg);
-                // self.components.cstate.send(cstate_msg).await
-                //     .map_err(|e| DatabaseError::Component(format!("CState send failed: {}", e)))?;
-                // For now, just log
-                tracing::info!("Would send to CState component");
+                // CStateActor expects WrappedCStateMessage, not raw CStateMessage
+                use zzcollector_state::messages::WrappedCStateMessage;
+                use zznet_session::types::PeerId;
+
+                let wrapped_msg = WrappedCStateMessage {
+                    peer_id: PeerId::from(peer_id),
+                    message: cstate_msg,
+                };
+
+                self.components
+                    .cstate
+                    .send(wrapped_msg)
+                    .await
+                    .map_err(|e| DatabaseError::Component(format!("CState send failed: {}", e)))?;
+                tracing::info!("✓ Sent to CState component");
             }
         }
 

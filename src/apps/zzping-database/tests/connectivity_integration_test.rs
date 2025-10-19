@@ -212,6 +212,32 @@ fn test_connectivity_database_to_collector() {
         db_stdout
     );
 
+    // Verify HELLO handshake occurred
+    assert!(
+        db_stdout.contains("Starting HELLO handshake with"),
+        "Database did not start HELLO handshake. Full output:\n{}",
+        db_stdout
+    );
+
+    assert!(
+        db_stdout.contains("HELLO handshake completed successfully"),
+        "Database HELLO handshake did not complete. Full output:\n{}",
+        db_stdout
+    );
+
+    // Verify collector performed HELLO handshake
+    assert!(
+        collector_stdout.contains("Starting HELLO handshake as collector"),
+        "Collector did not start HELLO handshake. Full output:\n{}",
+        collector_stdout
+    );
+
+    assert!(
+        collector_stdout.contains("HELLO handshake completed successfully as collector"),
+        "Collector HELLO handshake did not complete. Full output:\n{}",
+        collector_stdout
+    );
+
     // Verify successful TLS connection
     // The collector should report successful connection
     assert!(
