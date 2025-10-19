@@ -25,6 +25,8 @@ pub struct TcpTransportClient {
     addr: String,
     /// TLS configuration (if None, uses plain TCP).
     tls_config: Option<Arc<rustls::ClientConfig>>,
+    /// Server name for SNI (if TLS is enabled).
+    server_name: Option<String>,
 }
 
 impl TcpTransportClient {
@@ -35,6 +37,7 @@ impl TcpTransportClient {
     /// * `addr` - Target address (e.g., "192.168.1.1:5555")
     /// * `tls_config` - TLS configuration. If None, connections will be plain TCP.
     pub fn new(addr: String, tls_config: Option<TlsConfig>) -> Result<Self, TransportError> {
+        let server_name = tls_config.as_ref().map(|cfg| cfg.server_name.clone());
         let tls_config = match tls_config {
             Some(cfg) => {
                 let client_config = cfg
@@ -45,7 +48,11 @@ impl TcpTransportClient {
             None => None,
         };
 
-        Ok(Self { addr, tls_config })
+        Ok(Self {
+            addr,
+            tls_config,
+            server_name,
+        })
     }
 
     /// Create a plain TCP client (no encryption).
@@ -56,6 +63,7 @@ impl TcpTransportClient {
         Self {
             addr,
             tls_config: None,
+            server_name: None,
         }
     }
 
@@ -92,9 +100,12 @@ impl TransportClient for TcpTransportClient {
 
         // If TLS is configured, perform TLS handshake
         if let Some(ref tls_config) = self.tls_config {
-            // Extract hostname for SNI
-            let hostname = socket_addr.ip().to_string();
-            let server_name = ServerName::try_from(hostname)
+            // Use configured server_name for SNI (not the IP address)
+            // This allows connecting via any IP while using a consistent SAN name
+            let server_name_str = self.server_name.as_ref().ok_or_else(|| {
+                TransportError::IoError("TLS enabled but no server_name configured".to_string())
+            })?;
+            let server_name = ServerName::try_from(server_name_str.clone())
                 .map_err(|e| TransportError::IoError(format!("Invalid server name: {}", e)))?;
 
             let connector = TlsConnector::from(tls_config.clone());

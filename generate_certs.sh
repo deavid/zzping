@@ -2,14 +2,11 @@
 
 # Script to generate CA and certificates for zzping components
 #
-# NOTE: Service certificates use SAN=DNS:localhost because:
-#  - The collector connects to the database at 127.0.0.1 (localhost)
-#  - TLS certificate validation requires the SAN (Subject Alternative Name) to match the
-#    hostname/IP used during connection. Using DNS:localhost allows connections via
-#    "localhost" hostname, which is standard for local development and testing.
-#  - This is more flexible than hardcoding to a specific IP and allows both:
-#    * Connection via "localhost" hostname (recommended for testing)
-#    * Connection via 127.0.0.1 when hostname resolution is not available
+# NOTE: Service certificates use SAN=DNS:zzping because:
+#  - The client uses "zzping" as the SNI (Server Name Indication) value
+#  - TLS certificate validation requires the SAN to match the SNI value
+#  - This allows connections via any IP address or hostname without modification
+#  - The certificate SAN is fixed to "zzping" providing a consistent identity
 #
 # Usage:
 #   ./generate_certs.sh --ca                          # Generate CA certificate
@@ -68,16 +65,17 @@ generate_collector() {
     openssl req -subj "/CN=collector" -new -key "$COLLECTOR_KEY" -out "$COLLECTOR_CSR"
 
     echo "Signing collector certificate with CA..."
-    # SAN=DNS:localhost allows TLS connections to "localhost" hostname.
-    # This is required because the collector initiates TLS connections to the database
-    # using "localhost" as the hostname, and the certificate SAN must match.
+    # SAN=DNS:zzping allows TLS connections regardless of IP or hostname.
+    # The client uses "zzping" as the SNI (Server Name Indication) value, so the
+    # certificate SAN must match "zzping". This allows connecting via any IP address
+    # or hostname without TLS validation errors.
     openssl x509 -req -days 365 -in "$COLLECTOR_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
         -out "$COLLECTOR_CERT" -sha256 -CAcreateserial \
         -extfile <(cat <<EOF
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:localhost
+subjectAltName=DNS:zzping
 EOF
 )
 
@@ -101,16 +99,17 @@ generate_database() {
     openssl req -subj "/CN=database" -new -key "$DATABASE_KEY" -out "$DATABASE_CSR"
 
     echo "Signing database certificate with CA..."
-    # SAN=DNS:localhost allows TLS connections to "localhost" hostname.
-    # This is required because the collector initiates TLS connections to the database
-    # using "localhost" as the hostname, and the certificate SAN must match.
+    # SAN=DNS:zzping allows TLS connections regardless of IP or hostname.
+    # The client uses "zzping" as the SNI (Server Name Indication) value, so the
+    # certificate SAN must match "zzping". This allows connecting via any IP address
+    # or hostname without TLS validation errors.
     openssl x509 -req -days 365 -in "$DATABASE_CSR" -CA "$CA_CERT" -CAkey "$CA_KEY" \
         -out "$DATABASE_CERT" -sha256 -CAcreateserial \
         -extfile <(cat <<EOF
 basicConstraints=CA:FALSE
 keyUsage=digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth,clientAuth
-subjectAltName=DNS:localhost
+subjectAltName=DNS:zzping
 EOF
 )
 

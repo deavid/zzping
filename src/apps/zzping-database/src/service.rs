@@ -212,8 +212,8 @@ impl DatabaseService {
 
         let cm_addr = self.start_connection_manager();
 
-        // Build TcpTransportServer (no TLS configured here - keep config local)
-        let tls_cfg: Option<zznet_transport_tcp::config::TlsConfig> = None;
+        // Build TLS configuration for the transport server
+        let tls_cfg = Self::build_transport_tls_config(&self.config.tls)?;
 
         let bind = format!("{}:{}", self.config.bind_host, self.config.bind_port);
         let mut network = crate::network::DatabaseNetwork::new(&bind, tls_cfg, cm_addr)
@@ -229,18 +229,19 @@ impl DatabaseService {
             .map_err(|e| DatabaseError::Service(format!("Network error: {}", e)))
     }
 
-    /// Load TLS configuration for mTLS server
-    pub fn load_tls_config(tls: &TlsConfig) -> Result<std::sync::Arc<rustls::ServerConfig>> {
+    /// Build TLS configuration for the transport layer (TcpTransportServer)
+    pub fn build_transport_tls_config(
+        tls: &TlsConfig,
+    ) -> Result<Option<zznet_transport_tcp::config::TlsConfig>> {
         use std::path::PathBuf;
         use zznet_transport_tcp::config::{TlsCertAndKey, TlsConfig as TransportTlsConfig};
 
-        // Map our simple TlsConfig into the transport crate's TlsConfig and
-        // reuse its build_server_config() which knows how to create a rustls ServerConfig
         let cert = TlsCertAndKey {
             pem_path: PathBuf::from(&tls.server_cert_path),
             key_path: PathBuf::from(&tls.server_key_path),
         };
         let ca = tls.ca_cert_paths.first().map(PathBuf::from);
+
         let tcfg = TransportTlsConfig {
             cert,
             ca_cert_path: ca,
@@ -248,11 +249,7 @@ impl DatabaseService {
             server_name: "zzping".into(),
         };
 
-        let server_cfg = tcfg.build_server_config().map_err(|e| {
-            DatabaseError::Config(format!("Failed to build server TLS config: {}", e))
-        })?;
-
-        Ok(std::sync::Arc::new(server_cfg))
+        Ok(Some(tcfg))
     }
 
     fn create_connection_manager(
@@ -426,8 +423,9 @@ mod tests {
             server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
         };
 
-        let result = DatabaseService::load_tls_config(&tls_config);
-        assert!(result.is_ok(), "TLS config should load successfully");
+        let result = DatabaseService::build_transport_tls_config(&tls_config);
+        assert!(result.is_ok(), "TLS config should build successfully");
+        assert!(result.unwrap().is_some(), "TLS config should not be None");
     }
 
     #[test]
@@ -446,8 +444,12 @@ mod tests {
             server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
         };
 
-        let result = DatabaseService::load_tls_config(&tls_config);
-        assert!(result.is_err(), "Should fail with missing CA");
+        let result = DatabaseService::build_transport_tls_config(&tls_config);
+        // Build succeeds even with nonexistent CA - the error will happen when TLS config tries to load the cert
+        assert!(
+            result.is_ok(),
+            "TLS config build should not fail at this stage"
+        );
     }
 
     #[actix::test]
@@ -461,8 +463,13 @@ mod tests {
         let cm_addr = cm.start();
 
         // Test network creation without TLS (TLS config creation is complex and tested elsewhere)
+        // Use port 0 to let OS assign an available port
         let network_result =
-            crate::network::DatabaseNetwork::new("127.0.0.1:8443", None, cm_addr).await;
-        assert!(network_result.is_ok(), "Network creation should succeed");
+            crate::network::DatabaseNetwork::new("127.0.0.1:0", None, cm_addr).await;
+        assert!(
+            network_result.is_ok(),
+            "Network creation should succeed, error: {:?}",
+            network_result.err()
+        );
     }
 }

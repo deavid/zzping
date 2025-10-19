@@ -382,9 +382,9 @@ mod tests {
         let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let id = TcpTransport::parse_peer_cert_der(der, addr).expect("failed to parse cert DER");
 
-        // Expect the CN to be 'database' and SAN to be 'localhost' (local dev certs)
+        // Expect the CN to be 'database' and SAN to be 'zzping' (updated dev certs)
         assert_eq!(id.common_name, "database");
-        assert_eq!(id.san_username, "localhost");
+        assert_eq!(id.san_username, "zzping");
     }
 
     #[test]
@@ -500,7 +500,7 @@ mod tests {
             .expect("Failed to parse collector cert");
 
         assert_eq!(identity.common_name, "collector");
-        assert_eq!(identity.san_username, "localhost");
+        assert_eq!(identity.san_username, "zzping");
         assert_eq!(identity.peer_addr, "127.0.0.1:5555");
     }
 }
