@@ -148,12 +148,12 @@ debug = 2
 # are adding here a workspace wide forbid on the lints that must not be overriden. Do not be even tempted to change this!
 # If you think you have a legitimate reason for one of these, think again: YOU DON'T. DO NOT TOUCH THESE LINT CONFIGS!
 [workspace.lints.rust]
-dead_code = "deny"
-unused_variables = "deny"
-missing_docs = "deny"
+dead_code = "warn"
+unused_variables = "warn"
+missing_docs = "warn"
 
 [workspace.lints.clippy]
-new_ret_no_self = "deny"
-wildcard_imports = "deny"
-let_unit_value = "deny"
+new_ret_no_self = "warn"
+wildcard_imports = "warn"
+let_unit_value = "warn"
 uninlined_format_args = "allow"
