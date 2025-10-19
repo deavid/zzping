@@ -95,7 +95,7 @@ mod session_manager_integration_tests {
         });
 
         // Give time for processing
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         // The actor should still work but log a warning about no SessionManager
         // We can't easily test the log output, but the actor should not panic
@@ -157,7 +157,7 @@ mod session_manager_integration_tests {
             .unwrap();
 
         // Should receive initial (default) config immediately
-        let initial_config = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+        let initial_config = tokio::time::timeout(Duration::from_millis(5), rx.recv())
             .await
             .expect("Should receive initial config")
             .unwrap();
@@ -171,10 +171,10 @@ mod session_manager_integration_tests {
         database_addr.do_send(UpdateConfig(new_config.clone()));
 
         // Give time for broadcast
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(2)).await;
 
         // Should receive the updated config
-        let updated_config = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+        let updated_config = tokio::time::timeout(Duration::from_millis(5), rx.recv())
             .await
             .expect("Should receive updated config")
             .unwrap();
@@ -184,7 +184,7 @@ mod session_manager_integration_tests {
         database_addr.send(Unsubscribe(sub_id)).await.unwrap();
 
         // Give time for unsubscribe to be processed
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(2)).await;
 
         // Send another UpdateConfig (use send to ensure order)
         let final_config = IntentConfigData {
@@ -197,10 +197,10 @@ mod session_manager_integration_tests {
             .unwrap();
 
         // Give time for potential broadcast (should not happen)
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         // Should NOT receive the final config (channel should be empty)
-        let result = tokio::time::timeout(Duration::from_millis(100), rx.recv()).await;
+        let result = tokio::time::timeout(Duration::from_millis(5), rx.recv()).await;
         if let Ok(Ok(_)) = result {
             panic!("Should not receive config after unsubscribe");
         }
@@ -235,7 +235,7 @@ mod session_manager_integration_tests {
         });
 
         // Give time for processing
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         // The actor should accept the message without panicking
         println!("✓ Collector accepted ConfigUpdate from network");
@@ -381,7 +381,7 @@ mod session_manager_integration_tests {
         });
 
         // Give time for the message to travel across managers and be applied
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
 
         // Assert the collector actor's persisted state by sending it a QueryCurrentConfig
         // and observing that no panic occurs and its internal state was updated (we can
@@ -423,7 +423,7 @@ mod session_manager_integration_tests {
         });
 
         // Give time for persistence
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         // Verify persistence by checking the file exists
         assert!(config_path.exists());
@@ -583,7 +583,7 @@ mod session_manager_integration_tests {
         });
 
         // Give time for processing
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         // ===== Verify config was persisted =====
         assert!(config_path.exists());
@@ -596,7 +596,7 @@ mod session_manager_integration_tests {
         use tokio::time::{Duration as TokioDuration, timeout};
 
         // Wait for collector1 message
-        let pkt1 = timeout(TokioDuration::from_millis(500), rx1_out.recv()).await;
+        let pkt1 = timeout(TokioDuration::from_millis(5), rx1_out.recv()).await;
         assert!(pkt1.is_ok(), "Did not receive packet for collector1");
         if let Some((room, msg)) = pkt1.unwrap() {
             assert_eq!(room, RoomId::from("intent-config"));
@@ -639,7 +639,7 @@ mod session_manager_integration_tests {
         }
 
         // Wait for collector2 message
-        let pkt2 = timeout(TokioDuration::from_millis(500), rx2_out.recv()).await;
+        let pkt2 = timeout(TokioDuration::from_millis(5), rx2_out.recv()).await;
         assert!(pkt2.is_ok(), "Did not receive packet for collector2");
         if let Some((room, msg)) = pkt2.unwrap() {
             assert_eq!(room, RoomId::from("intent-config"));
@@ -736,7 +736,7 @@ mod session_manager_integration_tests {
             .start();
 
         // Give some time for the actor started() to run and send initial updates
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
         // Expect an initial ConfigUpdate to be received by the collector
         let pkt = message_capture.recv_default_timeout().await;
@@ -903,9 +903,21 @@ mod session_manager_integration_tests {
         println!("✓ Message delivered through real SessionManager pipeline (no test bypass)");
     }
 
-    /// Test that Database actor calls broadcast_to_room() on startup with correct config
+    /// Test that Database actor actually BROADCASTS to room on startup (producer-side validation)
+    /// This is the key test that ensures spawn_send_initial_updates() is called and works.
+    /// If this test fails, the production bug is reproduced: Collectors never get initial config.
     #[actix::test]
     async fn test_database_calls_broadcast_on_startup() {
+        use tokio::sync::mpsc;
+        use zznet_session::session_manager::SessionManager;
+        use zznet_session::types::{PeerId, RoomId};
+
+        // Setup logging
+        let _ = env_logger::builder()
+            .is_test(true)
+            .filter_level(log::LevelFilter::Debug)
+            .try_init();
+
         // Create temp file with initial config
         let temp_file = tempfile::NamedTempFile::new().unwrap();
         let config_path = temp_file.path().to_path_buf();
@@ -916,25 +928,110 @@ mod session_manager_integration_tests {
         let s = ron::ser::to_string_pretty(&initial_cfg, Default::default()).unwrap();
         std::fs::write(&config_path, s).unwrap();
 
-        // Create Database actor with config file
-        let db_addr = IntentConfigBuilder::new()
+        // Create Database SessionManager with a single Collector peer
+        let mut db_manager = SessionManager::<
+            IntentConfigNetworkMsg,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(vec![RoomId::from("intent-config")]);
+
+        // Add a Collector peer
+        let mut collector_peer = zznet_session::peer_session::PeerSession::<
+            IntentConfigNetworkMsg,
+            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
+        >::new(PeerId::from("test-collector"));
+        collector_peer
+            .add_room(
+                RoomId::from("intent-config"),
+                Box::new(zzping_test_utils::DummyRoomHandle::new(RoomId::from(
+                    "intent-config",
+                ))),
+            )
+            .unwrap();
+        collector_peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
+            permission: IntentConfigPermission::ReceiveConfigUpdates,
+        }));
+        db_manager
+            .add_peer(PeerId::from("test-collector"), collector_peer)
+            .unwrap();
+
+        // Simulate room publication
+        db_manager
+            .handle_publish_rooms(
+                &PeerId::from("test-collector"),
+                vec![RoomId::from("intent-config")],
+            )
+            .ok();
+
+        // Create channel to capture messages sent TO the collector
+        let (tx_db_to_collector, mut rx_db_to_collector) =
+            mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
+
+        // Create an inbound channel for DB to collector (not used in this test, but required)
+        let (_tx_db_inbound, rx_db_inbound) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
+
+        // Connect the collector peer
+        db_manager
+            .connect_peer(
+                PeerId::from("test-collector"),
+                tx_db_to_collector,
+                rx_db_inbound,
+            )
+            .unwrap();
+
+        // Start Database actor with the SessionManager BEFORE any messages
+        // This ensures we catch the startup broadcast
+        let _db_addr = IntentConfigBuilder::new()
             .role(IntentConfigRole::Database {
                 config_file_path: config_path,
             })
+            .session_manager(db_manager)
             .start()
             .expect("start failed");
 
-        // Give time for startup and config loading
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // Wait for the broadcast message from Database::started()
+        // The spawn_send_initial_updates() is spawned async, so we need to wait for it
+        use tokio::time::{Duration as TokioDuration, timeout};
 
-        // Verify the Database loaded the config correctly
-        use crate::messages::GetCurrentConfig;
-        let config = db_addr.send(GetCurrentConfig).await.unwrap();
-        assert_eq!(config.targets, initial_cfg.targets);
-        assert_eq!(config.ping_rate_pps, initial_cfg.ping_rate_pps);
+        let msg_result = timeout(TokioDuration::from_secs(2), rx_db_to_collector.recv()).await;
 
-        println!("✓ Database actor started and loaded config correctly");
-        println!("✓ Producer-side validation: Database loads config on startup");
+        match msg_result {
+            Ok(Some((_room, msg))) => {
+                match msg {
+                    IntentConfigNetworkMsg::ConfigUpdate {
+                        targets,
+                        ping_rate_pps,
+                    } => {
+                        // SUCCESS! Database sent the ConfigUpdate through SessionManager
+                        println!(
+                            "✓ PRODUCER VALIDATED: Database sent ConfigUpdate through broadcast_to_room()"
+                        );
+                        assert_eq!(targets, initial_cfg.targets, "Sent config targets mismatch");
+                        assert_eq!(
+                            ping_rate_pps, initial_cfg.ping_rate_pps,
+                            "Sent config rate mismatch"
+                        );
+                        println!(
+                            "✓ Message content correct: targets={:?}, rate={}",
+                            targets, ping_rate_pps
+                        );
+                    }
+                    other => {
+                        panic!("Expected ConfigUpdate from Database, got: {:?}", other);
+                    }
+                }
+            }
+            _ => {
+                panic!(
+                    "PRODUCER BUG DETECTED: Database did not send ConfigUpdate via broadcast_to_room() on startup.\n\
+                     This means either:\n  \
+                     1. spawn_send_initial_updates() was NOT called from started()\n  \
+                     2. broadcast_to_room() failed to send\n  \
+                     3. The message timed out\n\n\
+                     This is the exact scenario that fails in production. \
+                     Without this message, Collectors never receive initial config."
+                );
+            }
+        }
     }
 
     /// Test that Collector does NOT proactively query the Database for current
@@ -992,16 +1089,18 @@ mod session_manager_integration_tests {
             .expect("start failed");
 
         // Give the actor time to run any startup logic
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
         // Collector should NOT proactively query the DB on startup. Ensure no
         // outbound packet was sent from the collector within the short window.
-        let pkt_res = timeout(TokioDuration::from_millis(200), rx_out.recv()).await;
+        let pkt_res = timeout(TokioDuration::from_millis(20), rx_out.recv()).await;
         assert!(pkt_res.is_err(), "Collector should not query DB on startup");
     }
 
-    /// Test that when a Collector starts (and queries the DB), the Database
-    /// replies with CurrentConfig and the Collector applies it to its local state.
+    /// Test that Collector can apply a ConfigUpdate message received from Database
+    /// (This test manually delivers to test the consumer-side logic; producer-side
+    /// is validated in test_database_startup_broadcast_reaches_collector_actor and
+    /// test_database_calls_broadcast_on_startup)
     #[actix::test]
     async fn test_collector_applies_current_config_on_query() {
         use zznet_session::session_manager::SessionManager;
@@ -1070,43 +1169,28 @@ mod session_manager_integration_tests {
 
         use tokio::sync::mpsc;
 
-        // Instead of the generic in-memory connector, wire explicit channels
-        // so the test can intercept the collector's Query and send a
-        // CurrentConfig reply deterministically.
-
-        // Proxy channel: collector inbound for the DB side will be serviced by a
-        // forwarder that also copies packets into a test-visible receiver.
-        let (tx_coll_to_db, mut rx_proxy) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
-        // DB inbound channel that will be given to db_manager
+        // Wire explicit channels
+        let (tx_coll_to_db, mut rx_coll_to_db) =
+            mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         let (tx_db_in, rx_db_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
-
-        // Channel: DB -> Collector (db outbound, collector inbound)
         let (tx_db_to_coll, rx_db_to_coll) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
 
-        // Connect collector manager to DB peer: outbound is tx_coll_to_db, inbound is rx_db_to_coll
+        // Connect managers
         coll_manager
             .connect_peer(PeerId::from("db-instance"), tx_coll_to_db, rx_db_to_coll)
             .unwrap();
 
-        // Connect db manager to Collector peer: outbound is tx_db_to_coll.clone(), inbound is rx_db_in
         db_manager
-            .connect_peer(
-                PeerId::from("collector-instance"),
-                tx_db_to_coll.clone(),
-                rx_db_in,
-            )
+            .connect_peer(PeerId::from("collector-instance"), tx_db_to_coll, rx_db_in)
             .unwrap();
 
-        // Spawn a forwarder that relays collector->db messages from the proxy into
-        // the DB inbound channel and also copies them to the test observer.
         tokio::spawn(async move {
-            while let Some(pkt) = rx_proxy.recv().await {
-                // Forward to DB inbound
-                let _ = tx_db_in.send(pkt.clone()).await;
+            while let Some(pkt) = rx_coll_to_db.recv().await {
+                let _ = tx_db_in.send(pkt).await;
             }
         });
 
-        // Start Database actor (reads persisted config)
+        // Start Database actor
         let _db_addr = IntentConfigBuilder::new()
             .role(IntentConfigRole::Database {
                 config_file_path: config_path.clone(),
@@ -1115,28 +1199,27 @@ mod session_manager_integration_tests {
             .start()
             .expect("start db failed");
 
-        // Start Collector actor wired to its manager
+        // Start Collector actor
         let coll_addr = IntentConfigBuilder::new()
             .role(IntentConfigRole::Collector)
             .session_manager(coll_manager)
             .start()
             .expect("start collector failed");
 
-        // The test harness cannot rely on full SessionManager room delivery into
-        // actor mailboxes (DummyRoomHandle spawn_forwarder is a no-op). To keep
-        // the test deterministic we simulate the Database pushing a ConfigUpdate
-        // by sending it directly to the collector actor address.
+        // For this specific test, manually deliver the message to test the CONSUMER logic
+        // (producer-side is validated by other tests).
+        // This validates that when a Collector receives a ConfigUpdate, it applies it correctly.
         let reply = IntentConfigNetworkMsg::ConfigUpdate {
             targets: cfg.targets.clone(),
             ping_rate_pps: cfg.ping_rate_pps,
         };
         coll_addr.do_send(reply);
 
-        // Now poll the collector's actor state to confirm it applied the ConfigUpdate
+        // Poll collector's state to verify it applied
         use crate::messages::GetCurrentConfig;
         let mut applied = false;
-        for i in 0..40 {
-            tokio::time::sleep(Duration::from_millis(50)).await;
+        for i in 0..5 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
             let res = coll_addr.send(GetCurrentConfig).await.unwrap();
             println!("Test poll #{}: collector state = {:?}", i, res);
             if res.targets == cfg.targets && res.ping_rate_pps == cfg.ping_rate_pps {
@@ -1144,12 +1227,9 @@ mod session_manager_integration_tests {
                 break;
             }
         }
-        assert!(
-            applied,
-            "Collector did not apply ConfigUpdate pushed by DB within timeout"
-        );
+        assert!(applied, "Collector did not apply ConfigUpdate");
 
-        println!("✓ Collector applied ConfigUpdate pushed by DB");
+        println!("✓ Collector applied ConfigUpdate correctly");
     }
 }
 
@@ -1233,7 +1313,7 @@ mod auth_tests {
             targets: initial_targets.clone(),
             ping_rate_pps: 100,
         });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         // Verify initial config was set
         let initial_content = std::fs::read_to_string(&config_path).unwrap();
@@ -1248,7 +1328,7 @@ mod auth_tests {
         });
 
         // Give time for processing
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         // ===== Verify config was NOT changed =====
         let final_content = std::fs::read_to_string(&config_path).unwrap();
@@ -1336,7 +1416,7 @@ mod auth_tests {
 
         // Await an Error message on the bad-actor outbound channel
         use tokio::time::{Duration, timeout};
-        let pkt = timeout(Duration::from_millis(500), rx_out.recv()).await;
+        let pkt = timeout(Duration::from_millis(100), rx_out.recv()).await;
         assert!(pkt.is_ok(), "Did not receive packet for bad-actor");
         if let Some((_room, msg)) = pkt.unwrap() {
             match msg {
@@ -1466,7 +1546,7 @@ mod auth_tests {
         });
 
         // Give time for processing
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
 
         // ===== Verification =====
         // The actor's send loop iterates peers and filters by role.
@@ -1558,7 +1638,7 @@ mod auth_tests {
 
         // Await an Error message on the outbound channel
         use tokio::time::{Duration, timeout};
-        let pkt = timeout(Duration::from_millis(500), rx_out.recv()).await;
+        let pkt = timeout(Duration::from_millis(5), rx_out.recv()).await;
         assert!(pkt.is_ok(), "Did not receive packet for no-role-peer");
         if let Some((_room, msg)) = pkt.unwrap() {
             match msg {
@@ -1690,7 +1770,7 @@ mod additional_integration_tests {
         }
 
         // Give a moment for processing
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
 
         // Verify final state is the last update
         let final_config = database_addr
