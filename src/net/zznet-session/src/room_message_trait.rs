@@ -66,7 +66,7 @@ impl StdError for DeserializationError {}
 /// This trait enables PeerSession and SessionManager to work with any application's
 /// message enum while maintaining type safety and allowing different applications to
 /// have different enum definitions.
-pub trait RoomMessageTrait: Clone + Send + 'static {
+pub trait RoomMessageTrait: Clone + Send + Sync + Unpin + 'static {
     /// Get the room ID for this message
     ///
     /// The room ID is determined by which enum variant this is.

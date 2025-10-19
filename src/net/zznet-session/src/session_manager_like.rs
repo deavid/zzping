@@ -13,7 +13,7 @@ use zznet_auth::ApplicationRole;
 #[async_trait]
 pub trait SessionManagerLike<TMsg, TRole>: Send + Sync
 where
-    TMsg: RoomMessageTrait + Clone + Send + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     /// Broadcast a message to all peers matching a filter in parallel.

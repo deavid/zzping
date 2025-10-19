@@ -166,7 +166,7 @@ where
 
 impl<TMsg> Actor for SessionBridge<TMsg>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
 {
     type Context = Context<Self>;
 

@@ -40,7 +40,7 @@ pub fn connect_managers_in_memory<TMsg, TRole>(
     peer_id_b: &zznet_session::types::PeerId,
 ) -> Result<(), zznet_session::types::SessionError>
 where
-    TMsg: RoomMessageTrait + Clone + Send + 'static,
+    TMsg: RoomMessageTrait,
     TRole: zznet_auth::ApplicationRole,
 {
     use tokio::sync::mpsc;
@@ -73,7 +73,7 @@ pub fn create_and_add_peer<TMsg, TRole>(
     role: Option<TRole>,
 ) -> Result<(), zznet_session::types::SessionError>
 where
-    TMsg: RoomMessageTrait + Clone + Send + 'static,
+    TMsg: RoomMessageTrait,
     TRole: zznet_auth::ApplicationRole,
 {
     // Create peer
@@ -200,7 +200,7 @@ pub fn create_peer_with_message_capture<TMsg, TRole>(
     role: Option<TRole>,
 ) -> Result<MessageCapture<TMsg>, zznet_session::types::SessionError>
 where
-    TMsg: RoomMessageTrait + Clone + Send + 'static,
+    TMsg: RoomMessageTrait,
     TRole: zznet_auth::ApplicationRole,
 {
     // Create and add the peer

@@ -11,7 +11,7 @@ use zznet_session::{
 /// A builder for constructing `CStateActor` instances.
 pub struct CStateBuilder<TMsg, TRole, SM>
 where
-    TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
+    TMsg: RoomMessageTrait + From<CStateMessage>,
     TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
@@ -22,7 +22,7 @@ where
 
 impl<TMsg, TRole, SM> CStateBuilder<TMsg, TRole, SM>
 where
-    TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
+    TMsg: RoomMessageTrait + From<CStateMessage>,
     TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {

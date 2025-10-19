@@ -44,7 +44,7 @@ where
 
 impl<TMsg, TRole> ConnectionManager<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     /// Create a new ConnectionManager
@@ -177,7 +177,7 @@ where
 
 impl<TMsg, TRole> Actor for ConnectionManager<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Context = Context<Self>;
@@ -191,7 +191,7 @@ pub struct GetPeers;
 /// Handler for GetPeers - Return list of connected peer IDs
 impl<TMsg, TRole> Handler<GetPeers> for ConnectionManager<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = Vec<PeerId>;
@@ -223,7 +223,7 @@ impl<TMsg> GetPeerSender<TMsg> {
 /// Handler for GetPeerSender - Return cloneable sender for a peer
 impl<TMsg, TRole> Handler<GetPeerSender<TMsg>> for ConnectionManager<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = Option<mpsc::Sender<(RoomId, TMsg)>>;
@@ -255,7 +255,7 @@ impl<TMsg> SubscribePeerInbound<TMsg> {
 /// Handler for SubscribePeerInbound - Subscribe to inbound messages from peer
 impl<TMsg, TRole> Handler<SubscribePeerInbound<TMsg>> for ConnectionManager<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = Option<tokio::sync::broadcast::Receiver<(RoomId, TMsg)>>;
@@ -290,7 +290,7 @@ pub struct SendToRoom<TMsg> {
 /// See `get_peer_sender()` method below for the proper approach.
 impl<TMsg, TRole> Handler<SendToRoom<TMsg>> for ConnectionManager<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ResponseFuture<Result<(), String>>;
@@ -309,7 +309,7 @@ where
 /// Simplified: Delegates complex message wiring to SessionBridge actor.
 impl<TMsg, TRole> Handler<HandshakeComplete> for ConnectionManager<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ();

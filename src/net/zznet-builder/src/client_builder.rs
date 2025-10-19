@@ -30,7 +30,7 @@ where
 
 impl<TMsg, TRole> ClientBuilder<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     /// Create a new ClientBuilder with default configuration
@@ -182,7 +182,7 @@ where
 
 impl<TMsg, TRole> Default for ClientBuilder<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     fn default() -> Self {
@@ -207,7 +207,7 @@ where
 
 impl<TMsg, TRole> Actor for ClientActor<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Context = Context<Self>;
@@ -220,7 +220,7 @@ where
 
 impl<TMsg, TRole> ClientActor<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     /// Run the connection loop
@@ -296,7 +296,7 @@ pub struct Disconnect;
 
 impl<TMsg, TRole> Handler<Disconnect> for ClientActor<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ();
@@ -320,7 +320,7 @@ pub struct Reconnect;
 
 impl<TMsg, TRole> Handler<Reconnect> for ClientActor<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ();

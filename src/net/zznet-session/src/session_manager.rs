@@ -15,7 +15,7 @@ const DEFAULT_BROADCAST_TIMEOUT_MS: u64 = 5000;
 #[async_trait]
 impl<TMsg, TRole> SessionManagerLike<TMsg, TRole> for SessionManager<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + Clone + Send + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     async fn broadcast_to_room<F>(

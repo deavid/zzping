@@ -29,7 +29,7 @@ where
 
 impl<TMsg, TRole> ServerBuilder<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     /// Create a new ServerBuilder with default configuration
@@ -171,7 +171,7 @@ where
 
 impl<TMsg, TRole> Default for ServerBuilder<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     fn default() -> Self {
@@ -192,7 +192,7 @@ where
 
 impl<TMsg, TRole> Actor for ServerActor<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Context = Context<Self>;
@@ -211,7 +211,7 @@ struct AcceptNext;
 
 impl<TMsg, TRole> Handler<AcceptNext> for ServerActor<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ResponseActFuture<Self, ()>;
@@ -263,7 +263,7 @@ pub struct StopServer;
 
 impl<TMsg, TRole> Handler<StopServer> for ServerActor<TMsg, TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
+    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ();
