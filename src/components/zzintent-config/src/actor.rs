@@ -1942,4 +1942,350 @@ mod tests {
         let final_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
         assert!(final_timestamp > initial_timestamp);
     }
+
+    // Test: Database responds to QueryCurrentConfig by broadcasting current config
+    #[actix::test]
+    #[ntest::timeout(200)]
+    async fn test_database_responds_to_query_current_config() {
+        setup();
+
+        // Create SessionManager and add connected peers
+        use zznet_session::peer_session::PeerSession;
+        use zznet_session::types::PeerId;
+
+        let mut session_manager =
+            zznet_session::session_manager::SessionManager::<
+                IntentConfigMessage,
+                PermissionWrapper<MockRole>,
+            >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
+
+        // Add peer with User role
+        let peer_id1 = PeerId::from("peer-query-1");
+        let mut peer_session1 = PeerSession::new(peer_id1.clone());
+        peer_session1.set_role(Some(PermissionWrapper {
+            permission: MockRole::User,
+        }));
+
+        let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
+        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+
+        tokio::spawn(async move { while (outbound_rx1.recv().await).is_some() {} });
+
+        session_manager
+            .add_peer(peer_id1.clone(), peer_session1)
+            .unwrap();
+
+        // Add peer with Admin role
+        let peer_id2 = PeerId::from("peer-query-2");
+        let mut peer_session2 = PeerSession::new(peer_id2.clone());
+        peer_session2.set_role(Some(PermissionWrapper {
+            permission: MockRole::Admin,
+        }));
+
+        let (_inbound_tx2, _inbound_rx2) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx2, mut outbound_rx2) = tokio::sync::mpsc::channel(10);
+        peer_session2.connect(outbound_tx2, _inbound_rx2).unwrap();
+
+        tokio::spawn(async move { while (outbound_rx2.recv().await).is_some() {} });
+
+        session_manager
+            .add_peer(peer_id2.clone(), peer_session2)
+            .unwrap();
+
+        // Wrap in Rc and attach to actor
+        let rc_sm = Rc::new(session_manager);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path,
+        };
+        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        actor.set_session_manager(Rc::clone(&rc_sm));
+
+        // Set custom config that should be broadcast
+        actor.current_config = IntentConfigData {
+            targets: vec!["7.8.9.10".parse().unwrap()],
+            ping_rate_pps: 777,
+        };
+
+        // Ensure counters start at zero
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 0);
+        let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+
+        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+
+        // ACT: Send QueryCurrentConfig to Database
+        let query_msg = IntentConfigMessage::QueryCurrentConfig;
+        let _ = actor.handle(query_msg, &mut ctx).await;
+
+        // Give async tasks a moment to run
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+        // ASSERT: Both peers should receive the current config (no permission filter for QueryCurrentConfig responses)
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 2);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+
+        // ASSERT: Timestamp was updated
+        let final_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+        assert!(final_timestamp > initial_timestamp);
+    }
+
+    // Test: Database handles QueryCurrentConfig gracefully without session_manager
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_database_handles_query_current_config_without_session_manager() {
+        setup();
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path,
+        };
+        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        // Note: No session_manager set
+
+        // Set custom config
+        actor.current_config = IntentConfigData {
+            targets: vec!["1.2.3.4".parse().unwrap()],
+            ping_rate_pps: 100,
+        };
+
+        // Ensure counters start at zero
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 0);
+        let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+
+        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+
+        // ACT: Send QueryCurrentConfig to Database without session_manager
+        let query_msg = IntentConfigMessage::QueryCurrentConfig;
+        let _ = actor.handle(query_msg, &mut ctx).await;
+
+        // ASSERT: No broadcast occurred, counters unchanged
+        assert_eq!(actor.successful_broadcasts.load(Ordering::Relaxed), 0);
+        assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
+
+        // ASSERT: Timestamp unchanged
+        let final_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
+        assert_eq!(final_timestamp, initial_timestamp);
+    }
+
+    // Test: Database QueryCurrentConfig broadcasts correct config data
+    #[actix::test]
+    #[ntest::timeout(200)]
+    async fn test_database_query_current_config_broadcasts_correct_data() {
+        setup();
+
+        // Create SessionManager and add connected peer
+        use zznet_session::peer_session::PeerSession;
+        use zznet_session::types::PeerId;
+
+        let mut session_manager =
+            zznet_session::session_manager::SessionManager::<
+                IntentConfigMessage,
+                PermissionWrapper<MockRole>,
+            >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
+
+        // Add peer with User role
+        let peer_id = PeerId::from("peer-data-check");
+        let mut peer_session = PeerSession::new(peer_id.clone());
+        peer_session.set_role(Some(PermissionWrapper {
+            permission: MockRole::User,
+        }));
+
+        let (_inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(10);
+        let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(10);
+        peer_session.connect(outbound_tx, inbound_rx).unwrap();
+
+        // Collect messages sent to peer
+        let (msg_tx, mut msg_rx) = tokio::sync::mpsc::channel(10);
+        tokio::spawn(async move {
+            while let Some(msg) = outbound_rx.recv().await {
+                msg_tx.send(msg).await.ok();
+            }
+        });
+
+        session_manager
+            .add_peer(peer_id.clone(), peer_session)
+            .unwrap();
+
+        // Wrap in Rc and attach to actor
+        let rc_sm = Rc::new(session_manager);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let config_path = temp_dir.path().join("test.ron");
+        let role = IntentConfigRole::Database {
+            config_file_path: config_path,
+        };
+        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        actor.set_session_manager(Rc::clone(&rc_sm));
+
+        // Set specific config that should be broadcast
+        let expected_targets = vec!["192.168.1.1".parse().unwrap(), "10.0.0.1".parse().unwrap()];
+        let expected_rate = 999;
+        actor.current_config = IntentConfigData {
+            targets: expected_targets.clone(),
+            ping_rate_pps: expected_rate,
+        };
+
+        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+
+        // ACT: Send QueryCurrentConfig to Database
+        let query_msg = IntentConfigMessage::QueryCurrentConfig;
+        let _ = actor.handle(query_msg, &mut ctx).await;
+
+        // ASSERT: Peer received the correct CurrentConfig message
+        let received_msg =
+            tokio::time::timeout(std::time::Duration::from_millis(50), msg_rx.recv())
+                .await
+                .expect("Peer should receive CurrentConfig message")
+                .unwrap();
+
+        // Message is sent as (RoomId, IntentConfigMessage)
+        let (_room_id, actual_msg) = received_msg;
+        match actual_msg {
+            IntentConfigMessage::CurrentConfig {
+                targets,
+                ping_rate_pps,
+            } => {
+                assert_eq!(targets, expected_targets);
+                assert_eq!(ping_rate_pps, expected_rate);
+            }
+            _ => panic!("Expected CurrentConfig message, got {:?}", actual_msg),
+        }
+    }
+
+    // Test: Collector accepts CurrentConfig and updates its config
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_collector_accepts_current_config() {
+        setup();
+        // ARRANGE
+        let role = IntentConfigRole::Collector;
+        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let original_config = actor.current_config.clone();
+        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+
+        let new_targets = vec![
+            "10.10.10.10".parse().unwrap(),
+            "20.20.20.20".parse().unwrap(),
+        ];
+        let new_rate = 1234;
+        let msg = IntentConfigMessage::CurrentConfig {
+            targets: new_targets.clone(),
+            ping_rate_pps: new_rate,
+        };
+
+        // ACT
+        let _ = actor.handle(msg, &mut ctx).await;
+
+        // ASSERT: Collector's config SHOULD change
+        assert_ne!(actor.current_config, original_config);
+        assert_eq!(actor.current_config.targets, new_targets);
+        assert_eq!(actor.current_config.ping_rate_pps, new_rate);
+    }
+
+    // Test: Collector handles CurrentConfig with same config (no-op)
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_collector_current_config_no_op_when_unchanged() {
+        setup();
+        // ARRANGE
+        let role = IntentConfigRole::Collector;
+        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let original_config = actor.current_config.clone();
+        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+
+        // Send CurrentConfig with same data as current config
+        let msg = IntentConfigMessage::CurrentConfig {
+            targets: original_config.targets.clone(),
+            ping_rate_pps: original_config.ping_rate_pps,
+        };
+
+        // ACT
+        let _ = actor.handle(msg, &mut ctx).await;
+
+        // ASSERT: Config should remain unchanged
+        assert_eq!(actor.current_config, original_config);
+    }
+
+    // Test: Collector broadcasts to subscribers when CurrentConfig changes config
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_collector_current_config_broadcasts_on_change() {
+        setup();
+        // ARRANGE
+        let role = IntentConfigRole::Collector;
+        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+
+        // Add a subscriber
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+        let mock_subscriber = MockSubscriber { tx }.start();
+        let subscribe_msg = Subscribe {
+            recipient: mock_subscriber.recipient(),
+        };
+        actor.handle(subscribe_msg, &mut ctx);
+
+        // Drain the initial config broadcast
+        rx.recv().await.unwrap();
+
+        // ACT: Send CurrentConfig with new data
+        let new_targets = vec!["30.30.30.30".parse().unwrap()];
+        let new_rate = 5678;
+        let msg = IntentConfigMessage::CurrentConfig {
+            targets: new_targets.clone(),
+            ping_rate_pps: new_rate,
+        };
+        let _ = actor.handle(msg, &mut ctx).await;
+
+        // ASSERT: Subscriber should receive the new config
+        let received_config = tokio::time::timeout(Duration::from_millis(10), rx.recv())
+            .await
+            .expect("Subscriber should receive updated config")
+            .unwrap();
+
+        let expected_config = IntentConfigData {
+            targets: new_targets,
+            ping_rate_pps: new_rate,
+        };
+        assert_eq!(received_config, expected_config);
+    }
+
+    // Test: Collector does not broadcast when CurrentConfig has same config
+    #[actix::test]
+    #[ntest::timeout(100)]
+    async fn test_collector_current_config_no_broadcast_when_unchanged() {
+        setup();
+        // ARRANGE
+        let role = IntentConfigRole::Collector;
+        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+
+        // Add a subscriber
+        let (tx, mut rx) = tokio::sync::mpsc::channel(10);
+        let mock_subscriber = MockSubscriber { tx }.start();
+        let subscribe_msg = Subscribe {
+            recipient: mock_subscriber.recipient(),
+        };
+        actor.handle(subscribe_msg, &mut ctx);
+
+        // Drain the initial config broadcast
+        rx.recv().await.unwrap();
+
+        // ACT: Send CurrentConfig with same data as current config
+        let msg = IntentConfigMessage::CurrentConfig {
+            targets: actor.current_config.targets.clone(),
+            ping_rate_pps: actor.current_config.ping_rate_pps,
+        };
+        let _ = actor.handle(msg, &mut ctx).await;
+
+        // ASSERT: Subscriber should NOT receive another broadcast (channel should be empty)
+        let result = tokio::time::timeout(Duration::from_millis(10), rx.recv()).await;
+        assert!(
+            result.is_err(),
+            "Subscriber should not receive a broadcast for unchanged config"
+        );
+    }
 }
