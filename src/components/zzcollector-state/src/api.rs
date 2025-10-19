@@ -20,7 +20,7 @@ use zznet_session::{
 pub struct CStateHandle<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     addr: Addr<CStateActor<TMsg, TRole, SM>>,
@@ -29,7 +29,7 @@ where
 impl<TMsg, TRole, SM> CStateHandle<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     /// Creates a new `CStateHandle`.

@@ -24,18 +24,18 @@ use zznet_session::types::RoomId;
 /// Message to set the session manager on a running actor
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct SetSessionManager<T: ApplicationRole + std::fmt::Debug> {
+pub struct SetSessionManager<T: ApplicationRole> {
     /// The session manager to set
     pub session_manager: Rc<SessionManager<MemDBMessage, PermissionWrapper<T>>>,
 }
 
 /// Room handle that forwards MemDB messages to the MemDBActor
-pub struct MemDBRoomHandle<T: ApplicationRole + std::fmt::Debug> {
+pub struct MemDBRoomHandle<T: ApplicationRole> {
     addr: Addr<MemDBActor<T>>,
     room_id: RoomId,
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> MemDBRoomHandle<T> {
+impl<T: ApplicationRole> MemDBRoomHandle<T> {
     /// Create a new MemDBRoomHandle that forwards messages to the given actor address
     pub fn new(addr: Addr<MemDBActor<T>>) -> Self {
         Self {
@@ -45,9 +45,7 @@ impl<T: ApplicationRole + std::fmt::Debug> MemDBRoomHandle<T> {
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug + std::hash::Hash + 'static> RoomHandle<MemDBMessage>
-    for MemDBRoomHandle<T>
-{
+impl<T: ApplicationRole> RoomHandle<MemDBMessage> for MemDBRoomHandle<T> {
     fn room_id(&self) -> &RoomId {
         &self.room_id
     }
@@ -74,7 +72,7 @@ impl<T: ApplicationRole + std::fmt::Debug + std::hash::Hash + 'static> RoomHandl
 /// This actor operates in two roles:
 /// - **Collector**: Buffers ping results and sends batches to Database peers
 /// - **Database**: Receives batches, stores data, and provides query interface
-pub struct MemDBActor<T: ApplicationRole + std::fmt::Debug> {
+pub struct MemDBActor<T: ApplicationRole> {
     /// Role configuration (Collector or Database)
     role: MemDBRole,
 
@@ -98,7 +96,7 @@ pub struct MemDBActor<T: ApplicationRole + std::fmt::Debug> {
     outstanding_batch: Option<u64>,
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> Clone for MemDBActor<T> {
+impl<T: ApplicationRole> Clone for MemDBActor<T> {
     fn clone(&self) -> Self {
         Self {
             role: self.role.clone(),
@@ -113,13 +111,13 @@ impl<T: ApplicationRole + std::fmt::Debug> Clone for MemDBActor<T> {
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> Default for MemDBActor<T> {
+impl<T: ApplicationRole> Default for MemDBActor<T> {
     fn default() -> Self {
         Self::new_with_role(MemDBRole::default())
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> MemDBActor<T> {
+impl<T: ApplicationRole> MemDBActor<T> {
     /// Create a new MemDBActor with the specified role
     pub fn new_with_role(role: MemDBRole) -> Self {
         Self::new_with_role_and_session_manager(role, None)
@@ -281,7 +279,7 @@ impl<T: ApplicationRole + std::fmt::Debug> MemDBActor<T> {
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> Actor for MemDBActor<T> {
+impl<T: ApplicationRole> Actor for MemDBActor<T> {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Context<Self>) {
@@ -295,7 +293,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Actor for MemDBActor<T> {
 
 // Message handlers
 
-impl<T: ApplicationRole + std::fmt::Debug> Handler<SetSessionManager<T>> for MemDBActor<T> {
+impl<T: ApplicationRole> Handler<SetSessionManager<T>> for MemDBActor<T> {
     type Result = ();
 
     fn handle(&mut self, msg: SetSessionManager<T>, _ctx: &mut Context<Self>) {
@@ -303,7 +301,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Handler<SetSessionManager<T>> for Mem
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> Handler<StorePingResult> for MemDBActor<T> {
+impl<T: ApplicationRole> Handler<StorePingResult> for MemDBActor<T> {
     type Result = Result<(), MemDBError>;
 
     fn handle(&mut self, msg: StorePingResult, _ctx: &mut Context<Self>) -> Self::Result {
@@ -330,7 +328,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Handler<StorePingResult> for MemDBAct
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> Handler<ClearBuffer> for MemDBActor<T> {
+impl<T: ApplicationRole> Handler<ClearBuffer> for MemDBActor<T> {
     type Result = Result<(), MemDBError>;
 
     fn handle(&mut self, _msg: ClearBuffer, _ctx: &mut Context<Self>) -> Self::Result {
@@ -346,7 +344,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Handler<ClearBuffer> for MemDBActor<T
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> Handler<GetHealth> for MemDBActor<T> {
+impl<T: ApplicationRole> Handler<GetHealth> for MemDBActor<T> {
     type Result = Result<MemDBHealth, MemDBError>;
 
     fn handle(&mut self, _msg: GetHealth, _ctx: &mut Context<Self>) -> Self::Result {
@@ -372,7 +370,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Handler<GetHealth> for MemDBActor<T> 
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> Handler<GetStats> for MemDBActor<T> {
+impl<T: ApplicationRole> Handler<GetStats> for MemDBActor<T> {
     type Result = Result<TargetStats, MemDBError>;
 
     fn handle(&mut self, msg: GetStats, _ctx: &mut Context<Self>) -> Self::Result {
@@ -390,10 +388,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Handler<GetStats> for MemDBActor<T> {
 /// The behavior depends on the actor's role:
 /// - **Collector**: Receives BatchAck responses from Database peers
 /// - **Database**: Receives SubmitBatch and Query requests, sends responses
-impl<
-    T: ApplicationRole + 'static + Send + Clone + std::fmt::Debug + PartialEq + Eq + std::hash::Hash,
-> Handler<MemDBMessage> for MemDBActor<T>
-{
+impl<T: ApplicationRole> Handler<MemDBMessage> for MemDBActor<T> {
     type Result = ResponseFuture<()>;
 
     fn handle(&mut self, msg: MemDBMessage, _ctx: &mut Context<Self>) -> Self::Result {

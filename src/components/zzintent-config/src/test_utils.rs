@@ -1,4 +1,4 @@
-use crate::network_messages::IntentConfigMessage;
+use crate::network_messages::IntentConfigNetworkMsg;
 use tokio::sync::mpsc;
 use zznet_session::types::{RoomId, SessionError};
 
@@ -15,19 +15,19 @@ impl DummyRoomHandle {
     }
 }
 
-impl zznet_session::peer_session::RoomHandle<IntentConfigMessage> for DummyRoomHandle {
+impl zznet_session::peer_session::RoomHandle<IntentConfigNetworkMsg> for DummyRoomHandle {
     fn room_id(&self) -> &RoomId {
         &self.id
     }
 
-    fn send_message(&mut self, _msg: IntentConfigMessage) -> Result<(), SessionError> {
+    fn send_message(&mut self, _msg: IntentConfigNetworkMsg) -> Result<(), SessionError> {
         // No-op for tests
         Ok(())
     }
 
     fn spawn_forwarder(
         &mut self,
-        _tx: mpsc::Sender<(RoomId, IntentConfigMessage)>,
+        _tx: mpsc::Sender<(RoomId, IntentConfigNetworkMsg)>,
     ) -> Result<(), SessionError> {
         // No-op for tests
         Ok(())

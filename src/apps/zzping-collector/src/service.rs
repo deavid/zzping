@@ -132,7 +132,7 @@ impl CollectorService {
         let offered_rooms = vec![RoomId::from("intent-config")];
 
         let session_manager = zznet_session::session_manager::SessionManager::<
-            zzintent_config::network_messages::IntentConfigMessage,
+            zzintent_config::network_messages::IntentConfigNetworkMsg,
             zzintent_config::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(offered_rooms);
 

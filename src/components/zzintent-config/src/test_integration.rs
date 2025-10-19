@@ -15,7 +15,7 @@
 #[cfg(test)]
 mod session_manager_integration_tests {
     use crate::builder::IntentConfigBuilder;
-    use crate::network_messages::IntentConfigMessage;
+    use crate::network_messages::IntentConfigNetworkMsg;
     use crate::permissions::IntentConfigPermission;
     use crate::role::IntentConfigRole;
     use std::net::IpAddr;
@@ -46,7 +46,7 @@ mod session_manager_integration_tests {
         // Send RequestConfigChange
         let targets = vec!["8.8.8.8".parse::<IpAddr>().unwrap()];
         let ping_rate_pps = 100;
-        database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+        database_addr.do_send(IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-admin".to_string(),
             targets: targets.clone(),
             ping_rate_pps,
@@ -187,7 +187,7 @@ mod session_manager_integration_tests {
             "8.8.8.8".parse::<IpAddr>().unwrap(),
         ];
         let ping_rate_pps = 200;
-        collector_addr.do_send(IntentConfigMessage::ConfigUpdate {
+        collector_addr.do_send(IntentConfigNetworkMsg::ConfigUpdate {
             targets: targets.clone(),
             ping_rate_pps,
         });
@@ -215,12 +215,12 @@ mod session_manager_integration_tests {
 
         // Create SessionManagers for two processes
         let mut db_manager = zznet_session::session_manager::SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
         let mut collector_manager = zznet_session::session_manager::SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
@@ -229,7 +229,7 @@ mod session_manager_integration_tests {
         // to wire channels for that remote peer.
         // db_manager holds a peer entry for the collector (remote peer id)
         let mut db_peer_for_collector = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("collector-instance"));
         db_peer_for_collector
@@ -250,7 +250,7 @@ mod session_manager_integration_tests {
 
         // Collector manager holds a peer entry for the database instance (remote peer id)
         let mut coll_peer_for_db = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("db-instance"));
         coll_peer_for_db
@@ -271,7 +271,7 @@ mod session_manager_integration_tests {
 
         // Also add an admin peer locally to db_manager to authorize the local RequestConfigChange
         let mut admin_peer = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("test-admin"));
         admin_peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -332,7 +332,7 @@ mod session_manager_integration_tests {
 
         // Send a config change from the DB actor (simulate admin)
         let targets = vec!["5.5.5.5".parse::<IpAddr>().unwrap()];
-        db_addr.do_send(IntentConfigMessage::RequestConfigChange {
+        db_addr.do_send(IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "db-instance".to_string(),
             targets: targets.clone(),
             ping_rate_pps: 123,
@@ -374,7 +374,7 @@ mod session_manager_integration_tests {
         // Send config change
         let targets = vec!["9.9.9.9".parse::<IpAddr>().unwrap()];
         let ping_rate_pps = 50;
-        database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+        database_addr.do_send(IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-admin".to_string(),
             targets: targets.clone(),
             ping_rate_pps,
@@ -424,13 +424,13 @@ mod session_manager_integration_tests {
 
         // ===== Create Database SessionManager with 2 Collector peers + 1 Admin =====
         let mut session_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
         // Add admin peer (for RequestConfigChange authorization)
         let mut admin_peer = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("test-admin"));
         admin_peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -446,7 +446,7 @@ mod session_manager_integration_tests {
         use zzping_test_utils::DummyRoomHandle;
 
         let mut peer1 = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("collector1"));
         peer1
@@ -472,7 +472,7 @@ mod session_manager_integration_tests {
             .unwrap();
 
         let mut peer2 = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("collector2"));
         peer2
@@ -497,14 +497,14 @@ mod session_manager_integration_tests {
         // Connect peers in-memory using mpsc channels so we can capture outbound messages
         // For each collector peer we create an outbound_tx that the SessionManager's
         // PeerSession will use to send messages; we'll receive those on the rx side.
-        let (tx1_out, mut rx1_out) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
-        let (_tx1_in, rx1_in) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (tx1_out, mut rx1_out) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
+        let (_tx1_in, rx1_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("collector1"), tx1_out, rx1_in)
             .unwrap();
 
-        let (tx2_out, mut rx2_out) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
-        let (_tx2_in, rx2_in) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (tx2_out, mut rx2_out) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
+        let (_tx2_in, rx2_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("collector2"), tx2_out, rx2_in)
             .unwrap();
@@ -534,7 +534,7 @@ mod session_manager_integration_tests {
         ];
         let ping_rate_pps = 200;
 
-        database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+        database_addr.do_send(IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-admin".to_string(),
             targets: targets.clone(),
             ping_rate_pps,
@@ -559,7 +559,7 @@ mod session_manager_integration_tests {
         if let Some((room, msg)) = pkt1.unwrap() {
             assert_eq!(room, RoomId::from("intent-config"));
             match msg {
-                IntentConfigMessage::ConfigUpdate {
+                IntentConfigNetworkMsg::ConfigUpdate {
                     targets: t,
                     ping_rate_pps: r,
                 } => {
@@ -575,7 +575,7 @@ mod session_manager_integration_tests {
                         let next = timeout(TokioDuration::from_millis(200), rx1_out.recv()).await;
                         if let Ok(Some((_room2, msg2))) = next {
                             match msg2 {
-                                IntentConfigMessage::ConfigUpdate {
+                                IntentConfigNetworkMsg::ConfigUpdate {
                                     targets: t2,
                                     ping_rate_pps: r2,
                                 } => {
@@ -602,7 +602,7 @@ mod session_manager_integration_tests {
         if let Some((room, msg)) = pkt2.unwrap() {
             assert_eq!(room, RoomId::from("intent-config"));
             match msg {
-                IntentConfigMessage::ConfigUpdate {
+                IntentConfigNetworkMsg::ConfigUpdate {
                     targets: t,
                     ping_rate_pps: r,
                 } => {
@@ -614,7 +614,7 @@ mod session_manager_integration_tests {
                         let next = timeout(TokioDuration::from_millis(200), rx2_out.recv()).await;
                         if let Ok(Some((_room2, msg2))) = next {
                             match msg2 {
-                                IntentConfigMessage::ConfigUpdate {
+                                IntentConfigNetworkMsg::ConfigUpdate {
                                     targets: t2,
                                     ping_rate_pps: r2,
                                 } => {
@@ -670,7 +670,7 @@ mod session_manager_integration_tests {
 
         // Create SessionManager and add a Collector peer BEFORE actor starts
         let mut session_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
@@ -704,7 +704,7 @@ mod session_manager_integration_tests {
         );
         if let Some((_room, msg)) = pkt.unwrap() {
             match msg {
-                IntentConfigMessage::ConfigUpdate {
+                IntentConfigNetworkMsg::ConfigUpdate {
                     targets,
                     ping_rate_pps,
                 } => {
@@ -732,13 +732,13 @@ mod session_manager_integration_tests {
 
         // Create a SessionManager for the collector offering intent-config
         let mut coll_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
         // Add a DB peer entry so the manager knows about the DB remote
         let mut db_peer = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("db-instance"));
         db_peer
@@ -759,8 +759,8 @@ mod session_manager_integration_tests {
         // Connect peer channels so we can capture outbound messages that the
         // collector would send to the DB. tx_out is used by the manager to send
         // outbound messages to the remote; we will receive them on rx_out.
-        let (tx_out, mut rx_out) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
-        let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (tx_out, mut rx_out) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
+        let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         coll_manager
             .connect_peer(PeerId::from("db-instance"), tx_out, rx_in)
             .unwrap();
@@ -805,12 +805,12 @@ mod session_manager_integration_tests {
 
         // Create SessionManagers for DB and Collector
         let mut db_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
         let mut coll_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
@@ -857,12 +857,12 @@ mod session_manager_integration_tests {
 
         // Proxy channel: collector inbound for the DB side will be serviced by a
         // forwarder that also copies packets into a test-visible receiver.
-        let (tx_coll_to_db, mut rx_proxy) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (tx_coll_to_db, mut rx_proxy) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         // DB inbound channel that will be given to db_manager
-        let (tx_db_in, rx_db_in) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (tx_db_in, rx_db_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
 
         // Channel: DB -> Collector (db outbound, collector inbound)
-        let (tx_db_to_coll, rx_db_to_coll) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (tx_db_to_coll, rx_db_to_coll) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
 
         // Connect collector manager to DB peer: outbound is tx_coll_to_db, inbound is rx_db_to_coll
         coll_manager
@@ -907,7 +907,7 @@ mod session_manager_integration_tests {
         // actor mailboxes (DummyRoomHandle spawn_forwarder is a no-op). To keep
         // the test deterministic we simulate the Database pushing a ConfigUpdate
         // by sending it directly to the collector actor address.
-        let reply = IntentConfigMessage::ConfigUpdate {
+        let reply = IntentConfigNetworkMsg::ConfigUpdate {
             targets: cfg.targets.clone(),
             ping_rate_pps: cfg.ping_rate_pps,
         };
@@ -940,7 +940,7 @@ mod session_manager_integration_tests {
 #[cfg(test)]
 mod auth_tests {
     use crate::builder::IntentConfigBuilder;
-    use crate::network_messages::IntentConfigMessage;
+    use crate::network_messages::IntentConfigNetworkMsg;
     use crate::permissions::IntentConfigPermission;
     use crate::role::IntentConfigRole;
     use std::net::IpAddr;
@@ -970,13 +970,13 @@ mod auth_tests {
 
         // ===== Create SessionManager with mixed peers =====
         let mut session_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
         // Add admin peer (for initial config setup)
         let mut admin_peer = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("test-admin"));
         admin_peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -988,7 +988,7 @@ mod auth_tests {
 
         // Add peer with Collector role (NOT ClientAdmin - this is the attacker)
         let mut peer = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("bad-actor"));
         peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -1009,7 +1009,7 @@ mod auth_tests {
 
         // Set initial known config
         let initial_targets = vec!["9.9.9.9".parse::<IpAddr>().unwrap()];
-        database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+        database_addr.do_send(IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-admin".to_string(), // Will pass in debug mode
             targets: initial_targets.clone(),
             ping_rate_pps: 100,
@@ -1022,7 +1022,7 @@ mod auth_tests {
 
         // ===== Attempt unauthorized config change from Collector peer =====
         let malicious_targets = vec!["6.6.6.6".parse::<IpAddr>().unwrap()];
-        database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+        database_addr.do_send(IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "bad-actor".to_string(), // Has Collector role, not ClientAdmin
             targets: malicious_targets.clone(),
             ping_rate_pps: 666,
@@ -1064,12 +1064,12 @@ mod auth_tests {
 
         // Create SessionManager and add a single bad-actor peer
         let mut session_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
         let mut peer = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("bad-actor"));
         peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -1093,8 +1093,8 @@ mod auth_tests {
             .unwrap();
 
         // Connect the bad-actor with mpsc channel to capture outbound
-        let (tx_out, mut rx_out) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
-        let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (tx_out, mut rx_out) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
+        let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("bad-actor"), tx_out, rx_in)
             .unwrap();
@@ -1109,7 +1109,7 @@ mod auth_tests {
             .expect("start failed");
 
         // Send RequestConfigChange from bad-actor (unauthorized)
-        database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+        database_addr.do_send(IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "bad-actor".to_string(),
             targets: vec!["1.2.3.4".parse::<IpAddr>().unwrap()],
             ping_rate_pps: 10,
@@ -1121,7 +1121,7 @@ mod auth_tests {
         assert!(pkt.is_ok(), "Did not receive packet for bad-actor");
         if let Some((_room, msg)) = pkt.unwrap() {
             match msg {
-                IntentConfigMessage::Error { reason } => {
+                IntentConfigNetworkMsg::Error { reason } => {
                     assert!(reason.contains("unauthorized") || reason.contains("no role"));
                 }
                 _ => panic!("Expected Error message, got {:?}", msg),
@@ -1164,13 +1164,13 @@ mod auth_tests {
 
         // ===== Create SessionManager with mixed roles =====
         let mut session_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
         // Add 2 Collector peers
         let mut collector1 = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("collector1"));
         collector1.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -1181,7 +1181,7 @@ mod auth_tests {
             .unwrap();
 
         let mut collector2 = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("collector2"));
         collector2.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -1193,7 +1193,7 @@ mod auth_tests {
 
         // Add 1 ClientAdmin peer
         let mut admin = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("admin-user"));
         admin.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -1240,7 +1240,7 @@ mod auth_tests {
 
         // ===== Trigger ConfigUpdate =====
         let targets = vec!["7.7.7.7".parse::<IpAddr>().unwrap()];
-        database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+        database_addr.do_send(IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-admin".to_string(),
             targets: targets.clone(),
             ping_rate_pps: 777,
@@ -1286,13 +1286,13 @@ mod auth_tests {
 
         // Create SessionManager with a peer that has no role set
         let mut session_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
         // Add peer with no role (ACL not configured)
         let mut no_role_peer = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("no-role-peer"));
         // Do not set role: no_role_peer.set_role(None); // Explicitly None
@@ -1315,8 +1315,8 @@ mod auth_tests {
             .unwrap();
 
         // Connect the peer with mpsc channel to capture outbound
-        let (tx_out, mut rx_out) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
-        let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (tx_out, mut rx_out) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
+        let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("no-role-peer"), tx_out, rx_in)
             .unwrap();
@@ -1331,7 +1331,7 @@ mod auth_tests {
             .expect("start failed");
 
         // Send RequestConfigChange from the no-role peer
-        database_addr.do_send(IntentConfigMessage::RequestConfigChange {
+        database_addr.do_send(IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "no-role-peer".to_string(),
             targets: vec!["1.2.3.4".parse::<std::net::IpAddr>().unwrap()],
             ping_rate_pps: 10,
@@ -1343,7 +1343,7 @@ mod auth_tests {
         assert!(pkt.is_ok(), "Did not receive packet for no-role-peer");
         if let Some((_room, msg)) = pkt.unwrap() {
             match msg {
-                IntentConfigMessage::Error { reason } => {
+                IntentConfigNetworkMsg::Error { reason } => {
                     assert!(reason.contains("no-role") || reason.contains("ACL not configured"));
                 }
                 _ => panic!("Expected Error message, got {:?}", msg),
@@ -1416,7 +1416,7 @@ mod auth_tests {
 #[cfg(test)]
 mod additional_integration_tests {
     use crate::builder::IntentConfigBuilder;
-    use crate::network_messages::IntentConfigMessage;
+    use crate::network_messages::IntentConfigNetworkMsg;
     use crate::permissions::IntentConfigPermission;
     use crate::role::IntentConfigRole;
     use tempfile::NamedTempFile;
@@ -1529,13 +1529,13 @@ mod additional_integration_tests {
 
         // Now create and connect SessionManager (simulating late connection)
         let mut session_manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(vec![RoomId::from("intent-config")]);
 
         // Add a collector peer
         let mut collector_peer = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
         >::new(PeerId::from("late-collector"));
         collector_peer
@@ -1562,8 +1562,8 @@ mod additional_integration_tests {
             .unwrap();
 
         // Connect collector's channels
-        let (tx_out, _rx_out) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
-        let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigMessage)>(10);
+        let (tx_out, _rx_out) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
+        let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("late-collector"), tx_out, rx_in)
             .unwrap();

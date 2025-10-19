@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::network_messages::IntentConfigMessage;
+    use crate::network_messages::IntentConfigNetworkMsg;
     use std::time::Duration;
     use tokio::time::{advance, pause};
 
@@ -13,7 +13,7 @@ mod tests {
     async fn test_broadcast_fast_peers_succeed_quickly() {
         // No real waiting: fast path
         let mut manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permissions::IntentConfigPermission,
         >::new(vec!["intent-config".into()]);
 
@@ -23,7 +23,7 @@ mod tests {
 
         // Add peers and negotiate rooms
         let mut peer_session_a = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permissions::IntentConfigPermission,
         >::new(peer_a.clone());
         peer_session_a
@@ -43,7 +43,7 @@ mod tests {
             .unwrap();
 
         let mut peer_session_b = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permissions::IntentConfigPermission,
         >::new(peer_b.clone());
         peer_session_b
@@ -77,7 +77,7 @@ mod tests {
         let results = manager
             .broadcast_to_room(
                 &"intent-config".into(),
-                IntentConfigMessage::Heartbeat,
+                IntentConfigNetworkMsg::Heartbeat,
                 |_role| true,
                 Duration::from_millis(50),
             )
@@ -96,7 +96,7 @@ mod tests {
         pause();
 
         let mut manager = SessionManager::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permissions::IntentConfigPermission,
         >::new(vec!["intent-config".into()]);
 
@@ -105,7 +105,7 @@ mod tests {
 
         // Add fast peer and negotiate rooms
         let mut peer_session_fast = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permissions::IntentConfigPermission,
         >::new(peer_fast.clone());
         peer_session_fast
@@ -128,7 +128,7 @@ mod tests {
 
         // Add slow peer and negotiate rooms
         let mut peer_session_slow = zznet_session::peer_session::PeerSession::<
-            IntentConfigMessage,
+            IntentConfigNetworkMsg,
             crate::permissions::IntentConfigPermission,
         >::new(peer_slow.clone());
         peer_session_slow
@@ -164,7 +164,7 @@ mod tests {
         // Fill the slow peer's outbound buffer so subsequent send will await
         ch_slow
             .tx_out
-            .try_send(("intent-config".into(), IntentConfigMessage::Heartbeat))
+            .try_send(("intent-config".into(), IntentConfigNetworkMsg::Heartbeat))
             .ok();
 
         // Broadcast with small timeout
@@ -172,7 +172,7 @@ mod tests {
         let roomid = RoomId::from("intent-config");
         let fut = manager.broadcast_to_room(
             &roomid,
-            IntentConfigMessage::Heartbeat,
+            IntentConfigNetworkMsg::Heartbeat,
             |_role| true,
             timeout,
         );

@@ -1,7 +1,7 @@
 //! Provides the public builder for creating and starting the IntentConfigActor.
 
 use crate::actor::IntentConfigActor;
-use crate::network_messages::IntentConfigMessage;
+use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permission_wrapper::PermissionWrapper;
 use crate::role::IntentConfigRole;
 use actix::prelude::*;
@@ -17,9 +17,9 @@ use zznet_auth::role::ApplicationRole;
 /// This is the primary public entry point for creating the actor.
 /// It follows the 'Builder -> Start' pattern, ensuring that the actor
 /// is constructed and started in a controlled manner.
-pub struct IntentConfigBuilder<T: ApplicationRole + std::fmt::Debug = IntentConfigPermission> {
+pub struct IntentConfigBuilder<T: ApplicationRole = IntentConfigPermission> {
     role: IntentConfigRole,
-    session_manager: Option<Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>>,
+    session_manager: Option<Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>>,
     /// Per-peer broadcast timeout used when sending messages via SessionManager
     broadcast_timeout: Duration,
 }
@@ -44,7 +44,7 @@ impl Default for IntentConfigBuilder<IntentConfigPermission> {
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> IntentConfigBuilder<T> {
+impl<T: ApplicationRole> IntentConfigBuilder<T> {
     /// Set the role for this IntentConfig actor
     pub fn role(mut self, role: IntentConfigRole) -> Self {
         self.role = role;
@@ -54,7 +54,7 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigBuilder<T> {
     /// Set the SessionManager for network communication
     pub fn session_manager(
         mut self,
-        session_manager: SessionManager<IntentConfigMessage, PermissionWrapper<T>>,
+        session_manager: SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>,
     ) -> Self {
         self.session_manager = Some(Rc::new(session_manager));
         self

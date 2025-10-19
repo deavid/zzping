@@ -5,7 +5,7 @@ use crate::messages::{
     GetCurrentConfig, GetHealth, IntentConfigData, IntentConfigHealth, Subscribe, Unsubscribe,
     UpdateConfig,
 };
-use crate::network_messages::IntentConfigMessage;
+use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permission_wrapper::PermissionWrapper;
 use crate::permissions::{IntentConfigPermission, PermissionCheck};
 use crate::role::IntentConfigRole;
@@ -23,12 +23,7 @@ use zznet_session::types::RoomId;
 
 /// The IntentConfigActor stores the current configuration and manages subscribers.
 /// This struct is the private state of our component.
-///
-/// # ⚠️ Security Warning (Phase 2)
-///
-/// Accepts `RequestConfigChange` from ANY peer without auth checks.
-/// See crate-level docs for full security warning and requirements.
-pub struct IntentConfigActor<T: ApplicationRole + std::fmt::Debug> {
+pub struct IntentConfigActor<T: ApplicationRole> {
     current_config: IntentConfigData,
     subscribers: HashMap<usize, Recipient<IntentConfigData>>,
     next_id: usize,
@@ -37,9 +32,10 @@ pub struct IntentConfigActor<T: ApplicationRole + std::fmt::Debug> {
     role: IntentConfigRole,
 
     /// SessionManager for network communication (Phase 3)
-    session_manager: Option<Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>>,
+    session_manager: Option<Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>>,
     /// Per-peer broadcast timeout used when sending messages via SessionManager
     broadcast_timeout: std::time::Duration,
+
     /// Health counters for operational visibility. These are atomic so background
     /// tasks (spawned async sends) can update counts without accessing the
     /// actor's single-threaded context directly.
@@ -49,7 +45,7 @@ pub struct IntentConfigActor<T: ApplicationRole + std::fmt::Debug> {
     last_broadcast_ms: Arc<AtomicU64>,
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> Default for IntentConfigActor<T> {
+impl<T: ApplicationRole> Default for IntentConfigActor<T> {
     fn default() -> Self {
         Self::new_with_role(IntentConfigRole::default())
     }
@@ -71,7 +67,7 @@ impl PermissionCheck<IntentConfigPermission> for IntentConfigActor<IntentConfigP
     }
 }
 
-impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
+impl<T: ApplicationRole> IntentConfigActor<T> {
     /// Set the per-peer broadcast timeout used for network sends
     pub fn set_broadcast_timeout(&mut self, timeout: std::time::Duration) {
         self.broadcast_timeout = timeout;
@@ -100,7 +96,7 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
     /// Set the SessionManager for network communication
     pub fn set_session_manager(
         &mut self,
-        session_manager: Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>,
+        session_manager: Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>,
     ) {
         self.session_manager = Some(session_manager);
     }
@@ -158,8 +154,8 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
     /// using the provided SessionManager. Returns a ResponseFuture suitable for
     /// returning from a handler when needed.
     fn send_config_update_to_peers(
-        session_manager: Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>,
-        config_update: IntentConfigMessage,
+        session_manager: Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>,
+        config_update: IntentConfigNetworkMsg,
         timeout: std::time::Duration,
         successful_broadcasts: Arc<AtomicU64>,
         failed_broadcasts: Arc<AtomicU64>,
@@ -316,7 +312,7 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
                 // Send ConfigUpdate to each Collector via SessionManager (Phase 3)
                 if let Some(session_manager) = &self.session_manager {
                     let session_manager = Rc::clone(session_manager);
-                    let config_update = IntentConfigMessage::ConfigUpdate {
+                    let config_update = IntentConfigNetworkMsg::ConfigUpdate {
                         targets: self.current_config.targets.clone(),
                         ping_rate_pps: self.current_config.ping_rate_pps,
                     };
@@ -349,12 +345,12 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
 
     /// Spawn a fire-and-forget task to send an Error message to a specific peer.
     fn spawn_send_error(
-        session_manager: Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>,
+        session_manager: Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>,
         peer: String,
         reason: impl Into<String>,
     ) {
         let room_id = RoomId::from("intent-config");
-        let em = IntentConfigMessage::error(reason.into());
+        let em = IntentConfigNetworkMsg::error(reason.into());
         actix::spawn(async move {
             if let Err(e) = session_manager
                 .send_to_room(
@@ -371,8 +367,8 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
 
     /// Spawn CurrentConfig message to all peers (for responding to queries)
     fn spawn_send_current_config_to_peers(
-        session_manager: Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>,
-        current_config: IntentConfigMessage,
+        session_manager: Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>,
+        current_config: IntentConfigNetworkMsg,
         timeout: std::time::Duration,
         successful_broadcasts: Arc<AtomicU64>,
         failed_broadcasts: Arc<AtomicU64>,
@@ -416,7 +412,7 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
 
     /// Spawn initial ConfigUpdate messages to all collector peers (fire-and-forget)
     fn spawn_send_initial_updates(
-        session_manager: Rc<SessionManager<IntentConfigMessage, PermissionWrapper<T>>>,
+        session_manager: Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>,
         cfg: IntentConfigData,
         timeout: std::time::Duration,
         successful_broadcasts: Arc<AtomicU64>,
@@ -426,7 +422,7 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
         let cfg_clone = cfg.clone();
         actix::spawn(async move {
             let room_id = RoomId::from("intent-config");
-            let config_update = IntentConfigMessage::ConfigUpdate {
+            let config_update = IntentConfigNetworkMsg::ConfigUpdate {
                 targets: cfg_clone.targets.clone(),
                 ping_rate_pps: cfg_clone.ping_rate_pps,
             };
@@ -471,7 +467,7 @@ impl<T: ApplicationRole + std::fmt::Debug> IntentConfigActor<T> {
 }
 
 /// This is the boilerplate that officially makes the struct an Actix Actor.
-impl<T: ApplicationRole + std::fmt::Debug> Actor for IntentConfigActor<T> {
+impl<T: ApplicationRole> Actor for IntentConfigActor<T> {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Context<Self>) {
@@ -607,7 +603,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Actor for IntentConfigActor<T> {
                                     continue;
                                 }
                                 // Send ConfigUpdate to this single peer
-                                let em = IntentConfigMessage::ConfigUpdate {
+                                let em = IntentConfigNetworkMsg::ConfigUpdate {
                                     targets: cfg_w.targets.clone(),
                                     ping_rate_pps: cfg_w.ping_rate_pps,
                                 };
@@ -638,7 +634,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Actor for IntentConfigActor<T> {
 // --- Handler Implementations (The Business Logic) ---
 
 /// Handles the `UpdateConfig` message.
-impl<T: ApplicationRole + std::fmt::Debug> Handler<UpdateConfig> for IntentConfigActor<T> {
+impl<T: ApplicationRole> Handler<UpdateConfig> for IntentConfigActor<T> {
     type Result = ();
 
     fn handle(&mut self, msg: UpdateConfig, _ctx: &mut Context<Self>) -> Self::Result {
@@ -651,7 +647,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Handler<UpdateConfig> for IntentConfi
 }
 
 /// Handles the `Subscribe` message.
-impl<T: ApplicationRole + std::fmt::Debug> Handler<Subscribe> for IntentConfigActor<T> {
+impl<T: ApplicationRole> Handler<Subscribe> for IntentConfigActor<T> {
     type Result = usize; // Returns the subscription ID
 
     fn handle(&mut self, msg: Subscribe, _ctx: &mut Context<Self>) -> Self::Result {
@@ -668,7 +664,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Handler<Subscribe> for IntentConfigAc
 }
 
 /// Handles the `Unsubscribe` message.
-impl<T: ApplicationRole + std::fmt::Debug> Handler<Unsubscribe> for IntentConfigActor<T> {
+impl<T: ApplicationRole> Handler<Unsubscribe> for IntentConfigActor<T> {
     type Result = ();
 
     fn handle(&mut self, msg: Unsubscribe, _ctx: &mut Context<Self>) {
@@ -678,7 +674,7 @@ impl<T: ApplicationRole + std::fmt::Debug> Handler<Unsubscribe> for IntentConfig
 }
 
 /// Handles the `GetCurrentConfig` message.
-impl<T: ApplicationRole + std::fmt::Debug> Handler<GetCurrentConfig> for IntentConfigActor<T> {
+impl<T: ApplicationRole> Handler<GetCurrentConfig> for IntentConfigActor<T> {
     type Result = MessageResult<GetCurrentConfig>;
 
     fn handle(&mut self, _msg: GetCurrentConfig, _ctx: &mut Context<Self>) -> Self::Result {
@@ -694,22 +690,20 @@ impl<T: ApplicationRole + std::fmt::Debug> Handler<GetCurrentConfig> for IntentC
 /// Role-based behavior:
 /// - **Collector**: Responds to queries with current config, ignores incoming config updates
 /// - **Database**: Accepts config updates, can query collectors
-impl<
-    T: ApplicationRole + 'static + Send + Clone + std::fmt::Debug + PartialEq + Eq + std::hash::Hash,
-> Handler<IntentConfigMessage> for IntentConfigActor<T>
+impl<T: ApplicationRole> Handler<IntentConfigNetworkMsg> for IntentConfigActor<T>
 where
     Self: PermissionCheck<T>,
 {
     type Result = ResponseFuture<()>;
 
-    fn handle(&mut self, msg: IntentConfigMessage, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: IntentConfigNetworkMsg, _ctx: &mut Context<Self>) -> Self::Result {
         log::debug!("Handling network message: {:?}, role: {:?}", msg, self.role);
 
         match (&self.role, msg) {
             // --- Database Role Behavior (SENDER) ---
             (
                 IntentConfigRole::Database { .. },
-                IntentConfigMessage::RequestConfigChange {
+                IntentConfigNetworkMsg::RequestConfigChange {
                     sender_peer_id,
                     targets,
                     ping_rate_pps,
@@ -717,7 +711,7 @@ where
             ) => self.handle_request_config_change_db(sender_peer_id, targets, ping_rate_pps),
 
             // --- Collector Role Behavior (RECEIVER) ---
-            (IntentConfigRole::Collector, IntentConfigMessage::RequestConfigChange { .. }) => {
+            (IntentConfigRole::Collector, IntentConfigNetworkMsg::RequestConfigChange { .. }) => {
                 // Collector ignores RequestConfigChange (only Database handles admin requests)
                 log::debug!("Collector ignoring RequestConfigChange - not an admin endpoint");
                 Box::pin(async {})
@@ -725,7 +719,7 @@ where
 
             (
                 IntentConfigRole::Collector,
-                IntentConfigMessage::ConfigUpdate {
+                IntentConfigNetworkMsg::ConfigUpdate {
                     targets,
                     ping_rate_pps,
                 },
@@ -755,7 +749,7 @@ where
             }
 
             // --- Database receiving ConfigUpdate (invalid) ---
-            (IntentConfigRole::Database { .. }, IntentConfigMessage::ConfigUpdate { .. }) => {
+            (IntentConfigRole::Database { .. }, IntentConfigNetworkMsg::ConfigUpdate { .. }) => {
                 log::warn!(
                     "Database received ConfigUpdate - invalid for this role (Database should send, not receive)"
                 );
@@ -764,13 +758,13 @@ where
 
             // --- QueryCurrentConfig handling ---
             // Database responds with current config, Collector rejects
-            (IntentConfigRole::Database { .. }, IntentConfigMessage::QueryCurrentConfig) => {
+            (IntentConfigRole::Database { .. }, IntentConfigNetworkMsg::QueryCurrentConfig) => {
                 log::info!("Database received QueryCurrentConfig - responding with current config");
                 if let Some(session_manager) = &self.session_manager {
                     // Find the peer that sent this query to respond to them
                     // Note: We don't have direct access to sender peer ID here, so we broadcast
                     // In a real implementation, we'd need to track the sender
-                    let current_config = IntentConfigMessage::CurrentConfig {
+                    let current_config = IntentConfigNetworkMsg::CurrentConfig {
                         targets: self.current_config.targets.clone(),
                         ping_rate_pps: self.current_config.ping_rate_pps,
                     };
@@ -786,7 +780,7 @@ where
                 Box::pin(async {})
             }
 
-            (IntentConfigRole::Collector, IntentConfigMessage::QueryCurrentConfig) => {
+            (IntentConfigRole::Collector, IntentConfigNetworkMsg::QueryCurrentConfig) => {
                 log::warn!("Collector received QueryCurrentConfig - invalid for this role");
                 if let Some(session_manager) = &self.session_manager {
                     Self::spawn_send_error(
@@ -802,7 +796,7 @@ where
             // Database accepts (for recovery), Collector rejects
             (
                 IntentConfigRole::Database { .. },
-                IntentConfigMessage::CurrentConfig {
+                IntentConfigNetworkMsg::CurrentConfig {
                     targets,
                     ping_rate_pps,
                 },
@@ -819,7 +813,7 @@ where
 
             (
                 IntentConfigRole::Collector,
-                IntentConfigMessage::CurrentConfig {
+                IntentConfigNetworkMsg::CurrentConfig {
                     targets,
                     ping_rate_pps,
                 },
@@ -852,7 +846,7 @@ where
 
             // --- Heartbeat handling ---
             // Both roles accept heartbeats (keepalive mechanism)
-            (_, IntentConfigMessage::Heartbeat) => {
+            (_, IntentConfigNetworkMsg::Heartbeat) => {
                 log::debug!("Received Heartbeat - connection is alive");
                 // Could respond with Heartbeat if we want bidirectional keepalive
                 Box::pin(async {})
@@ -860,7 +854,7 @@ where
 
             // --- Error handling ---
             // Both roles can receive error messages
-            (_, IntentConfigMessage::Error { reason }) => {
+            (_, IntentConfigNetworkMsg::Error { reason }) => {
                 log::warn!("Received error from peer: {}", reason);
                 // Log the error - in a real implementation, might trigger recovery logic
                 Box::pin(async {})
@@ -870,7 +864,7 @@ where
 }
 
 /// Handles the `GetHealth` message.
-impl<T: ApplicationRole + std::fmt::Debug> Handler<GetHealth> for IntentConfigActor<T> {
+impl<T: ApplicationRole> Handler<GetHealth> for IntentConfigActor<T> {
     type Result = MessageResult<GetHealth>;
 
     fn handle(&mut self, _msg: GetHealth, _ctx: &mut Context<Self>) -> Self::Result {
@@ -1114,7 +1108,7 @@ mod tests {
 
         // ACT
         let _ = actor
-            .handle(IntentConfigMessage::QueryCurrentConfig, &mut ctx)
+            .handle(IntentConfigNetworkMsg::QueryCurrentConfig, &mut ctx)
             .await;
 
         // ASSERT: Collector's config should NOT change
@@ -1132,7 +1126,7 @@ mod tests {
         let original_config = actor.current_config.clone();
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
-        let msg = IntentConfigMessage::ConfigUpdate {
+        let msg = IntentConfigNetworkMsg::ConfigUpdate {
             targets: vec!["9.9.9.9".parse().unwrap()],
             ping_rate_pps: 999,
         };
@@ -1164,7 +1158,7 @@ mod tests {
         let original_config = actor.current_config.clone();
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
-        let msg = IntentConfigMessage::ConfigUpdate {
+        let msg = IntentConfigNetworkMsg::ConfigUpdate {
             targets: vec!["8.8.8.8".parse().unwrap(), "1.1.1.1".parse().unwrap()],
             ping_rate_pps: 123,
         };
@@ -1191,7 +1185,7 @@ mod tests {
         let original_config = actor.current_config.clone();
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
-        let msg = IntentConfigMessage::CurrentConfig {
+        let msg = IntentConfigNetworkMsg::CurrentConfig {
             targets: vec!["2.2.2.2".parse().unwrap()],
             ping_rate_pps: 22,
         };
@@ -1245,7 +1239,7 @@ mod tests {
         let original_config = actor.current_config.clone();
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
-        let msg = IntentConfigMessage::RequestConfigChange {
+        let msg = IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-admin".to_string(),
             targets: vec!["5.5.5.5".parse().unwrap()],
             ping_rate_pps: 555,
@@ -1279,7 +1273,7 @@ mod tests {
         let original_config = actor.current_config.clone();
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
-        let msg = IntentConfigMessage::RequestConfigChange {
+        let msg = IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-collector".to_string(),
             targets: vec!["6.6.6.6".parse().unwrap()],
             ping_rate_pps: 666,
@@ -1311,7 +1305,7 @@ mod tests {
         };
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
-        let msg = IntentConfigMessage::RequestConfigChange {
+        let msg = IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-admin".to_string(),
             targets: vec!["7.7.7.7".parse().unwrap()], // Same as current
             ping_rate_pps: 777,                        // Same as current
@@ -1335,7 +1329,7 @@ mod tests {
         let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
-        let msg = IntentConfigMessage::Error {
+        let msg = IntentConfigNetworkMsg::Error {
             reason: "Test error".to_string(),
         };
 
@@ -1364,7 +1358,9 @@ mod tests {
         let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
-        let _ = actor.handle(IntentConfigMessage::Heartbeat, &mut ctx).await;
+        let _ = actor
+            .handle(IntentConfigNetworkMsg::Heartbeat, &mut ctx)
+            .await;
 
         // Test Database
         let temp_dir = tempfile::tempdir().unwrap();
@@ -1374,7 +1370,9 @@ mod tests {
         };
         let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
-        let _ = actor.handle(IntentConfigMessage::Heartbeat, &mut ctx).await;
+        let _ = actor
+            .handle(IntentConfigNetworkMsg::Heartbeat, &mut ctx)
+            .await;
         // ASSERT: Just verify no panic
     }
 
@@ -1479,7 +1477,7 @@ mod tests {
 
         let mut session_manager =
             zznet_session::session_manager::SessionManager::<
-                IntentConfigMessage,
+                IntentConfigNetworkMsg,
                 PermissionWrapper<MockRole>,
             >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
 
@@ -1503,7 +1501,7 @@ mod tests {
         assert_eq!(actor.failed_broadcasts.load(Ordering::Relaxed), 0);
 
         // Spawn a CurrentConfig broadcast which will attempt to send to the peer but fail
-        let current = IntentConfigMessage::CurrentConfig {
+        let current = IntentConfigNetworkMsg::CurrentConfig {
             targets: actor.current_config.targets.clone(),
             ping_rate_pps: actor.current_config.ping_rate_pps,
         };
@@ -1536,7 +1534,7 @@ mod tests {
 
         let mut session_manager =
             zznet_session::session_manager::SessionManager::<
-                IntentConfigMessage,
+                IntentConfigNetworkMsg,
                 PermissionWrapper<MockRole>,
             >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
 
@@ -1598,7 +1596,7 @@ mod tests {
         let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
 
         // Create config update to send
-        let config_update = IntentConfigMessage::ConfigUpdate {
+        let config_update = IntentConfigNetworkMsg::ConfigUpdate {
             targets: vec!["1.2.3.4".parse().unwrap()],
             ping_rate_pps: 100,
         };
@@ -1638,7 +1636,7 @@ mod tests {
 
         let mut session_manager =
             zznet_session::session_manager::SessionManager::<
-                IntentConfigMessage,
+                IntentConfigNetworkMsg,
                 PermissionWrapper<MockRole>,
             >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
 
@@ -1693,7 +1691,7 @@ mod tests {
         let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
 
         // Create current config message to send
-        let current_config = IntentConfigMessage::CurrentConfig {
+        let current_config = IntentConfigNetworkMsg::CurrentConfig {
             targets: actor.current_config.targets.clone(),
             ping_rate_pps: actor.current_config.ping_rate_pps,
         };
@@ -1732,7 +1730,7 @@ mod tests {
 
         let mut session_manager =
             zznet_session::session_manager::SessionManager::<
-                IntentConfigMessage,
+                IntentConfigNetworkMsg,
                 PermissionWrapper<MockRole>,
             >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
 
@@ -1817,7 +1815,7 @@ mod tests {
         // Create SessionManager with no peers
         let session_manager =
             zznet_session::session_manager::SessionManager::<
-                IntentConfigMessage,
+                IntentConfigNetworkMsg,
                 PermissionWrapper<MockRole>,
             >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
 
@@ -1830,7 +1828,7 @@ mod tests {
         let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
 
         // Create config update to send
-        let config_update = IntentConfigMessage::ConfigUpdate {
+        let config_update = IntentConfigNetworkMsg::ConfigUpdate {
             targets: vec!["1.2.3.4".parse().unwrap()],
             ping_rate_pps: 100,
         };
@@ -1867,7 +1865,7 @@ mod tests {
 
         let mut session_manager =
             zznet_session::session_manager::SessionManager::<
-                IntentConfigMessage,
+                IntentConfigNetworkMsg,
                 PermissionWrapper<MockRole>,
             >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
 
@@ -1912,7 +1910,7 @@ mod tests {
         let initial_timestamp = actor.last_broadcast_ms.load(Ordering::Relaxed);
 
         // Create config update to send
-        let config_update = IntentConfigMessage::ConfigUpdate {
+        let config_update = IntentConfigNetworkMsg::ConfigUpdate {
             targets: vec!["2.3.4.5".parse().unwrap()],
             ping_rate_pps: 200,
         };
@@ -1955,7 +1953,7 @@ mod tests {
 
         let mut session_manager =
             zznet_session::session_manager::SessionManager::<
-                IntentConfigMessage,
+                IntentConfigNetworkMsg,
                 PermissionWrapper<MockRole>,
             >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
 
@@ -2017,7 +2015,7 @@ mod tests {
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
         // ACT: Send QueryCurrentConfig to Database
-        let query_msg = IntentConfigMessage::QueryCurrentConfig;
+        let query_msg = IntentConfigNetworkMsg::QueryCurrentConfig;
         let _ = actor.handle(query_msg, &mut ctx).await;
 
         // Give async tasks a moment to run
@@ -2059,7 +2057,7 @@ mod tests {
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
         // ACT: Send QueryCurrentConfig to Database without session_manager
-        let query_msg = IntentConfigMessage::QueryCurrentConfig;
+        let query_msg = IntentConfigNetworkMsg::QueryCurrentConfig;
         let _ = actor.handle(query_msg, &mut ctx).await;
 
         // ASSERT: No broadcast occurred, counters unchanged
@@ -2083,7 +2081,7 @@ mod tests {
 
         let mut session_manager =
             zznet_session::session_manager::SessionManager::<
-                IntentConfigMessage,
+                IntentConfigNetworkMsg,
                 PermissionWrapper<MockRole>,
             >::new_with_limits(vec![RoomId::from("intent-config")], None, None);
 
@@ -2132,7 +2130,7 @@ mod tests {
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
         // ACT: Send QueryCurrentConfig to Database
-        let query_msg = IntentConfigMessage::QueryCurrentConfig;
+        let query_msg = IntentConfigNetworkMsg::QueryCurrentConfig;
         let _ = actor.handle(query_msg, &mut ctx).await;
 
         // ASSERT: Peer received the correct CurrentConfig message
@@ -2145,7 +2143,7 @@ mod tests {
         // Message is sent as (RoomId, IntentConfigMessage)
         let (_room_id, actual_msg) = received_msg;
         match actual_msg {
-            IntentConfigMessage::CurrentConfig {
+            IntentConfigNetworkMsg::CurrentConfig {
                 targets,
                 ping_rate_pps,
             } => {
@@ -2172,7 +2170,7 @@ mod tests {
             "20.20.20.20".parse().unwrap(),
         ];
         let new_rate = 1234;
-        let msg = IntentConfigMessage::CurrentConfig {
+        let msg = IntentConfigNetworkMsg::CurrentConfig {
             targets: new_targets.clone(),
             ping_rate_pps: new_rate,
         };
@@ -2198,7 +2196,7 @@ mod tests {
         let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
 
         // Send CurrentConfig with same data as current config
-        let msg = IntentConfigMessage::CurrentConfig {
+        let msg = IntentConfigNetworkMsg::CurrentConfig {
             targets: original_config.targets.clone(),
             ping_rate_pps: original_config.ping_rate_pps,
         };
@@ -2234,7 +2232,7 @@ mod tests {
         // ACT: Send CurrentConfig with new data
         let new_targets = vec!["30.30.30.30".parse().unwrap()];
         let new_rate = 5678;
-        let msg = IntentConfigMessage::CurrentConfig {
+        let msg = IntentConfigNetworkMsg::CurrentConfig {
             targets: new_targets.clone(),
             ping_rate_pps: new_rate,
         };
@@ -2275,7 +2273,7 @@ mod tests {
         rx.recv().await.unwrap();
 
         // ACT: Send CurrentConfig with same data as current config
-        let msg = IntentConfigMessage::CurrentConfig {
+        let msg = IntentConfigNetworkMsg::CurrentConfig {
             targets: actor.current_config.targets.clone(),
             ping_rate_pps: actor.current_config.ping_rate_pps,
         };

@@ -17,7 +17,7 @@ use zznet_transport_tcp::server::TcpTransportServer;
 pub struct ServerBuilder<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
-    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     bind_addr: Option<String>,
     our_role: Option<TRole>,
@@ -30,7 +30,7 @@ where
 impl<TMsg, TRole> ServerBuilder<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     /// Create a new ServerBuilder with default configuration
     pub fn new() -> Self {
@@ -172,7 +172,7 @@ where
 impl<TMsg, TRole> Default for ServerBuilder<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     fn default() -> Self {
         Self::new()
@@ -183,7 +183,7 @@ where
 pub struct ServerActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
-    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     tcp_server: std::sync::Arc<tokio::sync::Mutex<TcpTransportServer>>,
     hello_config: HelloConfig,
@@ -193,7 +193,7 @@ where
 impl<TMsg, TRole> Actor for ServerActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     type Context = Context<Self>;
 
@@ -212,7 +212,7 @@ struct AcceptNext;
 impl<TMsg, TRole> Handler<AcceptNext> for ServerActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     type Result = ResponseActFuture<Self, ()>;
 
@@ -264,7 +264,7 @@ pub struct StopServer;
 impl<TMsg, TRole> Handler<StopServer> for ServerActor<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + Clone + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     type Result = ();
 

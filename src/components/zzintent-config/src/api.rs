@@ -29,10 +29,7 @@ pub trait IntentConfigApi<T: ApplicationRole> {
 /// Implements the public API for the actor's handle (`Addr`).
 /// This is where we translate the clean method calls into actual Actix messages.
 #[async_trait::async_trait]
-impl<
-    T: ApplicationRole + 'static + Send + Clone + std::fmt::Debug + PartialEq + Eq + std::hash::Hash,
-> IntentConfigApi<T> for Addr<IntentConfigActor<T>>
-{
+impl<T: ApplicationRole> IntentConfigApi<T> for Addr<IntentConfigActor<T>> {
     /// Translates the `update_config` method call into a `do_send` of an `UpdateConfig` message.
     fn update_config(&self, config: IntentConfigData) {
         // `do_send` is used for "tell" patterns where no response is needed.

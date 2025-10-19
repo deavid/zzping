@@ -12,7 +12,7 @@ use zznet_session::{
 pub struct CStateBuilder<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     role: CStateRole,
@@ -23,7 +23,7 @@ where
 impl<TMsg, TRole, SM> CStateBuilder<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     /// Creates a new `CStateBuilder`.

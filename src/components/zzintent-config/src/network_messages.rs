@@ -57,7 +57,7 @@ use zznet_session::types::RoomId;
     Clone, Debug, Message, Serialize, Deserialize, bincode::Encode, bincode::Decode, PartialEq,
 )]
 #[rtype(result = "()")]
-pub enum IntentConfigMessage {
+pub enum IntentConfigNetworkMsg {
     /// Administrative request to change configuration
     ///
     /// Sent by AdminClient to Database to request a configuration change.
@@ -140,7 +140,7 @@ pub enum IntentConfigMessage {
     },
 }
 
-impl IntentConfigMessage {
+impl IntentConfigNetworkMsg {
     /// Creates ConfigUpdate message for Database to send to Collectors.
     ///
     /// Use this for internal distribution after persisting configuration.
@@ -191,7 +191,7 @@ impl IntentConfigMessage {
     }
 }
 
-impl RoomMessageTrait for IntentConfigMessage {
+impl RoomMessageTrait for IntentConfigNetworkMsg {
     fn room_id(&self) -> RoomId {
         // All intent config messages use the same room for now
         // In the future, this could be based on collector hostname or other criteria
@@ -228,10 +228,10 @@ mod tests {
     #[test]
     fn test_config_update_creation() {
         let targets = vec!["8.8.8.8".parse().unwrap(), "1.1.1.1".parse().unwrap()];
-        let msg = IntentConfigMessage::config_update(targets.clone(), 100);
+        let msg = IntentConfigNetworkMsg::config_update(targets.clone(), 100);
 
         match msg {
-            IntentConfigMessage::ConfigUpdate {
+            IntentConfigNetworkMsg::ConfigUpdate {
                 targets: t,
                 ping_rate_pps,
             } => {
@@ -245,10 +245,10 @@ mod tests {
     #[test]
     fn test_current_config_creation() {
         let targets = vec!["8.8.8.8".parse().unwrap()];
-        let msg = IntentConfigMessage::current_config(targets.clone(), 50);
+        let msg = IntentConfigNetworkMsg::current_config(targets.clone(), 50);
 
         match msg {
-            IntentConfigMessage::CurrentConfig {
+            IntentConfigNetworkMsg::CurrentConfig {
                 targets: t,
                 ping_rate_pps,
             } => {
@@ -261,9 +261,9 @@ mod tests {
 
     #[test]
     fn test_error_creation() {
-        let msg = IntentConfigMessage::error("Test error");
+        let msg = IntentConfigNetworkMsg::error("Test error");
         match msg {
-            IntentConfigMessage::Error { reason } => {
+            IntentConfigNetworkMsg::Error { reason } => {
                 assert_eq!(reason, "Test error");
             }
             _ => panic!("Expected Error"),
@@ -272,40 +272,40 @@ mod tests {
 
     #[test]
     fn test_has_config_data() {
-        let update = IntentConfigMessage::config_update(vec![], 10);
+        let update = IntentConfigNetworkMsg::config_update(vec![], 10);
         assert!(update.has_config_data());
 
-        let current = IntentConfigMessage::current_config(vec![], 10);
+        let current = IntentConfigNetworkMsg::current_config(vec![], 10);
         assert!(current.has_config_data());
 
-        let query = IntentConfigMessage::QueryCurrentConfig;
+        let query = IntentConfigNetworkMsg::QueryCurrentConfig;
         assert!(!query.has_config_data());
 
-        let heartbeat = IntentConfigMessage::Heartbeat;
+        let heartbeat = IntentConfigNetworkMsg::Heartbeat;
         assert!(!heartbeat.has_config_data());
 
-        let error = IntentConfigMessage::error("test");
+        let error = IntentConfigNetworkMsg::error("test");
         assert!(!error.has_config_data());
     }
 
     #[test]
     fn test_config_data_extraction() {
         let targets = vec!["8.8.8.8".parse().unwrap()];
-        let update = IntentConfigMessage::config_update(targets.clone(), 100);
+        let update = IntentConfigNetworkMsg::config_update(targets.clone(), 100);
 
         let (extracted_targets, rate) = update.config_data().unwrap();
         assert_eq!(extracted_targets, targets);
         assert_eq!(rate, 100);
 
-        let query = IntentConfigMessage::QueryCurrentConfig;
+        let query = IntentConfigNetworkMsg::QueryCurrentConfig;
         assert!(query.config_data().is_none());
     }
 
     #[test]
     fn test_message_equality() {
-        let msg1 = IntentConfigMessage::config_update(vec!["8.8.8.8".parse().unwrap()], 100);
-        let msg2 = IntentConfigMessage::config_update(vec!["8.8.8.8".parse().unwrap()], 100);
-        let msg3 = IntentConfigMessage::config_update(vec!["1.1.1.1".parse().unwrap()], 100);
+        let msg1 = IntentConfigNetworkMsg::config_update(vec!["8.8.8.8".parse().unwrap()], 100);
+        let msg2 = IntentConfigNetworkMsg::config_update(vec!["8.8.8.8".parse().unwrap()], 100);
+        let msg3 = IntentConfigNetworkMsg::config_update(vec!["1.1.1.1".parse().unwrap()], 100);
 
         assert_eq!(msg1, msg2);
         assert_ne!(msg1, msg3);
@@ -313,12 +313,12 @@ mod tests {
 
     #[test]
     fn test_query_and_heartbeat() {
-        let query = IntentConfigMessage::QueryCurrentConfig;
-        let heartbeat = IntentConfigMessage::Heartbeat;
+        let query = IntentConfigNetworkMsg::QueryCurrentConfig;
+        let heartbeat = IntentConfigNetworkMsg::Heartbeat;
 
         // These should be creatable and comparable
-        assert_eq!(query, IntentConfigMessage::QueryCurrentConfig);
-        assert_eq!(heartbeat, IntentConfigMessage::Heartbeat);
+        assert_eq!(query, IntentConfigNetworkMsg::QueryCurrentConfig);
+        assert_eq!(heartbeat, IntentConfigNetworkMsg::Heartbeat);
         assert_ne!(query, heartbeat);
     }
 }

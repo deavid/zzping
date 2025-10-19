@@ -29,7 +29,7 @@ type Authorizer<TRole> =
 pub struct ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
-    TRole: ApplicationRole + std::fmt::Debug,
+    TRole: ApplicationRole,
 {
     /// Manages all peer sessions
     session_manager: SessionManager<TMsg, TRole>,
@@ -45,7 +45,7 @@ where
 impl<TMsg, TRole> ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + std::fmt::Debug,
+    TRole: ApplicationRole,
 {
     /// Create a new ConnectionManager
     ///
@@ -178,7 +178,7 @@ where
 impl<TMsg, TRole> Actor for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     type Context = Context<Self>;
 }
@@ -192,7 +192,7 @@ pub struct GetPeers;
 impl<TMsg, TRole> Handler<GetPeers> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     type Result = Vec<PeerId>;
 
@@ -224,7 +224,7 @@ impl<TMsg> GetPeerSender<TMsg> {
 impl<TMsg, TRole> Handler<GetPeerSender<TMsg>> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     type Result = Option<mpsc::Sender<(RoomId, TMsg)>>;
 
@@ -256,7 +256,7 @@ impl<TMsg> SubscribePeerInbound<TMsg> {
 impl<TMsg, TRole> Handler<SubscribePeerInbound<TMsg>> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     type Result = Option<tokio::sync::broadcast::Receiver<(RoomId, TMsg)>>;
 
@@ -291,7 +291,7 @@ pub struct SendToRoom<TMsg> {
 impl<TMsg, TRole> Handler<SendToRoom<TMsg>> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     type Result = ResponseFuture<Result<(), String>>;
 
@@ -310,7 +310,7 @@ where
 impl<TMsg, TRole> Handler<HandshakeComplete> for ConnectionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole + std::fmt::Debug + 'static,
+    TRole: ApplicationRole,
 {
     type Result = ();
 

@@ -33,7 +33,7 @@ use zznet_session::{
 pub struct CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     role: CStateRole,
@@ -50,7 +50,7 @@ where
 impl<TMsg, TRole, SM> CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     /// Creates a new `CStateActor`.
@@ -83,7 +83,7 @@ where
 impl<TMsg, TRole, SM> CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     fn start_heartbeat(&self, ctx: &mut Context<Self>) {
@@ -153,7 +153,7 @@ where
 impl<TMsg, TRole, SM> Actor for CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     type Context = Context<Self>;
@@ -185,7 +185,7 @@ where
 impl<TMsg, TRole, SM> StreamHandler<tokio::time::Instant> for CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     fn handle(&mut self, _item: tokio::time::Instant, ctx: &mut Context<Self>) {
@@ -199,7 +199,7 @@ where
 impl<TMsg, TRole, SM> Handler<ForceHeartbeat> for CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     type Result = Result<(), CStateError>;
@@ -212,7 +212,7 @@ where
 impl<TMsg, TRole, SM> Handler<WrappedCStateMessage> for CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     type Result = ();
@@ -409,7 +409,7 @@ impl<TMsg, TRole, SM> Handler<crate::messages::CleanupStaleCollectors>
     for CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     type Result = ();
@@ -450,7 +450,7 @@ where
 impl<TMsg, TRole, SM> Handler<UpdateHealthMetrics> for CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     type Result = ();
@@ -476,7 +476,7 @@ where
 impl<TMsg, TRole, SM> Handler<GetHealth> for CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     type Result = Result<CStateHealth, CStateError>;
@@ -493,7 +493,7 @@ where
 impl<TMsg, TRole, SM> Handler<GetCollectorState> for CStateActor<TMsg, TRole, SM>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static + From<CStateMessage> + Unpin,
-    TRole: ApplicationRole + 'static,
+    TRole: ApplicationRole,
     SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     type Result = Result<CollectorStateData, CStateError>;

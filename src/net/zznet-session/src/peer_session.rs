@@ -40,7 +40,7 @@ where
 pub struct PeerSession<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
-    TRole: ApplicationRole + std::fmt::Debug,
+    TRole: ApplicationRole,
 {
     peer_id: PeerId,
     state: ConnectionState,
@@ -78,7 +78,7 @@ where
 impl<TMsg, TRole> PeerSession<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
-    TRole: ApplicationRole + std::fmt::Debug,
+    TRole: ApplicationRole,
 {
     /// Create a new disconnected peer session
     ///
@@ -454,7 +454,7 @@ where
 impl<TMsg, TRole> Drop for PeerSession<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
-    TRole: ApplicationRole + std::fmt::Debug,
+    TRole: ApplicationRole,
 {
     fn drop(&mut self) {
         self.disconnect();

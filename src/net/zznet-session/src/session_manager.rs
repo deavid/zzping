@@ -16,7 +16,7 @@ const DEFAULT_BROADCAST_TIMEOUT_MS: u64 = 5000;
 impl<TMsg, TRole> SessionManagerLike<TMsg, TRole> for SessionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static,
-    TRole: ApplicationRole + std::fmt::Debug,
+    TRole: ApplicationRole,
 {
     async fn broadcast_to_room<F>(
         &self,
@@ -60,7 +60,7 @@ where
 pub struct SessionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
-    TRole: ApplicationRole + std::fmt::Debug,
+    TRole: ApplicationRole,
 {
     /// All peer sessions
     peers: HashMap<PeerId, PeerSession<TMsg, TRole>>,
@@ -79,7 +79,7 @@ where
 impl<TMsg, TRole> SessionManager<TMsg, TRole>
 where
     TMsg: RoomMessageTrait,
-    TRole: ApplicationRole + std::fmt::Debug,
+    TRole: ApplicationRole,
 {
     /// Create a new SessionManager
     ///

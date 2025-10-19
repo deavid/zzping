@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 // Component imports (DATABASE ROLES)
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
-use zzintent_config::network_messages::IntentConfigMessage;
+use zzintent_config::network_messages::IntentConfigNetworkMsg;
 use zzintent_config::permissions::IntentConfigPermission;
 use zzintent_config::role::IntentConfigRole;
 
@@ -109,13 +109,13 @@ impl ApplicationRole for DatabaseRole {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DatabaseMessage {
-    Intent(IntentConfigMessage),
+    Intent(IntentConfigNetworkMsg),
     MemDB(MemDBMessage),
     CState(CStateMessage),
 }
 
-impl From<IntentConfigMessage> for DatabaseMessage {
-    fn from(msg: IntentConfigMessage) -> Self {
+impl From<IntentConfigNetworkMsg> for DatabaseMessage {
+    fn from(msg: IntentConfigNetworkMsg) -> Self {
         DatabaseMessage::Intent(msg)
     }
 }
@@ -151,7 +151,7 @@ impl RoomMessageTrait for DatabaseMessage {
         room_id: &RoomId,
         bytes: &[u8],
     ) -> std::result::Result<Self, DeserializationError> {
-        if let Ok(msg) = IntentConfigMessage::deserialize_for_room(room_id, bytes) {
+        if let Ok(msg) = IntentConfigNetworkMsg::deserialize_for_room(room_id, bytes) {
             return Ok(DatabaseMessage::Intent(msg));
         }
         if let Ok(msg) = MemDBMessage::deserialize_for_room(room_id, bytes) {
@@ -167,7 +167,7 @@ impl RoomMessageTrait for DatabaseMessage {
 
     fn supported_rooms() -> Vec<RoomId> {
         let mut rooms = Vec::new();
-        rooms.extend(IntentConfigMessage::supported_rooms());
+        rooms.extend(IntentConfigNetworkMsg::supported_rooms());
         rooms.extend(MemDBMessage::supported_rooms());
         rooms.extend(CStateMessage::supported_rooms());
         rooms

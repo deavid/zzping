@@ -3,6 +3,8 @@
 //! This module defines the `ApplicationRole` trait that applications must
 //! implement to use zznet-auth's authorization system.
 
+use std::fmt::Debug;
+
 use serde::{Deserialize, Serialize};
 
 /// Trait for application-specific roles that can be used with zznet-auth.
@@ -19,6 +21,7 @@ pub trait ApplicationRole:
     + Sync
     + 'static
     + Unpin
+    + Debug
 {
     /// Parse role from certificate Common Name
     fn from_cn(cn: &str) -> Result<Self, crate::error::AuthError>;

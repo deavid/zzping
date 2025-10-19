@@ -41,7 +41,7 @@ pub fn connect_managers_in_memory<TMsg, TRole>(
 ) -> Result<(), zznet_session::types::SessionError>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static,
-    TRole: zznet_auth::ApplicationRole + std::fmt::Debug,
+    TRole: zznet_auth::ApplicationRole,
 {
     use tokio::sync::mpsc;
 
@@ -74,7 +74,7 @@ pub fn create_and_add_peer<TMsg, TRole>(
 ) -> Result<(), zznet_session::types::SessionError>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static,
-    TRole: zznet_auth::ApplicationRole + std::fmt::Debug,
+    TRole: zznet_auth::ApplicationRole,
 {
     // Create peer
     let mut peer = zznet_session::peer_session::PeerSession::<TMsg, TRole>::new(peer_id.clone());
@@ -201,7 +201,7 @@ pub fn create_peer_with_message_capture<TMsg, TRole>(
 ) -> Result<MessageCapture<TMsg>, zznet_session::types::SessionError>
 where
     TMsg: RoomMessageTrait + Clone + Send + 'static,
-    TRole: zznet_auth::ApplicationRole + std::fmt::Debug,
+    TRole: zznet_auth::ApplicationRole,
 {
     // Create and add the peer
     create_and_add_peer(manager, peer_id, rooms, role)?;
