@@ -3,6 +3,7 @@ use crate::room_message_trait::RoomMessageTrait;
 use crate::types::{ConnectionState, PeerId, RoomId, SessionError};
 use std::collections::HashMap;
 use tokio::sync::mpsc;
+use tracing;
 
 // NEW: Auth imports
 use crate::session_manager_like::SessionManagerLike;
@@ -85,6 +86,11 @@ where
     ///
     /// `offered_rooms`: List of room IDs this manager offers
     pub fn new(offered_rooms: Vec<RoomId>) -> Self {
+        tracing::info!(
+            "SessionManager configured with {} offered rooms: {:?}",
+            offered_rooms.len(),
+            offered_rooms
+        );
         Self {
             peers: HashMap::new(),
             offered_rooms,
@@ -99,6 +105,13 @@ where
         max_peers: Option<usize>,
         max_rooms_per_peer: Option<usize>,
     ) -> Self {
+        tracing::info!(
+            "SessionManager configured with {} offered rooms: {:?} (max_peers: {:?}, max_rooms_per_peer: {:?})",
+            offered_rooms.len(),
+            offered_rooms,
+            max_peers,
+            max_rooms_per_peer
+        );
         Self {
             peers: HashMap::new(),
             offered_rooms,

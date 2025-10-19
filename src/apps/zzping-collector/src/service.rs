@@ -319,6 +319,11 @@ impl CollectorService {
 
         // Collector offers "memdb" room
         let offered_rooms = vec!["memdb".to_string()];
+        tracing::info!(
+            "Collector offering {} rooms for connection: {:?}",
+            offered_rooms.len(),
+            offered_rooms
+        );
 
         // 1. Send HELLO frame
         let hello_frame = Frame::Handshake(HandshakeFrame::Hello {

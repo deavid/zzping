@@ -333,6 +333,11 @@ impl ConnectionHandler {
 
         // Database offers "memdb" and "query" rooms
         let offered_rooms = vec!["memdb".to_string(), "query".to_string()];
+        tracing::info!(
+            "Database offering {} rooms for connection: {:?}",
+            offered_rooms.len(),
+            offered_rooms
+        );
 
         // 1. Send HELLO frame
         let hello_frame = Frame::Handshake(HandshakeFrame::Hello {
