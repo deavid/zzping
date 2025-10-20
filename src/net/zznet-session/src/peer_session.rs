@@ -1,9 +1,11 @@
 use crate::room_message_trait::RoomMessageTrait;
 use crate::types::{ConnectionState, PeerId, RoomId, SessionError};
 use std::collections::HashMap;
-use tokio::sync::{broadcast, mpsc};
+use std::sync::Arc;
+use tokio::sync::{Mutex as TokioMutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 
+use tracing::debug;
 // NEW: Auth imports
 use zznet_api::types::PeerIdentity;
 use zznet_auth::ApplicationRole;
@@ -29,6 +31,8 @@ where
     fn spawn_forwarder(&mut self, tx: mpsc::Sender<(RoomId, TMsg)>) -> Result<(), SessionError>;
 }
 
+type SessionRooms<TMsg> = Arc<TokioMutex<HashMap<RoomId, Box<dyn RoomHandle<TMsg>>>>>;
+
 /// A session with one peer
 /// Manages rooms and connection state for this specific peer
 ///
@@ -46,7 +50,8 @@ where
     state: ConnectionState,
 
     // Type-erased room storage (each room can have different T)
-    rooms: HashMap<RoomId, Box<dyn RoomHandle<TMsg>>>,
+    // Wrapped in Arc<Mutex<>> so both PeerSession and inbound task can access
+    rooms: SessionRooms<TMsg>,
 
     // NEW: Authentication context for this peer
     /// The authenticated role of this peer (resolved from certificate)
@@ -87,7 +92,7 @@ where
         Self {
             peer_id,
             state: ConnectionState::Disconnected,
-            rooms: HashMap::new(),
+            rooms: Arc::new(TokioMutex::new(HashMap::new())),
             peer_role: None,     // NEW
             peer_identity: None, // NEW
             outbound_tx: None,
@@ -148,12 +153,13 @@ where
     /// The room must already be boxed as dyn RoomHandle<TMsg> (type-erased).
     ///
     /// Returns an error if the room already exists for this peer.
-    pub fn add_room(
+    pub async fn add_room(
         &mut self,
         room_id: RoomId,
         room: Box<dyn RoomHandle<TMsg>>,
     ) -> Result<(), SessionError> {
-        if self.rooms.contains_key(&room_id) {
+        let mut rooms = self.rooms.lock().await;
+        if rooms.contains_key(&room_id) {
             return Err(SessionError::RoomAlreadyExists {
                 peer_id: self.peer_id.clone(),
                 room_id,
@@ -161,7 +167,7 @@ where
         }
 
         // Store the type-erased room
-        self.rooms.insert(room_id.clone(), room);
+        rooms.insert(room_id.clone(), room);
 
         Ok(())
     }
@@ -178,7 +184,10 @@ where
 
     /// Get the list of room IDs configured for this peer
     pub fn room_ids(&self) -> Vec<RoomId> {
-        self.rooms.keys().cloned().collect()
+        self.rooms
+            .try_lock()
+            .map(|rooms| rooms.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Routes a single inbound message to the appropriate room
@@ -187,7 +196,7 @@ where
     /// Isolated for testability and clarity per coding standards.
     ///
     /// # Arguments
-    /// * `rooms` - Map of room IDs to their handlers
+    /// * `rooms` - Arc<Mutex<>> containing room IDs to their handlers
     /// * `peer_id` - ID of the peer (for logging)
     /// * `room_id` - Target room ID
     /// * `msg` - Message to route (application's message enum type)
@@ -197,12 +206,14 @@ where
     /// send_to_room() before sending outbound messages. For inbound messages, we accept
     /// anything the peer sends - if they send to an unjoined room, we log a warning.
     async fn route_inbound_message(
-        rooms: &mut HashMap<RoomId, Box<dyn RoomHandle<TMsg>>>,
+        rooms: &SessionRooms<TMsg>,
         peer_id: &PeerId,
         room_id: RoomId,
         msg: TMsg,
     ) {
-        if let Some(room) = rooms.get_mut(&room_id) {
+        let mut rooms_lock = rooms.lock().await;
+        if let Some(room) = rooms_lock.get_mut(&room_id) {
+            debug!("Received from peer room <{room_id:?}> message <{msg:?}>");
             // Send to room's handler via RoomHandle trait
             if let Err(e) = room.send_message(msg) {
                 tracing::warn!(
@@ -214,6 +225,11 @@ where
             }
         } else {
             // Phase 6: This could mean peer sent to unjoined room, or room doesn't exist locally
+            eprintln!(
+                "⚙️ [PeerSession] Message for room {:?}, available rooms: {:?}",
+                room_id,
+                rooms_lock.keys().collect::<Vec<_>>()
+            );
             tracing::warn!(
                 "Received message for unknown/unjoined room {} on peer {}",
                 room_id,
@@ -230,7 +246,7 @@ where
     ///
     /// After connection, messages sent via `send_to_room` will be delivered
     /// to the peer, and messages from the peer will be routed to room handlers.
-    pub fn connect(
+    pub async fn connect(
         &mut self,
         outbound_tx: mpsc::Sender<(RoomId, TMsg)>,
         inbound_rx: mpsc::Receiver<(RoomId, TMsg)>,
@@ -249,18 +265,21 @@ where
         }
 
         // Spawn forwarder for each room (Component → Peer)
-        for (room_id, room) in &mut self.rooms {
-            room.spawn_forwarder(outbound_clone.clone()).map_err(|_| {
-                SessionError::RoomReceiverAlreadySpawned {
-                    peer_id: self.peer_id.clone(),
-                    room_id: room_id.clone(),
-                }
-            })?;
+        {
+            let mut rooms = self.rooms.lock().await;
+            for (room_id, room) in rooms.iter_mut() {
+                room.spawn_forwarder(outbound_clone.clone()).map_err(|_| {
+                    SessionError::RoomReceiverAlreadySpawned {
+                        peer_id: self.peer_id.clone(),
+                        room_id: room_id.clone(),
+                    }
+                })?;
+            }
         }
 
         // Spawn task to route inbound peer messages to appropriate rooms
-        // This task owns the rooms HashMap and routes messages
-        let rooms = std::mem::take(&mut self.rooms);
+        // This task shares the rooms Arc with PeerSession for dynamic room addition
+        let rooms = Arc::clone(&self.rooms);
         let peer_id = self.peer_id.clone();
         let broadcast_tx = self.inbound_broadcast.clone();
 
@@ -285,7 +304,7 @@ where
     /// This is the core message pump for all inbound messages from a peer.
     /// If a broadcast sender is provided, messages are also broadcast to subscribers.
     async fn inbound_task_loop(
-        mut rooms: HashMap<RoomId, Box<dyn RoomHandle<TMsg>>>,
+        rooms: SessionRooms<TMsg>,
         peer_id: PeerId,
         mut inbound_rx: mpsc::Receiver<(RoomId, TMsg)>,
         broadcast_tx: Option<broadcast::Sender<(RoomId, TMsg)>>,
@@ -298,7 +317,7 @@ where
             }
 
             // Route to Room handlers
-            Self::route_inbound_message(&mut rooms, &peer_id, room_id, msg).await;
+            Self::route_inbound_message(&rooms, &peer_id, room_id, msg).await;
         }
         tracing::debug!("Peer {} inbound task stopped", peer_id);
     }
@@ -327,7 +346,10 @@ where
 
     /// Get the list of rooms we offer locally (from our added rooms)
     pub fn local_offered_rooms(&self) -> Vec<RoomId> {
-        self.rooms.keys().cloned().collect()
+        self.rooms
+            .try_lock()
+            .map(|rooms| rooms.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     /// Handle PublishRooms message from the remote peer
@@ -363,7 +385,11 @@ where
     fn compute_intersection(&self) -> Vec<RoomId> {
         use std::collections::HashSet;
 
-        let local_rooms: HashSet<_> = self.rooms.keys().cloned().collect();
+        let local_rooms: HashSet<_> = self
+            .rooms
+            .try_lock()
+            .map(|rooms| rooms.keys().cloned().collect())
+            .unwrap_or_default();
 
         if let Some(peer_rooms) = &self.peer_offered_rooms {
             let peer_set: HashSet<_> = peer_rooms.iter().cloned().collect();
@@ -408,7 +434,7 @@ where
             .outbound_tx
             .as_ref()
             .expect("BUG: outbound_tx is None but state is Connected - this violates invariants");
-
+        debug!("Sending to peer room <{room_id:?}> message <{msg:?}>");
         tx.send((room_id.clone(), msg))
             .await
             .map_err(|_| SessionError::SendFailed)?;
@@ -560,7 +586,9 @@ mod tests {
         );
 
         // Add room via RoomHandle
-        let result = session.add_room(RoomId::from("intentconfig"), Box::new(adapter));
+        let result = session
+            .add_room(RoomId::from("intentconfig"), Box::new(adapter))
+            .await;
         assert!(result.is_ok());
 
         // Verify it's in the list
@@ -586,6 +614,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
 
         // Try to add same room again
@@ -599,7 +628,9 @@ mod tests {
             peer_tx2,
         );
 
-        let result = session.add_room(RoomId::from("intentconfig"), Box::new(adapter2));
+        let result = session
+            .add_room(RoomId::from("intentconfig"), Box::new(adapter2))
+            .await;
         assert!(matches!(
             result,
             Err(SessionError::RoomAlreadyExists { .. })
@@ -633,9 +664,11 @@ mod tests {
 
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
         session
             .add_room(RoomId::from("health"), Box::new(adapter2))
+            .await
             .unwrap();
 
         let mut room_ids = session.room_ids();
@@ -663,13 +696,14 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter))
+            .await
             .unwrap();
 
         let (tx_out, _rx_out) = mpsc::channel(10);
         let (_tx_in, rx_in) = mpsc::channel(10);
 
         // Connect
-        session.connect(tx_out, rx_in).unwrap();
+        session.connect(tx_out, rx_in).await.unwrap();
         assert_eq!(session.state(), ConnectionState::Connected);
         assert!(session.is_connected());
 
@@ -696,20 +730,21 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter))
+            .await
             .unwrap();
 
         let (tx1, _rx1) = mpsc::channel(10);
         let (_tx_in1, rx_in1) = mpsc::channel(10);
 
         // First connect should succeed
-        session.connect(tx1, rx_in1).unwrap();
+        session.connect(tx1, rx_in1).await.unwrap();
         assert!(session.is_connected());
 
         // Second connect should fail
         let (tx2, _rx2) = mpsc::channel(10);
         let (_tx_in2, rx_in2) = mpsc::channel(10);
 
-        let result = session.connect(tx2, rx_in2);
+        let result = session.connect(tx2, rx_in2).await;
         assert!(matches!(result, Err(SessionError::PeerAlreadyConnected(_))));
     }
 
@@ -730,6 +765,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter))
+            .await
             .unwrap();
 
         // Phase 6: Negotiate room (peer offers same room)
@@ -740,7 +776,7 @@ mod tests {
         let (tx_out, _rx_out) = mpsc::channel(10);
         let (_tx_in, rx_in) = mpsc::channel(10);
 
-        session.connect(tx_out, rx_in).unwrap();
+        session.connect(tx_out, rx_in).await.unwrap();
 
         let msg = CollectorMessages::IntentConfig(IntentConfigMessage::Query);
         let room_id = RoomId::from("intentconfig");
@@ -767,6 +803,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter))
+            .await
             .unwrap();
 
         let msg = CollectorMessages::IntentConfig(IntentConfigMessage::Query);
@@ -794,12 +831,13 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter))
+            .await
             .unwrap();
 
         let (tx_out, mut rx_out) = mpsc::channel(10);
         let (_tx_in, rx_in) = mpsc::channel(10);
 
-        session.connect(tx_out, rx_in).unwrap();
+        session.connect(tx_out, rx_in).await.unwrap();
         assert!(session.is_connected());
 
         // Drop the session - should trigger disconnect via Drop impl
@@ -830,12 +868,13 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter))
+            .await
             .unwrap();
 
         // First connection
         let (tx1, _rx1) = mpsc::channel(10);
         let (_tx_in1, rx_in1) = mpsc::channel(10);
-        session.connect(tx1, rx_in1).unwrap();
+        session.connect(tx1, rx_in1).await.unwrap();
         assert!(session.is_connected());
 
         // Disconnect
@@ -846,7 +885,7 @@ mod tests {
         // Not supported yet
         let (tx2, _rx2) = mpsc::channel(10);
         let (_tx_in2, rx_in2) = mpsc::channel(10);
-        let result = session.connect(tx2, rx_in2);
+        let result = session.connect(tx2, rx_in2).await;
         assert!(result.is_ok());
         assert!(session.is_connected());
     }
@@ -874,6 +913,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
 
         let actor2 = TestActor.start();
@@ -887,6 +927,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("health"), Box::new(adapter2))
+            .await
             .unwrap();
 
         // Get local offered rooms
@@ -913,6 +954,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
 
         let actor2 = TestActor.start();
@@ -926,6 +968,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("health"), Box::new(adapter2))
+            .await
             .unwrap();
 
         // Peer offers same rooms
@@ -957,6 +1000,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
 
         let actor2 = TestActor.start();
@@ -970,6 +1014,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("health"), Box::new(adapter2))
+            .await
             .unwrap();
 
         // Peer offers: intentconfig, admin (different set)
@@ -1002,6 +1047,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
 
         let actor2 = TestActor.start();
@@ -1015,6 +1061,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("health"), Box::new(adapter2))
+            .await
             .unwrap();
 
         // Peer offers completely different rooms
@@ -1043,6 +1090,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
 
         let actor2 = TestActor.start();
@@ -1056,6 +1104,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("health"), Box::new(adapter2))
+            .await
             .unwrap();
 
         // Peer only offers intentconfig (so only intentconfig is joined)
@@ -1066,7 +1115,7 @@ mod tests {
         // Connect
         let (tx, _rx) = mpsc::channel(10);
         let (_tx_in, rx_in) = mpsc::channel(10);
-        session.connect(tx, rx_in).unwrap();
+        session.connect(tx, rx_in).await.unwrap();
 
         // Try to send to health (not joined)
         let result = session
@@ -1097,6 +1146,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter))
+            .await
             .unwrap();
 
         // Peer offers same room
@@ -1107,7 +1157,7 @@ mod tests {
         // Connect
         let (tx, mut rx) = mpsc::channel(10);
         let (_tx_in, rx_in) = mpsc::channel(10);
-        session.connect(tx, rx_in).unwrap();
+        session.connect(tx, rx_in).await.unwrap();
 
         // Send to joined room should succeed
         let result = session
@@ -1141,6 +1191,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
 
         let actor2 = TestActor.start();
@@ -1154,6 +1205,7 @@ mod tests {
         );
         session
             .add_room(RoomId::from("health"), Box::new(adapter2))
+            .await
             .unwrap();
 
         // Before negotiation, nothing is joined
@@ -1250,7 +1302,10 @@ mod tests {
         // Run the loop
         let peer_id = PeerId::from("test_peer");
         PeerSession::<CollectorMessages, MockRole>::inbound_task_loop(
-            rooms, peer_id, inbound_rx, None,
+            Arc::new(TokioMutex::new(rooms)),
+            peer_id,
+            inbound_rx,
+            None,
         )
         .await;
 
@@ -1290,7 +1345,10 @@ mod tests {
         // Run the loop
         let peer_id = PeerId::from("test_peer");
         PeerSession::<CollectorMessages, MockRole>::inbound_task_loop(
-            rooms, peer_id, inbound_rx, None,
+            Arc::new(TokioMutex::new(rooms)),
+            peer_id,
+            inbound_rx,
+            None,
         )
         .await;
 
@@ -1344,7 +1402,10 @@ mod tests {
         // Run the loop
         let peer_id = PeerId::from("test_peer");
         PeerSession::<CollectorMessages, MockRole>::inbound_task_loop(
-            rooms, peer_id, inbound_rx, None,
+            Arc::new(TokioMutex::new(rooms)),
+            peer_id,
+            inbound_rx,
+            None,
         )
         .await;
 
@@ -1372,12 +1433,13 @@ mod tests {
         let mock_room = MockRoomHandle::new(RoomId::from("known"));
         rooms.insert(RoomId::from("known"), Box::new(mock_room));
 
+        let rooms_arc = Arc::new(TokioMutex::new(rooms));
         let peer_id = PeerId::from("test_peer");
         let msg = CollectorMessages::IntentConfig(IntentConfigMessage::Query);
 
         // Route to unknown room - should not panic, just log warning
         PeerSession::<CollectorMessages, MockRole>::route_inbound_message(
-            &mut rooms,
+            &rooms_arc,
             &peer_id,
             RoomId::from("unknown"),
             msg,
@@ -1395,12 +1457,13 @@ mod tests {
         let mut rooms: HashMap<RoomId, Box<dyn RoomHandle<CollectorMessages>>> = HashMap::new();
         rooms.insert(RoomId::from("test"), Box::new(mock_room));
 
+        let rooms_arc = Arc::new(TokioMutex::new(rooms));
         let peer_id = PeerId::from("test_peer");
         let msg = CollectorMessages::IntentConfig(IntentConfigMessage::Query);
 
         // Route message - should handle error gracefully
         PeerSession::<CollectorMessages, MockRole>::route_inbound_message(
-            &mut rooms,
+            &rooms_arc,
             &peer_id,
             RoomId::from("test"),
             msg,
@@ -1431,7 +1494,10 @@ mod tests {
         // Run the loop - should process message and then exit gracefully
         let peer_id = PeerId::from("test_peer");
         PeerSession::<CollectorMessages, MockRole>::inbound_task_loop(
-            rooms, peer_id, inbound_rx, None,
+            Arc::new(TokioMutex::new(rooms)),
+            peer_id,
+            inbound_rx,
+            None,
         )
         .await;
 
@@ -1449,13 +1515,14 @@ mod tests {
         let mock_room = MockRoomHandle::new(RoomId::from("test"));
         session
             .add_room(RoomId::from("test"), Box::new(mock_room))
+            .await
             .unwrap();
 
         // Connect with channels
         let (tx_out, _rx_out) = mpsc::channel(10);
         let (_tx_in, rx_in) = mpsc::channel(10);
 
-        session.connect(tx_out, rx_in).unwrap();
+        session.connect(tx_out, rx_in).await.unwrap();
         assert!(session.is_connected());
 
         // Get task handle before disconnect
@@ -1483,11 +1550,12 @@ mod tests {
         let mock_room = MockRoomHandle::new(RoomId::from("test"));
         session
             .add_room(RoomId::from("test"), Box::new(mock_room))
+            .await
             .unwrap();
 
         let (tx_out, _rx_out) = mpsc::channel(10);
         let (_tx_in, rx_in) = mpsc::channel(10);
-        session.connect(tx_out, rx_in).unwrap();
+        session.connect(tx_out, rx_in).await.unwrap();
 
         // Disconnect multiple times - should not panic
         session.disconnect();

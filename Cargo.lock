@@ -2695,6 +2695,7 @@ dependencies = [
  "zznet-transport-tcp",
  "zzping-auth",
  "zzping-collector",
+ "zzpinger",
 ]
 
 [[package]]

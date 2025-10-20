@@ -33,6 +33,12 @@ pub struct IntentConfigActor<T: ApplicationRole> {
 
     /// SessionManager for network communication (Phase 3)
     session_manager: Option<Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>>,
+
+    /// Alternative: Generic adapter for accessing shared SessionManager (e.g., DatabaseMessage)
+    /// Used when the database service wires a shared session manager via adapter
+    database_message_adapter:
+        Option<std::sync::Arc<dyn crate::database_message_adapter::BroadcastVia>>,
+
     /// Per-peer broadcast timeout used when sending messages via SessionManager
     broadcast_timeout: std::time::Duration,
 
@@ -81,6 +87,7 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
             next_id: 0,
             role,
             session_manager: None,
+            database_message_adapter: None,
             broadcast_timeout: std::time::Duration::from_millis(500),
             successful_broadcasts: Arc::new(AtomicU64::new(0)),
             failed_broadcasts: Arc::new(AtomicU64::new(0)),
@@ -99,6 +106,18 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
         session_manager: Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>,
     ) {
         self.session_manager = Some(session_manager);
+    }
+
+    /// Set the DatabaseMessage adapter for shared SessionManager communication.
+    /// This is an alternative to set_session_manager() used by DatabaseService to wire
+    /// the shared per-process SessionManager.
+    ///
+    /// The adapter is a trait object that can be used directly without type casting.
+    pub fn set_database_message_adapter(
+        &mut self,
+        adapter: std::sync::Arc<dyn crate::database_message_adapter::BroadcastVia>,
+    ) {
+        self.database_message_adapter = Some(adapter);
     }
 
     /// The logic to broadcast the current configuration to all subscribers.
@@ -190,6 +209,67 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
                     Err(e) => {
                         fail_count = fail_count.saturating_add(1);
                         log::warn!("Failed to send ConfigUpdate to {}: {}", peer, e)
+                    }
+                }
+            }
+
+            if success_count > 0 {
+                successful_broadcasts.fetch_add(success_count, Ordering::Relaxed);
+            }
+            if fail_count > 0 {
+                failed_broadcasts.fetch_add(fail_count, Ordering::Relaxed);
+            }
+            // Update last broadcast timestamp
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            last_broadcast_ms.store(now_ms, Ordering::Relaxed);
+        })
+    }
+
+    /// Spawn a background task to send the given ConfigUpdate via DatabaseMessageAdapter.
+    /// This is used when the shared session manager is wired via adapter from DatabaseService.
+    fn send_config_update_to_peers_via_adapter(
+        adapter: Arc<dyn crate::database_message_adapter::BroadcastVia>,
+        config_update: IntentConfigNetworkMsg,
+        timeout: std::time::Duration,
+        successful_broadcasts: Arc<AtomicU64>,
+        failed_broadcasts: Arc<AtomicU64>,
+        last_broadcast_ms: Arc<AtomicU64>,
+    ) -> ResponseFuture<()> {
+        eprintln!("⚙️ send_config_update_to_peers_via_adapter - creating future");
+        Box::pin(async move {
+            eprintln!("⚙️ send_config_update_to_peers_via_adapter - future executing!");
+            log::warn!("⚙️ DEBUG: send_config_update_to_peers_via_adapter called");
+            // Don't call blocking peer_ids() from async context - just try to broadcast
+            // Use broadcast_to_room to send in parallel to peers matching the permission
+            eprintln!("⚙️ About to call broadcast_config_update_async");
+            log::warn!("⚙️ DEBUG: Calling broadcast_config_update_async");
+            let results = adapter
+                .broadcast_config_update_async(config_update, timeout)
+                .await;
+
+            eprintln!(
+                "⚙️ broadcast_config_update_async returned {} results",
+                results.len()
+            );
+            log::warn!(
+                "⚙️ DEBUG: broadcast_config_update_async returned {} results",
+                results.len()
+            );
+            // Update health counters based on per-peer results
+            let mut success_count: u64 = 0;
+            let mut fail_count: u64 = 0;
+            for (peer, res) in results {
+                match res {
+                    Ok(()) => {
+                        success_count = success_count.saturating_add(1);
+                        log::info!("Sent ConfigUpdate to {} via adapter", peer)
+                    }
+                    Err(e) => {
+                        fail_count = fail_count.saturating_add(1);
+                        log::warn!("Failed to send ConfigUpdate to {} via adapter: {}", peer, e)
                     }
                 }
             }
@@ -310,7 +390,36 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
             } else {
                 self.broadcast_config();
                 // Send ConfigUpdate to each Collector via SessionManager (Phase 3)
-                if let Some(session_manager) = &self.session_manager {
+
+                // Check if we have a database message adapter (priority over regular session manager)
+                log::warn!(
+                    "⚙️ DEBUG: Checking if database_message_adapter is set: {}",
+                    self.database_message_adapter.is_some()
+                );
+                if let Some(adapter) = &self.database_message_adapter {
+                    log::warn!("⚙️ DEBUG: Using database adapter for broadcast");
+                    let adapter = std::sync::Arc::clone(adapter);
+                    let config_update = IntentConfigNetworkMsg::ConfigUpdate {
+                        targets: self.current_config.targets.clone(),
+                        ping_rate_pps: self.current_config.ping_rate_pps,
+                    };
+
+                    // Log the payload we are about to send to peers for debugging
+                    log::info!(
+                        "Sending ConfigUpdate to peers via database adapter: targets={:?}, ping_rate_pps={} ",
+                        self.current_config.targets,
+                        self.current_config.ping_rate_pps
+                    );
+
+                    Self::send_config_update_to_peers_via_adapter(
+                        adapter,
+                        config_update,
+                        self.broadcast_timeout,
+                        Arc::clone(&self.successful_broadcasts),
+                        Arc::clone(&self.failed_broadcasts),
+                        Arc::clone(&self.last_broadcast_ms),
+                    )
+                } else if let Some(session_manager) = &self.session_manager {
                     let session_manager = Rc::clone(session_manager);
                     let config_update = IntentConfigNetworkMsg::ConfigUpdate {
                         targets: self.current_config.targets.clone(),
@@ -638,10 +747,45 @@ impl<T: ApplicationRole> Handler<UpdateConfig> for IntentConfigActor<T> {
     type Result = ();
 
     fn handle(&mut self, msg: UpdateConfig, _ctx: &mut Context<Self>) -> Self::Result {
+        eprintln!("⚙️ UpdateConfig handler called!");
         log::info!("Handling UpdateConfig message: {:?}", msg.0);
         if msg.0 != self.current_config {
-            self.current_config = msg.0;
+            self.current_config = msg.0.clone();
+
+            // Broadcast locally to subscribers
             self.broadcast_config();
+
+            // Also broadcast to network peers if we have an adapter
+            eprintln!(
+                "⚙️ Checking adapter: is_some={}",
+                self.database_message_adapter.is_some()
+            );
+            if let Some(adapter) = &self.database_message_adapter {
+                eprintln!("⚙️ Adapter is set, broadcasting to network!");
+                log::info!("DEBUG: Network adapter is set, will broadcast to peers");
+                let adapter = std::sync::Arc::clone(adapter);
+                let config_update = IntentConfigNetworkMsg::ConfigUpdate {
+                    targets: self.current_config.targets.clone(),
+                    ping_rate_pps: self.current_config.ping_rate_pps,
+                };
+
+                let send_future = Self::send_config_update_to_peers_via_adapter(
+                    adapter,
+                    config_update,
+                    self.broadcast_timeout,
+                    Arc::clone(&self.successful_broadcasts),
+                    Arc::clone(&self.failed_broadcasts),
+                    Arc::clone(&self.last_broadcast_ms),
+                );
+
+                // Spawn it to run in the background
+                eprintln!("⚙️ Spawning background broadcast task");
+                actix::spawn(send_future);
+                eprintln!("⚙️ Background broadcast task spawned");
+            } else {
+                eprintln!("⚙️ No adapter set");
+                log::debug!("DEBUG: No network adapter set, skipping network broadcast");
+            }
         }
     }
 }
@@ -880,6 +1024,82 @@ impl<T: ApplicationRole> Handler<GetHealth> for IntentConfigActor<T> {
             last_broadcast_ms: last,
         };
         MessageResult(health)
+    }
+}
+
+impl<T: ApplicationRole> Handler<crate::messages::SetDatabaseAdapter> for IntentConfigActor<T> {
+    type Result = ();
+
+    fn handle(&mut self, msg: crate::messages::SetDatabaseAdapter, _ctx: &mut Context<Self>) {
+        eprintln!("⚙️⚙️⚙️ SetDatabaseAdapter handler called!");
+        self.set_database_message_adapter(msg.0);
+        log::warn!("⚙️ IntentConfigActor: database_message_adapter set for network broadcast");
+    }
+}
+
+impl<T: ApplicationRole> Handler<crate::messages::NetworkMessageReceived> for IntentConfigActor<T> {
+    type Result = ();
+
+    fn handle(&mut self, msg: crate::messages::NetworkMessageReceived, _ctx: &mut Context<Self>) {
+        eprintln!("⚙️ [IntentConfig] Received network message: {:?}", msg.0);
+
+        // Handle the network message based on its type
+        match msg.0 {
+            IntentConfigNetworkMsg::ConfigUpdate {
+                targets,
+                ping_rate_pps,
+            } => {
+                eprintln!("⚙️ [IntentConfig] Processing ConfigUpdate from network");
+                let new_config = IntentConfigData {
+                    targets,
+                    ping_rate_pps,
+                };
+
+                // Update local config
+                self.current_config = new_config.clone();
+
+                // Broadcast to local subscribers
+                self.broadcast_config();
+
+                eprintln!("⚙️ [IntentConfig] ConfigUpdate applied successfully");
+            }
+            IntentConfigNetworkMsg::RequestConfigChange {
+                sender_peer_id,
+                targets,
+                ping_rate_pps,
+            } => {
+                log::info!(
+                    "Received RequestConfigChange from peer {}: {} targets, {} pps",
+                    sender_peer_id,
+                    targets.len(),
+                    ping_rate_pps
+                );
+                // TODO: Handle config change requests (requires role checking)
+            }
+            IntentConfigNetworkMsg::QueryCurrentConfig => {
+                log::info!("Received QueryCurrentConfig");
+                // TODO: Respond with current config
+            }
+            IntentConfigNetworkMsg::CurrentConfig {
+                targets,
+                ping_rate_pps,
+            } => {
+                log::info!(
+                    "Received CurrentConfig: {} targets, {} pps",
+                    targets.len(),
+                    ping_rate_pps
+                );
+                // TODO: Handle current config response
+            }
+            IntentConfigNetworkMsg::Heartbeat => {
+                log::debug!("Received Heartbeat");
+                // Heartbeats are for connection health, no action needed
+            }
+            IntentConfigNetworkMsg::Error { reason } => {
+                log::error!("Received Error from peer: {}", reason);
+                // Error messages indicate a problem on the remote side
+            }
+        }
     }
 }
 
@@ -1548,7 +1768,10 @@ mod tests {
         // Create channels for peer1 and connect it
         let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
         let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
-        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+        peer_session1
+            .connect(outbound_tx1, _inbound_rx1)
+            .await
+            .unwrap();
 
         // Spawn task to drain peer1's outbound channel so sends don't block
         tokio::spawn(async move {
@@ -1571,7 +1794,10 @@ mod tests {
         // Create channels for peer2 and connect it
         let (_inbound_tx2, _inbound_rx2) = tokio::sync::mpsc::channel(10);
         let (outbound_tx2, mut outbound_rx2) = tokio::sync::mpsc::channel(10);
-        peer_session2.connect(outbound_tx2, _inbound_rx2).unwrap();
+        peer_session2
+            .connect(outbound_tx2, _inbound_rx2)
+            .await
+            .unwrap();
 
         // Spawn task to drain peer2's outbound channel
         tokio::spawn(async move {
@@ -1649,7 +1875,10 @@ mod tests {
 
         let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
         let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
-        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+        peer_session1
+            .connect(outbound_tx1, _inbound_rx1)
+            .await
+            .unwrap();
 
         tokio::spawn(async move { while (outbound_rx1.recv().await).is_some() {} });
 
@@ -1666,7 +1895,10 @@ mod tests {
 
         let (_inbound_tx2, _inbound_rx2) = tokio::sync::mpsc::channel(10);
         let (outbound_tx2, mut outbound_rx2) = tokio::sync::mpsc::channel(10);
-        peer_session2.connect(outbound_tx2, _inbound_rx2).unwrap();
+        peer_session2
+            .connect(outbound_tx2, _inbound_rx2)
+            .await
+            .unwrap();
 
         tokio::spawn(async move { while (outbound_rx2.recv().await).is_some() {} });
 
@@ -1743,7 +1975,10 @@ mod tests {
 
         let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
         let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
-        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+        peer_session1
+            .connect(outbound_tx1, _inbound_rx1)
+            .await
+            .unwrap();
 
         tokio::spawn(async move { while (outbound_rx1.recv().await).is_some() {} });
 
@@ -1760,7 +1995,10 @@ mod tests {
 
         let (_inbound_tx2, _inbound_rx2) = tokio::sync::mpsc::channel(10);
         let (outbound_tx2, mut outbound_rx2) = tokio::sync::mpsc::channel(10);
-        peer_session2.connect(outbound_tx2, _inbound_rx2).unwrap();
+        peer_session2
+            .connect(outbound_tx2, _inbound_rx2)
+            .await
+            .unwrap();
 
         tokio::spawn(async move { while (outbound_rx2.recv().await).is_some() {} });
 
@@ -1878,7 +2116,10 @@ mod tests {
 
         let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
         let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
-        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+        peer_session1
+            .connect(outbound_tx1, _inbound_rx1)
+            .await
+            .unwrap();
 
         tokio::spawn(async move { while (outbound_rx1.recv().await).is_some() {} });
 
@@ -1966,7 +2207,10 @@ mod tests {
 
         let (_inbound_tx1, _inbound_rx1) = tokio::sync::mpsc::channel(10);
         let (outbound_tx1, mut outbound_rx1) = tokio::sync::mpsc::channel(10);
-        peer_session1.connect(outbound_tx1, _inbound_rx1).unwrap();
+        peer_session1
+            .connect(outbound_tx1, _inbound_rx1)
+            .await
+            .unwrap();
 
         tokio::spawn(async move { while (outbound_rx1.recv().await).is_some() {} });
 
@@ -1983,7 +2227,10 @@ mod tests {
 
         let (_inbound_tx2, _inbound_rx2) = tokio::sync::mpsc::channel(10);
         let (outbound_tx2, mut outbound_rx2) = tokio::sync::mpsc::channel(10);
-        peer_session2.connect(outbound_tx2, _inbound_rx2).unwrap();
+        peer_session2
+            .connect(outbound_tx2, _inbound_rx2)
+            .await
+            .unwrap();
 
         tokio::spawn(async move { while (outbound_rx2.recv().await).is_some() {} });
 
@@ -2094,7 +2341,7 @@ mod tests {
 
         let (_inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(10);
         let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(10);
-        peer_session.connect(outbound_tx, inbound_rx).unwrap();
+        peer_session.connect(outbound_tx, inbound_rx).await.unwrap();
 
         // Collect messages sent to peer
         let (msg_tx, mut msg_rx) = tokio::sync::mpsc::channel(10);

@@ -29,6 +29,7 @@ use tracing_subscriber::EnvFilter;
 ///     // Test runs with tracing enabled
 /// }
 /// ```
+#[allow(dead_code)] // Function is actually used in one test but clippy flags it. The reason is that each test is a different compilation target.
 pub fn init_test_tracing() -> tracing::subscriber::DefaultGuard {
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(
@@ -41,7 +42,7 @@ pub fn init_test_tracing() -> tracing::subscriber::DefaultGuard {
                 .add_directive("zzmem_db=debug".parse().unwrap())
                 .add_directive("zzcollector_state=debug".parse().unwrap())
                 .add_directive("zzping_collector=debug".parse().unwrap())
-                .add_directive("zzping_database=debug".parse().unwrap())
+                .add_directive("zzping_database=debug".parse().unwrap()),
         )
         .with_test_writer()
         .with_target(true)

@@ -33,6 +33,7 @@ mod tests {
                     "intent-config".into(),
                 )),
             )
+            .await
             .unwrap();
         peer_session_a.set_role(Some(
             crate::permissions::IntentConfigPermission::ReceiveConfigUpdates,
@@ -53,6 +54,7 @@ mod tests {
                     "intent-config".into(),
                 )),
             )
+            .await
             .unwrap();
         peer_session_b.set_role(Some(
             crate::permissions::IntentConfigPermission::ReceiveConfigUpdates,
@@ -66,11 +68,13 @@ mod tests {
         let ch_a = MessageCaptureChannels::with_buffer_size(10);
         manager
             .connect_peer(peer_a.clone(), ch_a.tx_out, ch_a.rx_in)
+            .await
             .unwrap();
 
         let ch_b = MessageCaptureChannels::with_buffer_size(10);
         manager
             .connect_peer(peer_b.clone(), ch_b.tx_out, ch_b.rx_in)
+            .await
             .unwrap();
 
         // Broadcast with a small timeout - should succeed immediately
@@ -115,6 +119,7 @@ mod tests {
                     "intent-config".into(),
                 )),
             )
+            .await
             .unwrap();
         peer_session_fast.set_role(Some(
             crate::permissions::IntentConfigPermission::ReceiveConfigUpdates,
@@ -138,6 +143,7 @@ mod tests {
                     "intent-config".into(),
                 )),
             )
+            .await
             .unwrap();
         peer_session_slow.set_role(Some(
             crate::permissions::IntentConfigPermission::ReceiveConfigUpdates,
@@ -153,12 +159,14 @@ mod tests {
         let ch_fast = MessageCaptureChannels::with_buffer_size(10);
         manager
             .connect_peer(peer_fast.clone(), ch_fast.tx_out, ch_fast.rx_in)
+            .await
             .unwrap();
 
         // Slow peer: buffer size 1, pre-fill to make send block
         let ch_slow = MessageCaptureChannels::with_buffer_size(1);
         manager
             .connect_peer(peer_slow.clone(), ch_slow.tx_out.clone(), ch_slow.rx_in)
+            .await
             .unwrap();
 
         // Fill the slow peer's outbound buffer so subsequent send will await

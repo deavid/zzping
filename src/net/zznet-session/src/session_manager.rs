@@ -1,4 +1,4 @@
-use crate::peer_session::PeerSession;
+use crate::peer_session::{PeerSession, RoomHandle};
 use crate::room_message_trait::RoomMessageTrait;
 use crate::types::{ConnectionState, PeerId, RoomId, SessionError};
 use std::collections::HashMap;
@@ -170,7 +170,7 @@ where
     ///
     /// Note: These channels carry TYPED messages (RoomId, TMsg),
     /// NOT bytes. Serialization happens at the transport layer, not here.
-    pub fn connect_peer(
+    pub async fn connect_peer(
         &mut self,
         peer_id: PeerId,
         outbound_tx: mpsc::Sender<(RoomId, TMsg)>,
@@ -181,7 +181,7 @@ where
             .get_mut(&peer_id)
             .ok_or_else(|| SessionError::PeerNotFound(peer_id.clone()))?;
 
-        peer.connect(outbound_tx, inbound_rx)?;
+        peer.connect(outbound_tx, inbound_rx).await?;
 
         tracing::info!("Connected to peer: {}", peer_id);
         Ok(())
@@ -212,6 +212,27 @@ where
         drop(peer); // Ensures cleanup
 
         tracing::info!("Removed peer: {}", peer_id);
+        Ok(())
+    }
+
+    /// Add a room handler to an existing peer
+    ///
+    /// This allows components to register handlers for rooms after the peer has been connected.
+    /// Useful for wiring component-specific room handlers to receive messages from peers.
+    pub async fn add_room_to_peer(
+        &mut self,
+        peer_id: &PeerId,
+        room_id: RoomId,
+        room_handle: Box<dyn RoomHandle<TMsg>>,
+    ) -> Result<(), SessionError> {
+        let peer = self
+            .peers
+            .get_mut(peer_id)
+            .ok_or_else(|| SessionError::PeerNotFound(peer_id.clone()))?;
+
+        peer.add_room(room_id.clone(), room_handle).await?;
+
+        tracing::debug!("Added room {:?} to peer {}", room_id, peer_id);
         Ok(())
     }
 
@@ -590,7 +611,7 @@ mod tests {
         let peer_id = PeerId::from("nonexistent_peer");
         let (tx, rx) = mpsc::channel(10);
 
-        let result = manager.connect_peer(peer_id, tx, rx);
+        let result = manager.connect_peer(peer_id, tx, rx).await;
         assert!(matches!(result, Err(SessionError::PeerNotFound(_))));
     }
 
@@ -637,6 +658,7 @@ mod tests {
 
         manager
             .connect_peer(PeerId::from("peer1"), tx_out, rx_out)
+            .await
             .unwrap();
 
         assert!(manager.is_peer_connected(&PeerId::from("peer1")));
@@ -665,7 +687,10 @@ mod tests {
         for peer_id in ["peer1", "peer2", "peer3"] {
             let (tx, _rx_in) = mpsc::channel(10);
             let (_tx_in, rx) = mpsc::channel(10);
-            manager.connect_peer(PeerId::from(peer_id), tx, rx).unwrap();
+            manager
+                .connect_peer(PeerId::from(peer_id), tx, rx)
+                .await
+                .unwrap();
         }
 
         // All should be connected
@@ -742,8 +767,10 @@ mod tests {
 
         // Add two rooms to the peer
         peer.add_room(RoomId::from("r1"), Box::new(SimpleRoom::new("r1")))
+            .await
             .unwrap();
         peer.add_room(RoomId::from("r2"), Box::new(SimpleRoom::new("r2")))
+            .await
             .unwrap();
 
         // Now attempt to register peer - should fail due to room limit

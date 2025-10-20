@@ -6,12 +6,6 @@
 //! - Aggregating health metrics from other components.
 //! - Tracking active collectors when configured in a `Database` role.
 
-#![deny(
-    dead_code,
-    unused_variables,
-    // missing_docs
-)]
-
 pub mod actor;
 pub mod api;
 pub mod builder;

@@ -281,6 +281,7 @@ mod session_manager_integration_tests {
                     "intent-config",
                 ))),
             )
+            .await
             .unwrap();
         // The db_manager sees the collector as a ReceiveConfigUpdates role
         db_peer_for_collector.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -302,6 +303,7 @@ mod session_manager_integration_tests {
                     "intent-config",
                 ))),
             )
+            .await
             .unwrap();
         // The collector manager sees the db as an UpdateConfig-capable client (admin)
         coll_peer_for_db.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -344,6 +346,7 @@ mod session_manager_integration_tests {
             &mut collector_manager,
             &PeerId::from("collector-instance"),
         )
+        .await
         .unwrap();
 
         // Now create actors wired to each manager
@@ -498,6 +501,7 @@ mod session_manager_integration_tests {
                     "intent-config",
                 ))),
             )
+            .await
             .unwrap();
         peer1.set_role(Some(crate::permission_wrapper::PermissionWrapper {
             permission: IntentConfigPermission::ReceiveConfigUpdates,
@@ -522,6 +526,7 @@ mod session_manager_integration_tests {
                 RoomId::from("intent-config"),
                 Box::new(DummyRoomHandle::new(RoomId::from("intent-config"))),
             )
+            .await
             .unwrap();
         peer2.set_role(Some(crate::permission_wrapper::PermissionWrapper {
             permission: IntentConfigPermission::ReceiveConfigUpdates,
@@ -543,12 +548,14 @@ mod session_manager_integration_tests {
         let (_tx1_in, rx1_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("collector1"), tx1_out, rx1_in)
+            .await
             .unwrap();
 
         let (tx2_out, mut rx2_out) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         let (_tx2_in, rx2_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("collector2"), tx2_out, rx2_in)
+            .await
             .unwrap();
 
         // (moved) Receive the outbound messages from each collector's channel and assert ConfigUpdate
@@ -725,6 +732,7 @@ mod session_manager_integration_tests {
                 permission: IntentConfigPermission::ReceiveConfigUpdates,
             }),
         )
+        .await
         .unwrap();
 
         // Now start the Database actor with the already-configured SessionManager
@@ -814,6 +822,7 @@ mod session_manager_integration_tests {
                     "intent-config",
                 ))),
             )
+            .await
             .unwrap();
         // The db_manager sees the collector as a ReceiveConfigUpdates role
         db_peer_for_collector.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -836,6 +845,7 @@ mod session_manager_integration_tests {
                     coll_addr.clone(),
                 )),
             )
+            .await
             .unwrap();
         // The collector manager sees the db as an UpdateConfig-capable client (admin)
         coll_peer_for_db.set_role(Some(crate::permission_wrapper::PermissionWrapper {
@@ -866,6 +876,7 @@ mod session_manager_integration_tests {
             &mut collector_manager,
             &PeerId::from("collector-instance"),
         )
+        .await
         .unwrap();
 
         // Now create Database actor with pre-existing config (this will trigger initial broadcast)
@@ -946,6 +957,7 @@ mod session_manager_integration_tests {
                     "intent-config",
                 ))),
             )
+            .await
             .unwrap();
         collector_peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
             permission: IntentConfigPermission::ReceiveConfigUpdates,
@@ -976,6 +988,7 @@ mod session_manager_integration_tests {
                 tx_db_to_collector,
                 rx_db_inbound,
             )
+            .await
             .unwrap();
 
         // Start Database actor with the SessionManager BEFORE any messages
@@ -1062,6 +1075,7 @@ mod session_manager_integration_tests {
                 RoomId::from("intent-config"),
                 Box::new(DummyRoomHandle::new(RoomId::from("intent-config"))),
             )
+            .await
             .unwrap();
         // Mark the DB peer as having UpdateConfig permission so it will be
         // targeted by the QueryCurrentConfig predicate.
@@ -1079,6 +1093,7 @@ mod session_manager_integration_tests {
         let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         coll_manager
             .connect_peer(PeerId::from("db-instance"), tx_out, rx_in)
+            .await
             .unwrap();
 
         // Start Collector actor wired to this manager
@@ -1142,6 +1157,7 @@ mod session_manager_integration_tests {
                     "intent-config",
                 ))),
             )
+            .await
             .unwrap();
         db_peer_for_collector.set_role(Some(crate::permission_wrapper::PermissionWrapper {
             permission: IntentConfigPermission::UpdateConfig,
@@ -1159,6 +1175,7 @@ mod session_manager_integration_tests {
                     "intent-config",
                 ))),
             )
+            .await
             .unwrap();
         coll_peer_for_db.set_role(Some(crate::permission_wrapper::PermissionWrapper {
             permission: IntentConfigPermission::ReceiveConfigUpdates,
@@ -1178,10 +1195,12 @@ mod session_manager_integration_tests {
         // Connect managers
         coll_manager
             .connect_peer(PeerId::from("db-instance"), tx_coll_to_db, rx_db_to_coll)
+            .await
             .unwrap();
 
         db_manager
             .connect_peer(PeerId::from("collector-instance"), tx_db_to_coll, rx_db_in)
+            .await
             .unwrap();
 
         tokio::spawn(async move {
@@ -1380,6 +1399,7 @@ mod auth_tests {
                 "intent-config",
             ))),
         )
+        .await
         .unwrap();
         session_manager
             .add_peer(PeerId::from("bad-actor"), peer)
@@ -1396,6 +1416,7 @@ mod auth_tests {
         let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("bad-actor"), tx_out, rx_in)
+            .await
             .unwrap();
 
         // Create Database actor with this SessionManager
@@ -1602,6 +1623,7 @@ mod auth_tests {
                     "intent-config",
                 ))),
             )
+            .await
             .unwrap();
         session_manager
             .add_peer(PeerId::from("no-role-peer"), no_role_peer)
@@ -1618,6 +1640,7 @@ mod auth_tests {
         let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("no-role-peer"), tx_out, rx_in)
+            .await
             .unwrap();
 
         // Create Database actor with this SessionManager
@@ -1844,6 +1867,7 @@ mod additional_integration_tests {
                     "intent-config",
                 ))),
             )
+            .await
             .unwrap();
         collector_peer.set_role(Some(crate::permission_wrapper::PermissionWrapper {
             permission: IntentConfigPermission::ReceiveConfigUpdates,
@@ -1865,6 +1889,7 @@ mod additional_integration_tests {
         let (_tx_in, rx_in) = mpsc::channel::<(RoomId, IntentConfigNetworkMsg)>(10);
         session_manager
             .connect_peer(PeerId::from("late-collector"), tx_out, rx_in)
+            .await
             .unwrap();
 
         // Now "connect" the SessionManager to the already-running actor

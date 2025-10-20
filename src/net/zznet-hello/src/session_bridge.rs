@@ -98,6 +98,10 @@ where
         if let Some(mut outbound_rx) = self.outbound_rx.take() {
             tokio::spawn(async move {
                 while let Some((room_id, message)) = outbound_rx.recv().await {
+                    debug!(
+                        "SessionBridge outbound received message for room {:?}",
+                        room_id.as_str()
+                    );
                     // Serialize message using RoomMessageTrait
                     let payload = match message.serialize_inner() {
                         Ok(data) => data,
@@ -189,7 +193,6 @@ mod tests {
 
     // Simple test message enum for SessionBridge tests
     #[derive(Debug, Clone)]
-    #[allow(dead_code)]
     enum TestMessages {
         IntentConfig,
         MemDB,
@@ -228,14 +231,56 @@ mod tests {
     }
 
     #[test]
-    fn test_session_bridge_creation() {
-        // Just verify it compiles and constructs
-        let (_outbound_tx, outbound_rx) = mpsc::channel::<(RoomId, TestMessages)>(100);
-        let (conn_to_session_tx, _conn_to_session_rx) =
-            mpsc::channel::<(RoomId, TestMessages)>(100);
-        let (_hello_to_conn_tx, hello_to_conn_rx) = mpsc::channel::<(String, Vec<u8>)>(100);
+    fn test_message_serialization() {
+        // Test that all variants serialize correctly
+        assert_eq!(
+            TestMessages::IntentConfig.serialize_inner().unwrap(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            TestMessages::MemDB.serialize_inner().unwrap(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            TestMessages::Health.serialize_inner().unwrap(),
+            vec![1, 2, 3]
+        );
+    }
 
-        // We can't easily test actix actors in unit tests, so just verify compilation
-        let _ = (outbound_rx, conn_to_session_tx, hello_to_conn_rx);
+    #[test]
+    fn test_message_deserialization() {
+        // Test that all room IDs can be deserialized
+        let bytes = vec![1, 2, 3];
+
+        let msg =
+            TestMessages::deserialize_for_room(&RoomId::from("intentconfig"), &bytes).unwrap();
+        assert!(matches!(msg, TestMessages::IntentConfig));
+
+        let msg = TestMessages::deserialize_for_room(&RoomId::from("memdb"), &bytes).unwrap();
+        assert!(matches!(msg, TestMessages::IntentConfig)); // Currently returns IntentConfig for all
+
+        let msg = TestMessages::deserialize_for_room(&RoomId::from("health"), &bytes).unwrap();
+        assert!(matches!(msg, TestMessages::IntentConfig)); // Currently returns IntentConfig for all
+    }
+
+    #[test]
+    fn test_message_room_ids() {
+        // Test that each variant has the correct room_id
+        assert_eq!(
+            TestMessages::IntentConfig.room_id(),
+            RoomId::from("intentconfig")
+        );
+        assert_eq!(TestMessages::MemDB.room_id(), RoomId::from("memdb"));
+        assert_eq!(TestMessages::Health.room_id(), RoomId::from("health"));
+    }
+
+    #[test]
+    fn test_supported_rooms() {
+        // Test that all three rooms are reported as supported
+        let supported = TestMessages::supported_rooms();
+        assert_eq!(supported.len(), 3);
+        assert!(supported.contains(&RoomId::from("intentconfig")));
+        assert!(supported.contains(&RoomId::from("memdb")));
+        assert!(supported.contains(&RoomId::from("health")));
     }
 }

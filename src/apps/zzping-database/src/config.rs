@@ -10,7 +10,7 @@ pub struct DatabaseConfig {
     pub bind_port: u16,
 
     /// TLS configuration for mTLS server (optional for TCP-only mode)
-    pub tls: Option<TlsConfig>,
+    pub tls: Option<DatabaseTlsConfig>,
 
     /// Component-specific settings
     pub components: ComponentConfig,
@@ -23,7 +23,7 @@ pub struct DatabaseConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TlsConfig {
+pub struct DatabaseTlsConfig {
     /// CA certificates for verifying client certificates (from collectors)
     /// Multiple paths supported to allow certificate rotation (dual-CA)
     pub ca_cert_paths: Vec<String>,
@@ -96,8 +96,8 @@ impl DatabaseConfig {
     pub fn for_testing() -> Self {
         Self {
             bind_host: "127.0.0.1".into(),
-            bind_port: 0, // OS assigns port (useful for parallel tests)
-            tls: None,    // TCP-only
+            bind_port: 58443,
+            tls: None, // TCP-only
             components: ComponentConfig::fast_timing(),
             data_dir: ".".into(),
         }
@@ -258,7 +258,7 @@ mod tests {
         DatabaseConfig {
             bind_host: "0.0.0.0".into(),
             bind_port: 8443,
-            tls: Some(TlsConfig {
+            tls: Some(DatabaseTlsConfig {
                 ca_cert_paths: vec![certs_dir.join("ca.pem").to_str().unwrap().to_string()],
                 server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
                 server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
@@ -333,7 +333,7 @@ mod tests {
     DatabaseConfig(
         bind_host: "0.0.0.0",
         bind_port: 8443,
-        tls: Some(TlsConfig(
+        tls: Some(DatabaseTlsConfig(
             ca_cert_paths: ["{}"],
             server_cert_path: "{}",
             server_key_path: "{}",

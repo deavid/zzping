@@ -33,7 +33,7 @@ impl DummyRoomHandle {
 /// Connect two SessionManager instances in-memory by wiring their peer channels
 /// together using tokio mpsc channels. This creates bidirectional channels so
 /// that manager_a can send to peer_b and manager_b can send to peer_a.
-pub fn connect_managers_in_memory<TMsg, TRole>(
+pub async fn connect_managers_in_memory<TMsg, TRole>(
     manager_a: &mut zznet_session::session_manager::SessionManager<TMsg, TRole>,
     peer_id_a: &zznet_session::types::PeerId,
     manager_b: &mut zznet_session::session_manager::SessionManager<TMsg, TRole>,
@@ -51,10 +51,14 @@ where
     let (tx_b_to_a, rx_b_to_a) = mpsc::channel::<(RoomId, TMsg)>(16);
 
     // Manager A connects to peer B with outbound tx A->B and inbound rx B->A
-    manager_a.connect_peer(peer_id_b.clone(), tx_a_to_b, rx_b_to_a)?;
+    manager_a
+        .connect_peer(peer_id_b.clone(), tx_a_to_b, rx_b_to_a)
+        .await?;
 
     // Manager B connects to peer A with outbound tx B->A and inbound rx A->B
-    manager_b.connect_peer(peer_id_a.clone(), tx_b_to_a, rx_a_to_b)?;
+    manager_b
+        .connect_peer(peer_id_a.clone(), tx_b_to_a, rx_a_to_b)
+        .await?;
 
     Ok(())
 }
@@ -66,7 +70,7 @@ where
 /// 3. Setting role/permissions
 /// 4. Adding to manager
 /// 5. Publishing rooms
-pub fn create_and_add_peer<TMsg, TRole>(
+pub async fn create_and_add_peer<TMsg, TRole>(
     manager: &mut zznet_session::session_manager::SessionManager<TMsg, TRole>,
     peer_id: &zznet_session::types::PeerId,
     rooms: Vec<RoomId>,
@@ -84,7 +88,8 @@ where
         peer.add_room(
             room_id.clone(),
             Box::new(DummyRoomHandle::new(room_id.clone())),
-        )?;
+        )
+        .await?;
     }
 
     // Set role if provided
@@ -193,7 +198,7 @@ impl<TMsg> Default for MessageCaptureChannels<TMsg> {
 
 /// Convenience helper that creates a peer, connects it to capture messages, and returns the capture handle.
 /// This combines create_and_add_peer + MessageCapture setup for the most common test pattern.
-pub fn create_peer_with_message_capture<TMsg, TRole>(
+pub async fn create_peer_with_message_capture<TMsg, TRole>(
     manager: &mut zznet_session::session_manager::SessionManager<TMsg, TRole>,
     peer_id: &zznet_session::types::PeerId,
     rooms: Vec<RoomId>,
@@ -204,13 +209,15 @@ where
     TRole: zznet_auth::ApplicationRole,
 {
     // Create and add the peer
-    create_and_add_peer(manager, peer_id, rooms, role)?;
+    create_and_add_peer(manager, peer_id, rooms, role).await?;
 
     // Set up message capture
     let channels = MessageCaptureChannels::new();
 
     // Connect the peer
-    manager.connect_peer(peer_id.clone(), channels.tx_out, channels.rx_in)?;
+    manager
+        .connect_peer(peer_id.clone(), channels.tx_out, channels.rx_in)
+        .await?;
 
     Ok(channels.capture)
 }

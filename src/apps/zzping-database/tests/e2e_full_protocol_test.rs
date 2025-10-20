@@ -96,7 +96,7 @@ async fn test_e2e_config_creation() {
     use zzping_database::config::DatabaseConfig;
     let db_config = DatabaseConfig::for_testing();
     assert_eq!(db_config.bind_host, "127.0.0.1");
-    assert_eq!(db_config.bind_port, 0); // OS assigns port
+    assert_eq!(db_config.bind_port, 58443); // OS assigns port
     assert!(db_config.tls.is_none()); // TCP-only
     assert_eq!(db_config.components.stale_timeout_secs, 1);
     assert_eq!(db_config.components.max_collectors, 10);
@@ -108,7 +108,7 @@ async fn test_e2e_config_creation() {
     let collector_config = CollectorConfig::for_testing("my-collector");
     assert_eq!(collector_config.collector_id, "my-collector");
     assert_eq!(collector_config.database_host, "127.0.0.1");
-    assert_eq!(collector_config.database_port, 8443);
+    assert_eq!(collector_config.database_port, 58443);
     assert!(collector_config.tls.is_none()); // TCP-only
     assert_eq!(collector_config.components.heartbeat_interval_ms, 100);
     assert_eq!(collector_config.components.memdb_batch_size, 5);

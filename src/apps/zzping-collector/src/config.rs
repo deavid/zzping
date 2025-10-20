@@ -14,7 +14,7 @@ pub struct CollectorConfig {
     pub database_port: u16,
 
     /// TLS configuration for mTLS connection (optional for TCP-only mode)
-    pub tls: Option<TlsConfig>,
+    pub tls: Option<CollectorTlsConfig>,
 
     /// Component-specific settings
     pub components: ComponentConfig,
@@ -22,7 +22,7 @@ pub struct CollectorConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// TLS configuration for mTLS.
-pub struct TlsConfig {
+pub struct CollectorTlsConfig {
     /// CA certificate for verifying server (database)
     pub ca_cert_path: String,
     /// Client certificate (this collector's identity)
@@ -82,7 +82,7 @@ impl CollectorConfig {
         Self {
             collector_id: collector_id.into(),
             database_host: "127.0.0.1".into(),
-            database_port: 8443,
+            database_port: 58443,
             tls: None, // TCP-only
             components: ComponentConfig::fast_timing(),
         }
@@ -199,7 +199,7 @@ mod tests {
                 heartbeat_interval_ms: 5000,
                 memdb_batch_size: 50,
             },
-            tls: Some(TlsConfig {
+            tls: Some(CollectorTlsConfig {
                 ca_cert_path,
                 client_cert_path,
                 client_key_path,
@@ -259,7 +259,7 @@ mod tests {
         collector_id: "test-collector",
         database_host: "127.0.0.1",
         database_port: 8443,
-        tls: Some(TlsConfig(
+        tls: Some(CollectorTlsConfig(
             ca_cert_path: "{}",
             client_cert_path: "{}",
             client_key_path: "{}",

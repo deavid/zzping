@@ -1,5 +1,5 @@
 #[allow(unused_imports)]
-use crate::config::{ComponentConfig, DatabaseConfig, TlsConfig};
+use crate::config::{ComponentConfig, DatabaseConfig, DatabaseTlsConfig};
 use crate::error::{DatabaseError, Result};
 
 use actix::{Actor, Addr};
@@ -81,21 +81,15 @@ impl RoomMessageTrait for DatabaseMessage {
     }
 
     fn deserialize_for_room(
-        room_id: &RoomId,
+        _room_id: &RoomId,
         bytes: &[u8],
     ) -> std::result::Result<Self, DeserializationError> {
-        if let Ok(msg) = IntentConfigNetworkMsg::deserialize_for_room(room_id, bytes) {
-            return Ok(DatabaseMessage::Intent(msg));
-        }
-        if let Ok(msg) = MemDBMessage::deserialize_for_room(room_id, bytes) {
-            return Ok(DatabaseMessage::MemDB(msg));
-        }
-        if let Ok(msg) = CStateMessage::deserialize_for_room(room_id, bytes) {
-            return Ok(DatabaseMessage::CState(msg));
-        }
-        Err(DeserializationError::Failed(
-            "Failed to deserialize message for any known type".to_string(),
-        ))
+        // First try to deserialize as the full DatabaseMessage enum
+        let s = std::str::from_utf8(bytes)
+            .map_err(|e| DeserializationError::Failed(format!("UTF-8 error: {}", e)))?;
+
+        ron::from_str::<DatabaseMessage>(s)
+            .map_err(|e| DeserializationError::Failed(format!("RON deserialize error: {}", e)))
     }
 
     fn supported_rooms() -> Vec<RoomId> {
@@ -116,15 +110,27 @@ pub struct ComponentBuilders {
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
     /// Builder for CState component (database role)
-    pub cstate: CStateBuilder<DatabaseMessage, AuthRole, SessionManager<DatabaseMessage, AuthRole>>,
+    pub cstate: CStateBuilder<
+        DatabaseMessage,
+        AuthRole,
+        tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>,
+    >,
+    /// Shared SessionManager for all components and ConnectionManager (Arc<Mutex<...>> for interior mutability)
+    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>>,
 }
 
+type CStateActorAddr = Addr<
+    CStateActor<
+        DatabaseMessage,
+        AuthRole,
+        tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>,
+    >,
+>;
 /// Started components (running actors).
 ///
 /// These addresses are cloned for each connection handler and will be used
 /// in Phase 6 to route messages to components via Actix messaging.
 /// Useful for testing, embedding, and custom service composition.
-#[allow(dead_code)]
 #[derive(Clone)]
 pub struct StartedComponents {
     /// Address of the running IntentConfig actor
@@ -132,8 +138,10 @@ pub struct StartedComponents {
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
     /// Address of the running CState actor (database role)
-    pub cstate:
-        Addr<CStateActor<DatabaseMessage, AuthRole, SessionManager<DatabaseMessage, AuthRole>>>,
+    pub cstate: CStateActorAddr,
+    /// The shared SessionManager instance used by all components
+    /// This must be used when creating ConnectionManager to ensure network messages flow properly
+    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>>,
 }
 
 // Per-connection handler for collector connections
@@ -152,16 +160,19 @@ impl DatabaseService {
     pub async fn run(self) -> Result<()> {
         tracing::info!("Database service starting");
 
-        // Step 1: Create and start components
+        // Step 1: Create builders (including the shared SessionManager)
         let builders = self.create_builders()?;
+        let session_manager = Arc::clone(&builders.session_manager);
+
+        // Step 2: Start components
         let _started = Self::start_components(builders).await?;
 
         tracing::info!("All components started successfully");
 
-        // Step 2: Start ConnectionManager actor and network wiring
-        tracing::info!("Starting ConnectionManager actor and network wiring");
+        // Step 3: Start ConnectionManager actor with the SHARED SessionManager
+        tracing::info!("Starting ConnectionManager actor with shared SessionManager");
 
-        let cm_addr = self.start_connection_manager();
+        let cm_addr = self.start_connection_manager_with_session_manager(session_manager);
 
         // Build TLS configuration for the transport server (if enabled)
         let tls_cfg = if let Some(tls) = &self.config.tls {
@@ -188,7 +199,7 @@ impl DatabaseService {
 
     /// Build TLS configuration for the transport layer (TcpTransportServer)
     pub fn build_transport_tls_config(
-        tls: &TlsConfig,
+        tls: &DatabaseTlsConfig,
     ) -> Result<Option<zznet_transport_tcp::config::TlsConfig>> {
         use std::path::PathBuf;
         use zznet_transport_tcp::config::{TlsCertAndKey, TlsConfig as TransportTlsConfig};
@@ -219,12 +230,20 @@ impl DatabaseService {
         // Create an authorizer that validates peer identity from TLS certificate
         // and resolves it to AuthRole (connection-level authorization).
         // Components will later map this to component-specific permissions using AuthRoleMapper.
-        // This ensures EVERY connection is authorized - there is no code path for unauthenticated access.
+        // When TLS is disabled, we accept all connections (no authentication).
         let authorizer: zzping_auth::Authorizer = Box::new(|peer_identity| {
             tracing::debug!(
                 "Database authorizer checking peer identity: {}",
                 peer_identity.full_identity()
             );
+
+            // When TLS is disabled (plain-tcp), skip authentication and accept as Collector
+            if peer_identity.common_name == "plain-tcp" {
+                tracing::warn!(
+                    "Plain TCP connection - no authentication, accepting as Collector role"
+                );
+                return Some(AuthRole::Collector);
+            }
 
             // Validate CN against allowed service roles
             match AuthRole::from_cn(&peer_identity.common_name) {
@@ -253,8 +272,54 @@ impl DatabaseService {
         ))
     }
 
+    /// Create ConnectionManager with a provided shared SessionManager.
+    ///
+    /// This is the correct way to create ConnectionManager - it shares the SessionManager
+    /// with all components, ensuring messages flow properly.
+    fn create_connection_manager_with_session_manager(
+        &self,
+        session_manager: Arc<tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>>,
+    ) -> Result<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, AuthRole>> {
+        // Create an authorizer that validates peer identity from TLS certificate
+        let authorizer: zzping_auth::Authorizer = Box::new(|peer_identity| {
+            tracing::debug!(
+                "Database authorizer checking peer identity: {}",
+                peer_identity.full_identity()
+            );
+
+            match AuthRole::from_cn(&peer_identity.common_name) {
+                Ok(role) => {
+                    tracing::debug!(
+                        "Authorizer resolved {} → {:?}",
+                        peer_identity.full_identity(),
+                        role
+                    );
+                    Some(role)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Authorizer rejected {} - unknown role: {}",
+                        peer_identity.full_identity(),
+                        e
+                    );
+                    None
+                }
+            }
+        });
+
+        Ok(
+            zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
+                session_manager,
+                authorizer,
+            ),
+        )
+    }
+
     /// Start ConnectionManager as an actix actor and return its address.
-    fn start_connection_manager(
+    ///
+    /// This is useful for testing scenarios where you want to manually inject
+    /// transport connections or customize the connection handling.
+    pub fn start_connection_manager(
         &self,
     ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, AuthRole>>
     {
@@ -264,6 +329,27 @@ impl DatabaseService {
         let mgr = match self.create_connection_manager() {
             Ok(m) => m,
             Err(e) => panic!("Failed to create ConnectionManager: {:?}", e),
+        };
+        mgr.start()
+    }
+
+    /// Start ConnectionManager with a provided shared SessionManager.
+    ///
+    /// This is the correct way to start ConnectionManager - it shares the SessionManager
+    /// with all components, ensuring messages flow properly.
+    pub fn start_connection_manager_with_session_manager(
+        &self,
+        session_manager: Arc<tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>>,
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, AuthRole>>
+    {
+        use actix::prelude::*;
+
+        let mgr = match self.create_connection_manager_with_session_manager(session_manager) {
+            Ok(m) => m,
+            Err(e) => panic!(
+                "Failed to create ConnectionManager with session_manager: {:?}",
+                e
+            ),
         };
         mgr.start()
     }
@@ -281,29 +367,35 @@ impl DatabaseService {
     /// let components = DatabaseService::start_components(builders).await?;
     /// ```
     pub fn create_builders(&self) -> Result<ComponentBuilders> {
-        // Create SessionManager for database components
-        // Database offers "memdb" and "query" rooms (matching HELLO handshake)
+        // Create THE ONE shared SessionManager for this database process
+        // All components and ConnectionManager share this single instance
+        // Wrapped in Arc<Mutex<...>> to allow:
+        // - Components to call &self methods (broadcast_to_room)
+        // - ConnectionManager to call &mut self methods (add_peer, connect_peer)
         use zznet_session::types::RoomId;
         let offered_rooms = vec![RoomId::from("memdb"), RoomId::from("query")];
 
+        let shared_session_manager = Arc::new(tokio::sync::Mutex::new(SessionManager::<
+            DatabaseMessage,
+            AuthRole,
+        >::new(
+            offered_rooms.clone()
+        )));
+
         // Create IntentConfig builder - DATABASE ROLE
-        // Use configured data_dir (resolved by DatabaseConfig::load) to compute
-        // the path for intent.ron so relative paths in RON are interpreted
-        // relative to the config file location.
-        // `data_dir` is mandatory and already resolved by DatabaseConfig::load()
+        // Note: IntentConfigActor will need to be updated to work with DatabaseMessage
+        // For now, we'll create it without a session_manager and wire it later
         let data_dir = std::path::PathBuf::from(&self.config.data_dir);
         let config_path = data_dir.join("intent.ron");
 
-        let intent_config_session_manager = zznet_session::session_manager::SessionManager::<
-            zzintent_config::network_messages::IntentConfigNetworkMsg,
-            zzintent_config::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
-        >::new(offered_rooms.clone());
-
-        let intent_config = IntentConfigBuilder::<IntentConfigPermission>::new()
-            .role(IntentConfigRole::Database {
+        let intent_config =
+            IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Database {
                 config_file_path: config_path,
-            })
-            .session_manager(intent_config_session_manager);
+            });
+        // Wire IntentConfig to use shared_session_manager via adapter
+        // The adapter bridges the type mismatch between what IntentConfig expects
+        // (Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>)
+        // and what we have (Arc<tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>>)
 
         // Create MemDB actor - DATABASE ROLE (no builder pattern!)
         let memdb_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
@@ -312,26 +404,22 @@ impl DatabaseService {
         });
         let memdb_addr = memdb_actor.start();
 
-        // Create CState builder - maps AuthRole to CStatePermission component role
-        let cstate_session_manager = zznet_session::session_manager::SessionManager::<
-            DatabaseMessage,
-            AuthRole,
-        >::new(offered_rooms);
-
+        // Create CState builder with the SHARED SessionManager (Arc<Mutex<...>>)
         let cstate = CStateBuilder::<
             DatabaseMessage,
             AuthRole,
-            SessionManager<DatabaseMessage, AuthRole>,
+            tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>,
         >::new(CStateRole::Database {
             stale_timeout_secs: self.config.components.stale_timeout_secs,
             max_collectors: Some(self.config.components.max_collectors),
         })
-        .session_manager(Arc::new(cstate_session_manager));
+        .session_manager(Arc::clone(&shared_session_manager));
 
         Ok(ComponentBuilders {
             intent_config,
             memdb_addr,
             cstate,
+            session_manager: shared_session_manager,
         })
     }
 
@@ -354,6 +442,22 @@ impl DatabaseService {
             .start()
             .map_err(|e| DatabaseError::Component(format!("IntentConfig start failed: {}", e)))?;
 
+        // Wire the shared SessionManager adapter to IntentConfig
+        // This connects IntentConfig to the per-process SessionManager so broadcasts work
+        eprintln!("⚙️ Creating DatabaseMessageAdapter for IntentConfig");
+        let adapter = std::sync::Arc::new(
+            zzintent_config::database_message_adapter::DatabaseMessageAdapter::new(
+                std::sync::Arc::clone(&builders.session_manager),
+            ),
+        );
+        // Cast to trait object (already wrapped in Arc)
+        let adapter_trait: std::sync::Arc<
+            dyn zzintent_config::database_message_adapter::BroadcastVia,
+        > = adapter;
+        eprintln!("⚙️ Sending SetDatabaseAdapter message to IntentConfigActor");
+        intent_addr.do_send(zzintent_config::messages::SetDatabaseAdapter(adapter_trait));
+        eprintln!("⚙️ SetDatabaseAdapter message sent");
+
         // Start CState
         let cstate_addr = builders.cstate.build();
 
@@ -361,6 +465,7 @@ impl DatabaseService {
             intent_config: intent_addr,
             memdb_addr: builders.memdb_addr,
             cstate: cstate_addr,
+            session_manager: builders.session_manager,
         })
     }
 
@@ -393,7 +498,7 @@ mod tests {
         DatabaseConfig {
             bind_host: "0.0.0.0".into(),
             bind_port: 8443,
-            tls: Some(TlsConfig {
+            tls: Some(DatabaseTlsConfig {
                 ca_cert_paths: vec![certs_dir.join("ca.pem").to_str().unwrap().to_string()],
                 server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
                 server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
@@ -438,7 +543,7 @@ mod tests {
             .parent()
             .unwrap();
         let certs_dir = workspace_root.join("test_certs");
-        let tls_config = TlsConfig {
+        let tls_config = DatabaseTlsConfig {
             ca_cert_paths: vec![certs_dir.join("ca.pem").to_str().unwrap().to_string()],
             server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
             server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
@@ -459,7 +564,7 @@ mod tests {
             .parent()
             .unwrap();
         let certs_dir = workspace_root.join("test_certs");
-        let tls_config = TlsConfig {
+        let tls_config = DatabaseTlsConfig {
             ca_cert_paths: vec!["nonexistent.pem".into()],
             server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
             server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),

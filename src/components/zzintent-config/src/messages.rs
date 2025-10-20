@@ -68,6 +68,20 @@ pub struct GetCurrentConfig;
 #[rtype(result = "IntentConfigHealth")]
 pub struct GetHealth;
 
+/// A command message to set a generic database adapter (for network broadcast via shared SessionManager).
+/// The adapter is a trait object that handles type conversion and broadcasting.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct SetDatabaseAdapter(
+    pub std::sync::Arc<dyn crate::database_message_adapter::BroadcastVia>,
+);
+
+/// A message containing a network message received from a peer.
+/// This is sent by the network layer (SessionManager/RoomHandler) to the IntentConfigActor.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct NetworkMessageReceived(pub crate::network_messages::IntentConfigNetworkMsg);
+
 /// A compact health struct exposing basic counters and last activity.
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct IntentConfigHealth {

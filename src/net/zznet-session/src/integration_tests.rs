@@ -464,13 +464,15 @@ mod peer_session_integration_tests {
         // Add rooms to peer session
         peer_session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
         peer_session
             .add_room(RoomId::from("memdb"), Box::new(adapter2))
+            .await
             .unwrap();
 
         // Connect peer session
-        peer_session.connect(inbound_tx, inbound_rx).unwrap();
+        peer_session.connect(inbound_tx, inbound_rx).await.unwrap();
 
         // Test outbound: Component → Room → Adapter → Peer
         room1
@@ -537,16 +539,19 @@ mod peer_session_integration_tests {
         // Add rooms
         peer_session
             .add_room(RoomId::from("intentconfig"), Box::new(adapter1))
+            .await
             .unwrap();
         peer_session
             .add_room(RoomId::from("memdb"), Box::new(adapter2))
+            .await
             .unwrap();
         peer_session
             .add_room(RoomId::from("health"), Box::new(adapter3))
+            .await
             .unwrap();
 
         // Connect
-        peer_session.connect(inbound_tx, inbound_rx).unwrap();
+        peer_session.connect(inbound_tx, inbound_rx).await.unwrap();
 
         // Send messages from all rooms concurrently
         room1
