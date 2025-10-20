@@ -164,6 +164,27 @@ impl<R: ApplicationRole> AclManager<R> {
     }
 }
 
+/// Create a default authorizer that implements the common pattern used by
+/// applications: parse role from certificate CN, and optionally accept
+/// plain-TCP fallback as a specific default role.
+///
+/// - `allow_plain_tcp`: when true, treat `peer_identity.common_name == "plain-tcp"` as allowed
+/// - `default_role_for_plain`: role to return when plain-tcp is allowed
+pub fn create_default_authorizer<R: ApplicationRole>(
+    allow_plain_tcp: bool,
+    default_role_for_plain: Option<R>,
+) -> GenericAuthorizer<R> {
+    Box::new(move |peer_identity: &zznet_api::types::PeerIdentity| {
+        // Plain-TCP handling
+        if allow_plain_tcp && peer_identity.common_name == "plain-tcp" {
+            return default_role_for_plain;
+        }
+
+        // Try parsing CN to role
+        R::from_cn(&peer_identity.common_name).ok()
+    })
+}
+
 impl<R: ApplicationRole> Default for AclManager<R> {
     fn default() -> Self {
         Self::new()
@@ -172,8 +193,69 @@ impl<R: ApplicationRole> Default for AclManager<R> {
 
 #[cfg(test)]
 mod tests {
-    // ...existing code... (no unused imports)
+    use super::*;
+    use serde::{Deserialize, Serialize};
 
-    // Generic ACL tests that work with any ApplicationRole implementation
-    // Specific role tests should be in the application crate that implements the trait
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    enum TestRole {
+        Collector,
+        Database,
+    }
+
+    impl crate::role::ApplicationRole for TestRole {
+        fn from_cn(cn: &str) -> Result<Self, crate::error::AuthError> {
+            match cn {
+                "collector" => Ok(TestRole::Collector),
+                "database" => Ok(TestRole::Database),
+                _ => Err(crate::error::AuthError::UnknownRole(cn.to_string())),
+            }
+        }
+
+        fn as_str(&self) -> &'static str {
+            match self {
+                TestRole::Collector => "collector",
+                TestRole::Database => "database",
+            }
+        }
+
+        fn can_connect_to(&self, _target: &Self) -> bool {
+            true
+        }
+
+        fn can_access_room(&self, _room_name: &str) -> bool {
+            true
+        }
+    }
+
+    fn mk_identity(cn: &str, username: &str) -> zznet_api::types::PeerIdentity {
+        zznet_api::types::PeerIdentity {
+            common_name: cn.to_string(),
+            san_username: username.to_string(),
+            peer_addr: "127.0.0.1:0".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_default_authorizer_parses_known_role() {
+        let auth = create_default_authorizer::<TestRole>(false, None);
+        let id = mk_identity("collector", "root");
+        let role = auth(&id);
+        assert_eq!(role, Some(TestRole::Collector));
+    }
+
+    #[test]
+    fn test_default_authorizer_plain_tcp_fallback() {
+        let auth = create_default_authorizer::<TestRole>(true, Some(TestRole::Database));
+        let id = mk_identity("plain-tcp", "root");
+        let role = auth(&id);
+        assert_eq!(role, Some(TestRole::Database));
+    }
+
+    #[test]
+    fn test_default_authorizer_rejects_unknown_cn() {
+        let auth = create_default_authorizer::<TestRole>(false, None);
+        let id = mk_identity("unknown-role", "bob");
+        let role = auth(&id);
+        assert_eq!(role, None);
+    }
 }

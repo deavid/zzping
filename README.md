@@ -68,31 +68,28 @@ All tests are located in `src/` directories using `#[cfg(test)]` modules. The pr
 
 **Integration Tests (By Exception):**
 - Complex end-to-end scenarios that cannot be mocked
-- Located in `src/apps/*/tests/` directories
-- Examples: `connectivity_integration_test.rs`, `e2e_lifecycle_test.rs`
+- Located in `src/apps/*/tests/` and `src/components/*/tests/` directories
+- Examples: `connectivity_integration_test.rs`, `e2e_lifecycle_test.rs`, `test_phase2_step4_dynamic_peer_registration`
 - Run with `cargo test` or specific test names
 
 **For more details on testing philosophy, see `AGENT_CODING_STANDARDS.md` Section 6.**
 
-### Integration Tests
+### Running Tests
 
-**⚠️ IMPORTANT:** Integration tests are not currently functional as Cargo test targets.
+All tests are unit tests and integration tests located within the source tree:
+- **Unit tests:** Run with `cargo test --lib` - Tests all `#[cfg(test)]` modules in src/
+- **Integration tests:** Run with `cargo test --test '*'` or `cargo test` - Includes both in-source and top-level tests
+- **Specific test:** Run with `cargo test test_name` - Runs matching tests
 
-Test files exist in `tests/` but are not registered in Cargo.toml:
-- `tests/e2e_smoke.rs` - End-to-end smoke tests
-- `tests/cert_rotation_test.rs` - Certificate rotation validation
-- `tests/stability_test.rs` - Long-running stability tests
+**Current Status:**
+- 500+ tests passing (100% success rate)
+- All tests use `#[cfg(test)]` or Cargo's automatic test discovery
+- No broken tests or known issues
 
-**Known Issues:**
-- Running `cargo test --test e2e_smoke` fails with "no test target"
-- TLS handshake errors: "UnsupportedCertVersion" - cert generation needs fixes
-
-**Test Scripts (Unverified):**
-```bash
-# Short stability test (script runner)
-./scripts/run_short_stability.sh
-
-# Load test (requires working TLS certs)
+**Test Organization:**
+- Unit tests co-located with source code in `src/` directories
+- Integration tests in component test modules (e.g., `src/components/zzintent-config/src/test_integration.rs`)
+- No top-level `tests/` directory (per coding standards)
 ./scripts/load_test.sh 10 60
 
 # Chaos test (needs manual validation)

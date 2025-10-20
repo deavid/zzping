@@ -5,6 +5,7 @@
 //! - Receives HandshakeComplete notifications from HelloActors
 //! - Creates PeerSession instances in SessionManager
 //! - Routes messages between HelloActors and application components
+//! - Wires registered room handlers for new peers
 
 use crate::actor::{HelloActor, HelloConfig, start_hello_actor_with_session_manager};
 use crate::session_bridge::SessionBridge;
@@ -54,6 +55,22 @@ where
     /// This is NOT optional - every connection must be authorized.
     /// Takes PeerIdentity (from TLS certificate) and returns role if allowed.
     authorizer: Authorizer<TRole>,
+    /// Optional callback for wiring room handlers to newly-connected peers.
+    /// Called from HandshakeComplete handler with the SessionManager and new peer ID.
+    /// IMPORTANT: This is now ASYNC and TRANSACTIONAL. If wiring fails, the connection
+    /// is automatically terminated to prevent "zombie" connections.
+    /// Returns a Result indicating success or failure of handler wiring.
+    room_handler_wirer: Option<
+        Arc<
+            dyn Fn(
+                    Arc<Mutex<SessionManager<TMsg, TRole>>>,
+                    &PeerId,
+                ) -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
+                > + Send
+                + Sync,
+        >,
+    >,
 }
 
 impl<TMsg, TRole> ConnectionManager<TMsg, TRole>
@@ -79,6 +96,7 @@ where
             ))),
             hello_actors: HashMap::new(),
             authorizer,
+            room_handler_wirer: None,
         }
     }
 
@@ -109,9 +127,34 @@ where
             session_manager,
             hello_actors: HashMap::new(),
             authorizer,
+            room_handler_wirer: None,
         }
     }
 
+    /// Set the room handler wirer callback
+    ///
+    /// This callback is invoked when a new peer connects (after HandshakeComplete).
+    /// It allows the application to wire room handlers to the new peer session.
+    ///
+    /// IMPORTANT: The wirer is now ASYNC and TRANSACTIONAL.
+    /// - If wiring succeeds (returns Ok(())), the connection is considered complete
+    /// - If wiring fails (returns Err(...)), the connection is terminated immediately
+    /// - This prevents "zombie" connections where the transport is up but application logic isn't
+    pub fn with_room_handler_wirer(
+        mut self,
+        wirer: Arc<
+            dyn Fn(
+                    Arc<Mutex<SessionManager<TMsg, TRole>>>,
+                    &PeerId,
+                ) -> std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
+                > + Send
+                + Sync,
+        >,
+    ) -> Self {
+        self.room_handler_wirer = Some(wirer);
+        self
+    }
     /// Add a pre-configured PeerSession to the SessionManager
     ///
     /// This allows the application to create Room<T> instances with
@@ -456,6 +499,7 @@ where
                 let sm = Arc::clone(&self.session_manager);
                 let hello_actor = msg.hello_actor.clone();
                 let actor_addr = _ctx.address();
+                let room_handler_wirer = self.room_handler_wirer.clone();
 
                 // Create PeerSession for this peer and set auth context
                 let mut peer_session =
@@ -472,16 +516,8 @@ where
                 // we'll send the channels back to the actor so it can start the SessionBridge
                 // from within the actor context (avoids spawn_local runtime issues).
                 tokio::spawn(async move {
-                    eprintln!(
-                        "⚙️ ConnectionManager tokio::spawn task STARTED for peer {}",
-                        peer_id
-                    );
                     // Lock the session manager asynchronously
                     let mut guard = sm.lock().await;
-                    eprintln!(
-                        "⚙️ ConnectionManager got SessionManager lock for peer {}",
-                        peer_id
-                    );
 
                     if let Err(e) = guard.add_peer(
                         zznet_session::types::PeerId::from(peer_id.as_str()),
@@ -494,7 +530,6 @@ where
                         );
                         return;
                     }
-                    eprintln!("⚙️ ConnectionManager add_peer SUCCESS for peer {}", peer_id);
 
                     if let Err(e) = guard
                         .connect_peer(
@@ -510,6 +545,45 @@ where
                             e
                         );
                         return;
+                    }
+
+                    // Release the lock BEFORE calling the wirer to avoid deadlocks
+                    // (the wirer might need to lock the SessionManager again)
+                    drop(guard);
+
+                    // Wire room handlers for the newly-connected peer (transactional)
+                    if let Some(wirer) = &room_handler_wirer {
+                        match wirer(
+                            Arc::clone(&sm),
+                            &zznet_session::types::PeerId::from(peer_id.as_str()),
+                        )
+                        .await
+                        {
+                            Ok(()) => {
+                                // Wiring succeeded - connection is now fully functional
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    "Failed to wire room handlers for peer {}: {}. Terminating connection.",
+                                    peer_id,
+                                    e
+                                );
+                                // Wiring failed - disconnect this peer to prevent a "zombie" connection
+                                let mut guard = sm.lock().await;
+                                if let Err(e) = guard.disconnect_peer(
+                                    &zznet_session::types::PeerId::from(peer_id.as_str()),
+                                ) {
+                                    tracing::error!(
+                                        "Failed to disconnect peer {} after wiring failure: {:?}",
+                                        peer_id,
+                                        e
+                                    );
+                                }
+                                // Send disconnect to HelloActor as well
+                                hello_actor.do_send(crate::actor::Disconnect);
+                                return;
+                            }
+                        }
                     }
 
                     // Give HelloActor the channel for forwarding received messages

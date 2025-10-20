@@ -1055,6 +1055,12 @@ impl<T: ApplicationRole> Handler<crate::messages::NetworkMessageReceived> for In
 
     fn handle(&mut self, msg: crate::messages::NetworkMessageReceived, _ctx: &mut Context<Self>) {
         eprintln!("⚙️ [IntentConfig] Received network message: {:?}", msg.0);
+        // FIXME(deavid): What's up with this messs of network messages? The only message that can be received
+        //      for this component is a "ConfigUpdate", yet there are countless variants below that are useless.
+        //      There is only 1 action possible: receive an update to the config. From whom or why shouldn't matter.
+        //      QueryCurrentConfig, CurrentConfig: No idea why is that there or what function it was hallucinated for them to have.
+        //      Heartbeat: Components do not need to send or receive Heartbeat.
+        //      Error: Ok, just a string to report to the console of the peer
 
         // Handle the network message based on its type
         match msg.0 {

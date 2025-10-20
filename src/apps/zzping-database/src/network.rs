@@ -1,7 +1,6 @@
-use crate::service::DatabaseMessage;
+use crate::service::{DatabaseMessage, StartedComponents};
 use std::time::Duration;
 use zznet_builder::ServerBuilder;
-use zznet_hello::connection_manager::ConnectionManager;
 use zznet_transport_tcp::config::TlsConfig;
 use zzping_auth::AuthRole;
 
@@ -11,7 +10,6 @@ use zzping_auth::AuthRole;
 pub struct DatabaseNetwork {
     bind_addr: String,
     tls_config: Option<TlsConfig>,
-    connection_manager: actix::Addr<ConnectionManager<DatabaseMessage, AuthRole>>,
     handshake_timeout: Duration,
 }
 
@@ -21,18 +19,11 @@ impl DatabaseNetwork {
     /// # Arguments
     /// * `bind_addr` - the address to bind to
     /// * `tls` - optional TLS configuration
-    /// * `connection_manager` - the actix address of the ConnectionManager actor
     /// * `handshake_timeout` - timeout for the handshake protocol
-    pub fn new(
-        bind_addr: &str,
-        tls: Option<TlsConfig>,
-        connection_manager: actix::Addr<ConnectionManager<DatabaseMessage, AuthRole>>,
-        handshake_timeout: Duration,
-    ) -> Self {
+    pub fn new(bind_addr: &str, tls: Option<TlsConfig>, handshake_timeout: Duration) -> Self {
         Self {
             bind_addr: bind_addr.to_string(),
             tls_config: tls,
-            connection_manager,
             handshake_timeout,
         }
     }
@@ -40,13 +31,40 @@ impl DatabaseNetwork {
     /// Start the server using ServerBuilder to accept incoming connections.
     ///
     /// This spawns a ServerActor that listens for connections and automatically
-    /// spawns HelloActors for each accepted connection.
-    pub async fn run(&self) -> Result<(), String> {
+    /// spawns HelloActors for each accepted connection. Room handlers are registered
+    /// declaratively via the builder.
+    ///
+    /// # Arguments
+    /// * `components` - Started component actors for room handler wiring
+    pub async fn run(&self, components: &StartedComponents) -> Result<(), String> {
+        // Create room handler factories for all 3 rooms
+        use std::sync::Arc as StdArc;
+
+        let intent_factory =
+            StdArc::new(crate::room_handlers::IntentConfigRoomHandlerFactory::new(
+                components.intent_config.clone(),
+            ));
+
+        let memdb_factory = StdArc::new(crate::room_handlers::MemDBRoomHandlerFactory::new(
+            components.memdb_addr.clone(),
+        ));
+
+        let cstate_factory = StdArc::new(crate::room_handlers::CStateRoomHandlerFactory::new(
+            components.cstate.clone(),
+        ));
+
         let builder = ServerBuilder::<DatabaseMessage, AuthRole>::new()
             .bind(&self.bind_addr)
             .as_role(AuthRole::Database)
-            .offer_rooms(vec!["intent-config".to_string()])
-            .handshake_timeout(self.handshake_timeout);
+            .offer_rooms(vec![
+                "intent-config".to_string(),
+                "memdb".to_string(),
+                "query".to_string(),
+            ])
+            .handshake_timeout(self.handshake_timeout)
+            .register_room_handler("intent-config", intent_factory)
+            .register_room_handler("memdb", memdb_factory)
+            .register_room_handler("query", cstate_factory);
 
         let builder = if let Some(tls) = &self.tls_config {
             builder.with_tls(tls.clone())
@@ -54,10 +72,8 @@ impl DatabaseNetwork {
             builder
         };
 
-        // The start() method returns an Addr to the ServerActor, which we don't need
-        // to hold onto - the actor is now running and managing connections automatically
         builder
-            .with_connection_manager(self.connection_manager.clone())
+            .with_default_authorizer(false, None)
             .start()
             .await
             .map(|_| ())

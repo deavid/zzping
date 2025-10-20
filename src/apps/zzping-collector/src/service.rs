@@ -33,6 +33,39 @@ use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::room_message_trait::{DeserializationError, SerializationError};
 use zznet_session::types::RoomId;
 
+// REFACTOR IN PROGRESS: Room Handler Registration
+//
+// The new `zznet_builder::RoomRegistry` provides a cleaner way to register room handlers.
+// See `crate::room_handlers` for an example using `IntentConfigRoomHandlerFactory`.
+//
+// Old pattern (repetitive, inlined):
+//   - Manually create wrapper structs for each component/message combo
+//   - Lock SessionManager and iterate peers
+//   - Call add_room_to_peer directly
+//
+// New pattern (via RoomRegistry):
+//   1. Implement RoomHandlerFactory trait (e.g., IntentConfigRoomHandlerFactory)
+//   2. Create RoomRegistry with the SessionManager
+//   3. Call registry.register_room_handler(room_id, factory)
+//   4. Call registry.wire_all_peers() at startup
+//   5. Call registry.wire_peer(peer_id) for dynamic connections
+//
+// This consolidates the boilerplate and makes it easy to reuse across apps.
+
+// FIXME(deavid): We have plenty of zznet-* crates like zznet-builder, zznet-rooms that exist to abstract room wiring.
+//      We need to clean up the mess on this file, and abstract everything away in zznet-* crates.
+//
+// **Manual Room Handler Wiring**
+//
+// The service logic in both apps contains complex, nearly identical functions (`wire_room_handlers`, `register_room_for_peer`) for attaching component actors to the `SessionManager`.
+//
+// -   **Files:**
+//     -   `src/apps/zzping-collector/src/service.rs`
+//     -   `src/apps/zzping-database/src/service.rs`
+// -   **The Problem:**
+//     -   This logic is highly repetitive and requires creating wrapper structs (`CollectorIntentConfigRoomHandler`, `DatabaseIntentConfigRoomHandler`) just to bridge the message types.
+//     -   This feels like functionality that should be part of a higher-level component framework or simplified by the `zznet-builder`. The design doc `ZZPing_Component_Framework_Architecture.md` hints at this, but the implementation isn't there, leaving the apps to do the heavy lifting.
+
 /// Top-level message enum for the Collector service.
 ///
 /// All network messages flow through this enum to ensure type safety
@@ -42,6 +75,8 @@ pub enum CollectorMessage {
     /// IntentConfig-related messages
     Intent(IntentConfigNetworkMsg),
 }
+
+// FIXME(deavid): This enum for messages shouldn't be needed. The fact that we're manually wiring each component hints at a bigger problem and a leaky abstraction
 
 impl From<IntentConfigNetworkMsg> for CollectorMessage {
     fn from(msg: IntentConfigNetworkMsg) -> Self {
@@ -91,12 +126,6 @@ pub struct ComponentBuilders {
     pub pinger: PingerBuilder,
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
-    /// The shared SessionManager instance for this collector process
-    pub session_manager: Arc<
-        tokio::sync::Mutex<
-            zznet_session::session_manager::SessionManager<CollectorMessage, AuthRole>,
-        >,
-    >,
 }
 
 /// Started components (running actors)
@@ -110,13 +139,6 @@ pub struct StartedComponents {
     pub pinger: PingerHandle,
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
-    /// The shared SessionManager instance used by all components
-    /// This must be used when creating ConnectionManager to ensure network messages flow properly
-    pub session_manager: Arc<
-        tokio::sync::Mutex<
-            zznet_session::session_manager::SessionManager<CollectorMessage, AuthRole>,
-        >,
-    >,
 }
 
 #[derive(Debug)]
@@ -141,12 +163,10 @@ impl CollectorService {
         let _started = Self::start_components(builders).await?;
 
         tracing::info!("All components started successfully");
-        // Step 2: Start ConnectionManager and network wiring
-        tracing::info!("Starting ConnectionManager actor and network wiring");
+        // Step 2: Network wiring (builders will create ConnectionManager internally)
+        tracing::info!("Starting network wiring");
 
-        let cm_addr = self.start_connection_manager();
-
-        // Load TLS configuration for transport layer (if enabled)
+        // Use the session_manager produced by started components and create an authorizer
         tracing::info!("Loading TLS configuration for transport layer");
         let tls_cfg = if let Some(tls) = &self.config.tls {
             tracing::info!("TLS enabled - using mTLS connection");
@@ -163,13 +183,12 @@ impl CollectorService {
             self.config.database_host, self.config.database_port
         );
         let reconnect_delay = std::time::Duration::from_millis(self.config.reconnect_delay_ms);
-        let network =
-            crate::network::CollectorNetwork::new(&addr, tls_cfg, cm_addr, reconnect_delay);
+        let network = crate::network::CollectorNetwork::new(&addr, tls_cfg, reconnect_delay);
 
         tracing::info!("Collector service connecting to database via ConnectionManager");
 
         network
-            .connect()
+            .connect(&_started.intent_config)
             .await
             .map_err(|e| CollectorError::Service(format!("Network error: {}", e)))?;
 
@@ -221,19 +240,17 @@ impl CollectorService {
     /// let components = CollectorService::start_components(builders).await?;
     /// ```
     pub fn create_builders(&self) -> Result<ComponentBuilders> {
-        // Create THE ONE shared SessionManager for this collector process
-        // All components and ConnectionManager share this single instance
-        use zznet_session::types::RoomId;
-        let offered_rooms = vec![RoomId::from("intent-config")];
-
-        let shared_session_manager = Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<CollectorMessage, AuthRole>::new(
-                offered_rooms.clone(),
-            ),
-        ));
+        // FIXME(deavid): This file needs cleanup, it needs to properly use zznet-builder for everything and stop re-implementing stuff.
+        // .. -   Both `CollectorService` and `DatabaseService` contain their own logic for creating a `ConnectionManager`,
+        //        creating an `Authorizer`, and loading TLS certificates from disk (`load_tls_config`, `build_transport_tls_config`).
+        // .. -   The `zznet-builder` crate already has methods like `.with_tls()` and `.with_connection_manager()`.
+        //        The *intent* of the builder is to abstract this setup away. The apps should be telling the builder *what* to do
+        //        (e.g., "use these cert paths"), not *how* to do it (e.g., manually loading PEM files and building `rustls::ClientConfig`).
+        // .. -   This leads to a huge amount of boilerplate code being duplicated across both application crates.
+        //        Any change to the authorization or TLS setup will now require edits in at least three places:
+        //        `zznet-builder`, `zzping-collector`, and `zzping-database`.
 
         // Create IntentConfig builder with role only
-        // IntentConfig will be wired to use shared_session_manager via adapter in start_components()
         let intent_config =
             IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Collector);
 
@@ -253,7 +270,6 @@ impl CollectorService {
             intent_config,
             pinger,
             memdb_addr,
-            session_manager: shared_session_manager,
         })
     }
 
@@ -285,28 +301,6 @@ impl CollectorService {
             .start()
             .map_err(|e| CollectorError::Component(format!("IntentConfig start failed: {}", e)))?;
 
-        // Wire the shared SessionManager adapter to IntentConfig
-        // This connects IntentConfig to the per-process SessionManager so broadcasts work
-        eprintln!("⚙️ [Collector] Creating DatabaseMessageAdapter for IntentConfig");
-        let adapter = std::sync::Arc::new(
-            zzintent_config::database_message_adapter::DatabaseMessageAdapter::new(
-                std::sync::Arc::clone(&builders.session_manager),
-            ),
-        );
-        // Cast to trait object (already wrapped in Arc)
-        let adapter_trait: std::sync::Arc<
-            dyn zzintent_config::database_message_adapter::BroadcastVia,
-        > = adapter;
-        eprintln!("⚙️ [Collector] Sending SetDatabaseAdapter message to IntentConfigActor");
-        intent_addr.do_send(zzintent_config::messages::SetDatabaseAdapter(adapter_trait));
-        eprintln!("⚙️ [Collector] SetDatabaseAdapter message sent");
-
-        // Wire room handlers from IntentConfig to SessionManager
-        // This enables message routing: network → SessionManager → room → IntentConfigActor
-        eprintln!("⚙️ [Collector] Wiring room handlers to SessionManager");
-        Self::wire_room_handlers(&intent_addr, &builders.session_manager).await?;
-        eprintln!("⚙️ [Collector] Room handlers wired to SessionManager");
-
         // Start Pinger
         let pinger_handle = builders.pinger.start()?;
 
@@ -314,93 +308,7 @@ impl CollectorService {
             intent_config: intent_addr,
             pinger: pinger_handle,
             memdb_addr: builders.memdb_addr,
-            session_manager: builders.session_manager,
         })
-    }
-
-    /// Wire room handlers from IntentConfigActor to SessionManager
-    ///
-    /// This registers the IntentConfig room handler with all existing peers,
-    /// enabling message routing from the network through SessionManager to IntentConfig.
-    async fn wire_room_handlers(
-        intent_addr: &Addr<IntentConfigActor<IntentConfigPermission>>,
-        session_manager: &Arc<
-            tokio::sync::Mutex<
-                zznet_session::session_manager::SessionManager<CollectorMessage, AuthRole>,
-            >,
-        >,
-    ) -> Result<()> {
-        use zznet_session::peer_session::RoomHandle;
-        use zznet_session::types::{RoomId, SessionError};
-
-        // Create a wrapper handler that converts CollectorMessage to IntentConfigNetworkMsg
-        struct CollectorIntentConfigRoomHandler {
-            intent_addr: Addr<IntentConfigActor<IntentConfigPermission>>,
-            room_id: RoomId,
-        }
-
-        impl RoomHandle<CollectorMessage> for CollectorIntentConfigRoomHandler {
-            fn room_id(&self) -> &RoomId {
-                &self.room_id
-            }
-
-            fn send_message(
-                &mut self,
-                msg: CollectorMessage,
-            ) -> std::result::Result<(), SessionError> {
-                // Extract IntentConfigNetworkMsg from CollectorMessage
-                match msg {
-                    CollectorMessage::Intent(intent_msg) => {
-                        eprintln!("  → Forwarding message to IntentConfigActor via room");
-                        self.intent_addr.do_send(
-                            zzintent_config::messages::NetworkMessageReceived(intent_msg),
-                        );
-                        Ok(())
-                    }
-                }
-            }
-
-            fn spawn_forwarder(
-                &mut self,
-                _tx: tokio::sync::mpsc::Sender<(RoomId, CollectorMessage)>,
-            ) -> std::result::Result<(), SessionError> {
-                // This handler is receive-only
-                Ok(())
-            }
-        }
-
-        let room_id = RoomId::from("zzintent-config");
-
-        // Lock SessionManager and register room with all peers
-        eprintln!("  → Locking SessionManager to register rooms");
-        let mut sm = session_manager.lock().await;
-
-        let peer_ids = sm.peer_ids();
-        let num_peers = peer_ids.len();
-        eprintln!("  → Found {} existing peers", num_peers);
-
-        for peer_id in peer_ids {
-            eprintln!("    → Adding room to peer {}", peer_id);
-
-            // Create a room handler for this peer
-            let handler: Box<dyn RoomHandle<CollectorMessage>> =
-                Box::new(CollectorIntentConfigRoomHandler {
-                    intent_addr: intent_addr.clone(),
-                    room_id: room_id.clone(),
-                });
-
-            sm.add_room_to_peer(&peer_id, room_id.clone(), handler)
-                .await
-                .map_err(|e| {
-                    CollectorError::Component(format!(
-                        "Failed to add room to peer {}: {}",
-                        peer_id, e
-                    ))
-                })?;
-        }
-
-        eprintln!("  → Room handler registered with all {} peers", num_peers);
-        Ok(())
     }
 
     /// Load TLS configuration for mTLS client connection
@@ -510,44 +418,8 @@ impl CollectorService {
         // Collector offers intent-config related rooms
         let offered_rooms = vec![RoomId::from("intent-config")];
 
-        // Create an authorizer that validates peer identity from TLS certificate
-        // and resolves it to AuthRole (connection-level authorization).
-        // Components will later map this to component-specific permissions using AuthRoleMapper.
-        // When TLS is disabled, we accept all connections (no authentication).
-        let authorizer: zzping_auth::Authorizer = Box::new(|peer_identity| {
-            tracing::debug!(
-                "Collector authorizer checking peer identity: {}",
-                peer_identity.full_identity()
-            );
-
-            // When TLS is disabled (plain-tcp), skip authentication and accept as Database
-            if peer_identity.common_name == "plain-tcp" {
-                tracing::warn!(
-                    "Plain TCP connection - no authentication, accepting as Database role"
-                );
-                return Some(AuthRole::Database);
-            }
-
-            // Validate CN against allowed service roles
-            match AuthRole::from_cn(&peer_identity.common_name) {
-                Ok(role) => {
-                    tracing::debug!(
-                        "Collector authorizer resolved {} → {:?}",
-                        peer_identity.full_identity(),
-                        role
-                    );
-                    Some(role)
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Collector authorizer rejected {} - unknown role: {}",
-                        peer_identity.full_identity(),
-                        e
-                    );
-                    None
-                }
-            }
-        });
+        // Create an authorizer using the service helper
+        let authorizer: zzping_auth::Authorizer = self.make_authorizer();
 
         Ok(zznet_hello::connection_manager::ConnectionManager::new(
             offered_rooms,
@@ -568,8 +440,19 @@ impl CollectorService {
         >,
     ) -> Result<zznet_hello::connection_manager::ConnectionManager<CollectorMessage, AuthRole>>
     {
-        // Create an authorizer that validates peer identity from TLS certificate
-        let authorizer: zzping_auth::Authorizer = Box::new(|peer_identity| {
+        let authorizer: zzping_auth::Authorizer = self.make_authorizer();
+
+        Ok(
+            zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
+                session_manager,
+                authorizer,
+            ),
+        )
+    }
+
+    /// Create the authorizer closure used by the Collector service.
+    fn make_authorizer(&self) -> zzping_auth::Authorizer {
+        Box::new(|peer_identity| {
             tracing::debug!(
                 "Collector authorizer checking peer identity: {}",
                 peer_identity.full_identity()
@@ -593,14 +476,7 @@ impl CollectorService {
                     None
                 }
             }
-        });
-
-        Ok(
-            zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
-                session_manager,
-                authorizer,
-            ),
-        )
+        })
     }
 
     /// Start ConnectionManager as an actix actor and return its address.
@@ -788,22 +664,15 @@ mod tests {
             rustls::crypto::ring::default_provider(),
         );
 
-        use actix::Actor;
         use std::time::Duration;
 
-        // Create a temporary service to get ConnectionManager
+        // Create a temporary service to get a session_manager and authorizer
         let config = create_test_config();
         let service = CollectorService::new(config).unwrap();
-        let cm = service.create_connection_manager().unwrap();
-        let cm_addr = cm.start();
-
+        let _builders = service.create_builders().unwrap();
         // Test network creation without TLS
-        let _network = crate::network::CollectorNetwork::new(
-            "127.0.0.1:8443",
-            None,
-            cm_addr.clone(),
-            Duration::from_secs(5),
-        );
+        let _network =
+            crate::network::CollectorNetwork::new("127.0.0.1:8443", None, Duration::from_secs(5));
         // Network created successfully if we get here
 
         // Test network creation with TLS
@@ -812,7 +681,6 @@ mod tests {
             let _network_with_tls = crate::network::CollectorNetwork::new(
                 "127.0.0.1:8443",
                 Some(tls_config),
-                cm_addr,
                 Duration::from_secs(5),
             );
             // Network created successfully if we get here

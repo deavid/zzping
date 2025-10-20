@@ -72,25 +72,7 @@ impl fmt::Display for AuthRole {
 }
 
 impl AuthRole {
-    /// Converts from zznet-api Role to AuthRole (compat shim during migration).
-    pub fn from_api_role(role: zznet_api::types::Role) -> Self {
-        match role {
-            zznet_api::types::Role::Collector => AuthRole::Collector,
-            zznet_api::types::Role::Database => AuthRole::Database,
-            zznet_api::types::Role::ClientRo => AuthRole::ClientRo,
-            zznet_api::types::Role::ClientAdmin => AuthRole::ClientAdmin,
-        }
-    }
-
-    /// Converts to zznet-api Role (compat shim during migration).
-    pub fn to_api_role(&self) -> zznet_api::types::Role {
-        match self {
-            AuthRole::Collector => zznet_api::types::Role::Collector,
-            AuthRole::Database => zznet_api::types::Role::Database,
-            AuthRole::ClientRo => zznet_api::types::Role::ClientRo,
-            AuthRole::ClientAdmin => zznet_api::types::Role::ClientAdmin,
-        }
-    }
+    // Migration shims to zznet_api::types::Role removed: zznet is auth-agnostic.
 }
 
 // Re-export common types for convenience

@@ -38,8 +38,18 @@ This is the most important section. The goal of documentation is to explain the 
     *   Creates pseudo-tests that never run and can become stale/incorrect.
     *   If example code is worth showing, it MUST be tested (use ```rust without ignore for doc-tests).
     *   If the example is too complex for a doc-test, simplify it or omit the example code entirely.
-    *   **DO NOT** create files in `tests/` or `examples/` directories. These directories are forbidden unless explicitly approved by the project owner for extraordinary circumstances.
-    *   Exception: Non-code examples (ASCII diagrams, config file formats, JSON/TOML samples) are allowed.
+
+#### Forbidden Directories
+
+*   **FORBIDDEN: Top-level `tests/` directory**
+    *   All tests must be in `src/` using `#[cfg(test)] mod tests { ... }`
+    *   The top-level `tests/` directory is prohibited per Section 6 standards
+    *   Exception: Only with explicit owner approval for extraordinary circumstances
+
+*   **FORBIDDEN: Top-level `examples/` directory**
+    *   Examples must be in doc-tests or documentation, not separate files
+    *   Non-code examples (ASCII diagrams, config file formats, JSON/TOML samples) are allowed in docs/
+    *   Exception: Only with explicit owner approval for extraordinary circumstances
 
 *   **Example of FORBIDDEN pattern:**
     ```rust

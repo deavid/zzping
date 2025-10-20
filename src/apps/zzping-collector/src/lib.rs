@@ -10,5 +10,7 @@ pub mod config;
 pub mod error;
 /// Network wiring module (collector)
 pub mod network;
+/// Room handler factories for component wiring
+pub mod room_handlers;
 /// Service module.
 pub mod service;

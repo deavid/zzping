@@ -1,12 +1,15 @@
 //! ServerBuilder - Fluent API for creating TCP servers
 
 use crate::error::{BuilderError, BuilderResult};
+use crate::room_registry::RoomHandlerFactory;
 use actix::prelude::*;
+use std::sync::Arc;
 use std::time::Duration;
 use zznet_auth::ApplicationRole;
 use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::RoomMessageTrait;
+use zznet_session::types::RoomId;
 use zznet_transport_tcp::config::TlsConfig;
 use zznet_transport_tcp::server::TcpTransportServer;
 
@@ -23,7 +26,19 @@ where
     offered_rooms: Vec<String>,
     handshake_timeout: Duration,
     tls_config: Option<TlsConfig>,
-    connection_manager: Option<Addr<ConnectionManager<TMsg, TRole>>>,
+    /// Internal ConnectionManager address - private to builder, not exposed to applications
+    _connection_manager: Option<Addr<ConnectionManager<TMsg, TRole>>>,
+    // Internal SessionManager owned by the builder when present
+    session_manager: Option<
+        std::sync::Arc<
+            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>,
+        >,
+    >,
+    /// Optional authorizer closure used when the builder creates the ConnectionManager.
+    authorizer: Option<zznet_auth::acl::GenericAuthorizer<TRole>>,
+    room_handlers: std::collections::HashMap<RoomId, Arc<dyn RoomHandlerFactory<TMsg, TRole>>>,
+    /// Persistent room registry owned by the builder (created lazily)
+    room_registry: Option<Arc<tokio::sync::Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>>>,
 }
 
 impl<TMsg, TRole> ServerBuilder<TMsg, TRole>
@@ -39,7 +54,11 @@ where
             offered_rooms: vec![],
             handshake_timeout: Duration::from_secs(10),
             tls_config: None,
-            connection_manager: None,
+            _connection_manager: None,
+            session_manager: None,
+            authorizer: None,
+            room_handlers: std::collections::HashMap::new(),
+            room_registry: None,
         }
     }
 
@@ -83,15 +102,159 @@ where
         self
     }
 
-    /// Set the ConnectionManager for handling connections
+    /// Set TLS configuration from certificate file paths.
     ///
-    /// If not provided, a new ConnectionManager will be created.
-    pub fn with_connection_manager(
+    /// Returns Err(TlsError) if files cannot be read or parsed.
+    pub fn with_tls_from_files(
         mut self,
-        manager: Addr<ConnectionManager<TMsg, TRole>>,
+        cert_path: impl Into<String>,
+        key_path: impl Into<String>,
+        ca_path: Option<impl Into<String>>,
+    ) -> Result<Self, zznet_transport_tcp::config::TlsError> {
+        let cert = cert_path.into();
+        let key = key_path.into();
+        let ca_opt = ca_path.map(|p| p.into());
+        let ca_ref = ca_opt.as_deref();
+        let cfg = TlsConfig::from_file_paths(&cert, &key, ca_ref)?;
+        self.tls_config = Some(cfg);
+        Ok(self)
+    }
+
+    // Removed API: Use with_session_manager(...) + with_authorizer(...)
+
+    /// Set an explicit authorizer closure for the builder to use when creating
+    /// the internal ConnectionManager.
+    pub fn with_authorizer(
+        mut self,
+        authorizer: zznet_auth::acl::GenericAuthorizer<TRole>,
     ) -> Self {
-        self.connection_manager = Some(manager);
+        self.authorizer = Some(authorizer);
         self
+    }
+
+    /// Convenience: create and use the default authorizer (from zznet-auth).
+    pub fn with_default_authorizer(
+        mut self,
+        allow_plain_tcp: bool,
+        default_role_for_plain: Option<TRole>,
+    ) -> Self {
+        let auth =
+            zznet_auth::acl::create_default_authorizer(allow_plain_tcp, default_role_for_plain);
+        self.authorizer = Some(auth);
+        self
+    }
+
+    /// Expose a SessionManager for advanced cases. If not provided, the builder will
+    /// create one internally when `start()` is called.
+    #[deprecated(
+        note = "Use the builder's internal SessionManager creation instead. This method will be removed in a future version."
+    )]
+    pub fn with_session_manager(
+        mut self,
+        session_manager: std::sync::Arc<
+            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>,
+        >,
+    ) -> Self {
+        self.session_manager = Some(session_manager);
+        self
+    }
+
+    /// Register a room handler factory for declarative room setup.
+    ///
+    /// Handlers registered this way will be automatically wired when the connection
+    /// is established and on reconnection.
+    pub fn register_room_handler(
+        mut self,
+        room_id: impl Into<RoomId>,
+        factory: Arc<dyn RoomHandlerFactory<TMsg, TRole>>,
+    ) -> Self {
+        let room_id = room_id.into();
+        self.room_handlers.insert(room_id.clone(), factory.clone());
+
+        // If room_registry already exists, register the handler with it immediately
+        if let Some(registry) = &self.room_registry {
+            let registry_clone = registry.clone();
+            let room_id_clone = room_id.clone();
+            // We need to spawn a task to register asynchronously since we can't make this method async
+            tokio::spawn(async move {
+                let mut reg = registry_clone.lock().await;
+                reg.register_room_handler(room_id_clone, factory);
+            });
+        }
+
+        self
+    }
+
+    /// Get or create the persistent RoomRegistry.
+    ///
+    /// This creates a single, shared RoomRegistry instance that persists across
+    /// all connections. The registry can be used for dynamic handler updates.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut builder = ServerBuilder::new()
+    ///     .offer_rooms(vec!["my-room".to_string()]);
+    ///
+    /// // Access the persistent registry
+    /// let registry = builder.room_registry();
+    /// // Can add handlers dynamically...
+    ///
+    /// builder.start().await?;
+    /// ```
+    pub fn room_registry(
+        &mut self,
+    ) -> Arc<tokio::sync::Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>> {
+        if self.room_registry.is_none() {
+            // Get or create SessionManager first
+            let sm = self.session_manager();
+
+            // Create the registry
+            let mut registry = crate::room_registry::RoomRegistry::new(sm);
+
+            // Register all existing handlers
+            for (room_id, factory) in &self.room_handlers {
+                registry.register_room_handler(room_id.clone(), factory.clone());
+            }
+
+            self.room_registry = Some(Arc::new(tokio::sync::Mutex::new(registry)));
+        }
+
+        self.room_registry.clone().unwrap()
+    }
+
+    /// Get a reference to the SessionManager.
+    ///
+    /// If the SessionManager has not been created yet, this will create it
+    /// using the offered rooms configured on the builder.
+    ///
+    /// This allows for app-level room wiring before calling `start()`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut builder = ServerBuilder::new()
+    ///     .offer_rooms(vec!["my-room".to_string()]);
+    ///
+    /// // Access SessionManager before starting
+    /// let session_manager = builder.session_manager();
+    /// // Perform advanced wiring...
+    ///
+    /// // Then start the server
+    /// builder.start().await?;
+    /// ```
+    pub fn session_manager(
+        &mut self,
+    ) -> Arc<tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>> {
+        if self.session_manager.is_none() {
+            // Create SessionManager with offered rooms
+            let offered: Vec<zznet_session::types::RoomId> = self
+                .offered_rooms
+                .iter()
+                .map(|r| zznet_session::types::RoomId::from(r.as_str()))
+                .collect();
+            let sm = zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
+            self.session_manager = Some(Arc::new(tokio::sync::Mutex::new(sm)));
+        }
+        self.session_manager.clone().unwrap()
     }
 
     /// Validate configuration before starting
@@ -118,21 +281,96 @@ where
 
         let bind_addr = self.bind_addr.unwrap();
 
-        // SECURITY: ConnectionManager is REQUIRED and must be provided with an authorizer.
-        // Applications must create and configure the ConnectionManager themselves,
-        // then pass it via with_connection_manager(). This ensures:
-        // - Authorizer is always configured (no unauthenticated connections possible)
-        // - Application controls authorization policy
-        let connection_manager = self.connection_manager.ok_or_else(|| {
-            BuilderError::MissingConfig(
-                "ConnectionManager with authorizer is REQUIRED. Use with_connection_manager() to provide one.".to_string(),
-            )
-        })?;
+        // Ensure we have a SessionManager: use provided or create one
+        let session_manager = match &self.session_manager {
+            Some(sm) => sm.clone(),
+            None => {
+                // Create a default SessionManager with offered rooms (convert to RoomId)
+                let offered: Vec<zznet_session::types::RoomId> = self
+                    .offered_rooms
+                    .iter()
+                    .map(|r| zznet_session::types::RoomId::from(r.as_str()))
+                    .collect();
+                let sm =
+                    zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
+                std::sync::Arc::new(tokio::sync::Mutex::new(sm))
+            }
+        };
+
+        // Ensure we have a ConnectionManager: use provided or create one bound to session_manager
+        let connection_manager = match self._connection_manager {
+            Some(cm) => cm,
+            None => {
+                // Use the builder-provided authorizer if present, otherwise use a conservative default
+                // that rejects all connections. ConnectionManager requires an authorizer.
+                let authorizer = match self.authorizer {
+                    Some(a) => a,
+                    None => Box::new(|_peer_identity: &zznet_api::types::PeerIdentity| None),
+                };
+
+                let mut cm =
+                    zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
+                        session_manager.clone(),
+                        authorizer,
+                    );
+
+                // Wire room handlers if any are registered
+                if !self.room_handlers.is_empty() {
+                    // Get or create the persistent room registry
+                    let registry = if let Some(reg) = &self.room_registry {
+                        reg.clone()
+                    } else {
+                        // Create the registry if it doesn't exist yet
+                        let mut registry_instance =
+                            crate::room_registry::RoomRegistry::new(session_manager.clone());
+                        for (room_id, factory) in &self.room_handlers {
+                            registry_instance
+                                .register_room_handler(room_id.clone(), factory.clone());
+                        }
+                        Arc::new(tokio::sync::Mutex::new(registry_instance))
+                    };
+
+                    let wirer: Arc<
+                        dyn Fn(
+                                Arc<
+                                    tokio::sync::Mutex<
+                                        zznet_session::session_manager::SessionManager<TMsg, TRole>,
+                                    >,
+                                >,
+                                &zznet_session::types::PeerId,
+                            ) -> std::pin::Pin<
+                                Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
+                            > + Send
+                            + Sync,
+                    > = Arc::new(move |_sm, peer_id| {
+                        let peer_id = peer_id.clone();
+                        let registry = registry.clone();
+                        Box::pin(async move {
+                            // Use the persistent RoomRegistry to wire this peer
+                            let registry_lock = registry.lock().await;
+                            registry_lock
+                                .wire_peer(&peer_id)
+                                .await
+                                .map_err(|e| format!("Failed to wire peer: {}", e))
+                        })
+                    });
+                    cm = cm.with_room_handler_wirer(wirer);
+                }
+
+                cm.start()
+            }
+        };
 
         // Create TCP server
         let tcp_server = TcpTransportServer::new(&bind_addr, self.tls_config)
             .await
             .map_err(|e| BuilderError::BindFailed(format!("{}: {}", bind_addr, e)))?;
+
+        // Get the actual bound address (useful for ephemeral ports)
+        let actual_bind_addr = tcp_server
+            .local_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|_| bind_addr.clone());
 
         // Create HelloConfig
         let role = match self.our_role {
@@ -152,9 +390,93 @@ where
             tcp_server: std::sync::Arc::new(tokio::sync::Mutex::new(tcp_server)),
             hello_config,
             connection_manager,
+            bind_addr: actual_bind_addr,
         };
 
         Ok(actor.start())
+    }
+
+    /// Start the server and also return the ConnectionManager Addr created by the builder.
+    ///
+    /// **WARNING:** This is an internal test API and should not be used in production code.
+    /// It exposes protocol-level details that may change. Use the public `start()` method instead.
+    #[doc(hidden)]
+    pub async fn start_with_connection_manager(
+        self,
+    ) -> BuilderResult<(
+        Addr<ServerActor<TMsg, TRole>>,
+        Addr<ConnectionManager<TMsg, TRole>>,
+    )> {
+        self.validate()?;
+
+        let bind_addr = self.bind_addr.unwrap();
+
+        // Ensure we have a SessionManager: use provided or create one
+        let session_manager = match &self.session_manager {
+            Some(sm) => sm.clone(),
+            None => {
+                let offered: Vec<zznet_session::types::RoomId> = self
+                    .offered_rooms
+                    .iter()
+                    .map(|r| zznet_session::types::RoomId::from(r.as_str()))
+                    .collect();
+                let sm =
+                    zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
+                std::sync::Arc::new(tokio::sync::Mutex::new(sm))
+            }
+        };
+
+        // Create ConnectionManager
+        let connection_manager = match self._connection_manager {
+            Some(cm) => cm,
+            None => {
+                let authorizer = match self.authorizer {
+                    Some(a) => a,
+                    None => Box::new(|_peer_identity: &zznet_api::types::PeerIdentity| None),
+                };
+
+                let cm =
+                    zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
+                        session_manager.clone(),
+                        authorizer,
+                    );
+                cm.start()
+            }
+        };
+
+        // Create TCP server
+        let tcp_server = TcpTransportServer::new(&bind_addr, self.tls_config)
+            .await
+            .map_err(|e| BuilderError::BindFailed(format!("{}: {}", bind_addr, e)))?;
+
+        // Get the actual bound address (useful for ephemeral ports)
+        let actual_bind_addr = tcp_server
+            .local_addr()
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|_| bind_addr.clone());
+
+        // Create HelloConfig
+        let role = match self.our_role {
+            Some(r) => r,
+            None => return Err(BuilderError::MissingConfig("our_role".to_string())),
+        };
+
+        let hello_config = HelloConfig {
+            our_role: role.as_str().to_string(),
+            offered_rooms: self.offered_rooms.clone(),
+            handshake_timeout: self.handshake_timeout,
+            hostname: "server-hostname".to_string(),
+        };
+
+        // Create and start ServerActor
+        let actor = ServerActor {
+            tcp_server: std::sync::Arc::new(tokio::sync::Mutex::new(tcp_server)),
+            hello_config,
+            connection_manager: connection_manager.clone(),
+            bind_addr: actual_bind_addr,
+        };
+
+        Ok((actor.start(), connection_manager))
     }
 }
 
@@ -177,6 +499,8 @@ where
     tcp_server: std::sync::Arc<tokio::sync::Mutex<TcpTransportServer>>,
     hello_config: HelloConfig,
     connection_manager: Addr<ConnectionManager<TMsg, TRole>>,
+    /// Cached bind address to avoid locking tcp_server (which may be blocked in accept())
+    bind_addr: String,
 }
 
 impl<TMsg, TRole> Actor for ServerActor<TMsg, TRole>
@@ -188,6 +512,7 @@ where
 
     fn started(&mut self, ctx: &mut Context<Self>) {
         tracing::info!("ServerActor started, beginning accept loop");
+        tracing::info!("Database service ready - using ConnectionManager for connections");
         // Trigger first accept
         ctx.address().do_send(AcceptNext);
     }
@@ -222,7 +547,8 @@ where
             .map(move |result, _act, ctx| {
                 match result {
                     Ok(transport) => {
-                        tracing::info!("Accepted new connection");
+                        // Try to print peer addr where possible (plain TCP prints it inside accept)
+                        tracing::info!("Accepted connection from peer");
 
                         // Spawn HelloActor for this connection
                         let _hello_actor = start_hello_actor_with_session_manager(
@@ -246,6 +572,15 @@ where
 }
 
 /// Message to stop the server
+///
+/// Sends this message to the ServerActor to gracefully shut down the server.
+/// This will close the listening socket and stop accepting new connections.
+/// Existing connections will be allowed to complete their current operations.
+///
+/// # Example
+/// ```ignore
+/// server_addr.send(zznet_builder::StopServer).await.ok();
+/// ```
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct StopServer;
@@ -260,6 +595,35 @@ where
     fn handle(&mut self, _msg: StopServer, ctx: &mut Context<Self>) {
         tracing::info!("Stopping server");
         ctx.stop();
+    }
+}
+
+/// Message to request the server's bound address
+///
+/// Sends this message to the ServerActor to get the actual listening address.
+/// This is particularly useful when binding to port 0 (ephemeral port), as it
+/// returns the actual assigned port.
+///
+/// # Example
+/// ```ignore
+/// let addr = server_addr.send(zznet_builder::GetBindAddr).await??;
+/// println!("Server listening on: {}", addr);
+/// ```
+#[derive(Message)]
+#[rtype(result = "Result<String, ()>")]
+pub struct GetBindAddr;
+
+impl<TMsg, TRole> Handler<GetBindAddr> for ServerActor<TMsg, TRole>
+where
+    TMsg: RoomMessageTrait,
+    TRole: ApplicationRole,
+{
+    type Result = Result<String, ()>;
+
+    fn handle(&mut self, _msg: GetBindAddr, _ctx: &mut Context<Self>) -> Self::Result {
+        // Return the cached bind address instead of locking tcp_server
+        // (which may be blocked in accept())
+        Ok(self.bind_addr.clone())
     }
 }
 

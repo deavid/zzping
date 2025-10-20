@@ -9,4 +9,6 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod network;
+/// Room handler factories for component wiring
+pub mod room_handlers;
 pub mod service;

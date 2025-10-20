@@ -96,21 +96,6 @@ pub struct MemDBActor<T: ApplicationRole> {
     outstanding_batch: Option<u64>,
 }
 
-impl<T: ApplicationRole> Clone for MemDBActor<T> {
-    fn clone(&self) -> Self {
-        Self {
-            role: self.role.clone(),
-            storage: None, // Storage is not cloneable, so we don't clone it
-            buffer: self.buffer.clone(),
-            session_manager: self.session_manager.clone(),
-            successful_batches: Arc::clone(&self.successful_batches),
-            failed_batches: Arc::clone(&self.failed_batches),
-            total_results: Arc::clone(&self.total_results),
-            outstanding_batch: self.outstanding_batch,
-        }
-    }
-}
-
 impl<T: ApplicationRole> Default for MemDBActor<T> {
     fn default() -> Self {
         Self::new_with_role(MemDBRole::default())
@@ -924,36 +909,6 @@ mod tests {
         // spawn_forwarder should succeed (returns Ok(()))
         let result = room_handle.spawn_forwarder(tx);
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_actor_clone() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
-
-        // Add some data to verify cloning behavior
-        actor.buffer.push(PingResult {
-            target: "test".to_string(),
-            timestamp_ms: 1234567890,
-            rtt_us: Some(1000),
-            sequence: 1,
-        });
-
-        let cloned = actor.clone();
-
-        // Verify role is cloned
-        assert_eq!(actor.role(), cloned.role());
-
-        // Verify buffer is cloned
-        assert_eq!(actor.buffer.len(), cloned.buffer.len());
-        assert_eq!(actor.buffer[0].target, cloned.buffer[0].target);
-
-        // Verify storage is not cloned (as expected)
-        assert!(cloned.storage.is_none());
-
-        // Verify counters are shared
-        assert_eq!(Arc::strong_count(&actor.successful_batches), 2);
-        assert_eq!(Arc::strong_count(&cloned.successful_batches), 2);
     }
 
     #[actix::test]

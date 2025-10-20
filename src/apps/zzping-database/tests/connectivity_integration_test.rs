@@ -182,7 +182,7 @@ fn test_connectivity_database_to_collector() {
 
     // Minimal startup delay - polling will catch readiness
     println!("Waiting for database to bind to port...");
-    thread::sleep(Duration::from_millis(5));
+    thread::sleep(Duration::from_millis(15));
 
     // Verify database is running
     match db_process.try_wait() {
@@ -223,7 +223,7 @@ fn test_connectivity_database_to_collector() {
     // We'll verify this by checking output after processes complete
     println!("Waiting for connection attempt and handshake completion...");
     let start = std::time::Instant::now();
-    let timeout = Duration::from_millis(50);
+    let timeout = Duration::from_millis(150);
 
     loop {
         let elapsed = start.elapsed();

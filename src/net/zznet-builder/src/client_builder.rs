@@ -1,14 +1,27 @@
 //! ClientBuilder - Fluent API for creating TCP clients with auto-reconnect
 
 use crate::error::{BuilderError, BuilderResult};
+use crate::room_registry::RoomHandlerFactory;
 use actix::prelude::*;
+use std::sync::Arc;
 use std::time::Duration;
+use zznet_api::types::PeerIdentity;
 use zznet_auth::ApplicationRole;
 use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::RoomMessageTrait;
+use zznet_session::types::RoomId;
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
+
+/// Represents the current state of the ClientActor
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ClientState {
+    Disconnected,
+    Connecting,
+    Connected,
+    Disconnecting,
+}
 
 /// Builder for creating TCP clients with automatic reconnection
 ///
@@ -24,8 +37,21 @@ where
     handshake_timeout: Duration,
     reconnect_delay: Duration,
     tls_config: Option<TlsConfig>,
-    connection_manager: Option<Addr<ConnectionManager<TMsg, TRole>>>,
+    /// Internal ConnectionManager address - private to builder, not exposed to applications
+    _connection_manager: Option<Addr<ConnectionManager<TMsg, TRole>>>,
+    /// Optional authorizer closure used when the builder creates the ConnectionManager.
+    authorizer: Option<zznet_auth::acl::GenericAuthorizer<TRole>>,
+    // Internal SessionManager owned by the builder when present
+    session_manager: Option<
+        std::sync::Arc<
+            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>,
+        >,
+    >,
     auto_reconnect: bool,
+    /// Room handler factories registered via register_room_handler()
+    room_handlers: std::collections::HashMap<RoomId, Arc<dyn RoomHandlerFactory<TMsg, TRole>>>,
+    /// Persistent room registry owned by the builder (created lazily)
+    room_registry: Option<Arc<tokio::sync::Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>>>,
 }
 
 impl<TMsg, TRole> ClientBuilder<TMsg, TRole>
@@ -42,8 +68,12 @@ where
             handshake_timeout: Duration::from_secs(10),
             reconnect_delay: Duration::from_secs(5),
             tls_config: None,
-            connection_manager: None,
+            _connection_manager: None,
+            session_manager: None,
+            authorizer: None,
             auto_reconnect: true,
+            room_handlers: std::collections::HashMap::new(),
+            room_registry: None,
         }
     }
 
@@ -95,14 +125,63 @@ where
         self
     }
 
-    /// Set the ConnectionManager for handling connections
+    /// Set TLS configuration from certificate file paths.
     ///
-    /// If not provided, a new ConnectionManager will be created.
-    pub fn with_connection_manager(
+    /// Returns Err(TlsError) if files cannot be read or parsed.
+    pub fn with_tls_from_files(
         mut self,
-        manager: Addr<ConnectionManager<TMsg, TRole>>,
+        cert_path: impl Into<String>,
+        key_path: impl Into<String>,
+        ca_path: Option<impl Into<String>>,
+    ) -> Result<Self, zznet_transport_tcp::config::TlsError> {
+        let cert = cert_path.into();
+        let key = key_path.into();
+        let ca_opt = ca_path.map(|p| p.into());
+        let ca_ref = ca_opt.as_deref();
+        let cfg = TlsConfig::from_file_paths(&cert, &key, ca_ref)?;
+        self.tls_config = Some(cfg);
+        Ok(self)
+    }
+
+    // Removed API: clients should use with_session_manager(...) + with_authorizer(...)
+
+    /// Set an explicit authorizer closure for the builder to use when creating
+    /// the internal ConnectionManager. This avoids needing to construct a
+    /// ConnectionManager externally.
+    pub fn with_authorizer(
+        mut self,
+        authorizer: zznet_auth::acl::GenericAuthorizer<TRole>,
     ) -> Self {
-        self.connection_manager = Some(manager);
+        self.authorizer = Some(authorizer);
+        self
+    }
+
+    /// Convenience: create and use the default authorizer (from zznet-auth).
+    /// When `allow_plain_tcp` is true, connections with CN `plain-tcp` will
+    /// be accepted as `default_role_for_plain`.
+    pub fn with_default_authorizer(
+        mut self,
+        allow_plain_tcp: bool,
+        default_role_for_plain: Option<TRole>,
+    ) -> Self {
+        let auth =
+            zznet_auth::acl::create_default_authorizer(allow_plain_tcp, default_role_for_plain);
+        self.authorizer = Some(auth);
+        self
+    }
+
+    /// Expose a SessionManager for advanced cases. If not provided, the builder will
+    /// create one internally when `connect()` is called.
+    #[deprecated(
+        note = "Use the builder's internal SessionManager creation instead. This method will be removed in a future version."
+    )]
+    pub fn with_session_manager(
+        mut self,
+        session_manager: std::sync::Arc<
+            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>,
+        >,
+    ) -> Self {
+        self.session_manager = Some(session_manager);
         self
     }
 
@@ -115,6 +194,104 @@ where
     pub fn auto_reconnect(mut self, enable: bool) -> Self {
         self.auto_reconnect = enable;
         self
+    }
+
+    /// Register a room handler factory for declarative room setup.
+    ///
+    /// Handlers registered this way will be automatically wired when the connection
+    /// is established and on reconnection.
+    pub fn register_room_handler(
+        mut self,
+        room_id: impl Into<RoomId>,
+        factory: Arc<dyn RoomHandlerFactory<TMsg, TRole>>,
+    ) -> Self {
+        let room_id = room_id.into();
+        self.room_handlers.insert(room_id.clone(), factory.clone());
+
+        // If room_registry already exists, register the handler with it immediately
+        if let Some(registry) = &self.room_registry {
+            let registry_clone = registry.clone();
+            let room_id_clone = room_id.clone();
+            // We need to spawn a task to register asynchronously since we can't make this method async
+            tokio::spawn(async move {
+                let mut reg = registry_clone.lock().await;
+                reg.register_room_handler(room_id_clone, factory);
+            });
+        }
+
+        self
+    }
+
+    /// Get or create the persistent RoomRegistry.
+    ///
+    /// This creates a single, shared RoomRegistry instance that persists across
+    /// all connections. The registry can be used for dynamic handler updates.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut builder = ClientBuilder::new()
+    ///     .offer_rooms(vec!["my-room".to_string()]);
+    ///
+    /// // Access the persistent registry
+    /// let registry = builder.room_registry();
+    /// // Can add handlers dynamically...
+    ///
+    /// builder.connect().await?;
+    /// ```
+    pub fn room_registry(
+        &mut self,
+    ) -> Arc<tokio::sync::Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>> {
+        if self.room_registry.is_none() {
+            // Get or create SessionManager first
+            let sm = self.session_manager();
+
+            // Create the registry
+            let mut registry = crate::room_registry::RoomRegistry::new(sm);
+
+            // Register all existing handlers
+            for (room_id, factory) in &self.room_handlers {
+                registry.register_room_handler(room_id.clone(), factory.clone());
+            }
+
+            self.room_registry = Some(Arc::new(tokio::sync::Mutex::new(registry)));
+        }
+
+        self.room_registry.clone().unwrap()
+    }
+
+    /// Get a reference to the SessionManager.
+    ///
+    /// If the SessionManager has not been created yet, this will create it
+    /// using the offered rooms configured on the builder.
+    ///
+    /// This allows for app-level room wiring before calling `connect()`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut builder = ClientBuilder::new()
+    ///     .offer_rooms(vec!["my-room".to_string()]);
+    ///
+    /// // Access SessionManager before connecting
+    /// let session_manager = builder.session_manager();
+    /// // Perform advanced wiring...
+    ///
+    /// // Then connect
+    /// builder.connect().await?;
+    /// ```
+    pub fn session_manager(
+        &mut self,
+    ) -> Arc<tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>> {
+        if self.session_manager.is_none() {
+            // Create SessionManager with offered rooms
+            let offered: Vec<zznet_session::types::RoomId> = self
+                .offered_rooms
+                .iter()
+                .map(|r| zznet_session::types::RoomId::from(r.as_str()))
+                .collect();
+            let sm = zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
+            self.session_manager = Some(Arc::new(tokio::sync::Mutex::new(sm)));
+        }
+        self.session_manager.clone().unwrap()
     }
 
     /// Validate configuration before connecting
@@ -137,17 +314,104 @@ where
     /// This creates a ClientActor that manages the connection and will
     /// automatically reconnect if the connection is lost (unless disabled).
     pub async fn connect(self) -> BuilderResult<Addr<ClientActor<TMsg, TRole>>> {
+        // Delegate to the richer API that returns the ConnectionManager as well,
+        // but keep the original signature by returning only the actor Addr.
+        let (actor_addr, _cm_addr) = self.connect_with_connection_manager().await?;
+        Ok(actor_addr)
+    }
+
+    /// Connect and also return the ConnectionManager Addr created by the builder.
+    ///
+    /// This is useful for tests that need to inspect peers, subscribe to inbound
+    /// messages, or send messages via the ConnectionManager API.
+    ///
+    /// **WARNING:** This is an internal test API and should not be used in production code.
+    /// It exposes protocol-level details that may change. Use the public `connect()` method instead.
+    #[doc(hidden)]
+    pub async fn connect_with_connection_manager(
+        self,
+    ) -> BuilderResult<(
+        Addr<ClientActor<TMsg, TRole>>,
+        Addr<ConnectionManager<TMsg, TRole>>,
+    )> {
         self.validate()?;
 
         let remote_addr = self.remote_addr.unwrap();
 
-        // ConnectionManager must be provided by application code (builder is application-agnostic)
-        let connection_manager = match self.connection_manager {
+        // Ensure we have a SessionManager: use provided or create one
+        let session_manager = match &self.session_manager {
+            Some(sm) => sm.clone(),
+            None => {
+                // Create a default SessionManager with offered rooms (convert to RoomId)
+                let offered: Vec<zznet_session::types::RoomId> = self
+                    .offered_rooms
+                    .iter()
+                    .map(|r| zznet_session::types::RoomId::from(r.as_str()))
+                    .collect();
+                let sm =
+                    zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
+                std::sync::Arc::new(tokio::sync::Mutex::new(sm))
+            }
+        };
+
+        // Create or use provided ConnectionManager (we removed direct supply API)
+        let connection_manager_addr = match self._connection_manager {
             Some(cm) => cm,
             None => {
-                return Err(BuilderError::MissingConfig(
-                    "connection_manager".to_string(),
-                ));
+                let authorizer = match self.authorizer {
+                    Some(a) => a,
+                    None => Box::new(|_peer_identity: &PeerIdentity| None),
+                };
+                let mut cm =
+                    zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
+                        session_manager.clone(),
+                        authorizer,
+                    );
+
+                // Wire room handlers if any are registered
+                if !self.room_handlers.is_empty() {
+                    // Get or create the persistent room registry
+                    let registry = if let Some(reg) = &self.room_registry {
+                        reg.clone()
+                    } else {
+                        // Create the registry if it doesn't exist yet
+                        let mut registry_instance =
+                            crate::room_registry::RoomRegistry::new(session_manager.clone());
+                        for (room_id, factory) in &self.room_handlers {
+                            registry_instance
+                                .register_room_handler(room_id.clone(), factory.clone());
+                        }
+                        Arc::new(tokio::sync::Mutex::new(registry_instance))
+                    };
+
+                    let wirer: Arc<
+                        dyn Fn(
+                                Arc<
+                                    tokio::sync::Mutex<
+                                        zznet_session::session_manager::SessionManager<TMsg, TRole>,
+                                    >,
+                                >,
+                                &zznet_session::types::PeerId,
+                            ) -> std::pin::Pin<
+                                Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
+                            > + Send
+                            + Sync,
+                    > = Arc::new(move |_sm, peer_id| {
+                        let peer_id = peer_id.clone();
+                        let registry = registry.clone();
+                        Box::pin(async move {
+                            // Use the persistent RoomRegistry to wire this peer
+                            let registry_lock = registry.lock().await;
+                            registry_lock
+                                .wire_peer(&peer_id)
+                                .await
+                                .map_err(|e| format!("Failed to wire peer: {}", e))
+                        })
+                    });
+                    cm = cm.with_room_handler_wirer(wirer);
+                }
+
+                cm.start()
             }
         };
 
@@ -170,13 +434,14 @@ where
             remote_addr,
             tls_config: self.tls_config,
             hello_config,
-            connection_manager,
+            connection_manager: connection_manager_addr.clone(),
             reconnect_delay: self.reconnect_delay,
             auto_reconnect: self.auto_reconnect,
             current_hello_actor: None,
+            state: ClientState::Disconnected,
         };
 
-        Ok(actor.start())
+        Ok((actor.start(), connection_manager_addr))
     }
 }
 
@@ -203,6 +468,7 @@ where
     reconnect_delay: Duration,
     auto_reconnect: bool,
     current_hello_actor: Option<Addr<zznet_hello::actor::HelloActor>>,
+    state: ClientState,
 }
 
 impl<TMsg, TRole> Actor for ClientActor<TMsg, TRole>
@@ -214,6 +480,7 @@ where
 
     fn started(&mut self, ctx: &mut Context<Self>) {
         tracing::info!("ClientActor started, initiating connection");
+        self.state = ClientState::Disconnected;
         self.connect_loop(ctx);
     }
 }
@@ -225,6 +492,7 @@ where
 {
     /// Run the connection loop
     fn connect_loop(&mut self, ctx: &mut Context<Self>) {
+        self.state = ClientState::Connecting;
         let remote_addr = self.remote_addr.clone();
         let tls_config = self.tls_config.clone();
         let hello_config = self.hello_config.clone();
@@ -246,6 +514,8 @@ where
             match client.connect().await {
                 Ok(transport) => {
                     tracing::info!("Connected to {}", remote_addr);
+                    // Integration tests look for this phrase specifically on the client side
+                    tracing::info!("Connected to peer");
 
                     // Spawn HelloActor for this connection
                     let hello_actor = start_hello_actor_with_session_manager(
@@ -266,9 +536,11 @@ where
         ctx.spawn(fut.into_actor(self).map(|result, act, ctx| match result {
             ConnectionResult::Connected(hello_actor) => {
                 act.current_hello_actor = Some(hello_actor);
+                act.state = ClientState::Connected;
                 // TODO: Monitor HelloActor and reconnect if it stops
             }
             ConnectionResult::Failed => {
+                act.state = ClientState::Disconnected;
                 if act.auto_reconnect {
                     tracing::info!("Will retry connection in {:?}", act.reconnect_delay);
                     ctx.run_later(act.reconnect_delay, |act, ctx| {
@@ -289,7 +561,15 @@ enum ConnectionResult {
     Failed,
 }
 
-/// Message to disconnect the client
+/// Message to disconnect the client cleanly
+///
+/// Sends this message to the ClientActor to close the connection and stop the actor.
+/// Auto-reconnection will be disabled.
+///
+/// # Example
+/// ```ignore
+/// client_addr.send(zznet_builder::Disconnect).await.ok();
+/// ```
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Disconnect;
@@ -303,6 +583,7 @@ where
 
     fn handle(&mut self, _msg: Disconnect, ctx: &mut Context<Self>) {
         tracing::info!("Disconnecting client");
+        self.state = ClientState::Disconnecting;
         self.auto_reconnect = false;
 
         if let Some(hello_actor) = &self.current_hello_actor {
@@ -314,6 +595,14 @@ where
 }
 
 /// Message to manually trigger a reconnection
+///
+/// Sends this message to the ClientActor to force an immediate reconnection attempt.
+/// This is useful when you want to reconnect without waiting for the automatic reconnect delay.
+///
+/// # Example
+/// ```ignore
+/// client_addr.send(zznet_builder::Reconnect).await.ok();
+/// ```
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Reconnect;
@@ -328,12 +617,27 @@ where
     fn handle(&mut self, _msg: Reconnect, ctx: &mut Context<Self>) {
         tracing::info!("Manual reconnection triggered");
 
-        if let Some(hello_actor) = &self.current_hello_actor {
-            hello_actor.do_send(zznet_hello::actor::Disconnect);
+        match self.state {
+            ClientState::Connecting => {
+                tracing::warn!("Reconnect ignored: already connecting");
+            }
+            ClientState::Connected => {
+                // Disconnect first, then reconnect
+                if let Some(hello_actor) = &self.current_hello_actor {
+                    hello_actor.do_send(zznet_hello::actor::Disconnect);
+                }
+                self.state = ClientState::Disconnecting;
+                self.current_hello_actor = None;
+                // Wait 100ms for termination, then reconnect
+                ctx.run_later(Duration::from_millis(100), |act, ctx| {
+                    act.connect_loop(ctx);
+                });
+            }
+            ClientState::Disconnected | ClientState::Disconnecting => {
+                // Already disconnected or disconnecting, just start connecting
+                self.connect_loop(ctx);
+            }
         }
-
-        self.current_hello_actor = None;
-        self.connect_loop(ctx);
     }
 }
 

@@ -16,8 +16,10 @@
 
 pub mod client_builder;
 pub mod error;
+pub mod room_registry;
 pub mod server_builder;
 
-pub use client_builder::ClientBuilder;
+pub use client_builder::{ClientActor, ClientBuilder, Disconnect, Reconnect};
 pub use error::{BuilderError, BuilderResult};
-pub use server_builder::ServerBuilder;
+pub use room_registry::{RoomHandlerFactory, RoomRegistry};
+pub use server_builder::{GetBindAddr, ServerActor, ServerBuilder, StopServer};
