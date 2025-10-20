@@ -37,7 +37,8 @@ This is the most important section. The goal of documentation is to explain the 
 *   **FORBIDDEN: Example code blocks with ```ignore**
     *   Creates pseudo-tests that never run and can become stale/incorrect.
     *   If example code is worth showing, it MUST be tested (use ```rust without ignore for doc-tests).
-    *   If the example is too complex for a doc-test, put it in the tests/ or examples/ directory.
+    *   If the example is too complex for a doc-test, simplify it or omit the example code entirely.
+    *   **DO NOT** create files in `tests/` or `examples/` directories. These directories are forbidden unless explicitly approved by the project owner for extraordinary circumstances.
     *   Exception: Non-code examples (ASCII diagrams, config file formats, JSON/TOML samples) are allowed.
 
 *   **Example of FORBIDDEN pattern:**
@@ -124,8 +125,38 @@ This is the most important section. The goal of documentation is to explain the 
 
 ### Test Location and Organization
 
-*   **Rule:** ALL tests must be in `src/` files using `#[cfg(test)] mod tests { ... }`. Integration tests in `tests/` are NOT allowed.
-*   **Rationale:** Keeps tests close to implementation, easier to maintain, ensures private APIs are tested.
+*   **Rule:** ALL tests must be in `src/` files using `#[cfg(test)] mod tests { ... }`.
+    - The top-level `tests/` directory is **FORBIDDEN**
+    - The top-level `examples/` directory is **FORBIDDEN**
+    - All test code must live with the implementation in `src/`
+
+*   **Rationale:**
+    - Keeps tests close to implementation
+    - Easier to maintain
+    - Ensures private APIs can be tested
+    - Prevents proliferation of integration test files that are hard to maintain
+    - Forces better component design (testable components don't need external integration tests)
+
+*   **Exception (Rare):** The project owner may explicitly grant permission for integration tests or examples in extraordinary circumstances (e.g., complex end-to-end scenarios that cannot be mocked). Do NOT assume this exception applies to your task. If you believe you need an integration test, stop and ask first.
+
+### Unit Tests vs Integration Tests
+
+*   **Unit Tests (Required):**
+    - Tests that verify individual functions, methods, or components in isolation
+    - Use mocks, fakes, and test doubles to control dependencies
+    - Control all inputs and verify outputs/behavior
+    - Fast, deterministic, no external dependencies
+    - Located in `src/` with `#[cfg(test)]`
+    - **This is the default and only approved testing approach**
+
+*   **Integration Tests (Forbidden Unless Explicitly Approved):**
+    - Tests that run multiple real components together
+    - Tests that span multiple crates
+    - Subprocess-based tests that spawn actual binaries
+    - Tests requiring external resources (real databases, networks, filesystems)
+    - **These are NOT allowed unless project owner grants explicit permission**
+
+*   **Policy:** Always default to unit tests with mocks. If you think you need an integration test, ask yourself: "Can I test this contract with mocks and test doubles?" The answer is almost always YES. Well-designed components are testable in isolation.
 
 ### Test Coverage Requirements
 

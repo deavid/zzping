@@ -18,10 +18,6 @@
 
 /// Actor implementation for the MemDB component
 pub mod actor;
-/// Public API for interacting with MemDB
-pub mod api;
-/// Builder pattern for configuring MemDB instances
-pub mod builder;
 /// Internal actor messages
 pub mod messages;
 /// Network protocol messages

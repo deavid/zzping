@@ -56,6 +56,24 @@ This is a collection of tools to monitor home network latency and packet loss us
 cargo test
 ```
 
+### Testing
+
+All tests are located in `src/` directories using `#[cfg(test)]` modules. The project follows a unit-test-first philosophy:
+
+**Unit Tests (Primary):**
+- Located alongside implementation code in `src/`
+- Use mocks and test doubles for dependencies
+- Fast, deterministic, no external resources needed
+- Run with `cargo test`
+
+**Integration Tests (By Exception):**
+- Complex end-to-end scenarios that cannot be mocked
+- Located in `src/apps/*/tests/` directories
+- Examples: `connectivity_integration_test.rs`, `e2e_lifecycle_test.rs`
+- Run with `cargo test` or specific test names
+
+**For more details on testing philosophy, see `AGENT_CODING_STANDARDS.md` Section 6.**
+
 ### Integration Tests
 
 **⚠️ IMPORTANT:** Integration tests are not currently functional as Cargo test targets.
@@ -132,14 +150,15 @@ cargo clippy --workspace -- -D warnings
 **Completed:**
 - ✅ Multi-CA certificate rotation support (database accepts multiple CA certs)
 - ✅ Comprehensive documentation (README, TROUBLESHOOTING, RUNBOOK)
-- ✅ Test infrastructure created (files, scripts, fixtures)
+- ✅ Test infrastructure (unit tests in src/, select integration tests for complex E2E)
 - ✅ All unit tests pass
 - ✅ Clippy clean
 - ✅ Release builds work
 
 **In Progress / Needs Work:**
-- ⚠️ Integration tests not registered in Cargo.toml
-- ⚠️ TLS certificate generation has compatibility issues
+- 🔄 zznet-builder integration (apps should use builder API instead of manual transport)
+- 🔄 zznet-room integration (apps should leverage Room abstraction)
+- ⚠️ TLS certificate generation may have compatibility issues
 - ⚠️ Load/chaos/stability tests exist but unverified
 - ⚠️ No actual 24-hour run completed
 
