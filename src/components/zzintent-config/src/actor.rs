@@ -2,8 +2,8 @@
 //! state and message handling logic.
 
 use crate::messages::{
-    GetCurrentConfig, GetHealth, IntentConfigData, IntentConfigHealth, Subscribe, Unsubscribe,
-    UpdateConfig,
+    CreateRoom, GetCurrentConfig, GetHealth, GetRoomChannels, GetRoomChannelsResponse,
+    IntentConfigData, IntentConfigHealth, Subscribe, Unsubscribe, UpdateConfig,
 };
 use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permission_wrapper::PermissionWrapper;
@@ -41,6 +41,17 @@ pub struct IntentConfigActor<T: ApplicationRole> {
 
     /// Per-peer broadcast timeout used when sending messages via SessionManager
     broadcast_timeout: std::time::Duration,
+
+    /// Room for typed peer-to-peer communication (Phase 2)
+    /// Created after actor starts, allows bidirectional messaging with peers
+    #[allow(dead_code)]
+    room: Option<zznet_room::room::Room<IntentConfigNetworkMsg>>,
+
+    /// Room channels for wiring with SessionManager (Phase 2)
+    /// These are extracted after room creation and used to route peer messages
+    /// Stored as Arc so they can be shared with SessionManager
+    #[allow(dead_code)]
+    room_channels: Option<std::sync::Arc<zznet_room::room::RoomChannels<IntentConfigNetworkMsg>>>,
 
     /// Health counters for operational visibility. These are atomic so background
     /// tasks (spawned async sends) can update counts without accessing the
@@ -89,6 +100,8 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
             session_manager: None,
             database_message_adapter: None,
             broadcast_timeout: std::time::Duration::from_millis(500),
+            room: None,
+            room_channels: None,
             successful_broadcasts: Arc::new(AtomicU64::new(0)),
             failed_broadcasts: Arc::new(AtomicU64::new(0)),
             last_broadcast_ms: Arc::new(AtomicU64::new(0)),
@@ -1100,6 +1113,60 @@ impl<T: ApplicationRole> Handler<crate::messages::NetworkMessageReceived> for In
                 // Error messages indicate a problem on the remote side
             }
         }
+    }
+}
+
+/// Handles the `CreateRoom` message, creating typed channels for network messaging.
+/// The channels are stored for SessionManager to use for message routing.
+impl<T: ApplicationRole> Handler<CreateRoom> for IntentConfigActor<T> {
+    type Result = ();
+
+    fn handle(&mut self, _msg: CreateRoom, _ctx: &mut Context<Self>) -> Self::Result {
+        // Create the channel pair that will be used by SessionManager
+        let (_outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(100);
+        let (inbound_tx, _inbound_rx) = tokio::sync::mpsc::channel(100);
+
+        let channels = zznet_room::room::RoomChannels {
+            outbound_rx,
+            inbound_tx,
+        };
+
+        // Store channels for SessionManager to use
+        self.room_channels = Some(std::sync::Arc::new(channels));
+
+        log::info!(
+            "✓ Room channels created for IntentConfigActor, ready for SessionManager wiring"
+        );
+    }
+}
+
+/// Handles the `GetRoomChannels` message, creating and returning room channels for network messaging.
+/// If channels don't exist yet, they are created on-demand.
+impl<T: ApplicationRole> Handler<GetRoomChannels> for IntentConfigActor<T> {
+    type Result = MessageResult<GetRoomChannels>;
+
+    fn handle(&mut self, _msg: GetRoomChannels, _ctx: &mut Context<Self>) -> Self::Result {
+        // Create channels on-demand if they don't exist yet
+        if self.room_channels.is_none() {
+            // Create the channel pair that will be used by SessionManager
+            let (_outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(100);
+            let (inbound_tx, _inbound_rx) = tokio::sync::mpsc::channel(100);
+
+            let channels = zznet_room::room::RoomChannels {
+                outbound_rx,
+                inbound_tx,
+            };
+
+            // Store channels for SessionManager to use
+            self.room_channels = Some(std::sync::Arc::new(channels));
+
+            log::info!(
+                "✓ Room channels created on-demand for IntentConfigActor, ready for SessionManager wiring"
+            );
+        }
+
+        let channels = self.room_channels.clone();
+        MessageResult(GetRoomChannelsResponse { channels })
     }
 }
 

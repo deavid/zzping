@@ -458,6 +458,10 @@ impl DatabaseService {
         intent_addr.do_send(zzintent_config::messages::SetDatabaseAdapter(adapter_trait));
         eprintln!("⚙️ SetDatabaseAdapter message sent");
 
+        // Create room channels for this actor
+        // NOTE: Rooms are created on-demand when GetRoomChannels is called
+        eprintln!("⚙️ [Database] Room channels will be created on-demand");
+
         // Start CState
         let cstate_addr = builders.cstate.build();
 

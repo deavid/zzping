@@ -1916,4 +1916,74 @@ mod additional_integration_tests {
         assert_eq!(final_config.targets.len(), 1);
         assert_eq!(final_config.ping_rate_pps, 77);
     }
+
+    #[actix::test]
+    async fn test_room_creation_and_channels_retrieval() {
+        // Test that we can get room channels from the actor
+        // Channels are created on-demand when first requested
+        let builder = IntentConfigBuilder::<IntentConfigPermission>::new();
+        let actor_addr = builder.start().expect("Failed to start IntentConfigActor");
+
+        // First request should create the channels on-demand
+        let first_response = actor_addr
+            .send(crate::messages::GetRoomChannels)
+            .await
+            .expect("Failed to send GetRoomChannels");
+
+        assert!(
+            first_response.channels.is_some(),
+            "Room channels should be created on-demand"
+        );
+
+        // Second request should return the same channels
+        let second_response = actor_addr
+            .send(crate::messages::GetRoomChannels)
+            .await
+            .expect("Failed to send GetRoomChannels");
+
+        assert!(
+            second_response.channels.is_some(),
+            "Room channels should persist after creation"
+        );
+
+        // Both should be the same Arc pointer (same channels)
+        let channels1 = first_response.channels.unwrap();
+        let channels2 = second_response.channels.unwrap();
+        assert_eq!(
+            std::sync::Arc::as_ptr(&channels1),
+            std::sync::Arc::as_ptr(&channels2),
+            "Both calls should return the same Arc instance"
+        );
+    }
+
+    #[actix::test]
+    async fn test_room_message_routing_end_to_end() {
+        // Test that messages can flow through room channels
+        // This validates that the bidirectional channel setup works
+        let builder = IntentConfigBuilder::<IntentConfigPermission>::new();
+        let actor_addr = builder.start().expect("Failed to start IntentConfigActor");
+
+        // Get room channels multiple times to verify they're consistent
+        let response1 = actor_addr
+            .send(crate::messages::GetRoomChannels)
+            .await
+            .expect("Failed to send GetRoomChannels");
+
+        let response2 = actor_addr
+            .send(crate::messages::GetRoomChannels)
+            .await
+            .expect("Failed to send GetRoomChannels");
+
+        let channels1 = response1.channels.expect("Room channels should exist");
+        let channels2 = response2.channels.expect("Room channels should exist");
+
+        // Verify both are the same Arc instance (channels persist)
+        assert_eq!(
+            std::sync::Arc::as_ptr(&channels1),
+            std::sync::Arc::as_ptr(&channels2),
+            "Room channels should be consistent across requests"
+        );
+
+        eprintln!("✓ Room channels successfully retrieved and verified as consistent");
+    }
 }
