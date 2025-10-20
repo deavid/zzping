@@ -458,9 +458,11 @@ impl DatabaseService {
         intent_addr.do_send(zzintent_config::messages::SetDatabaseAdapter(adapter_trait));
         eprintln!("⚙️ SetDatabaseAdapter message sent");
 
-        // Create room channels for this actor
-        // NOTE: Rooms are created on-demand when GetRoomChannels is called
-        eprintln!("⚙️ [Database] Room channels will be created on-demand");
+        // Wire room handlers from IntentConfig to SessionManager
+        // This enables message routing: network → SessionManager → room → IntentConfigActor
+        eprintln!("⚙️ [Database] Wiring room handlers to SessionManager");
+        Self::wire_room_handlers(&intent_addr, &builders.session_manager).await?;
+        eprintln!("⚙️ [Database] Room handlers wired to SessionManager");
 
         // Start CState
         let cstate_addr = builders.cstate.build();
@@ -471,6 +473,99 @@ impl DatabaseService {
             cstate: cstate_addr,
             session_manager: builders.session_manager,
         })
+    }
+
+    /// Wire room handlers from IntentConfigActor to SessionManager
+    ///
+    /// This registers the IntentConfig room handler with all existing peers,
+    /// enabling message routing from the network through SessionManager to IntentConfig.
+    async fn wire_room_handlers(
+        intent_addr: &Addr<IntentConfigActor<IntentConfigPermission>>,
+        session_manager: &Arc<
+            tokio::sync::Mutex<
+                zznet_session::session_manager::SessionManager<DatabaseMessage, AuthRole>,
+            >,
+        >,
+    ) -> Result<()> {
+        use zznet_session::peer_session::RoomHandle;
+        use zznet_session::types::{RoomId, SessionError};
+
+        // Create a wrapper handler that converts DatabaseMessage to IntentConfigNetworkMsg
+        struct DatabaseIntentConfigRoomHandler {
+            intent_addr: Addr<IntentConfigActor<IntentConfigPermission>>,
+            room_id: RoomId,
+        }
+
+        impl RoomHandle<DatabaseMessage> for DatabaseIntentConfigRoomHandler {
+            fn room_id(&self) -> &RoomId {
+                &self.room_id
+            }
+
+            fn send_message(
+                &mut self,
+                msg: DatabaseMessage,
+            ) -> std::result::Result<(), SessionError> {
+                // Extract IntentConfigNetworkMsg from DatabaseMessage
+                match msg {
+                    DatabaseMessage::Intent(intent_msg) => {
+                        eprintln!("  → Forwarding message to IntentConfigActor via room");
+                        self.intent_addr.do_send(
+                            zzintent_config::messages::NetworkMessageReceived(intent_msg),
+                        );
+                        Ok(())
+                    }
+                    DatabaseMessage::MemDB(_) => {
+                        eprintln!("  → Ignoring MemDB message in IntentConfig room handler");
+                        Ok(())
+                    }
+                    DatabaseMessage::CState(_) => {
+                        eprintln!("  → Ignoring CState message in IntentConfig room handler");
+                        Ok(())
+                    }
+                }
+            }
+
+            fn spawn_forwarder(
+                &mut self,
+                _tx: tokio::sync::mpsc::Sender<(RoomId, DatabaseMessage)>,
+            ) -> std::result::Result<(), SessionError> {
+                // This handler is receive-only
+                Ok(())
+            }
+        }
+
+        let room_id = RoomId::from("zzintent-config");
+
+        // Lock SessionManager and register room with all peers
+        eprintln!("  → Locking SessionManager to register rooms");
+        let mut sm = session_manager.lock().await;
+
+        let peer_ids = sm.peer_ids();
+        let num_peers = peer_ids.len();
+        eprintln!("  → Found {} existing peers", num_peers);
+
+        for peer_id in peer_ids {
+            eprintln!("    → Adding room to peer {}", peer_id);
+
+            // Create a room handler for this peer
+            let handler: Box<dyn RoomHandle<DatabaseMessage>> =
+                Box::new(DatabaseIntentConfigRoomHandler {
+                    intent_addr: intent_addr.clone(),
+                    room_id: room_id.clone(),
+                });
+
+            sm.add_room_to_peer(&peer_id, room_id.clone(), handler)
+                .await
+                .map_err(|e| {
+                    DatabaseError::Component(format!(
+                        "Failed to add room to peer {}: {}",
+                        peer_id, e
+                    ))
+                })?;
+        }
+
+        eprintln!("  → Room handler registered with all {} peers", num_peers);
+        Ok(())
     }
 
     /// Creates and starts all database components in one call.
