@@ -118,6 +118,20 @@ pub struct GetRoomChannelsResponse {
 #[rtype(result = "()")]
 pub struct CreateRoom;
 
+/// A request to get a RoomHandle for SessionManager integration.
+/// Returns a boxed trait object that SessionManager can use to route messages to this actor.
+#[derive(Message)]
+#[rtype(result = "GetRoomHandlerResponse")]
+pub struct GetRoomHandlerForSessionManager;
+
+/// Response containing a RoomHandle trait object for SessionManager.
+pub struct GetRoomHandlerResponse {
+    /// A RoomHandle that SessionManager can use to route messages to this actor
+    pub handler: Box<
+        dyn zznet_session::peer_session::RoomHandle<crate::network_messages::IntentConfigNetworkMsg>,
+    >,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

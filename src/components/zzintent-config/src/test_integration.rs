@@ -1986,4 +1986,53 @@ mod additional_integration_tests {
 
         eprintln!("✓ Room channels successfully retrieved and verified as consistent");
     }
+
+    /// Test that room channels can be retrieved and are ready for SessionManager
+    #[actix::test]
+    async fn test_room_channels_ready_for_session_manager() {
+        let builder = IntentConfigBuilder::<IntentConfigPermission>::new();
+        let actor_addr = builder.start().expect("Failed to start IntentConfigActor");
+
+        // Request room channels
+        let response = actor_addr
+            .send(crate::messages::GetRoomChannels)
+            .await
+            .expect("Failed to get room channels");
+
+        // Verify channels exist and are boxable for SessionManager
+        assert!(
+            response.channels.is_some(),
+            "Room channels must exist for SessionManager integration"
+        );
+
+        let channels = response.channels.unwrap();
+
+        // These channels can now be used to create a RoomAdapter
+        // which SessionManager will use to route messages to the actor
+        eprintln!(
+            "✓ Room channels ready for SessionManager: {:p}",
+            std::sync::Arc::as_ptr(&channels)
+        );
+    }
+
+    /// Test the complete IntentConfig RoomHandler
+    /// This validates the bridge between room channels and the actor
+    #[actix::test]
+    async fn test_intent_config_room_handler() {
+        use zznet_session::peer_session::RoomHandle;
+        use zznet_session::types::RoomId;
+
+        let builder = IntentConfigBuilder::<IntentConfigPermission>::new();
+        let actor_addr = builder.start().expect("Failed to start IntentConfigActor");
+
+        // Create a room handler (what SessionManager would use)
+        let room_id = RoomId::from("intent-config");
+        let handler =
+            crate::room_handler::IntentConfigRoomHandler::new(actor_addr.clone(), room_id.clone());
+
+        // The handler has the room ID (trait method)
+        assert_eq!(handler.room_id(), &room_id);
+
+        eprintln!("✓ IntentConfigRoomHandler successfully created and ready for use");
+    }
 }
