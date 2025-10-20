@@ -20,6 +20,14 @@ pub struct DatabaseConfig {
     /// relative to the directory containing the RON file. If you want the
     /// same directory as the RON file, set `data_dir: "."` explicitly.
     pub data_dir: String,
+
+    /// Handshake timeout in seconds for the HELLO protocol (default: 10s)
+    #[serde(default = "default_handshake_timeout_secs")]
+    pub handshake_timeout_secs: u64,
+}
+
+fn default_handshake_timeout_secs() -> u64 {
+    10
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +108,7 @@ impl DatabaseConfig {
             tls: None, // TCP-only
             components: ComponentConfig::fast_timing(),
             data_dir: ".".into(),
+            handshake_timeout_secs: 10,
         }
     }
 
@@ -269,6 +278,7 @@ mod tests {
                 message_frame_timeout_ms: 500,
             },
             data_dir: String::from("."),
+            handshake_timeout_secs: 10,
         }
     }
 

@@ -1,51 +1,66 @@
 use crate::service::DatabaseMessage;
-use zznet_api::error::TransportError;
-use zznet_api::transport::TransportServer as _;
+use std::time::Duration;
+use zznet_builder::ServerBuilder;
 use zznet_hello::connection_manager::ConnectionManager;
-use zznet_hello::connection_manager::HandleTransport;
 use zznet_transport_tcp::config::TlsConfig;
-use zznet_transport_tcp::server::TcpTransportServer;
 use zzping_auth::AuthRole;
 
+/// DatabaseNetwork manages the server-side connection using ServerBuilder.
+///
+/// This abstracts away manual accept loop handling and provides actor-based connection lifecycle management.
 pub struct DatabaseNetwork {
-    server: TcpTransportServer,
+    bind_addr: String,
+    tls_config: Option<TlsConfig>,
     connection_manager: actix::Addr<ConnectionManager<DatabaseMessage, AuthRole>>,
+    handshake_timeout: Duration,
 }
 
 impl DatabaseNetwork {
-    pub async fn new(
+    /// Create a new DatabaseNetwork that will use ServerBuilder for accepting connections.
+    ///
+    /// # Arguments
+    /// * `bind_addr` - the address to bind to
+    /// * `tls` - optional TLS configuration
+    /// * `connection_manager` - the actix address of the ConnectionManager actor
+    /// * `handshake_timeout` - timeout for the handshake protocol
+    pub fn new(
         bind_addr: &str,
         tls: Option<TlsConfig>,
         connection_manager: actix::Addr<ConnectionManager<DatabaseMessage, AuthRole>>,
-    ) -> Result<Self, TransportError> {
-        let server = if let Some(cfg) = tls {
-            TcpTransportServer::with_tls(bind_addr, cfg).await?
-        } else {
-            TcpTransportServer::plain(bind_addr).await?
-        };
-
-        Ok(Self {
-            server,
+        handshake_timeout: Duration,
+    ) -> Self {
+        Self {
+            bind_addr: bind_addr.to_string(),
+            tls_config: tls,
             connection_manager,
-        })
+            handshake_timeout,
+        }
     }
 
-    pub async fn run(&mut self) -> Result<(), TransportError> {
-        loop {
-            let transport = self.server.accept().await?;
+    /// Start the server using ServerBuilder to accept incoming connections.
+    ///
+    /// This spawns a ServerActor that listens for connections and automatically
+    /// spawns HelloActors for each accepted connection.
+    pub async fn run(&self) -> Result<(), String> {
+        let builder = ServerBuilder::<DatabaseMessage, AuthRole>::new()
+            .bind(&self.bind_addr)
+            .as_role(AuthRole::Database)
+            .offer_rooms(vec!["intent-config".to_string()])
+            .handshake_timeout(self.handshake_timeout);
 
-            // Create HelloConfig for this connection - application should pass real config
-            let config = zznet_hello::actor::HelloConfig::default();
+        let builder = if let Some(tls) = &self.tls_config {
+            builder.with_tls(tls.clone())
+        } else {
+            builder
+        };
 
-            // Send transport to ConnectionManager actor
-            let cm = self.connection_manager.clone();
-            cm.try_send(HandleTransport { transport, config })
-                .map_err(|e| {
-                    TransportError::IoError(format!(
-                        "Failed to send transport to ConnectionManager: {}",
-                        e
-                    ))
-                })?;
-        }
+        // The start() method returns an Addr to the ServerActor, which we don't need
+        // to hold onto - the actor is now running and managing connections automatically
+        builder
+            .with_connection_manager(self.connection_manager.clone())
+            .start()
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("ServerBuilder failed: {:?}", e))
     }
 }

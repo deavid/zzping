@@ -1,59 +1,66 @@
 use crate::service::CollectorMessage;
-use zznet_api::error::TransportError;
-use zznet_api::transport::TransportClient as _; // bring connect() into scope
-use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
-use zznet_transport_tcp::client::TcpTransportClient;
+use std::time::Duration;
+use zznet_builder::ClientBuilder;
+use zznet_hello::connection_manager::ConnectionManager;
 use zznet_transport_tcp::config::TlsConfig;
 use zzping_auth::AuthRole;
 
-/// CollectorNetwork now holds a client and the ConnectionManager actor address.
+/// CollectorNetwork manages the client-side connection using ClientBuilder.
+///
+/// This abstracts away manual connection handling and provides automatic reconnection.
 pub struct CollectorNetwork {
-    client: TcpTransportClient,
+    remote_addr: String,
+    tls_config: Option<TlsConfig>,
     connection_manager: actix::Addr<ConnectionManager<CollectorMessage, AuthRole>>,
+    reconnect_delay: Duration,
 }
 
 impl CollectorNetwork {
-    /// Create a new CollectorNetwork.
+    /// Create a new CollectorNetwork that will use ClientBuilder for connections.
     ///
-    /// `addr` is the server address to connect to, `tls` is optional TLS configuration,
-    /// `connection_manager` is the actix address of the ConnectionManager actor.
+    /// # Arguments
+    /// * `addr` - the server address to connect to
+    /// * `tls` - optional TLS configuration
+    /// * `connection_manager` - the actix address of the ConnectionManager actor
+    /// * `reconnect_delay` - delay between reconnection attempts
     pub fn new(
         addr: &str,
         tls: Option<TlsConfig>,
         connection_manager: actix::Addr<ConnectionManager<CollectorMessage, AuthRole>>,
-    ) -> Result<Self, TransportError> {
-        let client = if let Some(cfg) = tls {
-            TcpTransportClient::with_tls(addr.to_string(), cfg)?
-        } else {
-            TcpTransportClient::plain(addr.to_string())
-        };
-
-        Ok(Self {
-            client,
+        reconnect_delay: Duration,
+    ) -> Self {
+        Self {
+            remote_addr: addr.to_string(),
+            tls_config: tls,
             connection_manager,
-        })
+            reconnect_delay,
+        }
     }
 
-    /// Connect to the server, hand the resulting transport to ConnectionManager and return.
+    /// Connect to the server using ClientBuilder with automatic reconnection.
     ///
-    /// This function does not block the process; ConnectionManager owns the transport afterwards.
-    pub async fn connect(&mut self) -> Result<(), TransportError> {
-        let transport = self.client.connect().await?;
+    /// This spawns a ClientActor that manages the connection lifecycle,
+    /// including automatic reconnection on failure.
+    pub async fn connect(&self) -> Result<(), String> {
+        let builder = ClientBuilder::<CollectorMessage, AuthRole>::new()
+            .connect_to(&self.remote_addr)
+            .as_role(AuthRole::Collector)
+            .offer_rooms(vec!["intent-config".to_string()])
+            .reconnect_delay(self.reconnect_delay);
 
-        // Build a simple HelloConfig - applications can extend if needed
-        let config = zznet_hello::actor::HelloConfig::default();
+        let builder = if let Some(tls) = &self.tls_config {
+            builder.with_tls(tls.clone())
+        } else {
+            builder
+        };
 
-        // Send transport to ConnectionManager actor which will spawn HelloActor and manage lifecycle
-        self.connection_manager
-            .try_send(HandleTransport { transport, config })
-            .map_err(|e| {
-                TransportError::IoError(format!(
-                    "Failed to send transport to ConnectionManager: {}",
-                    e
-                ))
-            })?;
-
-        // If ConnectionManager takes ownership, we can return successfully. Keep process alive as needed by service.
-        Ok(())
+        // The connect() method returns an Addr to the ClientActor, which we don't need
+        // to hold onto - the actor is now running and managing the connection automatically
+        builder
+            .with_connection_manager(self.connection_manager.clone())
+            .connect()
+            .await
+            .map(|_| ())
+            .map_err(|e| format!("ClientBuilder failed: {:?}", e))
     }
 }

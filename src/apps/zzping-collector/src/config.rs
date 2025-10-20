@@ -18,6 +18,14 @@ pub struct CollectorConfig {
 
     /// Component-specific settings
     pub components: ComponentConfig,
+
+    /// Delay in milliseconds between reconnection attempts (default: 5000ms)
+    #[serde(default = "default_reconnect_delay_ms")]
+    pub reconnect_delay_ms: u64,
+}
+
+fn default_reconnect_delay_ms() -> u64 {
+    5000
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +93,7 @@ impl CollectorConfig {
             database_port: 58443,
             tls: None, // TCP-only
             components: ComponentConfig::fast_timing(),
+            reconnect_delay_ms: 100, // Fast reconnect for testing
         }
     }
 
@@ -204,6 +213,7 @@ mod tests {
                 client_cert_path,
                 client_key_path,
             }),
+            reconnect_delay_ms: 5000,
         }
     }
 

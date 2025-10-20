@@ -184,13 +184,13 @@ impl DatabaseService {
         };
 
         let bind = format!("{}:{}", self.config.bind_host, self.config.bind_port);
-        let mut network = crate::network::DatabaseNetwork::new(&bind, tls_cfg, cm_addr)
-            .await
-            .map_err(|e| DatabaseError::Service(format!("Failed to create network: {}", e)))?;
+        let handshake_timeout = std::time::Duration::from_secs(self.config.handshake_timeout_secs);
+        let network =
+            crate::network::DatabaseNetwork::new(&bind, tls_cfg, cm_addr, handshake_timeout);
 
         tracing::info!("Database service ready - using ConnectionManager for connections");
 
-        // Run network accept loop (this will run until shutdown)
+        // Run network server (this will run until shutdown)
         network
             .run()
             .await
@@ -509,6 +509,7 @@ mod tests {
                 message_frame_timeout_ms: 500,
             },
             data_dir: String::from("."),
+            handshake_timeout_secs: 10,
         }
     }
 
@@ -581,6 +582,7 @@ mod tests {
     #[actix::test]
     async fn test_database_network_creation() {
         use actix::Actor;
+        use std::time::Duration;
 
         // Create a temporary service to get ConnectionManager
         let config = create_test_config();
@@ -590,12 +592,13 @@ mod tests {
 
         // Test network creation without TLS (TLS config creation is complex and tested elsewhere)
         // Use port 0 to let OS assign an available port
-        let network_result =
-            crate::network::DatabaseNetwork::new("127.0.0.1:0", None, cm_addr).await;
-        assert!(
-            network_result.is_ok(),
-            "Network creation should succeed, error: {:?}",
-            network_result.err()
+        let _network = crate::network::DatabaseNetwork::new(
+            "127.0.0.1:0",
+            None,
+            cm_addr,
+            Duration::from_secs(10),
         );
+        // Network is now created successfully if we get here
+        // We don't run() it as that would block indefinitely
     }
 }

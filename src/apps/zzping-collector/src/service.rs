@@ -162,8 +162,9 @@ impl CollectorService {
             "{}:{}",
             self.config.database_host, self.config.database_port
         );
-        let mut network = crate::network::CollectorNetwork::new(&addr, tls_cfg, cm_addr)
-            .map_err(|e| CollectorError::Service(format!("Failed to create network: {}", e)))?;
+        let reconnect_delay = std::time::Duration::from_millis(self.config.reconnect_delay_ms);
+        let network =
+            crate::network::CollectorNetwork::new(&addr, tls_cfg, cm_addr, reconnect_delay);
 
         tracing::info!("Collector service connecting to database via ConnectionManager");
 
@@ -590,6 +591,7 @@ mod tests {
                 heartbeat_interval_ms: 5000,
                 memdb_batch_size: 50,
             },
+            reconnect_delay_ms: 5000,
         }
     }
 
@@ -696,6 +698,7 @@ mod tests {
         );
 
         use actix::Actor;
+        use std::time::Duration;
 
         // Create a temporary service to get ConnectionManager
         let config = create_test_config();
@@ -704,19 +707,24 @@ mod tests {
         let cm_addr = cm.start();
 
         // Test network creation without TLS
-        let network_result =
-            crate::network::CollectorNetwork::new("127.0.0.1:8443", None, cm_addr.clone());
-        assert!(network_result.is_ok(), "Network creation should succeed");
+        let _network = crate::network::CollectorNetwork::new(
+            "127.0.0.1:8443",
+            None,
+            cm_addr.clone(),
+            Duration::from_secs(5),
+        );
+        // Network created successfully if we get here
 
         // Test network creation with TLS
         if let Some(tls) = &create_test_config().tls {
             let tls_config = CollectorService::convert_tls_config(tls).unwrap();
-            let network_result_with_tls =
-                crate::network::CollectorNetwork::new("127.0.0.1:8443", Some(tls_config), cm_addr);
-            assert!(
-                network_result_with_tls.is_ok(),
-                "Network creation with TLS should succeed"
+            let _network_with_tls = crate::network::CollectorNetwork::new(
+                "127.0.0.1:8443",
+                Some(tls_config),
+                cm_addr,
+                Duration::from_secs(5),
             );
+            // Network created successfully if we get here
         }
     }
 }
