@@ -4,15 +4,14 @@
 //! zzcollector-state) into a single binary that connects to the database server
 //! via mTLS and performs network monitoring.
 
+use actix_rt::System;
 use anyhow::{Context, Result};
-use tokio::task::LocalSet;
 use tracing_subscriber::EnvFilter;
 use zzping_collector::{cli::CliArgs, config::CollectorConfig, service::CollectorService};
 
 fn main() -> Result<()> {
-    let rt = tokio::runtime::Runtime::new()?;
-    let local = LocalSet::new();
-    rt.block_on(local.run_until(async_main()))
+    // Use actix System to ensure the Tokio reactor is installed the way Actix expects.
+    System::new().block_on(async_main())
 }
 
 async fn async_main() -> Result<()> {
@@ -50,6 +49,12 @@ async fn async_main() -> Result<()> {
     let service = CollectorService::new(config).context("Failed to create collector service")?;
 
     service.run().await.context("Collector service failed")?;
+
+    tracing::info!(
+        "Collector service started successfully; entering run-loop (blocking until shutdown)"
+    );
+    let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
+    let _ = rx.await;
 
     tracing::info!("ZZPing Collector shutdown complete");
     Ok(())

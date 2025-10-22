@@ -33,38 +33,19 @@ use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::room_message_trait::{DeserializationError, SerializationError};
 use zznet_session::types::RoomId;
 
-// REFACTOR IN PROGRESS: Room Handler Registration
+// Room Handler Architecture
 //
-// The new `zznet_builder::RoomRegistry` provides a cleaner way to register room handlers.
-// See `crate::room_handlers` for an example using `IntentConfigRoomHandlerFactory`.
+// This application uses the declarative room handler registration pattern provided by
+// `zznet-builder`. Room handlers are defined as factories in `crate::room_handlers` and
+// registered with the `ClientBuilder` in `crate::network`.
 //
-// Old pattern (repetitive, inlined):
-//   - Manually create wrapper structs for each component/message combo
-//   - Lock SessionManager and iterate peers
-//   - Call add_room_to_peer directly
+// Pattern:
+//   1. Define RoomHandlerFactory implementations (see `room_handlers.rs`)
+//   2. Register factories with ClientBuilder/ServerBuilder (see `network.rs`)
+//   3. Builders automatically wire handlers on connection/reconnection
 //
-// New pattern (via RoomRegistry):
-//   1. Implement RoomHandlerFactory trait (e.g., IntentConfigRoomHandlerFactory)
-//   2. Create RoomRegistry with the SessionManager
-//   3. Call registry.register_room_handler(room_id, factory)
-//   4. Call registry.wire_all_peers() at startup
-//   5. Call registry.wire_peer(peer_id) for dynamic connections
-//
-// This consolidates the boilerplate and makes it easy to reuse across apps.
-
-// FIXME(deavid): We have plenty of zznet-* crates like zznet-builder, zznet-rooms that exist to abstract room wiring.
-//      We need to clean up the mess on this file, and abstract everything away in zznet-* crates.
-//
-// **Manual Room Handler Wiring**
-//
-// The service logic in both apps contains complex, nearly identical functions (`wire_room_handlers`, `register_room_for_peer`) for attaching component actors to the `SessionManager`.
-//
-// -   **Files:**
-//     -   `src/apps/zzping-collector/src/service.rs`
-//     -   `src/apps/zzping-database/src/service.rs`
-// -   **The Problem:**
-//     -   This logic is highly repetitive and requires creating wrapper structs (`CollectorIntentConfigRoomHandler`, `DatabaseIntentConfigRoomHandler`) just to bridge the message types.
-//     -   This feels like functionality that should be part of a higher-level component framework or simplified by the `zznet-builder`. The design doc `ZZPing_Component_Framework_Architecture.md` hints at this, but the implementation isn't there, leaving the apps to do the heavy lifting.
+// This approach eliminates manual SessionManager locking and provides reusable,
+// testable room handler configuration. See `ROOM_REGISTRY_GUIDE.md` for details.
 
 /// Top-level message enum for the Collector service.
 ///
@@ -75,8 +56,6 @@ pub enum CollectorMessage {
     /// IntentConfig-related messages
     Intent(IntentConfigNetworkMsg),
 }
-
-// FIXME(deavid): This enum for messages shouldn't be needed. The fact that we're manually wiring each component hints at a bigger problem and a leaky abstraction
 
 impl From<IntentConfigNetworkMsg> for CollectorMessage {
     fn from(msg: IntentConfigNetworkMsg) -> Self {
@@ -403,8 +382,6 @@ impl CollectorService {
             server_name: "zzping".into(),
         })
     }
-
-    // old manual HELLO/TLS/framing helpers removed - Phase 3 finalization
 }
 
 impl CollectorService {
@@ -452,25 +429,46 @@ impl CollectorService {
 
     /// Create the authorizer closure used by the Collector service.
     fn make_authorizer(&self) -> zzping_auth::Authorizer {
-        Box::new(|peer_identity| {
+        Box::new(|auth_ctx| {
             tracing::debug!(
-                "Collector authorizer checking peer identity: {}",
-                peer_identity.full_identity()
+                "Collector authorizer checking HELLO role: {}",
+                auth_ctx.hello_role_str
             );
 
-            match AuthRole::from_cn(&peer_identity.common_name) {
+            // Validate HELLO role against TLS if TLS is present
+            if let Some(ref peer_identity) = auth_ctx.peer_identity {
+                tracing::debug!(
+                    "TLS identity present: {}, validating against HELLO role",
+                    peer_identity.full_identity()
+                );
+                // Basic validation: ensure CN matches hello_role_str
+                if peer_identity.common_name != auth_ctx.hello_role_str {
+                    tracing::error!(
+                        "TLS CN mismatch: HELLO claimed '{}' but cert CN is '{}'",
+                        auth_ctx.hello_role_str,
+                        peer_identity.common_name
+                    );
+                    return None;
+                }
+            } else {
+                tracing::warn!(
+                    "Plain TCP connection - no TLS authentication, relying on HELLO role only"
+                );
+            }
+
+            match AuthRole::from_cn(&auth_ctx.hello_role_str) {
                 Ok(role) => {
                     tracing::debug!(
-                        "Collector authorizer resolved {} → {:?}",
-                        peer_identity.full_identity(),
+                        "Collector authorizer resolved HELLO '{}' → {:?}",
+                        auth_ctx.hello_role_str,
                         role
                     );
                     Some(role)
                 }
                 Err(e) => {
                     tracing::warn!(
-                        "Collector authorizer rejected {} - unknown role: {}",
-                        peer_identity.full_identity(),
+                        "Collector authorizer rejected HELLO role '{}' - unknown role: {}",
+                        auth_ctx.hello_role_str,
                         e
                     );
                     None

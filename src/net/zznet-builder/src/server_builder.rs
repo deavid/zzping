@@ -133,13 +133,14 @@ where
     }
 
     /// Convenience: create and use the default authorizer (from zznet-auth).
-    pub fn with_default_authorizer(
-        mut self,
-        allow_plain_tcp: bool,
-        default_role_for_plain: Option<TRole>,
-    ) -> Self {
-        let auth =
-            zznet_auth::acl::create_default_authorizer(allow_plain_tcp, default_role_for_plain);
+    ///
+    /// # Parameters
+    /// - `allow_insecure_tcp`: when true, accepts connections without TLS validation
+    ///
+    /// # Important
+    /// The role always comes from the HELLO message. There is no "default role".
+    pub fn with_default_authorizer(mut self, allow_insecure_tcp: bool) -> Self {
+        let auth = zznet_auth::acl::create_default_authorizer(allow_insecure_tcp);
         self.authorizer = Some(auth);
         self
     }
@@ -305,7 +306,7 @@ where
                 // that rejects all connections. ConnectionManager requires an authorizer.
                 let authorizer = match self.authorizer {
                     Some(a) => a,
-                    None => Box::new(|_peer_identity: &zznet_api::types::PeerIdentity| None),
+                    None => Box::new(|_ctx: &zznet_api::types::AuthContext| None),
                 };
 
                 let mut cm =
@@ -432,7 +433,7 @@ where
             None => {
                 let authorizer = match self.authorizer {
                     Some(a) => a,
-                    None => Box::new(|_peer_identity: &zznet_api::types::PeerIdentity| None),
+                    None => Box::new(|_ctx: &zznet_api::types::AuthContext| None),
                 };
 
                 let cm =

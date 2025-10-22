@@ -8,7 +8,7 @@ DatabaseConfig(
 
     // TLS certificate paths for mTLS server
     // Set to None() to disable TLS and use plain TCP
-    tls: Some(TlsConfig(
+    tls: Some(DatabaseTlsConfig(
         // CA certificate for verifying collector certificates
             ca_cert_paths: ["../test_certs/ca.pem"],
         // Server certificate (this database's identity)

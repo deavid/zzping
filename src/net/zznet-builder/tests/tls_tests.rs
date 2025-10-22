@@ -107,16 +107,15 @@ type TestSessionManager = std::sync::Arc<
     tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TestMessage, TestRole>>,
 >;
 
-type TestAuthorizer =
-    Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<TestRole> + Send + Sync>;
+type TestAuthorizer = Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
 fn create_test_session_manager() -> (TestSessionManager, TestAuthorizer) {
     let offered_rooms = vec![RoomId::from("test")];
     let sm =
         zznet_session::session_manager::SessionManager::<TestMessage, TestRole>::new(offered_rooms);
     let session_manager = std::sync::Arc::new(tokio::sync::Mutex::new(sm));
-    let authorizer = Box::new(|_peer_id: &zznet_api::types::PeerIdentity| Some(TestRole::Database))
-        as Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<TestRole> + Send + Sync>;
+    let authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| Some(TestRole::Database))
+        as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
     (session_manager, authorizer)
 }
 

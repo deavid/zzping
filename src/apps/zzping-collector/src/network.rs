@@ -57,7 +57,8 @@ impl CollectorNetwork {
             .as_role(AuthRole::Collector)
             .offer_rooms(vec!["intent-config".to_string()])
             .reconnect_delay(self.reconnect_delay)
-            .with_default_authorizer(false, None)
+            // Allow plain-TCP connections (role will come from HELLO message)
+            .with_default_authorizer(true)
             .register_room_handler("intent-config", factory);
 
         let builder = if let Some(tls) = &self.tls_config {

@@ -42,6 +42,21 @@ impl PeerIdentity {
     }
 }
 
+/// Authentication context passed to the authorizer.
+///
+/// This contains both the HELLO protocol role (primary source) and optional
+/// TLS identity (for validation). The authorizer should:
+/// 1. Parse the HELLO role (always required - this is the source of truth)
+/// 2. If TLS identity exists, validate HELLO role matches certificate CN
+/// 3. If no TLS, check insecure mode flag before trusting HELLO
+#[derive(Debug, Clone)]
+pub struct AuthContext {
+    /// Role string from HELLO message - PRIMARY source of identity
+    pub hello_role_str: String,
+    /// Optional TLS peer identity for validation (None for plain TCP)
+    pub peer_identity: Option<PeerIdentity>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

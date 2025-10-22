@@ -24,19 +24,19 @@ use zznet_session::{
 };
 use zzping_auth::AuthRole;
 
-// FIXME(deavid): We have plenty of zznet-* crates like zznet-builder, zznet-rooms that exist to abstract room wiring.
-//      We need to clean up the mess on this file, and abstract everything away in zznet-* crates.
+// Room Handler Architecture
 //
-// **Manual Room Handler Wiring**
+// This application uses the declarative room handler registration pattern provided by
+// `zznet-builder`. Room handlers are defined as factories in `crate::room_handlers` and
+// registered with the `ServerBuilder` in `crate::network`.
 //
-// The service logic in both apps contains complex, nearly identical functions (`wire_room_handlers`, `register_room_for_peer`) for attaching component actors to the `SessionManager`.
+// Pattern:
+//   1. Define RoomHandlerFactory implementations (see `room_handlers.rs`)
+//   2. Register factories with ClientBuilder/ServerBuilder (see `network.rs`)
+//   3. Builders automatically wire handlers on connection/reconnection
 //
-// -   **Files:**
-//     -   `src/apps/zzping-collector/src/service.rs`
-//     -   `src/apps/zzping-database/src/service.rs`
-// -   **The Problem:**
-//     -   This logic is highly repetitive and requires creating wrapper structs (`CollectorIntentConfigRoomHandler`, `DatabaseIntentConfigRoomHandler`) just to bridge the message types.
-//     -   This feels like functionality that should be part of a higher-level component framework or simplified by the `zznet-builder`. The design doc `ZZPing_Component_Framework_Architecture.md` hints at this, but the implementation isn't there, leaving the apps to do the heavy lifting.
+// This approach eliminates manual SessionManager locking and provides reusable,
+// testable room handler configuration. See `ROOM_REGISTRY_GUIDE.md` for details.
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum DatabaseMessage {
@@ -44,8 +44,6 @@ pub enum DatabaseMessage {
     MemDB(MemDBMessage),
     CState(CStateMessage),
 }
-
-// FIXME(deavid): This enum for messages shouldn't be needed. The fact that we're manually wiring each component hints at a bigger problem and a leaky abstraction
 
 impl From<IntentConfigNetworkMsg> for DatabaseMessage {
     fn from(msg: IntentConfigNetworkMsg) -> Self {
@@ -252,26 +250,39 @@ impl DatabaseService {
 
     /// Create the authorizer closure used by the Database service.
     fn make_authorizer(&self) -> zzping_auth::Authorizer {
-        Box::new(|peer_identity| {
+        Box::new(|auth_ctx| {
             tracing::debug!(
-                "Database authorizer checking peer identity: {}",
-                peer_identity.full_identity()
+                "Database authorizer checking HELLO role: {}",
+                auth_ctx.hello_role_str
             );
 
-            // When TLS is disabled (plain-tcp), accept as Collector
-            if peer_identity.common_name == "plain-tcp" {
-                tracing::warn!(
-                    "Plain TCP connection - no authentication, accepting as Collector role"
+            // Validate HELLO role against TLS if TLS is present
+            if let Some(ref peer_identity) = auth_ctx.peer_identity {
+                tracing::debug!(
+                    "TLS identity present: {}, validating against HELLO role",
+                    peer_identity.full_identity()
                 );
-                return Some(AuthRole::Collector);
+                // Basic validation: ensure CN matches hello_role_str
+                if peer_identity.common_name != auth_ctx.hello_role_str {
+                    tracing::error!(
+                        "TLS CN mismatch: HELLO claimed '{}' but cert CN is '{}'",
+                        auth_ctx.hello_role_str,
+                        peer_identity.common_name
+                    );
+                    return None;
+                }
+            } else {
+                tracing::warn!(
+                    "Plain TCP connection - no TLS authentication, relying on HELLO role only"
+                );
             }
 
-            match AuthRole::from_cn(&peer_identity.common_name) {
+            match AuthRole::from_cn(&auth_ctx.hello_role_str) {
                 Ok(role) => Some(role),
                 Err(e) => {
                     tracing::warn!(
-                        "Authorizer rejected {} - unknown role: {}",
-                        peer_identity.full_identity(),
+                        "Authorizer rejected HELLO role '{}' - unknown role: {}",
+                        auth_ctx.hello_role_str,
                         e
                     );
                     None

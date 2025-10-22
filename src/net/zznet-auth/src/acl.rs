@@ -1,7 +1,8 @@
 //! Access Control List (ACL) implementation for ZZPing authorization.
 //!
 //! This module provides role-based authorization using allow-lists.
-//! Roles are determined from TLS certificate Common Names (CN=role format).
+//! Roles are determined from HELLO protocol messages (primary) and validated
+//! against TLS certificates (if present).
 
 use std::collections::HashSet;
 use std::marker::PhantomData;
@@ -9,8 +10,12 @@ use std::marker::PhantomData;
 use crate::role::ApplicationRole;
 
 /// Generic type alias for authorizer closures with custom role types.
+///
+/// The authorizer receives an AuthContext with:
+/// - hello_role_str: Role claimed in HELLO message (PRIMARY source)
+/// - peer_identity: Optional TLS identity for validation
 pub type GenericAuthorizer<R> =
-    Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<R> + Send + Sync>;
+    Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<R> + Send + Sync>;
 
 // Note: No application-specific aliases are exported here. Applications
 // should provide their own concrete role type and (optionally) a
@@ -122,6 +127,10 @@ impl<R: ApplicationRole> AclManager<R> {
         self.insecure_trust_hello
     }
 
+    // TODO: Update these methods to work with AuthContext instead of PeerIdentity
+    // For now, commented out since they aren't used yet and the API is changing
+
+    /*
     /// Bridge function for ConnectionManager's Authorizer type.
     ///
     /// This wraps `authorize_peer` to return `Option<R>` instead of `Result`,
@@ -136,13 +145,6 @@ impl<R: ApplicationRole> AclManager<R> {
     ///
     /// This is a backwards-compatible alias for `to_generic_authorizer()`.
     /// Returns a closure that can be passed to `ConnectionManager::new_with_acl()`.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let acl = AclManager::<MyRole>::with_allowed_peers(allowed_peers);
-    /// let authorizer = acl.to_authorizer();
-    /// let conn_mgr = ConnectionManager::new_with_acl(rooms, Some((authorizer, false)));
-    /// ```
     pub fn to_authorizer(self) -> GenericAuthorizer<R> {
         self.to_generic_authorizer()
     }
@@ -152,36 +154,91 @@ impl<R: ApplicationRole> AclManager<R> {
     /// This is the recommended way to integrate AclManager with ConnectionManager.
     /// The returned closure captures the AclManager and can be passed to
     /// `ConnectionManager::new_with_acl()`.
-    ///
-    /// # Example
-    /// ```ignore
-    /// let acl = AclManager::<MyRole>::with_allowed_peers(allowed_peers);
-    /// let authorizer = acl.to_generic_authorizer();
-    /// let conn_mgr = ConnectionManager::new_with_acl(rooms, Some((authorizer, false)));
-    /// ```
     pub fn to_generic_authorizer(self) -> GenericAuthorizer<R> {
         Box::new(move |identity| self.authorize_peer_option(identity))
     }
+    */
 }
 
-/// Create a default authorizer that implements the common pattern used by
-/// applications: parse role from certificate CN, and optionally accept
-/// plain-TCP fallback as a specific default role.
+/// Create a default authorizer that implements the correct authentication model:
+/// HELLO role is PRIMARY, TLS certificate VALIDATES (if present).
 ///
-/// - `allow_plain_tcp`: when true, treat `peer_identity.common_name == "plain-tcp"` as allowed
-/// - `default_role_for_plain`: role to return when plain-tcp is allowed
+/// This is a simple authorizer suitable for basic deployments. For production systems
+/// with complex access control requirements, consider using `AclManager::to_authorizer()`
+/// which supports allow-lists and per-role permissions.
+///
+/// # Parameters
+/// - `allow_insecure_tcp`: when true, accepts HELLO role without TLS validation
+///
+/// # Security Model
+/// 1. Parse role from HELLO message (primary source of identity - **mandatory**)
+/// 2. If TLS is present, verify HELLO role matches certificate CN
+/// 3. If TLS is absent, check `allow_insecure_tcp` flag before accepting
+///
+/// # Important
+/// There is NO "default role". The role **always** comes from the HELLO message.
+/// The peer must send a valid role in the HELLO handshake.
 pub fn create_default_authorizer<R: ApplicationRole>(
-    allow_plain_tcp: bool,
-    default_role_for_plain: Option<R>,
+    allow_insecure_tcp: bool,
 ) -> GenericAuthorizer<R> {
-    Box::new(move |peer_identity: &zznet_api::types::PeerIdentity| {
-        // Plain-TCP handling
-        if allow_plain_tcp && peer_identity.common_name == "plain-tcp" {
-            return default_role_for_plain;
+    Box::new(move |auth_ctx: &zznet_api::types::AuthContext| {
+        // Step 1: Parse HELLO role (always required - this is the source of truth)
+        let hello_role = match R::from_cn(&auth_ctx.hello_role_str) {
+            Ok(role) => role,
+            Err(e) => {
+                tracing::warn!(
+                    "Failed to parse HELLO role '{}': {:?}",
+                    auth_ctx.hello_role_str,
+                    e
+                );
+                return None;
+            }
+        };
+
+        // Step 2: If TLS exists, validate HELLO against certificate
+        if let Some(ref peer_id) = auth_ctx.peer_identity {
+            let cert_role = match R::from_cn(&peer_id.common_name) {
+                Ok(role) => role,
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to parse certificate CN '{}': {:?}",
+                        peer_id.common_name,
+                        e
+                    );
+                    return None;
+                }
+            };
+
+            // SECURITY: HELLO claim must match TLS certificate
+            if hello_role.as_str() != cert_role.as_str() {
+                tracing::error!(
+                    "!!! SECURITY VIOLATION !!!: HELLO claimed {:?} but certificate says {:?}",
+                    hello_role.as_str(),
+                    cert_role.as_str()
+                );
+                return None;
+            }
+
+            tracing::info!(
+                "Authorized: HELLO={}, validated by cert ({})",
+                hello_role.as_str(),
+                peer_id.full_identity()
+            );
+            return Some(hello_role);
         }
 
-        // Try parsing CN to role
-        R::from_cn(&peer_identity.common_name).ok()
+        // Step 3: No TLS - check insecure mode
+        if !allow_insecure_tcp {
+            tracing::error!("Connection without TLS rejected (insecure mode disabled)");
+            return None;
+        }
+
+        // INSECURE: Trust HELLO claim without validation
+        tracing::warn!(
+            "⚠️  INSECURE MODE: Trusting HELLO claim {} without TLS validation",
+            hello_role.as_str()
+        );
+        Some(hello_role)
     })
 }
 
@@ -235,27 +292,46 @@ mod tests {
         }
     }
 
+    fn mk_auth_ctx(
+        hello_role: &str,
+        peer_id: Option<zznet_api::types::PeerIdentity>,
+    ) -> zznet_api::types::AuthContext {
+        zznet_api::types::AuthContext {
+            hello_role_str: hello_role.to_string(),
+            peer_identity: peer_id,
+        }
+    }
+
     #[test]
-    fn test_default_authorizer_parses_known_role() {
-        let auth = create_default_authorizer::<TestRole>(false, None);
-        let id = mk_identity("collector", "root");
-        let role = auth(&id);
+    fn test_default_authorizer_with_matching_tls() {
+        let auth = create_default_authorizer::<TestRole>(false);
+        let ctx = mk_auth_ctx("collector", Some(mk_identity("collector", "root")));
+        let role = auth(&ctx);
         assert_eq!(role, Some(TestRole::Collector));
     }
 
     #[test]
-    fn test_default_authorizer_plain_tcp_fallback() {
-        let auth = create_default_authorizer::<TestRole>(true, Some(TestRole::Database));
-        let id = mk_identity("plain-tcp", "root");
-        let role = auth(&id);
+    fn test_default_authorizer_insecure_tcp_mode() {
+        let auth = create_default_authorizer::<TestRole>(true);
+        let ctx = mk_auth_ctx("database", None); // No TLS identity
+        let role = auth(&ctx);
         assert_eq!(role, Some(TestRole::Database));
     }
 
     #[test]
-    fn test_default_authorizer_rejects_unknown_cn() {
-        let auth = create_default_authorizer::<TestRole>(false, None);
-        let id = mk_identity("unknown-role", "bob");
-        let role = auth(&id);
-        assert_eq!(role, None);
+    fn test_default_authorizer_rejects_mismatched_roles() {
+        let auth = create_default_authorizer::<TestRole>(false);
+        // HELLO says "collector" but cert says "database"
+        let ctx = mk_auth_ctx("collector", Some(mk_identity("database", "root")));
+        let role = auth(&ctx);
+        assert_eq!(role, None); // Security violation!
+    }
+
+    #[test]
+    fn test_default_authorizer_rejects_tcp_without_insecure_flag() {
+        let auth = create_default_authorizer::<TestRole>(false);
+        let ctx = mk_auth_ctx("collector", None); // No TLS, insecure mode disabled
+        let role = auth(&ctx);
+        assert_eq!(role, None); // TLS required
     }
 }

@@ -43,12 +43,13 @@ impl TcpTransport {
     /// Create a plain TCP transport (no encryption).
     ///
     /// This is primarily for testing. Production should use TLS.
+    /// Note: peer_identity() will return None for plain TCP connections.
     pub fn plain(stream: TcpStream, peer_addr: SocketAddr) -> Self {
         debug!("Created plain TCP transport for {}", peer_addr);
-        // For plain TCP, use a placeholder identity - will be updated from HELLO later
+        // For plain TCP, create a dummy identity (will not be used since peer_identity() returns None)
         let peer_identity = PeerIdentity {
-            common_name: "plain-tcp".to_string(),
-            san_username: "unknown".to_string(),
+            common_name: "unused".to_string(),
+            san_username: "unused".to_string(),
             peer_addr: peer_addr.to_string(),
         };
         TcpTransport {
@@ -261,8 +262,13 @@ impl TransportConnection for TcpTransport {
         Some(self.peer_addr.to_string())
     }
 
-    fn peer_identity(&self) -> PeerIdentity {
-        self.peer_identity.clone()
+    fn peer_identity(&self) -> Option<PeerIdentity> {
+        match &self.stream {
+            TcpTransportStream::Plain(_) => None, // No TLS = no cryptographic identity
+            TcpTransportStream::Tls(_) | TcpTransportStream::TlsServer(_) => {
+                Some(self.peer_identity.clone())
+            }
+        }
     }
 }
 

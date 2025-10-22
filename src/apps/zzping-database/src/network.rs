@@ -73,7 +73,8 @@ impl DatabaseNetwork {
         };
 
         builder
-            .with_default_authorizer(false, None)
+            // Allow plain-TCP connections (role will come from HELLO message)
+            .with_default_authorizer(true)
             .start()
             .await
             .map(|_| ())

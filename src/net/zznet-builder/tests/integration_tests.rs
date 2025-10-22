@@ -147,12 +147,12 @@ async fn test_server_client_basic_connection() {
     ));
 
     let server_authorizer =
-        Box::new(|_peer_id: &zznet_api::types::PeerIdentity| TestRole::from_cn("database").ok())
-            as Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<TestRole> + Send + Sync>;
+        Box::new(|_auth_ctx: &zznet_api::types::AuthContext| TestRole::from_cn("database").ok())
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
     let client_authorizer =
-        Box::new(|_peer_id: &zznet_api::types::PeerIdentity| TestRole::from_cn("database").ok())
-            as Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<TestRole> + Send + Sync>;
+        Box::new(|_auth_ctx: &zznet_api::types::AuthContext| TestRole::from_cn("database").ok())
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
     // Start server and obtain its ConnectionManager addr
     println!("Starting server on 127.0.0.1:18080...");
@@ -221,8 +221,8 @@ async fn test_multiple_clients() {
     ));
 
     let server_authorizer =
-        Box::new(|_peer_id: &zznet_api::types::PeerIdentity| AuthRole::from_cn("database").ok())
-            as Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<AuthRole> + Send + Sync>;
+        Box::new(|_auth_ctx: &zznet_api::types::AuthContext| AuthRole::from_cn("database").ok())
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
 
     println!("Starting server on 127.0.0.1:18081...");
     let (server, _server_manager) = ServerBuilder::new()
@@ -252,10 +252,10 @@ async fn test_multiple_clients() {
             ),
         ));
 
-        let client_authorizer = Box::new(|_peer_id: &zznet_api::types::PeerIdentity| {
+        let client_authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| {
             AuthRole::from_cn("database").ok()
         })
-            as Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<AuthRole> + Send + Sync>;
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
 
         let client = ClientBuilder::new()
             .connect_to("127.0.0.1:18081")
@@ -312,7 +312,7 @@ async fn test_client_reconnection() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .start()
         .await
         .expect("Failed to start server");
@@ -332,7 +332,7 @@ async fn test_client_reconnection() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .auto_reconnect(true)
         .reconnect_delay(Duration::from_millis(200))
         .connect()
@@ -358,7 +358,7 @@ async fn test_client_reconnection() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .start()
         .await
         .expect("Failed to restart server");
@@ -393,7 +393,7 @@ async fn test_graceful_shutdown() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .start()
         .await
         .expect("Failed to start server");
@@ -411,7 +411,7 @@ async fn test_graceful_shutdown() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .auto_reconnect(false)
         .connect()
         .await
@@ -449,7 +449,7 @@ async fn test_server_bind_error() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .start()
         .await;
 
@@ -475,7 +475,7 @@ async fn test_client_connection_failure() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .auto_reconnect(false)
         .connect()
         .await
@@ -511,10 +511,10 @@ async fn test_different_auth_roles() {
             ),
         ));
 
-        let server_authorizer = Box::new(|_peer_id: &zznet_api::types::PeerIdentity| {
+        let server_authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| {
             AuthRole::from_cn("database").ok()
         })
-            as Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<AuthRole> + Send + Sync>;
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
 
         // Start server and obtain its ConnectionManager addr
         println!("Starting server on ephemeral port (bind 127.0.0.1:0)...");
@@ -548,7 +548,7 @@ async fn test_different_auth_roles() {
                     RoomId::from("health"),
                 ]),
             )))
-            .with_default_authorizer(false, None)
+            .with_default_authorizer(false)
             .auto_reconnect(false)
             .connect()
             .await
@@ -584,10 +584,10 @@ async fn test_end_to_end_message_exchange() {
             ),
         ));
 
-        let server_authorizer = Box::new(|_peer_id: &zznet_api::types::PeerIdentity| {
+        let server_authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| {
             AuthRole::from_cn("database").ok()
         })
-            as Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<AuthRole> + Send + Sync>;
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
 
         // Start server with ConnectionManager
         println!("Starting server on ephemeral port (bind 127.0.0.1:0)...");
@@ -618,10 +618,10 @@ async fn test_end_to_end_message_exchange() {
             ),
         ));
 
-        let client_authorizer = Box::new(|_peer_id: &zznet_api::types::PeerIdentity| {
+        let client_authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| {
             AuthRole::from_cn("database").ok()
         })
-            as Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<AuthRole> + Send + Sync>;
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
 
         let (client, client_manager) = ClientBuilder::new()
             .connect_to(&server_addr)
@@ -823,7 +823,7 @@ async fn test_phase5_connection_manager_not_exposed() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .start() // Public API - returns Addr<ServerActor> only
         .await
         .expect("Failed to start server");
@@ -840,7 +840,7 @@ async fn test_phase5_connection_manager_not_exposed() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .auto_reconnect(false)
         .connect() // Public API - returns Addr<ClientActor> only
         .await
@@ -872,7 +872,7 @@ async fn test_phase5_client_control_messages() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .start()
         .await
         .expect("Failed to start server");
@@ -888,7 +888,7 @@ async fn test_phase5_client_control_messages() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .auto_reconnect(false)
         .connect()
         .await
@@ -937,7 +937,7 @@ async fn test_phase5_client_reconnect() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .start_with_connection_manager()
         .await
         .expect("Failed to start server");
@@ -953,7 +953,7 @@ async fn test_phase5_client_reconnect() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .auto_reconnect(true)
         .connect_with_connection_manager()
         .await
@@ -1004,7 +1004,7 @@ async fn test_phase5_server_control_messages() {
                 RoomId::from("health"),
             ]),
         )))
-        .with_default_authorizer(false, None)
+        .with_default_authorizer(false)
         .start()
         .await
         .expect("Failed to start server");
@@ -1101,7 +1101,7 @@ async fn test_phase5_register_room_handler() {
         .bind("127.0.0.1:18093")
         .as_role(AuthRole::Database)
         .offer_rooms(vec!["health".to_string()])
-        .with_default_authorizer(true, Some(AuthRole::Collector))
+        .with_default_authorizer(true)
         .register_room_handler(
             RoomId::from("health"),
             Arc::new(TestRoomHandlerFactory::new(tx)),
@@ -1116,7 +1116,7 @@ async fn test_phase5_register_room_handler() {
         .connect_to("127.0.0.1:18093")
         .as_role(AuthRole::Collector)
         .offer_rooms(vec!["health".to_string()])
-        .with_default_authorizer(true, Some(AuthRole::Database))
+        .with_default_authorizer(true)
         .auto_reconnect(false)
         .connect_with_connection_manager()
         .await
@@ -1190,7 +1190,7 @@ async fn test_phase5_wiring_failure_prevents_zombie_connections() {
         .bind("127.0.0.1:18094")
         .as_role(AuthRole::Database)
         .offer_rooms(vec!["health".to_string()])
-        .with_default_authorizer(true, Some(AuthRole::Collector))
+        .with_default_authorizer(true)
         .register_room_handler(
             RoomId::from("health"),
             Arc::new(TestRoomHandlerFactory::new(tx)),
@@ -1206,7 +1206,7 @@ async fn test_phase5_wiring_failure_prevents_zombie_connections() {
         .connect_to("127.0.0.1:18094")
         .as_role(AuthRole::Collector)
         .offer_rooms(vec!["health".to_string()])
-        .with_default_authorizer(true, Some(AuthRole::Database))
+        .with_default_authorizer(true)
         .auto_reconnect(false)
         .connect_with_connection_manager()
         .await

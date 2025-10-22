@@ -84,16 +84,15 @@ pub trait TransportConnection: Send {
     /// Returns `None` if address information is unavailable.
     fn peer_addr(&self) -> Option<String>;
 
-    /// Returns the verified identity of the peer.
+    /// Returns the verified identity of the peer from TLS certificate.
     ///
-    /// For TLS connections, this is extracted from the peer's certificate (CN + SAN).
-    /// For raw TCP connections, this is synthesized from HELLO message claims
-    /// (and should only be trusted if the application is in insecure mode).
+    /// Returns Some(identity) for TLS connections (extracted from CN + SAN).
+    /// Returns None for raw TCP connections (no cryptographic identity available).
     ///
-    /// The identity is always available - there is no "no identity" state.
-    /// Applications that require cryptographic proof must check their security
-    /// configuration and reject connections if TLS is not enabled.
-    fn peer_identity(&self) -> crate::types::PeerIdentity;
+    /// The HELLO protocol provides role claims for both TLS and TCP modes.
+    /// - For TLS: Use this identity to validate the HELLO role claim
+    /// - For TCP: No identity to validate against (insecure mode required)
+    fn peer_identity(&self) -> Option<crate::types::PeerIdentity>;
 }
 
 /// A transport server that accepts incoming connections.

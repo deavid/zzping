@@ -126,8 +126,8 @@ impl TransportConnection for MockConnection {
         Some(format!("mock:{}", self.peer_id))
     }
 
-    fn peer_identity(&self) -> PeerIdentity {
-        self.peer_identity.clone()
+    fn peer_identity(&self) -> Option<PeerIdentity> {
+        Some(self.peer_identity.clone())
     }
 }
 

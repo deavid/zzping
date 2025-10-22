@@ -27,6 +27,7 @@ zznet-hello.workspace = true
 # Runtime dependencies
 tokio.workspace = true
 actix.workspace = true
+actix-rt = "2"
 
 # Configuration and serialization
 serde.workspace = true

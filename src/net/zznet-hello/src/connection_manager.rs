@@ -16,14 +16,14 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use zznet_api::transport::TransportConnection;
+use zznet_api::types::AuthContext;
 use zznet_auth::ApplicationRole;
 use zznet_session::peer_session::PeerSession;
 use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::{PeerId, RoomId};
 
-type Authorizer<TRole> =
-    Box<dyn Fn(&zznet_api::types::PeerIdentity) -> Option<TRole> + Send + Sync>;
+type Authorizer<TRole> = Box<dyn Fn(&AuthContext) -> Option<TRole> + Send + Sync>;
 
 /// ConnectionManager coordinates HelloActors and SessionManager
 ///
@@ -332,8 +332,11 @@ where
 
     fn handle(&mut self, msg: HandleTransport, ctx: &mut Context<Self>) -> Self::Result {
         // Use peer_addr string as a temporary peer id until handshake provides canonical id
-        let peer_identity = msg.transport.peer_identity();
-        let peer_id = PeerId::from(peer_identity.peer_addr.as_str());
+        let peer_addr = msg
+            .transport
+            .peer_addr()
+            .unwrap_or_else(|| "unknown".to_string());
+        let peer_id = PeerId::from(peer_addr.as_str());
 
         // Spawn HelloActor managed by this ConnectionManager (it will wire to SessionManager)
         let _addr = self.spawn_hello_actor(peer_id, msg.transport, msg.config, ctx);
@@ -482,17 +485,29 @@ where
             msg.active_rooms
         );
 
-        // SECURITY: Authorizer is MANDATORY. Resolve peer role from PeerIdentity (TLS cert).
-        // peer_role_str from HELLO is logged but not used for authorization.
-        // Authorization decisions are based on cryptographically verified TLS certificate only.
-        match (self.authorizer)(&msg.peer_identity) {
+        // SECURITY: Authorizer is MANDATORY.
+        // HELLO role is the PRIMARY source, TLS identity (if present) validates it.
+        let auth_ctx = AuthContext {
+            hello_role_str: msg.peer_role_str.clone(),
+            peer_identity: if msg.peer_identity.common_name != "unused" {
+                Some(msg.peer_identity.clone())
+            } else {
+                None
+            },
+        };
+
+        match (self.authorizer)(&auth_ctx) {
             Some(role) => {
                 tracing::info!(
-                    "Peer {} ({}) authorized as {:?} (identity: {})",
+                    "Peer {} authorized as {:?} (HELLO={}, identity={})",
                     peer_id,
-                    msg.peer_role_str,
                     role,
-                    msg.peer_identity.full_identity()
+                    msg.peer_role_str,
+                    auth_ctx
+                        .peer_identity
+                        .as_ref()
+                        .map(|id| id.full_identity())
+                        .unwrap_or_else(|| "none (plain TCP)".to_string())
                 );
 
                 // Prepare data to perform session mutations asynchronously without blocking the actor thread.
@@ -618,9 +633,13 @@ where
                     peer_id
                 );
                 tracing::error!(
-                    "    Identity: {} | HELLO claimed role: {}",
-                    msg.peer_identity.full_identity(),
-                    msg.peer_role_str
+                    "    HELLO claimed role: {} | TLS identity: {}",
+                    msg.peer_role_str,
+                    auth_ctx
+                        .peer_identity
+                        .as_ref()
+                        .map(|id| id.full_identity())
+                        .unwrap_or_else(|| "none (plain TCP)".to_string())
                 );
                 tracing::warn!("Disconnecting unauthorized peer {}", peer_id);
                 msg.hello_actor.do_send(crate::actor::Disconnect);

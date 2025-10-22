@@ -124,7 +124,7 @@ pub struct HelloActor {
     active_rooms: Vec<String>,
     /// Peer's role string received during handshake (CN from certificate).
     peer_role: Option<String>,
-    /// Peer's cryptographic identity from transport.
+    /// Peer's cryptographic identity from transport (None for plain TCP).
     peer_identity: zznet_api::types::PeerIdentity,
     /// Sender to I/O task for outbound frames.
     io_tx: mpsc::UnboundedSender<Bytes>,
@@ -575,7 +575,16 @@ pub fn start_hello_actor_with_session_manager(
 ) -> Addr<HelloActor> {
     let (io_tx, io_rx) = mpsc::unbounded_channel();
 
-    let peer_identity = transport.peer_identity();
+    // Get peer identity from transport (None for plain TCP)
+    let peer_identity = transport.peer_identity().unwrap_or_else(|| {
+        // For plain TCP, create a dummy identity
+        zznet_api::types::PeerIdentity {
+            common_name: "unused".to_string(),
+            san_username: "unused".to_string(),
+            peer_addr: "unknown".to_string(),
+        }
+    });
+
     let mut actor = HelloActor::new(config, peer_identity, io_tx);
     if let Some(sm) = session_manager {
         actor = actor.with_session_manager(sm);

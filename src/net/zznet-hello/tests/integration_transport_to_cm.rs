@@ -78,9 +78,9 @@ async fn transport_accept_and_send_to_connection_manager() {
             let offered_rooms = vec![];
             // Simple authorizer that accepts all peers as Admin
             let authorizer =
-                Box::new(|_peer_id: &zznet_api::types::PeerIdentity| Some(MockRole::Admin))
+                Box::new(|_auth_ctx: &zznet_api::types::AuthContext| Some(MockRole::Admin))
                     as Box<
-                        dyn Fn(&zznet_api::types::PeerIdentity) -> Option<MockRole> + Send + Sync,
+                        dyn Fn(&zznet_api::types::AuthContext) -> Option<MockRole> + Send + Sync,
                     >;
             let mgr =
                 ConnectionManager::<EmptyMsg, MockRole>::new(offered_rooms, authorizer).start();

@@ -5,7 +5,6 @@ use crate::room_registry::RoomHandlerFactory;
 use actix::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
-use zznet_api::types::PeerIdentity;
 use zznet_auth::ApplicationRole;
 use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
 use zznet_hello::connection_manager::ConnectionManager;
@@ -157,15 +156,14 @@ where
     }
 
     /// Convenience: create and use the default authorizer (from zznet-auth).
-    /// When `allow_plain_tcp` is true, connections with CN `plain-tcp` will
-    /// be accepted as `default_role_for_plain`.
-    pub fn with_default_authorizer(
-        mut self,
-        allow_plain_tcp: bool,
-        default_role_for_plain: Option<TRole>,
-    ) -> Self {
-        let auth =
-            zznet_auth::acl::create_default_authorizer(allow_plain_tcp, default_role_for_plain);
+    ///
+    /// # Parameters
+    /// - `allow_insecure_tcp`: when true, accepts connections without TLS validation
+    ///
+    /// # Important
+    /// The role always comes from the HELLO message. There is no "default role".
+    pub fn with_default_authorizer(mut self, allow_insecure_tcp: bool) -> Self {
+        let auth = zznet_auth::acl::create_default_authorizer(allow_insecure_tcp);
         self.authorizer = Some(auth);
         self
     }
@@ -360,7 +358,7 @@ where
             None => {
                 let authorizer = match self.authorizer {
                     Some(a) => a,
-                    None => Box::new(|_peer_identity: &PeerIdentity| None),
+                    None => Box::new(|_ctx: &zznet_api::types::AuthContext| None),
                 };
                 let mut cm =
                     zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(

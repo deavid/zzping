@@ -385,18 +385,31 @@ fn verify_prerequisites() -> std::path::PathBuf {
     workspace_root.pop(); // Remove apps
     workspace_root.pop(); // Remove src
 
+    // Try to run `cargo build --release` in workspace root
+    let build_status = std::process::Command::new("cargo")
+        .arg("build")
+        .arg("--release")
+        .current_dir(&workspace_root)
+        .status()
+        .expect("Failed to execute cargo build --release");
+
+    assert!(
+        build_status.success(),
+        "cargo build --release failed. Ensure the project builds successfully before running this test."
+    );
     // Check binaries exist
     let db_binary = workspace_root.join("target/release/zzping-database");
+
     assert!(
         db_binary.exists(),
-        "Database binary not found at: {}\nRun: cargo build --release",
+        "Database binary still not found at: {} after building release. Build may have produced different artifact names or failed.",
         db_binary.display()
     );
 
     let collector_binary = workspace_root.join("target/release/zzping-collector");
     assert!(
         collector_binary.exists(),
-        "Collector binary not found at: {}\nRun: cargo build --release",
+        "Collector binary still not found at: {} after building release. Build may have produced different artifact names or failed.",
         collector_binary.display()
     );
 
