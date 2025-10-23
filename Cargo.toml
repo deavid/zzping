@@ -155,6 +155,7 @@ debug = 2
 dead_code = "warn"
 unused_variables = "warn"
 missing_docs = "warn"
+unsafe_code = "warn"
 
 [workspace.lints.clippy]
 new_ret_no_self = "warn"

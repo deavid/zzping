@@ -13,7 +13,7 @@
 //! use zznet_auth::{ApplicationRole, AclManager};
 //! use serde::{Deserialize, Serialize};
 //!
-//! #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+//! #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 //! enum MyRole { Admin, User, Guest }
 //!
 //! impl ApplicationRole for MyRole {

@@ -111,13 +111,7 @@ pub struct ComponentBuilders {
     pub cstate_addr: CStateActorAddr,
 }
 
-type CStateActorAddr = Addr<
-    CStateActor<
-        DatabaseMessage,
-        AuthRole,
-        tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>,
-    >,
->;
+type CStateActorAddr = Addr<CStateActor<AuthRole>>;
 /// Started components (running actors).
 ///
 /// These addresses are cloned for each connection handler and will be used
@@ -207,7 +201,7 @@ impl DatabaseService {
 
     fn create_connection_manager(
         &self,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, AuthRole>> {
+    ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         use zznet_session::types::RoomId;
 
         // FIXME(deavid): This file needs cleanup, it needs to properly use zznet-builder for everything and stop re-implementing stuff.
@@ -236,8 +230,8 @@ impl DatabaseService {
     /// with all components, ensuring messages flow properly.
     fn create_connection_manager_with_session_manager(
         &self,
-        session_manager: Arc<tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>>,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, AuthRole>> {
+        session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
+    ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         let authorizer = self.make_authorizer();
 
         Ok(
@@ -297,7 +291,7 @@ impl DatabaseService {
     /// transport connections or customize the connection handling.
     pub fn start_connection_manager(
         &self,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, AuthRole>>
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>>
     {
         use actix::prelude::*;
 
@@ -315,8 +309,8 @@ impl DatabaseService {
     /// with all components, ensuring messages flow properly.
     pub fn start_connection_manager_with_session_manager(
         &self,
-        session_manager: Arc<tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>>,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<DatabaseMessage, AuthRole>>
+        session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>>
     {
         use actix::prelude::*;
 
@@ -359,26 +353,11 @@ impl DatabaseService {
         });
         let memdb_addr = memdb_actor.start();
 
-        // CState requires a SessionManager, so we create one internally for it
-        // (CState is the only component that needs it at build time)
-        use zznet_session::types::RoomId;
-        let offered_rooms = vec![RoomId::from("memdb"), RoomId::from("query")];
-        let cstate_session_manager =
-            Arc::new(tokio::sync::Mutex::new(SessionManager::<
-                DatabaseMessage,
-                AuthRole,
-            >::new(offered_rooms)));
-
-        // Create CState actor with its own SessionManager
-        let cstate_addr = CStateBuilder::<
-            DatabaseMessage,
-            AuthRole,
-            tokio::sync::Mutex<SessionManager<DatabaseMessage, AuthRole>>,
-        >::new(CStateRole::Database {
+        // Create CState actor
+        let cstate_addr = CStateBuilder::<AuthRole>::new(CStateRole::Database {
             stale_timeout_secs: self.config.components.stale_timeout_secs,
             max_collectors: Some(self.config.components.max_collectors),
         })
-        .session_manager(cstate_session_manager)
         .build();
 
         Ok(ComponentBuilders {

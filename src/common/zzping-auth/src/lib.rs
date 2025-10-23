@@ -8,7 +8,7 @@ use std::fmt;
 use zznet_auth::ApplicationRole;
 
 /// Authentication role for a peer in the ZZPing network.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuthRole {
     /// Role representing a collector service.
     Collector,

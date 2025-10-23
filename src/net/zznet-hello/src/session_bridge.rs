@@ -30,18 +30,15 @@ use actix::prelude::*;
 use tokio::sync::mpsc;
 use tracing::{debug, error};
 
-use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::types::RoomId;
 
 use crate::actor::HelloActor;
 
 /// SessionBridge actor - Manages bidirectional message forwarding
 ///
-/// Generic over TMsg: the application's message enum type
-pub struct SessionBridge<TMsg>
-where
-    TMsg: RoomMessageTrait,
-{
+/// No longer generic - works directly with serialized bytes (Vec<u8>)
+/// since Room<T> handles serialization at the component level
+pub struct SessionBridge {
     /// Peer identifier for logging
     peer_id: String,
 
@@ -49,36 +46,33 @@ where
     hello_actor: Addr<HelloActor>,
 
     /// Receiver for outbound messages from SessionManager
-    /// These messages need to be serialized and sent to HelloActor
-    outbound_rx: Option<mpsc::Receiver<(RoomId, TMsg)>>,
+    /// These messages are already serialized by Room<T>
+    outbound_rx: Option<mpsc::Receiver<(RoomId, Vec<u8>)>>,
 
     /// Sender for inbound messages to SessionManager
-    /// These messages come from HelloActor and are deserialized
-    conn_to_session_tx: mpsc::Sender<(RoomId, TMsg)>,
+    /// These messages are raw bytes that will be deserialized by Room<T>
+    conn_to_session_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
 
     /// Receiver for inbound messages from HelloActor
-    /// These are raw bytes that need deserialization
+    /// These are raw bytes that will be forwarded to SessionManager
     hello_to_conn_rx: Option<mpsc::Receiver<(String, Vec<u8>)>>,
 }
 
-impl<TMsg> SessionBridge<TMsg>
-where
-    TMsg: RoomMessageTrait,
-{
+impl SessionBridge {
     /// Create a new SessionBridge
     ///
     /// # Arguments
     ///
     /// * `peer_id` - Identifier for this peer (for logging)
     /// * `hello_actor` - Address of the HelloActor to send messages to
-    /// * `outbound_rx` - Channel from SessionManager with outbound messages
-    /// * `conn_to_session_tx` - Channel to SessionManager for inbound messages
+    /// * `outbound_rx` - Channel from SessionManager with serialized outbound messages
+    /// * `conn_to_session_tx` - Channel to SessionManager for serialized inbound messages
     /// * `hello_to_conn_rx` - Channel from HelloActor with raw messages
     pub fn new(
         peer_id: String,
         hello_actor: Addr<HelloActor>,
-        outbound_rx: mpsc::Receiver<(RoomId, TMsg)>,
-        conn_to_session_tx: mpsc::Sender<(RoomId, TMsg)>,
+        outbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
+        conn_to_session_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
         hello_to_conn_rx: mpsc::Receiver<(String, Vec<u8>)>,
     ) -> Self {
         Self {
@@ -90,28 +84,20 @@ where
         }
     }
 
-    /// Spawn task: SessionManager outbound → HelloActor (with serialization)
+    /// Spawn task: SessionManager outbound → HelloActor (already serialized)
     fn start_outbound_forwarding(&mut self) {
         let hello_actor = self.hello_actor.clone();
         let peer_id = self.peer_id.clone();
 
         if let Some(mut outbound_rx) = self.outbound_rx.take() {
             tokio::spawn(async move {
-                while let Some((room_id, message)) = outbound_rx.recv().await {
+                while let Some((room_id, payload)) = outbound_rx.recv().await {
                     debug!(
                         "SessionBridge outbound received message for room {:?}",
                         room_id.as_str()
                     );
-                    // Serialize message using RoomMessageTrait
-                    let payload = match message.serialize_inner() {
-                        Ok(data) => data,
-                        Err(e) => {
-                            error!("Failed to serialize message for peer {}: {:?}", peer_id, e);
-                            continue;
-                        }
-                    };
 
-                    // Create SendMessage for HelloActor
+                    // Messages are already serialized by Room<T>, just forward them
                     let send_msg = crate::actor::SendMessage {
                         from_room: room_id.as_str().to_string(),
                         to_room: room_id.as_str().to_string(),
@@ -132,7 +118,7 @@ where
         }
     }
 
-    /// Spawn task: HelloActor inbound → SessionManager (with deserialization)
+    /// Spawn task: HelloActor inbound → SessionManager (no deserialization needed)
     fn start_inbound_forwarding(&mut self) {
         let peer_id = self.peer_id.clone();
         let conn_to_session_tx = self.conn_to_session_tx.clone();
@@ -140,26 +126,14 @@ where
         if let Some(mut hello_to_conn_rx) = self.hello_to_conn_rx.take() {
             tokio::spawn(async move {
                 while let Some((room_name, payload)) = hello_to_conn_rx.recv().await {
-                    // Deserialize message using RoomMessageTrait
+                    // Just forward the raw bytes - Room<T> will deserialize
                     let room_id = RoomId::from(room_name.as_str());
-                    match TMsg::deserialize_for_room(&room_id, &payload) {
-                        Ok(message) => {
-                            // Send to SessionManager
-                            if let Err(e) = conn_to_session_tx.try_send((room_id.clone(), message))
-                            {
-                                error!(
-                                    "Failed to send inbound message to SessionManager for peer {}: {:?}",
-                                    peer_id, e
-                                );
-                                break;
-                            }
-                        }
-                        Err(e) => {
-                            error!(
-                                "Failed to deserialize inbound message for peer {}: {:?}",
-                                peer_id, e
-                            );
-                        }
+                    if let Err(e) = conn_to_session_tx.try_send((room_id.clone(), payload)) {
+                        error!(
+                            "Failed to send inbound message to SessionManager for peer {}: {:?}",
+                            peer_id, e
+                        );
+                        break;
                     }
                 }
                 debug!("Inbound forwarding task for peer {} completed", peer_id);
@@ -168,10 +142,7 @@ where
     }
 }
 
-impl<TMsg> Actor for SessionBridge<TMsg>
-where
-    TMsg: RoomMessageTrait,
-{
+impl Actor for SessionBridge {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Self::Context) {
@@ -184,103 +155,5 @@ where
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         debug!("SessionBridge stopped for peer {}", self.peer_id);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Simple test message enum for SessionBridge tests
-    #[derive(Debug, Clone)]
-    enum TestMessages {
-        IntentConfig,
-        MemDB,
-        Health,
-    }
-
-    impl RoomMessageTrait for TestMessages {
-        fn room_id(&self) -> RoomId {
-            match self {
-                TestMessages::IntentConfig => RoomId::from("intentconfig"),
-                TestMessages::MemDB => RoomId::from("memdb"),
-                TestMessages::Health => RoomId::from("health"),
-            }
-        }
-
-        fn serialize_inner(
-            &self,
-        ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
-            Ok(vec![1, 2, 3]) // Stub for testing
-        }
-
-        fn deserialize_for_room(
-            _room_id: &RoomId,
-            _bytes: &[u8],
-        ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
-            Ok(TestMessages::IntentConfig) // Stub for testing
-        }
-
-        fn supported_rooms() -> Vec<RoomId> {
-            vec![
-                RoomId::from("intentconfig"),
-                RoomId::from("memdb"),
-                RoomId::from("health"),
-            ]
-        }
-    }
-
-    #[test]
-    fn test_message_serialization() {
-        // Test that all variants serialize correctly
-        assert_eq!(
-            TestMessages::IntentConfig.serialize_inner().unwrap(),
-            vec![1, 2, 3]
-        );
-        assert_eq!(
-            TestMessages::MemDB.serialize_inner().unwrap(),
-            vec![1, 2, 3]
-        );
-        assert_eq!(
-            TestMessages::Health.serialize_inner().unwrap(),
-            vec![1, 2, 3]
-        );
-    }
-
-    #[test]
-    fn test_message_deserialization() {
-        // Test that all room IDs can be deserialized
-        let bytes = vec![1, 2, 3];
-
-        let msg =
-            TestMessages::deserialize_for_room(&RoomId::from("intentconfig"), &bytes).unwrap();
-        assert!(matches!(msg, TestMessages::IntentConfig));
-
-        let msg = TestMessages::deserialize_for_room(&RoomId::from("memdb"), &bytes).unwrap();
-        assert!(matches!(msg, TestMessages::IntentConfig)); // Currently returns IntentConfig for all
-
-        let msg = TestMessages::deserialize_for_room(&RoomId::from("health"), &bytes).unwrap();
-        assert!(matches!(msg, TestMessages::IntentConfig)); // Currently returns IntentConfig for all
-    }
-
-    #[test]
-    fn test_message_room_ids() {
-        // Test that each variant has the correct room_id
-        assert_eq!(
-            TestMessages::IntentConfig.room_id(),
-            RoomId::from("intentconfig")
-        );
-        assert_eq!(TestMessages::MemDB.room_id(), RoomId::from("memdb"));
-        assert_eq!(TestMessages::Health.room_id(), RoomId::from("health"));
-    }
-
-    #[test]
-    fn test_supported_rooms() {
-        // Test that all three rooms are reported as supported
-        let supported = TestMessages::supported_rooms();
-        assert_eq!(supported.len(), 3);
-        assert!(supported.contains(&RoomId::from("intentconfig")));
-        assert!(supported.contains(&RoomId::from("memdb")));
-        assert!(supported.contains(&RoomId::from("health")));
     }
 }

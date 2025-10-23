@@ -49,19 +49,23 @@ pub struct MemDBHealth {
     pub last_batch_ms: Option<u64>,
 }
 
-/// Statistics for a specific target.
-#[derive(Debug, Clone)]
-pub struct TargetStats {
-    /// Target host
-    pub target: String,
-    /// Number of results for this target
-    pub result_count: usize,
-    /// Average RTT in microseconds
-    pub avg_rtt_us: Option<f64>,
-    /// Packet loss percentage
-    pub packet_loss_percent: f64,
-    /// Last seen timestamp
-    pub last_seen_ms: Option<u64>,
+/// A command message to create the room for component-to-component messaging.
+/// This should be called after the actor is started so we can get the proper Recipient.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct CreateRoom;
+
+/// A request to get the room channels for component-to-component messaging.
+/// This allows external services to wire up room-based communication with the actor.
+#[derive(Message)]
+#[rtype(result = "GetRoomChannelsResponse")]
+pub struct GetRoomChannels;
+
+/// Response containing the room channels if available.
+#[derive(Clone)]
+pub struct GetRoomChannelsResponse {
+    /// The room channels for component-to-component messaging, wrapped in Arc for sharing.
+    pub channels: Option<std::sync::Arc<zznet_room::room::RoomChannels>>,
 }
 
 /// Errors that can occur in MemDB operations.
@@ -90,6 +94,21 @@ pub enum MemDBError {
     /// Internal error: {0}
     #[error("Internal error: {0}")]
     InternalError(String),
+}
+
+/// Statistics for a specific target.
+#[derive(Debug, Clone)]
+pub struct TargetStats {
+    /// Target host
+    pub target: String,
+    /// Number of results for this target
+    pub result_count: usize,
+    /// Average RTT in microseconds
+    pub avg_rtt_us: Option<f64>,
+    /// Packet loss percentage
+    pub packet_loss_percent: f64,
+    /// Last seen timestamp
+    pub last_seen_ms: Option<u64>,
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@
 //!
 //! These messages are exchanged between collector and database roles over the network.
 
+use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use zznet_session::{
     room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError},
@@ -12,7 +13,10 @@ use zznet_session::{
 pub const CSTATE_ROOM: &str = "cstate";
 
 /// Enum representing all possible messages for the collector state room.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(
+    Clone, Debug, Message, Serialize, Deserialize, bincode::Encode, bincode::Decode, PartialEq,
+)]
+#[rtype(result = "()")]
 pub enum CStateMessage {
     /// Collector -> Database: Register and report health.
     Heartbeat {
@@ -63,7 +67,7 @@ pub enum CStateMessage {
 }
 
 /// Information about a single collector, used in `CollectorList`.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, bincode::Encode, bincode::Decode)]
 pub struct CollectorInfo {
     /// The unique ID of the collector.
     pub id: String,

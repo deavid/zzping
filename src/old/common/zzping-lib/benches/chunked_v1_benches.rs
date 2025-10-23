@@ -192,14 +192,8 @@ fn criterion_benchmark(c: &mut Criterion) {
             start_time,
         );
 
-        // Enable debug output to see compression decisions
-        unsafe {
-            std::env::set_var("ZZPING_DEBUG_COMPRESSION", "1");
-        }
+        // Compress without debug output in benchmarks
         let compressed_data = compress_chunked_v1(&records).unwrap();
-        unsafe {
-            std::env::remove_var("ZZPING_DEBUG_COMPRESSION");
-        }
 
         let uncompressed_size = records.len() * std::mem::size_of::<RawDataRecord>();
 

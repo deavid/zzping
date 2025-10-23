@@ -3,7 +3,6 @@
 pub mod actor;
 pub mod api;
 pub mod builder;
-pub mod database_message_adapter;
 pub mod messages;
 pub mod network_messages;
 /// A wrapper around an ApplicationRole to be used by the IntentConfig component.
@@ -15,7 +14,6 @@ pub mod room_handler;
 /// The public API for the IntentConfig component.
 #[cfg(test)]
 mod api_tests;
-mod broadcast_timeout_tests;
 #[cfg(test)]
 mod builder_tests;
 #[cfg(test)]

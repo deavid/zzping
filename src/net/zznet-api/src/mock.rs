@@ -69,10 +69,17 @@ impl MockConnection {
     ///
     /// # Example
     ///
-    /// ```ignore
-    /// connection.inject_error(TransportError::Timeout).await;
-    /// let result = connection.recv().await;
+    /// ```
+    /// # use zznet_api::mock::create_mock_pair;
+    /// # use zznet_api::error::TransportError;
+    /// # use zznet_api::transport::TransportConnection;
+    /// # use bytes::Bytes;
+    /// # tokio_test::block_on(async {
+    /// let (mut conn_a, mut conn_b) = create_mock_pair("test");
+    /// conn_a.inject_error(TransportError::Timeout).await;
+    /// let result = conn_a.recv().await;
     /// assert!(matches!(result, Err(TransportError::Timeout)));
+    /// # });
     /// ```
     pub async fn inject_error(&self, error: TransportError) {
         *self.inject_error.lock().await = Some(error);
@@ -140,13 +147,18 @@ impl TransportConnection for MockConnection {
 ///
 /// # Example
 ///
-/// ```ignore
-/// let (conn_a, conn_b) = create_mock_pair("test");
+/// ```
+/// # use zznet_api::mock::create_mock_pair;
+/// # use zznet_api::transport::TransportConnection;
+/// # use bytes::Bytes;
+/// # tokio_test::block_on(async {
+/// let (mut conn_a, mut conn_b) = create_mock_pair("test");
 ///
 /// // Send from A to B
 /// conn_a.send(Bytes::from("hello")).await.unwrap();
 /// let msg = conn_b.recv().await.unwrap();
 /// assert_eq!(msg, Some(Bytes::from("hello")));
+/// # });
 /// ```
 pub fn create_mock_pair(base_id: &str) -> (MockConnection, MockConnection) {
     let (tx_a, rx_a) = mpsc::channel(32);

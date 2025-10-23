@@ -5,10 +5,12 @@ use crate::room_registry::RoomHandlerFactory;
 use actix::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use zznet_auth::ApplicationRole;
 use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::RoomMessageTrait;
+use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
@@ -37,20 +39,16 @@ where
     reconnect_delay: Duration,
     tls_config: Option<TlsConfig>,
     /// Internal ConnectionManager address - private to builder, not exposed to applications
-    _connection_manager: Option<Addr<ConnectionManager<TMsg, TRole>>>,
+    _connection_manager: Option<Addr<ConnectionManager<TRole>>>,
     /// Optional authorizer closure used when the builder creates the ConnectionManager.
     authorizer: Option<zznet_auth::acl::GenericAuthorizer<TRole>>,
     // Internal SessionManager owned by the builder when present
-    session_manager: Option<
-        std::sync::Arc<
-            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>,
-        >,
-    >,
+    session_manager: Option<Arc<Mutex<SessionManager<TRole>>>>,
     auto_reconnect: bool,
     /// Room handler factories registered via register_room_handler()
     room_handlers: std::collections::HashMap<RoomId, Arc<dyn RoomHandlerFactory<TMsg, TRole>>>,
     /// Persistent room registry owned by the builder (created lazily)
-    room_registry: Option<Arc<tokio::sync::Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>>>,
+    room_registry: Option<Arc<Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>>>,
 }
 
 impl<TMsg, TRole> ClientBuilder<TMsg, TRole>
@@ -175,9 +173,7 @@ where
     )]
     pub fn with_session_manager(
         mut self,
-        session_manager: std::sync::Arc<
-            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>,
-        >,
+        session_manager: Arc<Mutex<SessionManager<TRole>>>,
     ) -> Self {
         self.session_manager = Some(session_manager);
         self
@@ -226,19 +222,81 @@ where
     /// all connections. The registry can be used for dynamic handler updates.
     ///
     /// # Example
-    /// ```ignore
-    /// let mut builder = ClientBuilder::new()
+    /// ```
+    /// use zznet_builder::client_builder::ClientBuilder;
+    /// use zznet_session::room_message_trait::RoomMessageTrait;
+    /// use zznet_session::types::RoomId;
+    /// use serde::{Deserialize, Serialize};
+    /// 
+    /// #[derive(Debug, Clone)]
+    /// enum TestMessages {
+    ///     Test,
+    /// }
+    /// 
+    /// impl RoomMessageTrait for TestMessages {
+    ///     fn room_id(&self) -> RoomId {
+    ///         RoomId::from("test")
+    ///     }
+    /// 
+    ///     fn serialize_inner(
+    ///         &self,
+    ///     ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
+    ///         Ok(vec![])
+    ///     }
+    /// 
+    ///     fn deserialize_for_room(
+    ///         _room_id: &RoomId,
+    ///         _bytes: &[u8],
+    ///     ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
+    ///         Ok(TestMessages::Test)
+    ///     }
+    /// 
+    ///     fn supported_rooms() -> Vec<RoomId> {
+    ///         vec![RoomId::from("test")]
+    ///     }
+    /// }
+    /// 
+    /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    /// enum TestRole {
+    ///     Collector,
+    ///     Database,
+    /// }
+    /// 
+    /// impl zznet_auth::ApplicationRole for TestRole {
+    ///     fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+    ///         match cn {
+    ///             "collector" => Ok(TestRole::Collector),
+    ///             "database" => Ok(TestRole::Database),
+    ///             _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+    ///         }
+    ///     }
+    /// 
+    ///     fn as_str(&self) -> &'static str {
+    ///         match self {
+    ///             TestRole::Collector => "collector",
+    ///             TestRole::Database => "database",
+    ///         }
+    ///     }
+    /// 
+    ///     fn can_connect_to(&self, _target: &Self) -> bool {
+    ///         true
+    ///     }
+    /// 
+    ///     fn can_access_room(&self, _room_name: &str) -> bool {
+    ///         true
+    ///     }
+    /// }
+    /// 
+    /// let mut builder = ClientBuilder::<TestMessages, TestRole>::new()
     ///     .offer_rooms(vec!["my-room".to_string()]);
     ///
     /// // Access the persistent registry
     /// let registry = builder.room_registry();
     /// // Can add handlers dynamically...
     ///
-    /// builder.connect().await?;
+    /// // builder.connect().await?;
     /// ```
-    pub fn room_registry(
-        &mut self,
-    ) -> Arc<tokio::sync::Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>> {
+    pub fn room_registry(&mut self) -> Arc<Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>> {
         if self.room_registry.is_none() {
             // Get or create SessionManager first
             let sm = self.session_manager();
@@ -251,7 +309,7 @@ where
                 registry.register_room_handler(room_id.clone(), factory.clone());
             }
 
-            self.room_registry = Some(Arc::new(tokio::sync::Mutex::new(registry)));
+            self.room_registry = Some(Arc::new(Mutex::new(registry)));
         }
 
         self.room_registry.clone().unwrap()
@@ -265,8 +323,72 @@ where
     /// This allows for app-level room wiring before calling `connect()`.
     ///
     /// # Example
-    /// ```ignore
-    /// let mut builder = ClientBuilder::new()
+    /// ```
+    /// use zznet_builder::client_builder::ClientBuilder;
+    /// use zznet_session::room_message_trait::RoomMessageTrait;
+    /// use zznet_session::types::RoomId;
+    /// use serde::{Deserialize, Serialize};
+    /// 
+    /// #[derive(Debug, Clone)]
+    /// enum TestMessages {
+    ///     Test,
+    /// }
+    /// 
+    /// impl RoomMessageTrait for TestMessages {
+    ///     fn room_id(&self) -> RoomId {
+    ///         RoomId::from("test")
+    ///     }
+    /// 
+    ///     fn serialize_inner(
+    ///         &self,
+    ///     ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
+    ///         Ok(vec![])
+    ///     }
+    /// 
+    ///     fn deserialize_for_room(
+    ///         _room_id: &RoomId,
+    ///         _bytes: &[u8],
+    ///     ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
+    ///         Ok(TestMessages::Test)
+    ///     }
+    /// 
+    ///     fn supported_rooms() -> Vec<RoomId> {
+    ///         vec![RoomId::from("test")]
+    ///     }
+    /// }
+    /// 
+    /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    /// enum TestRole {
+    ///     Collector,
+    ///     Database,
+    /// }
+    /// 
+    /// impl zznet_auth::ApplicationRole for TestRole {
+    ///     fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+    ///         match cn {
+    ///             "collector" => Ok(TestRole::Collector),
+    ///             "database" => Ok(TestRole::Database),
+    ///             _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+    ///         }
+    ///     }
+    /// 
+    ///     fn as_str(&self) -> &'static str {
+    ///         match self {
+    ///             TestRole::Collector => "collector",
+    ///             TestRole::Database => "database",
+    ///         }
+    ///     }
+    /// 
+    ///     fn can_connect_to(&self, _target: &Self) -> bool {
+    ///         true
+    ///     }
+    /// 
+    ///     fn can_access_room(&self, _room_name: &str) -> bool {
+    ///         true
+    ///     }
+    /// }
+    /// 
+    /// let mut builder = ClientBuilder::<TestMessages, TestRole>::new()
     ///     .offer_rooms(vec!["my-room".to_string()]);
     ///
     /// // Access SessionManager before connecting
@@ -274,11 +396,9 @@ where
     /// // Perform advanced wiring...
     ///
     /// // Then connect
-    /// builder.connect().await?;
+    /// // builder.connect().await?;
     /// ```
-    pub fn session_manager(
-        &mut self,
-    ) -> Arc<tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>> {
+    pub fn session_manager(&mut self) -> Arc<Mutex<SessionManager<TRole>>> {
         if self.session_manager.is_none() {
             // Create SessionManager with offered rooms
             let offered: Vec<zznet_session::types::RoomId> = self
@@ -286,8 +406,8 @@ where
                 .iter()
                 .map(|r| zznet_session::types::RoomId::from(r.as_str()))
                 .collect();
-            let sm = zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
-            self.session_manager = Some(Arc::new(tokio::sync::Mutex::new(sm)));
+            let sm = SessionManager::<TRole>::new(offered);
+            self.session_manager = Some(Arc::new(Mutex::new(sm)));
         }
         self.session_manager.clone().unwrap()
     }
@@ -311,7 +431,7 @@ where
     ///
     /// This creates a ClientActor that manages the connection and will
     /// automatically reconnect if the connection is lost (unless disabled).
-    pub async fn connect(self) -> BuilderResult<Addr<ClientActor<TMsg, TRole>>> {
+    pub async fn connect(self) -> BuilderResult<Addr<ClientActor<TRole>>> {
         // Delegate to the richer API that returns the ConnectionManager as well,
         // but keep the original signature by returning only the actor Addr.
         let (actor_addr, _cm_addr) = self.connect_with_connection_manager().await?;
@@ -328,10 +448,7 @@ where
     #[doc(hidden)]
     pub async fn connect_with_connection_manager(
         self,
-    ) -> BuilderResult<(
-        Addr<ClientActor<TMsg, TRole>>,
-        Addr<ConnectionManager<TMsg, TRole>>,
-    )> {
+    ) -> BuilderResult<(Addr<ClientActor<TRole>>, Addr<ConnectionManager<TRole>>)> {
         self.validate()?;
 
         let remote_addr = self.remote_addr.unwrap();
@@ -346,9 +463,8 @@ where
                     .iter()
                     .map(|r| zznet_session::types::RoomId::from(r.as_str()))
                     .collect();
-                let sm =
-                    zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
-                std::sync::Arc::new(tokio::sync::Mutex::new(sm))
+                let sm = SessionManager::<TRole>::new(offered);
+                Arc::new(Mutex::new(sm))
             }
         };
 
@@ -379,16 +495,12 @@ where
                             registry_instance
                                 .register_room_handler(room_id.clone(), factory.clone());
                         }
-                        Arc::new(tokio::sync::Mutex::new(registry_instance))
+                        Arc::new(Mutex::new(registry_instance))
                     };
 
                     let wirer: Arc<
                         dyn Fn(
-                                Arc<
-                                    tokio::sync::Mutex<
-                                        zznet_session::session_manager::SessionManager<TMsg, TRole>,
-                                    >,
-                                >,
+                                Arc<Mutex<SessionManager<TRole>>>,
                                 &zznet_session::types::PeerId,
                             ) -> std::pin::Pin<
                                 Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
@@ -454,24 +566,22 @@ where
 }
 
 /// Actor that manages the client's connection loop
-pub struct ClientActor<TMsg, TRole>
+pub struct ClientActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     remote_addr: String,
     tls_config: Option<TlsConfig>,
     hello_config: HelloConfig,
-    connection_manager: Addr<ConnectionManager<TMsg, TRole>>,
+    connection_manager: Addr<ConnectionManager<TRole>>,
     reconnect_delay: Duration,
     auto_reconnect: bool,
     current_hello_actor: Option<Addr<zznet_hello::actor::HelloActor>>,
     state: ClientState,
 }
 
-impl<TMsg, TRole> Actor for ClientActor<TMsg, TRole>
+impl<TRole> Actor for ClientActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Context = Context<Self>;
@@ -483,9 +593,8 @@ where
     }
 }
 
-impl<TMsg, TRole> ClientActor<TMsg, TRole>
+impl<TRole> ClientActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     /// Run the connection loop
@@ -565,16 +674,15 @@ enum ConnectionResult {
 /// Auto-reconnection will be disabled.
 ///
 /// # Example
-/// ```ignore
-/// client_addr.send(zznet_builder::Disconnect).await.ok();
+/// ```
+/// // client_addr.send(zznet_builder::Disconnect).await.ok();
 /// ```
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Disconnect;
 
-impl<TMsg, TRole> Handler<Disconnect> for ClientActor<TMsg, TRole>
+impl<TRole> Handler<Disconnect> for ClientActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ();
@@ -598,16 +706,15 @@ where
 /// This is useful when you want to reconnect without waiting for the automatic reconnect delay.
 ///
 /// # Example
-/// ```ignore
-/// client_addr.send(zznet_builder::Reconnect).await.ok();
+/// ```
+/// // client_addr.send(zznet_builder::Reconnect).await.ok();
 /// ```
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Reconnect;
 
-impl<TMsg, TRole> Handler<Reconnect> for ClientActor<TMsg, TRole>
+impl<TRole> Handler<Reconnect> for ClientActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ();
@@ -678,7 +785,7 @@ mod tests {
     }
 
     /// Minimal test role for builder unit tests. Derive traits required by ApplicationRole.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     enum TestRole {
         Collector,
         Database,

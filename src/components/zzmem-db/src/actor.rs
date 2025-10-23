@@ -4,7 +4,8 @@
 //! for in-memory ping result storage and querying.
 
 use crate::messages::{
-    ClearBuffer, GetHealth, GetStats, MemDBError, MemDBHealth, StorePingResult, TargetStats,
+    ClearBuffer, CreateRoom, GetHealth, GetRoomChannels, GetRoomChannelsResponse, GetStats,
+    MemDBError, MemDBHealth, StorePingResult, TargetStats,
 };
 use crate::network_messages::{MemDBMessage, PingResult};
 use crate::permission_wrapper::PermissionWrapper;
@@ -26,7 +27,7 @@ use zznet_session::types::RoomId;
 #[rtype(result = "()")]
 pub struct SetSessionManager<T: ApplicationRole> {
     /// The session manager to set
-    pub session_manager: Rc<SessionManager<MemDBMessage, PermissionWrapper<T>>>,
+    pub session_manager: Rc<SessionManager<PermissionWrapper<T>>>,
 }
 
 /// Room handle that forwards MemDB messages to the MemDBActor
@@ -45,22 +46,33 @@ impl<T: ApplicationRole> MemDBRoomHandle<T> {
     }
 }
 
-impl<T: ApplicationRole> RoomHandle<MemDBMessage> for MemDBRoomHandle<T> {
+impl<T: ApplicationRole> RoomHandle for MemDBRoomHandle<T> {
     fn room_id(&self) -> &RoomId {
         &self.room_id
     }
 
-    fn send_message(
-        &mut self,
-        msg: MemDBMessage,
-    ) -> Result<(), zznet_session::types::SessionError> {
-        self.addr.do_send(msg);
-        Ok(())
+    fn send_message(&mut self, bytes: Vec<u8>) -> Result<(), zznet_session::types::SessionError> {
+        // Deserialize the bytes to MemDBMessage
+        let config = bincode::config::standard();
+        match bincode::serde::decode_from_slice::<MemDBMessage, _>(&bytes, config) {
+            Ok((msg, _)) => {
+                self.addr.do_send(msg);
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to deserialize MemDBMessage: {:?}", e);
+                // Return a generic error - deserialization failures are logged but don't have a specific variant
+                Err(zznet_session::types::SessionError::RoomNotFound {
+                    peer_id: zznet_session::types::PeerId::from("unknown"),
+                    room_id: self.room_id.clone(),
+                })
+            }
+        }
     }
 
     fn spawn_forwarder(
         &mut self,
-        _tx: tokio::sync::mpsc::Sender<(RoomId, MemDBMessage)>,
+        _tx: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
     ) -> Result<(), zznet_session::types::SessionError> {
         // Not needed for direct forwarding
         Ok(())
@@ -86,7 +98,7 @@ pub struct MemDBActor<T: ApplicationRole> {
     // Temporarily commented out Handler<MemDBMessage>
 
     // Network message handler for MemDBMessage
-    session_manager: Option<Rc<SessionManager<MemDBMessage, PermissionWrapper<T>>>>,
+    session_manager: Option<Rc<SessionManager<PermissionWrapper<T>>>>,
     /// Health counters for operational visibility
     successful_batches: Arc<AtomicU64>,
     failed_batches: Arc<AtomicU64>,
@@ -94,6 +106,12 @@ pub struct MemDBActor<T: ApplicationRole> {
 
     /// For Collector role: track the timestamp of the currently outstanding batch
     outstanding_batch: Option<u64>,
+
+    /// Room instance for component-to-component messaging
+    room: Option<zznet_room::room::Room<MemDBMessage>>,
+
+    /// Room channels for SessionManager wiring
+    room_channels: Option<std::sync::Arc<zznet_room::room::RoomChannels>>,
 }
 
 impl<T: ApplicationRole> Default for MemDBActor<T> {
@@ -111,7 +129,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
     /// Create a new MemDBActor with role and optional SessionManager
     pub fn new_with_role_and_session_manager(
         role: MemDBRole,
-        session_manager: Option<Rc<SessionManager<MemDBMessage, PermissionWrapper<T>>>>,
+        session_manager: Option<Rc<SessionManager<PermissionWrapper<T>>>>,
     ) -> Self {
         // Validate the role configuration
         if let Err(e) = role.validate() {
@@ -135,6 +153,8 @@ impl<T: ApplicationRole> MemDBActor<T> {
             failed_batches: Arc::new(AtomicU64::new(0)),
             total_results: Arc::new(AtomicU64::new(0)),
             outstanding_batch: None,
+            room: None,
+            room_channels: None,
         }
     }
 
@@ -146,7 +166,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
     /// Set the SessionManager for network communication
     pub fn set_session_manager(
         &mut self,
-        session_manager: Rc<SessionManager<MemDBMessage, PermissionWrapper<T>>>,
+        session_manager: Rc<SessionManager<PermissionWrapper<T>>>,
     ) {
         self.session_manager = Some(session_manager);
     }
@@ -217,8 +237,21 @@ impl<T: ApplicationRole> MemDBActor<T> {
 
                     // Set sender_peer_id to our own identity if available via session manager identity (not available here), leave empty
                     let send_fut = async move {
-                        if let Err(e) = sender.send((room_clone, msg_to_send)).await {
-                            tracing::warn!("Failed to send SubmitBatch to {}: {:?}", peer_id, e);
+                        // Serialize the message
+                        let config = bincode::config::standard();
+                        match bincode::serde::encode_to_vec(&msg_to_send, config) {
+                            Ok(bytes) => {
+                                if let Err(e) = sender.send((room_clone, bytes)).await {
+                                    tracing::warn!(
+                                        "Failed to send SubmitBatch to {}: {:?}",
+                                        peer_id,
+                                        e
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to serialize SubmitBatch: {:?}", e);
+                            }
                         }
                     };
 
@@ -429,8 +462,21 @@ impl<T: ApplicationRole> Handler<MemDBMessage> for MemDBActor<T> {
                         if let Some(sender) = sm_rc.get_peer_sender(&peer) {
                             // Send the ack via the cloned sender
                             let room = zznet_session::types::RoomId::from("memdb");
-                            if let Err(e) = sender.send((room, ack)).await {
-                                tracing::warn!("Failed sending BatchAck to {}: {:?}", peer, e);
+                            // Serialize the message
+                            let config = bincode::config::standard();
+                            match bincode::serde::encode_to_vec(&ack, config) {
+                                Ok(bytes) => {
+                                    if let Err(e) = sender.send((room, bytes)).await {
+                                        tracing::warn!(
+                                            "Failed sending BatchAck to {}: {:?}",
+                                            peer,
+                                            e
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to serialize BatchAck: {:?}", e);
+                                }
                             }
                         } else {
                             tracing::warn!(
@@ -482,8 +528,21 @@ impl<T: ApplicationRole> Handler<MemDBMessage> for MemDBActor<T> {
                         let peer = zznet_session::types::PeerId::from(sender_peer_id.as_str());
                         if let Some(sender) = sm_rc.get_peer_sender(&peer) {
                             let room = zznet_session::types::RoomId::from("memdb");
-                            if let Err(e) = sender.send((room, response)).await {
-                                tracing::warn!("Failed sending QueryResponse to {}: {:?}", peer, e);
+                            // Serialize the message
+                            let config = bincode::config::standard();
+                            match bincode::serde::encode_to_vec(&response, config) {
+                                Ok(bytes) => {
+                                    if let Err(e) = sender.send((room, bytes)).await {
+                                        tracing::warn!(
+                                            "Failed sending QueryResponse to {}: {:?}",
+                                            peer,
+                                            e
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to serialize QueryResponse: {:?}", e);
+                                }
                             }
                         } else {
                             tracing::warn!(
@@ -564,6 +623,52 @@ impl<T: ApplicationRole> Handler<MemDBMessage> for MemDBActor<T> {
                 Box::pin(async {})
             }
         }
+    }
+}
+
+/// Handles the `CreateRoom` message, creating typed channels for network messaging.
+/// The channels are stored for SessionManager to use for message routing.
+impl<T: ApplicationRole> Handler<CreateRoom> for MemDBActor<T> {
+    type Result = ();
+
+    fn handle(&mut self, _msg: CreateRoom, _ctx: &mut Context<Self>) -> Self::Result {
+        // Create the Room<T> with typed message handling
+        let (room, channels) = zznet_room::room::Room::new(
+            "memdb".to_string(),
+            _ctx.address().recipient::<MemDBMessage>(),
+        );
+
+        // Store the room and channels
+        self.room = Some(room);
+        self.room_channels = Some(std::sync::Arc::new(channels));
+
+        log::info!("✓ Room created for MemDBActor, ready for SessionManager wiring");
+    }
+}
+
+/// Handles the `GetRoomChannels` message, creating and returning room channels for network messaging.
+/// If channels don't exist yet, they are created on-demand.
+impl<T: ApplicationRole> Handler<GetRoomChannels> for MemDBActor<T> {
+    type Result = MessageResult<GetRoomChannels>;
+
+    fn handle(&mut self, _msg: GetRoomChannels, _ctx: &mut Context<Self>) -> Self::Result {
+        // Create room on-demand if it doesn't exist yet
+        if self.room.is_none() {
+            // Create the Room<T> with typed message handling
+            let (room, channels) = zznet_room::room::Room::new(
+                "memdb".to_string(),
+                _ctx.address().recipient::<MemDBMessage>(),
+            );
+
+            // Store the room and channels
+            self.room = Some(room);
+            self.room_channels = Some(std::sync::Arc::new(channels));
+
+            log::info!("✓ Room created on-demand for MemDBActor, ready for SessionManager wiring");
+        }
+
+        let channels = self.room_channels.clone();
+        MessageResult(GetRoomChannelsResponse { channels })
     }
 }
 
@@ -892,7 +997,11 @@ mod tests {
             to_ms: 2000,
         };
 
-        let result = room_handle.send_message(msg);
+        // Serialize the message to bytes
+        let config = bincode::config::standard();
+        let bytes = bincode::serde::encode_to_vec(&msg, config).unwrap();
+
+        let result = room_handle.send_message(bytes);
         assert!(result.is_ok());
     }
 

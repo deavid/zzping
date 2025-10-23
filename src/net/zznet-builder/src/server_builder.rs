@@ -5,10 +5,12 @@ use crate::room_registry::RoomHandlerFactory;
 use actix::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use zznet_auth::ApplicationRole;
 use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_session::room_message_trait::RoomMessageTrait;
+use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
 use zznet_transport_tcp::config::TlsConfig;
 use zznet_transport_tcp::server::TcpTransportServer;
@@ -27,18 +29,14 @@ where
     handshake_timeout: Duration,
     tls_config: Option<TlsConfig>,
     /// Internal ConnectionManager address - private to builder, not exposed to applications
-    _connection_manager: Option<Addr<ConnectionManager<TMsg, TRole>>>,
+    _connection_manager: Option<Addr<ConnectionManager<TRole>>>,
     // Internal SessionManager owned by the builder when present
-    session_manager: Option<
-        std::sync::Arc<
-            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>,
-        >,
-    >,
+    session_manager: Option<Arc<Mutex<SessionManager<TRole>>>>,
     /// Optional authorizer closure used when the builder creates the ConnectionManager.
     authorizer: Option<zznet_auth::acl::GenericAuthorizer<TRole>>,
     room_handlers: std::collections::HashMap<RoomId, Arc<dyn RoomHandlerFactory<TMsg, TRole>>>,
     /// Persistent room registry owned by the builder (created lazily)
-    room_registry: Option<Arc<tokio::sync::Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>>>,
+    room_registry: Option<Arc<Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>>>,
 }
 
 impl<TMsg, TRole> ServerBuilder<TMsg, TRole>
@@ -152,9 +150,7 @@ where
     )]
     pub fn with_session_manager(
         mut self,
-        session_manager: std::sync::Arc<
-            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>,
-        >,
+        session_manager: Arc<Mutex<SessionManager<TRole>>>,
     ) -> Self {
         self.session_manager = Some(session_manager);
         self
@@ -192,19 +188,81 @@ where
     /// all connections. The registry can be used for dynamic handler updates.
     ///
     /// # Example
-    /// ```ignore
-    /// let mut builder = ServerBuilder::new()
+    /// ```
+    /// use zznet_builder::server_builder::ServerBuilder;
+    /// use zznet_session::room_message_trait::RoomMessageTrait;
+    /// use zznet_session::types::RoomId;
+    /// use serde::{Deserialize, Serialize};
+    /// 
+    /// #[derive(Debug, Clone)]
+    /// enum TestMessages {
+    ///     Test,
+    /// }
+    /// 
+    /// impl RoomMessageTrait for TestMessages {
+    ///     fn room_id(&self) -> RoomId {
+    ///         RoomId::from("test")
+    ///     }
+    /// 
+    ///     fn serialize_inner(
+    ///         &self,
+    ///     ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
+    ///         Ok(vec![])
+    ///     }
+    /// 
+    ///     fn deserialize_for_room(
+    ///         _room_id: &RoomId,
+    ///         _bytes: &[u8],
+    ///     ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
+    ///         Ok(TestMessages::Test)
+    ///     }
+    /// 
+    ///     fn supported_rooms() -> Vec<RoomId> {
+    ///         vec![RoomId::from("test")]
+    ///     }
+    /// }
+    /// 
+    /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    /// enum TestRole {
+    ///     Collector,
+    ///     Database,
+    /// }
+    /// 
+    /// impl zznet_auth::ApplicationRole for TestRole {
+    ///     fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+    ///         match cn {
+    ///             "collector" => Ok(TestRole::Collector),
+    ///             "database" => Ok(TestRole::Database),
+    ///             _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+    ///         }
+    ///     }
+    /// 
+    ///     fn as_str(&self) -> &'static str {
+    ///         match self {
+    ///             TestRole::Collector => "collector",
+    ///             TestRole::Database => "database",
+    ///         }
+    ///     }
+    /// 
+    ///     fn can_connect_to(&self, _target: &Self) -> bool {
+    ///         true
+    ///     }
+    /// 
+    ///     fn can_access_room(&self, _room_name: &str) -> bool {
+    ///         true
+    ///     }
+    /// }
+    /// 
+    /// let mut builder = ServerBuilder::<TestMessages, TestRole>::new()
     ///     .offer_rooms(vec!["my-room".to_string()]);
     ///
     /// // Access the persistent registry
     /// let registry = builder.room_registry();
     /// // Can add handlers dynamically...
     ///
-    /// builder.start().await?;
+    /// // builder.start().await?;
     /// ```
-    pub fn room_registry(
-        &mut self,
-    ) -> Arc<tokio::sync::Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>> {
+    pub fn room_registry(&mut self) -> Arc<Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>> {
         if self.room_registry.is_none() {
             // Get or create SessionManager first
             let sm = self.session_manager();
@@ -217,7 +275,7 @@ where
                 registry.register_room_handler(room_id.clone(), factory.clone());
             }
 
-            self.room_registry = Some(Arc::new(tokio::sync::Mutex::new(registry)));
+            self.room_registry = Some(Arc::new(Mutex::new(registry)));
         }
 
         self.room_registry.clone().unwrap()
@@ -231,8 +289,72 @@ where
     /// This allows for app-level room wiring before calling `start()`.
     ///
     /// # Example
-    /// ```ignore
-    /// let mut builder = ServerBuilder::new()
+    /// ```
+    /// use zznet_builder::server_builder::ServerBuilder;
+    /// use zznet_session::room_message_trait::RoomMessageTrait;
+    /// use zznet_session::types::RoomId;
+    /// use serde::{Deserialize, Serialize};
+    /// 
+    /// #[derive(Debug, Clone)]
+    /// enum TestMessages {
+    ///     Test,
+    /// }
+    /// 
+    /// impl RoomMessageTrait for TestMessages {
+    ///     fn room_id(&self) -> RoomId {
+    ///         RoomId::from("test")
+    ///     }
+    /// 
+    ///     fn serialize_inner(
+    ///         &self,
+    ///     ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
+    ///         Ok(vec![])
+    ///     }
+    /// 
+    ///     fn deserialize_for_room(
+    ///         _room_id: &RoomId,
+    ///         _bytes: &[u8],
+    ///     ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
+    ///         Ok(TestMessages::Test)
+    ///     }
+    /// 
+    ///     fn supported_rooms() -> Vec<RoomId> {
+    ///         vec![RoomId::from("test")]
+    ///     }
+    /// }
+    /// 
+    /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+    /// enum TestRole {
+    ///     Collector,
+    ///     Database,
+    /// }
+    /// 
+    /// impl zznet_auth::ApplicationRole for TestRole {
+    ///     fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
+    ///         match cn {
+    ///             "collector" => Ok(TestRole::Collector),
+    ///             "database" => Ok(TestRole::Database),
+    ///             _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
+    ///         }
+    ///     }
+    /// 
+    ///     fn as_str(&self) -> &'static str {
+    ///         match self {
+    ///             TestRole::Collector => "collector",
+    ///             TestRole::Database => "database",
+    ///         }
+    ///     }
+    /// 
+    ///     fn can_connect_to(&self, _target: &Self) -> bool {
+    ///         true
+    ///     }
+    /// 
+    ///     fn can_access_room(&self, _room_name: &str) -> bool {
+    ///         true
+    ///     }
+    /// }
+    /// 
+    /// let mut builder = ServerBuilder::<TestMessages, TestRole>::new()
     ///     .offer_rooms(vec!["my-room".to_string()]);
     ///
     /// // Access SessionManager before starting
@@ -240,11 +362,9 @@ where
     /// // Perform advanced wiring...
     ///
     /// // Then start the server
-    /// builder.start().await?;
+    /// // builder.start().await?;
     /// ```
-    pub fn session_manager(
-        &mut self,
-    ) -> Arc<tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TMsg, TRole>>> {
+    pub fn session_manager(&mut self) -> Arc<Mutex<SessionManager<TRole>>> {
         if self.session_manager.is_none() {
             // Create SessionManager with offered rooms
             let offered: Vec<zznet_session::types::RoomId> = self
@@ -252,8 +372,8 @@ where
                 .iter()
                 .map(|r| zznet_session::types::RoomId::from(r.as_str()))
                 .collect();
-            let sm = zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
-            self.session_manager = Some(Arc::new(tokio::sync::Mutex::new(sm)));
+            let sm = SessionManager::<TRole>::new(offered);
+            self.session_manager = Some(Arc::new(Mutex::new(sm)));
         }
         self.session_manager.clone().unwrap()
     }
@@ -277,7 +397,7 @@ where
     ///
     /// This creates a ServerActor that listens for connections and spawns
     /// HelloActors for each accepted connection.
-    pub async fn start(self) -> BuilderResult<Addr<ServerActor<TMsg, TRole>>> {
+    pub async fn start(self) -> BuilderResult<Addr<ServerActor<TRole>>> {
         self.validate()?;
 
         let bind_addr = self.bind_addr.unwrap();
@@ -292,9 +412,8 @@ where
                     .iter()
                     .map(|r| zznet_session::types::RoomId::from(r.as_str()))
                     .collect();
-                let sm =
-                    zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
-                std::sync::Arc::new(tokio::sync::Mutex::new(sm))
+                let sm = SessionManager::<TRole>::new(offered);
+                Arc::new(Mutex::new(sm))
             }
         };
 
@@ -328,16 +447,12 @@ where
                             registry_instance
                                 .register_room_handler(room_id.clone(), factory.clone());
                         }
-                        Arc::new(tokio::sync::Mutex::new(registry_instance))
+                        Arc::new(Mutex::new(registry_instance))
                     };
 
                     let wirer: Arc<
                         dyn Fn(
-                                Arc<
-                                    tokio::sync::Mutex<
-                                        zznet_session::session_manager::SessionManager<TMsg, TRole>,
-                                    >,
-                                >,
+                                Arc<Mutex<SessionManager<TRole>>>,
                                 &zznet_session::types::PeerId,
                             ) -> std::pin::Pin<
                                 Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
@@ -388,7 +503,7 @@ where
 
         // Create and start ServerActor
         let actor = ServerActor {
-            tcp_server: std::sync::Arc::new(tokio::sync::Mutex::new(tcp_server)),
+            tcp_server: Arc::new(Mutex::new(tcp_server)),
             hello_config,
             connection_manager,
             bind_addr: actual_bind_addr,
@@ -404,10 +519,7 @@ where
     #[doc(hidden)]
     pub async fn start_with_connection_manager(
         self,
-    ) -> BuilderResult<(
-        Addr<ServerActor<TMsg, TRole>>,
-        Addr<ConnectionManager<TMsg, TRole>>,
-    )> {
+    ) -> BuilderResult<(Addr<ServerActor<TRole>>, Addr<ConnectionManager<TRole>>)> {
         self.validate()?;
 
         let bind_addr = self.bind_addr.unwrap();
@@ -421,9 +533,8 @@ where
                     .iter()
                     .map(|r| zznet_session::types::RoomId::from(r.as_str()))
                     .collect();
-                let sm =
-                    zznet_session::session_manager::SessionManager::<TMsg, TRole>::new(offered);
-                std::sync::Arc::new(tokio::sync::Mutex::new(sm))
+                let sm = SessionManager::<TRole>::new(offered);
+                Arc::new(Mutex::new(sm))
             }
         };
 
@@ -471,7 +582,7 @@ where
 
         // Create and start ServerActor
         let actor = ServerActor {
-            tcp_server: std::sync::Arc::new(tokio::sync::Mutex::new(tcp_server)),
+            tcp_server: Arc::new(Mutex::new(tcp_server)),
             hello_config,
             connection_manager: connection_manager.clone(),
             bind_addr: actual_bind_addr,
@@ -492,21 +603,19 @@ where
 }
 
 /// Actor that manages the server's accept loop
-pub struct ServerActor<TMsg, TRole>
+pub struct ServerActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
-    tcp_server: std::sync::Arc<tokio::sync::Mutex<TcpTransportServer>>,
+    tcp_server: Arc<Mutex<TcpTransportServer>>,
     hello_config: HelloConfig,
-    connection_manager: Addr<ConnectionManager<TMsg, TRole>>,
+    connection_manager: Addr<ConnectionManager<TRole>>,
     /// Cached bind address to avoid locking tcp_server (which may be blocked in accept())
     bind_addr: String,
 }
 
-impl<TMsg, TRole> Actor for ServerActor<TMsg, TRole>
+impl<TRole> Actor for ServerActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Context = Context<Self>;
@@ -524,9 +633,8 @@ where
 #[rtype(result = "()")]
 struct AcceptNext;
 
-impl<TMsg, TRole> Handler<AcceptNext> for ServerActor<TMsg, TRole>
+impl<TRole> Handler<AcceptNext> for ServerActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ResponseActFuture<Self, ()>;
@@ -579,16 +687,15 @@ where
 /// Existing connections will be allowed to complete their current operations.
 ///
 /// # Example
-/// ```ignore
-/// server_addr.send(zznet_builder::StopServer).await.ok();
+/// ```
+/// // server_addr.send(zznet_builder::StopServer).await.ok();
 /// ```
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct StopServer;
 
-impl<TMsg, TRole> Handler<StopServer> for ServerActor<TMsg, TRole>
+impl<TRole> Handler<StopServer> for ServerActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ();
@@ -606,17 +713,16 @@ where
 /// returns the actual assigned port.
 ///
 /// # Example
-/// ```ignore
-/// let addr = server_addr.send(zznet_builder::GetBindAddr).await??;
-/// println!("Server listening on: {}", addr);
+/// ```
+/// // let addr = server_addr.send(zznet_builder::GetBindAddr).await??;
+/// // println!("Server listening on: {}", addr);
 /// ```
 #[derive(Message)]
 #[rtype(result = "Result<String, ()>")]
 pub struct GetBindAddr;
 
-impl<TMsg, TRole> Handler<GetBindAddr> for ServerActor<TMsg, TRole>
+impl<TRole> Handler<GetBindAddr> for ServerActor<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = Result<String, ()>;
@@ -665,7 +771,7 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     enum TestRole {
         Collector,
         Database,

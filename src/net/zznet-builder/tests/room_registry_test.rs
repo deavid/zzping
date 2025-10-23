@@ -16,7 +16,7 @@ mod room_registry_integration_tests {
     use zznet_session::types::{RoomId, SessionError};
 
     // Simple test role
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     enum TestRole {
         Server,
         Client,
@@ -91,18 +91,18 @@ mod room_registry_integration_tests {
         message_count: Arc<Mutex<usize>>,
     }
 
-    impl RoomHandle<TestMessage> for TestRoomHandler {
+    impl RoomHandle for TestRoomHandler {
         fn room_id(&self) -> &RoomId {
             &self.room_id
         }
 
-        fn send_message(&mut self, _msg: TestMessage) -> Result<(), SessionError> {
+        fn send_message(&mut self, _msg: Vec<u8>) -> Result<(), SessionError> {
             Ok(())
         }
 
         fn spawn_forwarder(
             &mut self,
-            _tx: tokio::sync::mpsc::Sender<(RoomId, TestMessage)>,
+            _tx: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
         ) -> Result<(), SessionError> {
             Ok(())
         }
@@ -114,7 +114,7 @@ mod room_registry_integration_tests {
     }
 
     impl RoomHandlerFactory<TestMessage, TestRole> for TestRoomHandlerFactory {
-        fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle<TestMessage>> {
+        fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle> {
             Box::new(TestRoomHandler {
                 room_id,
                 message_count: Arc::clone(&self.message_count),
@@ -124,19 +124,20 @@ mod room_registry_integration_tests {
 
     #[tokio::test]
     async fn test_room_registry_creation() {
-        let session_manager = Arc::new(Mutex::new(SessionManager::<TestMessage, TestRole>::new(
-            vec![RoomId::from("test")],
-        )));
+        let session_manager = Arc::new(Mutex::new(SessionManager::<TestRole>::new(vec![
+            RoomId::from("test"),
+        ])));
 
-        let _registry = RoomRegistry::new(Arc::clone(&session_manager));
+        let _registry: RoomRegistry<TestMessage, TestRole> =
+            RoomRegistry::new(Arc::clone(&session_manager));
         // Registry created successfully
     }
 
     #[tokio::test]
     async fn test_room_registry_register_and_wire() {
-        let session_manager = Arc::new(Mutex::new(SessionManager::<TestMessage, TestRole>::new(
-            vec![RoomId::from("test")],
-        )));
+        let session_manager = Arc::new(Mutex::new(SessionManager::<TestRole>::new(vec![
+            RoomId::from("test"),
+        ])));
 
         let mut registry = RoomRegistry::new(Arc::clone(&session_manager));
 

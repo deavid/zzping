@@ -8,7 +8,7 @@ use std::time::Instant;
 use zznet_api::types::PeerIdentity;
 use zznet_auth::acl::AclManager;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum MockRole {
     X,
     Y,

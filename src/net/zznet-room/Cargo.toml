@@ -19,6 +19,11 @@ actix.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+bincode.workspace = true
+
+# Internal dependencies - NO zznet-session to avoid cycles
+zznet-auth = { path = "../zznet-auth" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

@@ -4,10 +4,8 @@ use tokio::task::JoinHandle;
 
 /// Connects two rooms bidirectionally
 /// Messages sent from Room A arrive at Room B and vice versa
-pub fn connect_rooms<T: Send + 'static>(
-    channels_a: RoomChannels<T>,
-    channels_b: RoomChannels<T>,
-) -> RoomConnection {
+/// Channels now carry Vec<u8> (serialized messages)
+pub fn connect_rooms(channels_a: RoomChannels, channels_b: RoomChannels) -> RoomConnection {
     // Forward A's outbound → B's inbound
     let task_a_to_b = tokio::spawn(forward_messages(
         channels_a.outbound_rx,
@@ -25,7 +23,7 @@ pub fn connect_rooms<T: Send + 'static>(
     }
 }
 
-async fn forward_messages<T>(mut rx: mpsc::Receiver<T>, tx: mpsc::Sender<T>) {
+async fn forward_messages(mut rx: mpsc::Receiver<Vec<u8>>, tx: mpsc::Sender<Vec<u8>>) {
     while let Some(msg) = rx.recv().await {
         if tx.send(msg).await.is_err() {
             // Other side closed, stop forwarding
@@ -56,8 +54,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_connect_rooms_forwards_messages() {
-        let (tx_a, rx_a): (mpsc::Sender<i32>, mpsc::Receiver<i32>) = mpsc::channel(10);
-        let (tx_b, rx_b): (mpsc::Sender<i32>, mpsc::Receiver<i32>) = mpsc::channel(10);
+        let (tx_a, rx_a): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) = mpsc::channel(10);
+        let (tx_b, rx_b): (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>) = mpsc::channel(10);
 
         let channels_a = RoomChannels {
             outbound_rx: rx_a,

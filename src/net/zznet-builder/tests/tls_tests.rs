@@ -9,12 +9,15 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use zznet_auth::ApplicationRole;
 use zznet_builder::{ClientBuilder, ServerBuilder};
 use zznet_session::room_message_trait::{
     DeserializationError, RoomMessageTrait, SerializationError,
 };
+use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
 use zznet_transport_tcp::config::TlsConfig;
 
@@ -38,7 +41,7 @@ fn get_certs_dir() -> PathBuf {
     get_workspace_root().join("test_certs")
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum TestRole {
     Collector,
     Database,
@@ -103,17 +106,14 @@ impl RoomMessageTrait for TestMessage {
 }
 
 /// Helper: Create a SessionManager and an authorizer used by builders in tests
-type TestSessionManager = std::sync::Arc<
-    tokio::sync::Mutex<zznet_session::session_manager::SessionManager<TestMessage, TestRole>>,
->;
+type TestSessionManager = Arc<Mutex<SessionManager<TestRole>>>;
 
 type TestAuthorizer = Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
 fn create_test_session_manager() -> (TestSessionManager, TestAuthorizer) {
     let offered_rooms = vec![RoomId::from("test")];
-    let sm =
-        zznet_session::session_manager::SessionManager::<TestMessage, TestRole>::new(offered_rooms);
-    let session_manager = std::sync::Arc::new(tokio::sync::Mutex::new(sm));
+    let sm = SessionManager::<TestRole>::new(offered_rooms);
+    let session_manager = Arc::new(Mutex::new(sm));
     let authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| Some(TestRole::Database))
         as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
     (session_manager, authorizer)

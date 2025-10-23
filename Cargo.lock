@@ -2456,6 +2456,7 @@ dependencies = [
  "actix",
  "anyhow",
  "async-trait",
+ "bincode",
  "chrono",
  "log",
  "ntest",
@@ -2470,6 +2471,7 @@ dependencies = [
  "uuid",
  "zznet-api",
  "zznet-auth",
+ "zznet-room",
  "zznet-session",
  "zzping-auth",
  "zzping-test-utils",
@@ -2513,6 +2515,7 @@ dependencies = [
  "tokio",
  "tracing",
  "zznet-auth",
+ "zznet-room",
  "zznet-session",
  "zzping-auth",
  "zzping-test-utils",
@@ -2582,9 +2585,12 @@ name = "zznet-room"
 version = "0.3.0-dev"
 dependencies = [
  "actix",
+ "bincode",
+ "serde",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "zznet-auth",
 ]
 
 [[package]]
@@ -2641,8 +2647,10 @@ dependencies = [
  "actix",
  "actix-rt",
  "anyhow",
+ "bincode",
  "chrono",
  "clap",
+ "log",
  "ron",
  "rustls",
  "rustls-pemfile",
@@ -2674,8 +2682,10 @@ dependencies = [
  "actix",
  "actix-rt",
  "anyhow",
+ "bincode",
  "chrono",
  "clap",
+ "log",
  "ron",
  "rustls",
  "rustls-pemfile",

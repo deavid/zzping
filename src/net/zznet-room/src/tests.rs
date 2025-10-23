@@ -1,11 +1,12 @@
 use actix::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::connector::connect_rooms;
 use crate::room::Room;
 
-#[derive(Message, Clone, Debug, PartialEq)]
+#[derive(Message, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[rtype(result = "()")]
 struct TestMessage {
     value: i32,
@@ -43,12 +44,12 @@ async fn test_room_to_room_communication() {
     // Setup Component A with its room
     let (component_a, _received_a) = TestComponent::new();
     let actor_a = component_a.start();
-    let (room_a, channels_a) = Room::new(actor_a.recipient());
+    let (room_a, channels_a) = Room::new("room_a".to_string(), actor_a.recipient());
 
     // Setup Component B with its room
     let (component_b, received_b) = TestComponent::new();
     let actor_b = component_b.start();
-    let (mut room_b, channels_b) = Room::new(actor_b.recipient());
+    let (mut room_b, channels_b) = Room::new("room_b".to_string(), actor_b.recipient());
 
     // Connect the rooms
     let _connection = connect_rooms(channels_a, channels_b);
@@ -84,41 +85,15 @@ async fn test_room_to_room_communication() {
 }
 
 #[actix::test]
-async fn test_manual_message_processing() {
-    let (component, received) = TestComponent::new();
-    let actor = component.start();
-    let (mut room, channels) = Room::new(actor.recipient());
-
-    // Simulate a message arriving
-    channels
-        .inbound_tx
-        .send(TestMessage { value: 42 })
-        .await
-        .unwrap();
-
-    // Process it manually
-    let processed = room.process_one().await.unwrap();
-    assert!(processed);
-
-    // Give handler time to process
-    tokio::time::sleep(Duration::from_millis(1)).await;
-
-    // Verify it was handled
-    let msgs = received.lock().unwrap();
-    assert_eq!(msgs.len(), 1);
-    assert_eq!(msgs[0].value, 42);
-}
-
-#[actix::test]
 async fn test_bidirectional_communication() {
     // Setup both components
     let (component_a, received_a) = TestComponent::new();
     let actor_a = component_a.start();
-    let (mut room_a, channels_a) = Room::new(actor_a.recipient());
+    let (mut room_a, channels_a) = Room::new("room_a".to_string(), actor_a.recipient());
 
     let (component_b, received_b) = TestComponent::new();
     let actor_b = component_b.start();
-    let (mut room_b, channels_b) = Room::new(actor_b.recipient());
+    let (mut room_b, channels_b) = Room::new("room_b".to_string(), actor_b.recipient());
 
     // Connect rooms
     let _connection = connect_rooms(channels_a, channels_b);

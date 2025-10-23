@@ -19,7 +19,6 @@ use zznet_api::transport::TransportConnection;
 use zznet_api::types::AuthContext;
 use zznet_auth::ApplicationRole;
 use zznet_session::peer_session::PeerSession;
-use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::{PeerId, RoomId};
 
@@ -31,11 +30,9 @@ type Authorizer<TRole> = Box<dyn Fn(&AuthContext) -> Option<TRole> + Send + Sync
 /// There is no code path that allows connections without authorization.
 /// Every peer must be explicitly authorized before gaining access.
 ///
-/// Generic over TMsg: the application's message enum type
 /// Generic over TRole: the application's role type
-pub struct ConnectionManager<TMsg, TRole>
+pub struct ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     /// Manages all peer sessions (shared with components via Arc<Mutex<...>>)
@@ -46,7 +43,7 @@ where
     /// - Arc<Mutex<...>> provides interior mutability for both use cases
     /// - All share the SAME SessionManager instance
     /// - This allows messages to flow: Network → SessionManager ← Components
-    session_manager: Arc<Mutex<SessionManager<TMsg, TRole>>>,
+    session_manager: Arc<Mutex<SessionManager<TRole>>>,
 
     /// Maps PeerId to HelloActor address
     /// Used to send InboundRoomMessage to the correct HelloActor
@@ -63,7 +60,7 @@ where
     room_handler_wirer: Option<
         Arc<
             dyn Fn(
-                    Arc<Mutex<SessionManager<TMsg, TRole>>>,
+                    Arc<Mutex<SessionManager<TRole>>>,
                     &PeerId,
                 ) -> std::pin::Pin<
                     Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
@@ -73,9 +70,8 @@ where
     >,
 }
 
-impl<TMsg, TRole> ConnectionManager<TMsg, TRole>
+impl<TRole> ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     /// Create a new ConnectionManager with a REQUIRED authorizer function.
@@ -120,7 +116,7 @@ where
     /// - Pass it to ConnectionManager via this constructor
     /// - This ensures messages broadcast to SessionManager reach all components
     pub fn new_with_session_manager(
-        session_manager: Arc<Mutex<SessionManager<TMsg, TRole>>>,
+        session_manager: Arc<Mutex<SessionManager<TRole>>>,
         authorizer: Authorizer<TRole>,
     ) -> Self {
         Self {
@@ -144,7 +140,7 @@ where
         mut self,
         wirer: Arc<
             dyn Fn(
-                    Arc<Mutex<SessionManager<TMsg, TRole>>>,
+                    Arc<Mutex<SessionManager<TRole>>>,
                     &PeerId,
                 ) -> std::pin::Pin<
                     Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
@@ -159,7 +155,7 @@ where
     ///
     /// This allows the application to create Room<T> instances with
     /// different T types before adding to the session.
-    pub fn add_peer(&mut self, peer_id: PeerId, peer_session: PeerSession<TMsg, TRole>) {
+    pub fn add_peer(&mut self, peer_id: PeerId, peer_session: PeerSession<TRole>) {
         if let Err(e) = self
             .session_manager
             .blocking_lock()
@@ -202,7 +198,7 @@ where
     /// Get the sender for sending messages to a peer
     ///
     /// Returns `None` if peer doesn't exist or isn't connected.
-    pub fn get_peer_sender(&self, peer_id: &PeerId) -> Option<mpsc::Sender<(RoomId, TMsg)>> {
+    pub fn get_peer_sender(&self, peer_id: &PeerId) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>> {
         self.session_manager
             .try_lock()
             .ok()
@@ -223,7 +219,7 @@ where
     pub fn subscribe_peer_inbound(
         &mut self,
         peer_id: &PeerId,
-    ) -> Option<tokio::sync::broadcast::Receiver<(RoomId, TMsg)>> {
+    ) -> Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>> {
         self.session_manager
             .try_lock()
             .ok()
@@ -239,9 +235,8 @@ where
     }
 }
 
-impl<TMsg, TRole> Actor for ConnectionManager<TMsg, TRole>
+impl<TRole> Actor for ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Context = Context<Self>;
@@ -258,9 +253,8 @@ struct HandshakePostProcessed {
     hello_actor: Addr<HelloActor>,
 }
 
-impl<TMsg, TRole> Handler<HandshakePostProcessed> for ConnectionManager<TMsg, TRole>
+impl<TRole> Handler<HandshakePostProcessed> for ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ();
@@ -281,14 +275,13 @@ struct HandshakePostProcessedInner<TMsg> {
     hello_to_conn_rx: Option<tokio::sync::mpsc::Receiver<(String, Vec<u8>)>>,
 }
 
-impl<TMsg, TRole> Handler<HandshakePostProcessedInner<TMsg>> for ConnectionManager<TMsg, TRole>
+impl<TRole> Handler<HandshakePostProcessedInner<Vec<u8>>> for ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait + 'static,
-    TRole: ApplicationRole,
+    TRole: ApplicationRole + 'static,
 {
     type Result = ();
 
-    fn handle(&mut self, msg: HandshakePostProcessedInner<TMsg>, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: HandshakePostProcessedInner<Vec<u8>>, _ctx: &mut Context<Self>) {
         // Store HelloActor address for future use
         self.hello_actors
             .insert(msg.peer_id.clone(), msg.hello_actor.clone());
@@ -323,9 +316,8 @@ pub struct HandleTransport {
     pub config: crate::actor::HelloConfig,
 }
 
-impl<TMsg, TRole> Handler<HandleTransport> for ConnectionManager<TMsg, TRole>
+impl<TRole> Handler<HandleTransport> for ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = Result<(), String>;
@@ -350,9 +342,8 @@ where
 pub struct GetPeers;
 
 /// Handler for GetPeers - Return list of connected peer IDs
-impl<TMsg, TRole> Handler<GetPeers> for ConnectionManager<TMsg, TRole>
+impl<TRole> Handler<GetPeers> for ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = Vec<PeerId>;
@@ -364,82 +355,68 @@ where
 
 /// Message to get a cloneable sender for a peer
 #[derive(Message)]
-#[rtype(result = "Option<mpsc::Sender<(RoomId, TMsg)>>")]
-pub struct GetPeerSender<TMsg: 'static> {
+#[rtype(result = "Option<mpsc::Sender<(RoomId, Vec<u8>)>>")]
+pub struct GetPeerSender {
     /// The peer to query for a cloneable sender.
     pub peer_id: PeerId,
-    _phantom: std::marker::PhantomData<TMsg>,
 }
 
-impl<TMsg> GetPeerSender<TMsg> {
+impl GetPeerSender {
     /// Create a `GetPeerSender` message for the given peer id.
     pub fn new(peer_id: PeerId) -> Self {
-        Self {
-            peer_id,
-            _phantom: std::marker::PhantomData,
-        }
+        Self { peer_id }
     }
 }
 
 /// Handler for GetPeerSender - Return cloneable sender for a peer
-impl<TMsg, TRole> Handler<GetPeerSender<TMsg>> for ConnectionManager<TMsg, TRole>
+impl<TRole> Handler<GetPeerSender> for ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
-    type Result = Option<mpsc::Sender<(RoomId, TMsg)>>;
+    type Result = Option<mpsc::Sender<(RoomId, Vec<u8>)>>;
 
-    fn handle(&mut self, msg: GetPeerSender<TMsg>, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: GetPeerSender, _ctx: &mut Context<Self>) -> Self::Result {
         self.get_peer_sender(&msg.peer_id)
     }
 }
 
 /// Message to subscribe to inbound messages from a peer
 #[derive(Message)]
-#[rtype(result = "Option<tokio::sync::broadcast::Receiver<(RoomId, TMsg)>>")]
-pub struct SubscribePeerInbound<TMsg: 'static> {
+#[rtype(result = "Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>>")]
+pub struct SubscribePeerInbound {
     /// The peer to subscribe to inbound messages from.
     pub peer_id: PeerId,
-    _phantom: std::marker::PhantomData<TMsg>,
 }
 
-impl<TMsg> SubscribePeerInbound<TMsg> {
+impl SubscribePeerInbound {
     /// Create a `SubscribePeerInbound` message for the given peer id.
     pub fn new(peer_id: PeerId) -> Self {
-        Self {
-            peer_id,
-            _phantom: std::marker::PhantomData,
-        }
+        Self { peer_id }
     }
 }
 
 /// Handler for SubscribePeerInbound - Subscribe to inbound messages from peer
-impl<TMsg, TRole> Handler<SubscribePeerInbound<TMsg>> for ConnectionManager<TMsg, TRole>
+impl<TRole> Handler<SubscribePeerInbound> for ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
-    type Result = Option<tokio::sync::broadcast::Receiver<(RoomId, TMsg)>>;
+    type Result = Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>>;
 
-    fn handle(
-        &mut self,
-        msg: SubscribePeerInbound<TMsg>,
-        _ctx: &mut Context<Self>,
-    ) -> Self::Result {
+    fn handle(&mut self, msg: SubscribePeerInbound, _ctx: &mut Context<Self>) -> Self::Result {
         self.subscribe_peer_inbound(&msg.peer_id)
     }
 }
 
-/// Message to send a typed message to a peer's room
+/// Message to send serialized data to a peer's room
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
-pub struct SendToRoom<TMsg> {
+pub struct SendToRoom {
     /// Target peer id.
     pub peer_id: PeerId,
     /// Target room id within the peer.
     pub room_id: RoomId,
-    /// The typed message to send.
-    pub message: TMsg,
+    /// The serialized message data.
+    pub data: Vec<u8>,
 }
 
 /// Handler for SendToRoom - Forward message to SessionManager
@@ -449,14 +426,13 @@ pub struct SendToRoom<TMsg> {
 /// instead of routing sends through the actor system.
 ///
 /// See `get_peer_sender()` method below for the proper approach.
-impl<TMsg, TRole> Handler<SendToRoom<TMsg>> for ConnectionManager<TMsg, TRole>
+impl<TRole> Handler<SendToRoom> for ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ResponseFuture<Result<(), String>>;
 
-    fn handle(&mut self, _msg: SendToRoom<TMsg>, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, _msg: SendToRoom, _ctx: &mut Context<Self>) -> Self::Result {
         // We can't access session_manager methods in async context without Arc
         // The real solution: don't use this pattern! Use get_peer_sender() instead.
         let error = "SendToRoom through actor messages not supported. \
@@ -469,9 +445,8 @@ where
 ///
 /// SECURITY: Every connection goes through the mandatory authorizer.
 /// No code path allows unauthenticated connections.
-impl<TMsg, TRole> Handler<HandshakeComplete> for ConnectionManager<TMsg, TRole>
+impl<TRole> Handler<HandshakeComplete> for ConnectionManager<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     type Result = ();
@@ -615,7 +590,7 @@ where
 
                     // Send channels back to actor so it can start the SessionBridge inside
                     // the actor context (this avoids spawn_local being called outside LocalSet).
-                    let inner_msg = HandshakePostProcessedInner::<TMsg> {
+                    let inner_msg = HandshakePostProcessedInner::<Vec<u8>> {
                         peer_id: zznet_session::types::PeerId::from(peer_id.as_str()),
                         hello_actor: send_hello_actor,
                         outbound_rx: Some(outbound_rx),
@@ -708,8 +683,7 @@ mod tests {
         let authorizer: Authorizer<zznet_auth::mock::MockRole> =
             Box::new(|_peer_identity| Some(zznet_auth::mock::MockRole::Admin));
 
-        let _manager =
-            ConnectionManager::<TestMessages, zznet_auth::mock::MockRole>::new(rooms, authorizer);
+        let _manager = ConnectionManager::<zznet_auth::mock::MockRole>::new(rooms, authorizer);
         // Just test it compiles and constructs
     }
 }

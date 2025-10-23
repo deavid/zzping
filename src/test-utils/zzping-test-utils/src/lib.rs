@@ -10,7 +10,6 @@
 
 use std::time::Duration;
 use tokio::sync::mpsc;
-use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::types::{RoomId, SessionError};
 
 /// A minimal RoomHandle implementation used in tests to provide a room id
@@ -33,22 +32,21 @@ impl DummyRoomHandle {
 /// Connect two SessionManager instances in-memory by wiring their peer channels
 /// together using tokio mpsc channels. This creates bidirectional channels so
 /// that manager_a can send to peer_b and manager_b can send to peer_a.
-pub async fn connect_managers_in_memory<TMsg, TRole>(
-    manager_a: &mut zznet_session::session_manager::SessionManager<TMsg, TRole>,
+pub async fn connect_managers_in_memory<TRole>(
+    manager_a: &mut zznet_session::session_manager::SessionManager<TRole>,
     peer_id_a: &zznet_session::types::PeerId,
-    manager_b: &mut zznet_session::session_manager::SessionManager<TMsg, TRole>,
+    manager_b: &mut zznet_session::session_manager::SessionManager<TRole>,
     peer_id_b: &zznet_session::types::PeerId,
 ) -> Result<(), zznet_session::types::SessionError>
 where
-    TMsg: RoomMessageTrait,
     TRole: zznet_auth::ApplicationRole,
 {
     use tokio::sync::mpsc;
 
     // Channel: A -> B
-    let (tx_a_to_b, rx_a_to_b) = mpsc::channel::<(RoomId, TMsg)>(16);
+    let (tx_a_to_b, rx_a_to_b) = mpsc::channel::<(RoomId, Vec<u8>)>(16);
     // Channel: B -> A
-    let (tx_b_to_a, rx_b_to_a) = mpsc::channel::<(RoomId, TMsg)>(16);
+    let (tx_b_to_a, rx_b_to_a) = mpsc::channel::<(RoomId, Vec<u8>)>(16);
 
     // Manager A connects to peer B with outbound tx A->B and inbound rx B->A
     manager_a
@@ -70,18 +68,17 @@ where
 /// 3. Setting role/permissions
 /// 4. Adding to manager
 /// 5. Publishing rooms
-pub async fn create_and_add_peer<TMsg, TRole>(
-    manager: &mut zznet_session::session_manager::SessionManager<TMsg, TRole>,
+pub async fn create_and_add_peer<TRole>(
+    manager: &mut zznet_session::session_manager::SessionManager<TRole>,
     peer_id: &zznet_session::types::PeerId,
     rooms: Vec<RoomId>,
     role: Option<TRole>,
 ) -> Result<(), zznet_session::types::SessionError>
 where
-    TMsg: RoomMessageTrait,
     TRole: zznet_auth::ApplicationRole,
 {
     // Create peer
-    let mut peer = zznet_session::peer_session::PeerSession::<TMsg, TRole>::new(peer_id.clone());
+    let mut peer = zznet_session::peer_session::PeerSession::<TRole>::new(peer_id.clone());
 
     // Add rooms
     for room_id in &rooms {
@@ -107,13 +104,13 @@ where
 }
 
 /// Return type for MessageCapture creation that bundles the capture handle with connection channels
-pub struct MessageCaptureChannels<TMsg> {
+pub struct MessageCaptureChannels {
     /// The capture handle used to receive messages from the connected peer.
-    pub capture: MessageCapture<TMsg>,
+    pub capture: MessageCapture,
     /// Sender side for outbound messages into the peer under test.
-    pub tx_out: mpsc::Sender<(RoomId, TMsg)>,
+    pub tx_out: mpsc::Sender<(RoomId, Vec<u8>)>,
     /// Receiver side for inbound messages that will be delivered to the peer.
-    pub rx_in: mpsc::Receiver<(RoomId, TMsg)>,
+    pub rx_in: mpsc::Receiver<(RoomId, Vec<u8>)>,
 }
 
 /// Message capture helper that sets up channels and provides a way to wait for messages.
@@ -134,41 +131,41 @@ pub struct MessageCaptureChannels<TMsg> {
 ///
 /// // New way (simple):
 /// async fn example() {
-///     let channels: MessageCaptureChannels<String> = MessageCaptureChannels::new();
+///     let channels: MessageCaptureChannels = MessageCaptureChannels::new();
 ///     let mut capture = channels.capture;
 ///     let pkt = capture.recv_default_timeout().await;
 /// }
 /// ```
-pub struct MessageCapture<TMsg> {
+pub struct MessageCapture {
     /// Receiver for captured messages. Tests can `.recv()` on this to observe
     /// messages published by the peer under test.
-    pub rx: mpsc::Receiver<(RoomId, TMsg)>,
+    pub rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
     // Internal sender kept alive so the channel remains open while the
     // capture exists.
-    _tx: mpsc::Sender<(RoomId, TMsg)>, // Keep alive
+    _tx: mpsc::Sender<(RoomId, Vec<u8>)>, // Keep alive
 }
 
-impl<TMsg> MessageCapture<TMsg>
+impl MessageCapture
 where
-    TMsg: Send + 'static,
+    Vec<u8>: Send + 'static,
 {
     /// Wait for the next message with a timeout
     pub async fn recv_timeout(
         &mut self,
         timeout: Duration,
-    ) -> Result<Option<(RoomId, TMsg)>, tokio::time::error::Elapsed> {
+    ) -> Result<Option<(RoomId, Vec<u8>)>, tokio::time::error::Elapsed> {
         tokio::time::timeout(timeout, self.rx.recv()).await
     }
 
     /// Wait for the next message with default timeout (500ms)
     pub async fn recv_default_timeout(
         &mut self,
-    ) -> Result<Option<(RoomId, TMsg)>, tokio::time::error::Elapsed> {
+    ) -> Result<Option<(RoomId, Vec<u8>)>, tokio::time::error::Elapsed> {
         self.recv_timeout(Duration::from_millis(500)).await
     }
 }
 
-impl<TMsg> MessageCaptureChannels<TMsg> {
+impl MessageCaptureChannels {
     /// Create a new message capture with default buffer size (10)
     pub fn new() -> Self {
         Self::with_buffer_size(10)
@@ -190,7 +187,7 @@ impl<TMsg> MessageCaptureChannels<TMsg> {
     }
 }
 
-impl<TMsg> Default for MessageCaptureChannels<TMsg> {
+impl Default for MessageCaptureChannels {
     fn default() -> Self {
         Self::new()
     }
@@ -198,14 +195,13 @@ impl<TMsg> Default for MessageCaptureChannels<TMsg> {
 
 /// Convenience helper that creates a peer, connects it to capture messages, and returns the capture handle.
 /// This combines create_and_add_peer + MessageCapture setup for the most common test pattern.
-pub async fn create_peer_with_message_capture<TMsg, TRole>(
-    manager: &mut zznet_session::session_manager::SessionManager<TMsg, TRole>,
+pub async fn create_peer_with_message_capture<TRole>(
+    manager: &mut zznet_session::session_manager::SessionManager<TRole>,
     peer_id: &zznet_session::types::PeerId,
     rooms: Vec<RoomId>,
     role: Option<TRole>,
-) -> Result<MessageCapture<TMsg>, zznet_session::types::SessionError>
+) -> Result<MessageCapture, zznet_session::types::SessionError>
 where
-    TMsg: RoomMessageTrait,
     TRole: zznet_auth::ApplicationRole,
 {
     // Create and add the peer
@@ -222,19 +218,20 @@ where
     Ok(channels.capture)
 }
 
-impl<M: Send + 'static + RoomMessageTrait> zznet_session::peer_session::RoomHandle<M>
-    for DummyRoomHandle
-{
+impl zznet_session::peer_session::RoomHandle for DummyRoomHandle {
     fn room_id(&self) -> &RoomId {
         &self.id
     }
 
-    fn send_message(&mut self, _msg: M) -> Result<(), SessionError> {
+    fn send_message(&mut self, _bytes: Vec<u8>) -> Result<(), SessionError> {
         // No-op for tests
         Ok(())
     }
 
-    fn spawn_forwarder(&mut self, _tx: mpsc::Sender<(RoomId, M)>) -> Result<(), SessionError> {
+    fn spawn_forwarder(
+        &mut self,
+        _tx: mpsc::Sender<(RoomId, Vec<u8>)>,
+    ) -> Result<(), SessionError> {
         // No-op for tests
         Ok(())
     }

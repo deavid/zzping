@@ -21,10 +21,7 @@ where
     TRole: ApplicationRole,
 {
     /// Create a new room handler for the given room ID.
-    ///
-    /// The handler should implement `RoomHandle<TMsg>` and know how to
-    /// extract/inject messages from/to the room's components.
-    fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle<TMsg>>;
+    fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle>;
 }
 
 /// Registry that manages room handler registration with a SessionManager.
@@ -38,7 +35,7 @@ where
     TMsg: RoomMessageTrait + Send + Sync + 'static,
     TRole: ApplicationRole,
 {
-    session_manager: Arc<Mutex<SessionManager<TMsg, TRole>>>,
+    session_manager: Arc<Mutex<SessionManager<TRole>>>,
     // Map of room_id -> factory for creating handlers
     handlers: std::collections::HashMap<RoomId, Arc<dyn RoomHandlerFactory<TMsg, TRole>>>,
 }
@@ -49,7 +46,7 @@ where
     TRole: ApplicationRole,
 {
     /// Create a new room registry.
-    pub fn new(session_manager: Arc<Mutex<SessionManager<TMsg, TRole>>>) -> Self {
+    pub fn new(session_manager: Arc<Mutex<SessionManager<TRole>>>) -> Self {
         Self {
             session_manager,
             handlers: std::collections::HashMap::new(),

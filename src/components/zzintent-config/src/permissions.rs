@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use zznet_auth::error::AuthError;
 use zznet_auth::role::ApplicationRole;
 use zzping_auth::{AuthRole, AuthRoleMapper};
 
@@ -16,40 +15,46 @@ pub enum IntentConfigPermission {
 }
 
 /// A trait for checking permissions.
-pub trait PermissionCheck<T> {
+pub trait PermissionCheck<T: ApplicationRole> {
     /// Checks if the given role has permission to update the config.
     fn has_update_permission(&self, role: &T) -> bool;
     /// Checks if the given role has permission to receive config updates.
     fn has_receive_permission(&self, role: &T) -> bool;
     /// Returns a string representation of the permission.
     fn to_string(&self, role: &T) -> String;
+    /// Returns the role wrapper for peers that should receive config updates.
+    fn receive_role(&self) -> crate::permission_wrapper::PermissionWrapper<T>;
 }
 
 // Implement ApplicationRole for the concrete permission enum.
 impl ApplicationRole for IntentConfigPermission {
-    fn from_cn(cn: &str) -> Result<Self, AuthError> {
+    fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
         match cn {
-            "intent-update" | "update-config" => Ok(Self::UpdateConfig),
-            "intent-receive" | "receive-config-updates" => Ok(Self::ReceiveConfigUpdates),
-            other => Err(AuthError::UnknownRole(other.to_string())),
+            "update-config" | "intent-update" => Ok(Self::UpdateConfig),
+            "receive-config-updates" | "intent-receive" => Ok(Self::ReceiveConfigUpdates),
+            _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
         }
     }
 
     fn as_str(&self) -> &'static str {
         match self {
-            IntentConfigPermission::UpdateConfig => "update-config",
-            IntentConfigPermission::ReceiveConfigUpdates => "receive-config-updates",
+            Self::UpdateConfig => "update-config",
+            Self::ReceiveConfigUpdates => "receive-config-updates",
         }
     }
 
     fn can_connect_to(&self, _target: &Self) -> bool {
-        // These permissions are orthogonal to connection topology for now.
+        // In this simple model, any valid role can connect to any other.
         true
     }
 
-    fn can_access_room(&self, _room_name: &str) -> bool {
-        // Both roles can access the intent-config room in our tests.
-        true
+    fn can_access_room(&self, room_name: &str) -> bool {
+        // All roles can access the intent-config room.
+        room_name == "intent-config"
+    }
+
+    fn receive_config_updates_role() -> Option<Self> {
+        Some(Self::ReceiveConfigUpdates)
     }
 }
 

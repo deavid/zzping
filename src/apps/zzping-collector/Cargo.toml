@@ -28,6 +28,8 @@ zznet-hello.workspace = true
 tokio.workspace = true
 actix.workspace = true
 actix-rt = "2"
+bincode.workspace = true
+log.workspace = true
 
 # Configuration and serialization
 serde.workspace = true

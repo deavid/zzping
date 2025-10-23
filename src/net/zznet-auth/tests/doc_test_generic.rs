@@ -6,7 +6,7 @@ use zznet_api::types::PeerIdentity;
 use zznet_auth::acl::AclManager;
 use zznet_auth::role::ApplicationRole;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum MockRole {
     Service,
     User,

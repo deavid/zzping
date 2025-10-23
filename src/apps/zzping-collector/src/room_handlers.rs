@@ -26,7 +26,7 @@ impl IntentConfigRoomHandlerFactory {
 }
 
 impl RoomHandlerFactory<CollectorMessage, AuthRole> for IntentConfigRoomHandlerFactory {
-    fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle<CollectorMessage>> {
+    fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle> {
         Box::new(CollectorIntentConfigRoomHandler {
             intent_addr: self.intent_addr.clone(),
             room_id,
@@ -40,26 +40,37 @@ struct CollectorIntentConfigRoomHandler {
     room_id: RoomId,
 }
 
-impl RoomHandle<CollectorMessage> for CollectorIntentConfigRoomHandler {
+impl RoomHandle for CollectorIntentConfigRoomHandler {
     fn room_id(&self) -> &RoomId {
         &self.room_id
     }
 
-    fn send_message(&mut self, msg: CollectorMessage) -> Result<(), SessionError> {
-        match msg {
-            CollectorMessage::Intent(intent_msg) => {
-                self.intent_addr
-                    .do_send(zzintent_config::messages::NetworkMessageReceived(
-                        intent_msg,
-                    ));
+    fn send_message(&mut self, bytes: Vec<u8>) -> Result<(), SessionError> {
+        // Deserialize bytes to IntentConfigNetworkMsg
+        let config = bincode::config::standard();
+        match bincode::serde::decode_from_slice::<
+            zzintent_config::network_messages::IntentConfigNetworkMsg,
+            _,
+        >(&bytes, config)
+        {
+            Ok((msg, _)) => {
+                // Forward directly to the actor (no wrapper needed)
+                self.intent_addr.do_send(msg);
                 Ok(())
+            }
+            Err(e) => {
+                log::error!("Failed to deserialize IntentConfigNetworkMsg: {:?}", e);
+                Err(SessionError::RoomNotFound {
+                    peer_id: zznet_session::types::PeerId::from("unknown"),
+                    room_id: self.room_id.clone(),
+                })
             }
         }
     }
 
     fn spawn_forwarder(
         &mut self,
-        _tx: tokio::sync::mpsc::Sender<(RoomId, CollectorMessage)>,
+        _tx: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
     ) -> Result<(), SessionError> {
         // This handler is receive-only
         Ok(())

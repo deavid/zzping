@@ -12,24 +12,6 @@
 //! - Receives typed messages from a peer
 //! - Delivers to a local component handler
 //!
-//! ## Example
-//!
-//! ```rust
-//! use zznet_room::room::Room;
-//! use zznet_room::connector::connect_rooms;
-//! use actix::prelude::*;
-//!
-//! #[derive(Message, Clone)]
-//! #[rtype(result = "()")]
-//! struct TestMsg { value: i32 }
-//!
-//! struct TestActor;
-//! impl Actor for TestActor { type Context = Context<Self>; }
-//! impl Handler<TestMsg> for TestActor {
-//!     type Result = ();
-//!     fn handle(&mut self, msg: TestMsg, _: &mut Context<Self>) {}
-//! }
-//!
 //! // In an Actix runtime:
 //! // let actor_a = TestActor.start();
 //! // let (room_a, channels_a) = Room::new(actor_a.recipient());
@@ -38,27 +20,6 @@
 //! // let connection = connect_rooms(channels_a, channels_b);
 //! ```
 //!
-//! ## Testing
-//!
-//! Rooms support both automatic and manual message processing:
-//!
-//! ```rust
-//! // Automatic: spawn background receiver
-//! // room.spawn_receiver().unwrap();
-//!
-//! // Manual: process one message at a time (for tests)
-//! // room.process_one().await.unwrap();
-//! ```
-
-//! ## Status
-//!
-//! This crate is currently a Proof-of-Concept (PoC). It provides a convenient
-//! in-memory `Room<T>` abstraction useful for local testing and component
-//! integration without involving the network layer. It is not yet hardened for
-//! production use: consider it a developer convenience rather than a stable
-//! delivery contract. If you plan to rely on it in production, open an issue so
-//! we can track hardening requirements (thread-safety, backpressure, tracing,
-//! and public API stability).
 
 /// Connector utilities to wire two `Room`s together.
 pub mod connector;

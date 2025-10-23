@@ -1,9 +1,5 @@
-use crate::{
-    room_message_trait::RoomMessageTrait,
-    types::{PeerId, RoomId, SessionError},
-};
+use crate::types::{PeerId, RoomId, SessionError};
 use async_trait::async_trait;
-use std::time::Duration;
 use zznet_auth::ApplicationRole;
 
 /// A trait for mocking the SessionManager.
@@ -11,36 +7,18 @@ use zznet_auth::ApplicationRole;
 /// This trait provides a subset of the `SessionManager`'s methods, allowing it
 /// to be mocked for testing purposes.
 #[async_trait]
-pub trait SessionManagerLike<TMsg, TRole>: Send + Sync
+pub trait SessionManagerLike<TRole>: Send + Sync
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
-    /// Broadcast a message to all peers matching a filter in parallel.
+    /// Send serialized bytes to a specific peer's room
     ///
-    /// This helper sends `message` to the given `room_id` for every peer whose
-    /// role satisfies `filter`. Each send is performed in its own task and the
-    /// function returns a vector of per-peer results. A per-send timeout can be
-    /// provided to avoid blocking on slow peers.
-    async fn broadcast_to_room<F>(
-        &self,
-        room_id: &RoomId,
-        message: TMsg,
-        filter: F,
-        timeout: Option<Duration>,
-    ) -> Vec<(PeerId, Result<(), SessionError>)>
-    where
-        F: Fn(&TRole) -> bool + Send + Sync + 'static;
-
-    /// Send a typed message to a specific peer's room
-    ///
-    /// The message is the application's enum type (TMsg).
-    /// It will be serialized at the transport layer.
+    /// Serialization happens at the Room layer.
     async fn send_to_room(
         &self,
         peer_id: &PeerId,
         room_id: &RoomId,
-        msg: TMsg,
+        bytes: Vec<u8>,
     ) -> Result<(), SessionError>;
 
     /// Get the authenticated role for a peer, cloned out of the session manager.
@@ -54,37 +32,19 @@ where
 // This allows components to use Arc<Mutex<SessionManager>> as their session manager,
 // enabling sharing with ConnectionManager which needs mutable access.
 #[async_trait]
-impl<TMsg, TRole> SessionManagerLike<TMsg, TRole>
-    for tokio::sync::Mutex<crate::session_manager::SessionManager<TMsg, TRole>>
+impl<TRole> SessionManagerLike<TRole>
+    for tokio::sync::Mutex<crate::session_manager::SessionManager<TRole>>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
-    async fn broadcast_to_room<F>(
-        &self,
-        room_id: &RoomId,
-        message: TMsg,
-        filter: F,
-        timeout: Option<Duration>,
-    ) -> Vec<(PeerId, Result<(), SessionError>)>
-    where
-        F: Fn(&TRole) -> bool + Send + Sync + 'static,
-    {
-        let timeout_duration = timeout.unwrap_or(Duration::from_millis(5000));
-        // Lock the mutex to access the SessionManager
-        let sm = self.lock().await;
-        sm.broadcast_to_room(room_id, message, filter, timeout_duration)
-            .await
-    }
-
     async fn send_to_room(
         &self,
         peer_id: &PeerId,
         room_id: &RoomId,
-        msg: TMsg,
+        bytes: Vec<u8>,
     ) -> Result<(), SessionError> {
         let sm = self.lock().await;
-        sm.send_to_room(peer_id, room_id, msg).await
+        sm.send_to_room(peer_id, room_id, bytes).await
     }
 
     fn get_peer_role(&self, peer_id: &PeerId) -> Option<TRole> {

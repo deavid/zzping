@@ -7,7 +7,7 @@ use zznet_auth::acl::AclManager;
 use zznet_auth::error::AuthError;
 use zznet_auth::role::ApplicationRole;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum MockRole {
     Foo,
     Bar,

@@ -336,23 +336,20 @@ impl CollectorService {
         let keys: Vec<_> = pkcs8_private_keys(&mut key_reader)
             .map(|r| {
                 r.map_err(|e| CollectorError::Config(format!("Failed to parse private key: {}", e)))
-                    .map(|k| Box::leak(k.secret_pkcs8_der().to_vec().into_boxed_slice()))
             })
             .collect::<std::result::Result<_, _>>()?;
 
         if keys.is_empty() {
             return Err(CollectorError::Config("No private key found".into()));
         }
-        let private_key = PrivateKeyDer::try_from(unsafe { &*(keys[0] as *const [u8]) })
-            .map_err(|e| CollectorError::Config(format!("Invalid private key: {}", e)))?;
-        drop(keys);
+        // Convert to PrivateKeyDer directly from the owned key
+        let private_key = PrivateKeyDer::Pkcs8(keys.into_iter().next().unwrap());
 
-        // 4. Build client config
-        let cert_chain_der: Vec<_> = cert_chain
-            .iter()
-            .map(|c| CertificateDer::from(unsafe { &*(*c as *const [u8]) }))
+        // 4. Build client config - convert cert_chain to owned CertificateDer
+        let cert_chain_der: Vec<CertificateDer<'static>> = cert_chain
+            .into_iter()
+            .map(|c| CertificateDer::from(c.to_vec()))
             .collect();
-        drop(cert_chain);
         let config = ClientConfig::builder()
             .with_root_certificates(root_store)
             .with_client_auth_cert(cert_chain_der, private_key)
@@ -388,8 +385,7 @@ impl CollectorService {
     /// Create ConnectionManager configured with offered rooms for collector
     fn create_connection_manager(
         &self,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager<CollectorMessage, AuthRole>>
-    {
+    ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         use zznet_session::types::RoomId;
 
         // Collector offers intent-config related rooms
@@ -411,12 +407,9 @@ impl CollectorService {
     fn create_connection_manager_with_session_manager(
         &self,
         session_manager: Arc<
-            tokio::sync::Mutex<
-                zznet_session::session_manager::SessionManager<CollectorMessage, AuthRole>,
-            >,
+            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<AuthRole>>,
         >,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager<CollectorMessage, AuthRole>>
-    {
+    ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         let authorizer: zzping_auth::Authorizer = self.make_authorizer();
 
         Ok(
@@ -483,8 +476,7 @@ impl CollectorService {
     /// transport connections or customize the connection handling.
     pub fn start_connection_manager(
         &self,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<CollectorMessage, AuthRole>>
-    {
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         use actix::prelude::*;
 
         let mgr = match self.create_connection_manager() {
@@ -501,12 +493,9 @@ impl CollectorService {
     pub fn start_connection_manager_with_session_manager(
         &self,
         session_manager: Arc<
-            tokio::sync::Mutex<
-                zznet_session::session_manager::SessionManager<CollectorMessage, AuthRole>,
-            >,
+            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<AuthRole>>,
         >,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<CollectorMessage, AuthRole>>
-    {
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         use actix::prelude::*;
 
         let mgr = match self.create_connection_manager_with_session_manager(session_manager) {

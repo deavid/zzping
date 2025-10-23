@@ -90,7 +90,7 @@ pub enum MetricsMessage {
 /// Application A's message enum: Full collector with all rooms
 ///
 /// This simulates a full-featured collector binary that supports all room types.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum CollectorMessages {
     /// Message for intent configuration room.
     IntentConfig(IntentConfigMessage),

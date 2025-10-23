@@ -1,7 +1,6 @@
 //! Provides the public builder for creating and starting the IntentConfigActor.
 
 use crate::actor::IntentConfigActor;
-use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permission_wrapper::PermissionWrapper;
 use crate::role::IntentConfigRole;
 use actix::prelude::*;
@@ -19,7 +18,7 @@ use zznet_auth::role::ApplicationRole;
 /// is constructed and started in a controlled manner.
 pub struct IntentConfigBuilder<T: ApplicationRole = IntentConfigPermission> {
     role: IntentConfigRole,
-    session_manager: Option<Rc<SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>>>,
+    session_manager: Option<Rc<SessionManager<PermissionWrapper<T>>>>,
     /// Per-peer broadcast timeout used when sending messages via SessionManager
     broadcast_timeout: Duration,
 }
@@ -54,7 +53,7 @@ impl<T: ApplicationRole> IntentConfigBuilder<T> {
     /// Set the SessionManager for network communication
     pub fn session_manager(
         mut self,
-        session_manager: SessionManager<IntentConfigNetworkMsg, PermissionWrapper<T>>,
+        session_manager: SessionManager<PermissionWrapper<T>>,
     ) -> Self {
         self.session_manager = Some(Rc::new(session_manager));
         self
@@ -99,8 +98,8 @@ impl<T: ApplicationRole> IntentConfigBuilder<T> {
             actor.role()
         );
 
-        // Configure broadcast timeout on actor
-        actor.set_broadcast_timeout(self.broadcast_timeout);
+        // TODO: Broadcast timeout removed during Room<T> migration
+        // Timeout configuration will be reimplemented if needed
 
         // Set session manager if provided
         if let Some(session_manager) = self.session_manager.take() {

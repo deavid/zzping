@@ -13,6 +13,10 @@ pub enum CStateError {
     #[error("Invalid role: The actor is not configured as a {0}.")]
     InvalidRole(String),
 
+    /// Returned when the Room is required but not configured.
+    #[error("Room is not configured.")]
+    NotConnected,
+
     /// Returned when the SessionManager is required but not provided.
     #[error("SessionManager is not configured.")]
     SessionManagerMissing,
@@ -81,6 +85,25 @@ pub struct CStateHealth {
     pub heartbeats_acked: u64,
     /// Total number of heartbeats that failed to send.
     pub heartbeats_failed: u64,
+}
+
+/// A command message to create the room for component-to-component messaging.
+/// This should be called after the actor is started so we can get the proper Recipient.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct CreateRoom;
+
+/// A request to get the room channels for component-to-component messaging.
+/// This allows external services to wire up room-based communication with the actor.
+#[derive(Message)]
+#[rtype(result = "GetRoomChannelsResponse")]
+pub struct GetRoomChannels;
+
+/// Response containing the room channels if available.
+#[derive(Clone)]
+pub struct GetRoomChannelsResponse {
+    /// The room channels for component-to-component messaging, wrapped in Arc for sharing.
+    pub channels: Option<std::sync::Arc<zznet_room::room::RoomChannels>>,
 }
 
 #[cfg(test)]

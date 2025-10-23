@@ -49,10 +49,24 @@ fn generate_connection_nonce() -> u64 {
 }
 
 /// Contains the state specific to a `Database` role instance.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct DatabaseStateData {
     /// A map of tracked collectors, keyed by their collector ID.
     pub collectors: HashMap<String, TrackedCollector>,
+    /// The number of seconds without a heartbeat before a collector is considered stale.
+    pub stale_timeout_secs: u64,
+    /// The maximum number of collectors to track.
+    pub max_collectors: Option<usize>,
+}
+
+impl Default for DatabaseStateData {
+    fn default() -> Self {
+        Self {
+            collectors: HashMap::new(),
+            stale_timeout_secs: 300, // 5 minutes default
+            max_collectors: None,
+        }
+    }
 }
 
 /// Represents a collector being tracked by the database.
@@ -74,6 +88,45 @@ pub struct TrackedCollector {
     pub connection_nonce: u64,
     /// The SessionManager peer ID of the collector.
     pub peer_id: String,
+}
+
+impl TrackedCollector {
+    /// Creates a new TrackedCollector.
+    pub fn new(id: String, connection_nonce: u64) -> Self {
+        Self {
+            id,
+            last_seen_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+            uptime_secs: 0,
+            pings_sent: 0,
+            pings_received: 0,
+            batches_sent: 0,
+            connection_nonce,
+            peer_id: String::new(),
+        }
+    }
+
+    /// Updates the collector's heartbeat information.
+    pub fn update_heartbeat(
+        &mut self,
+        uptime_secs: u64,
+        pings_sent: u64,
+        pings_received: u64,
+        batches_sent: u64,
+        _last_config_update_ms: u64,
+    ) {
+        self.last_seen_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.uptime_secs = uptime_secs;
+        self.pings_sent = pings_sent;
+        self.pings_received = pings_received;
+        self.batches_sent = batches_sent;
+        // Note: last_config_update_ms could be stored if needed
+    }
 }
 
 #[cfg(test)]

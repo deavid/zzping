@@ -68,20 +68,6 @@ pub struct GetCurrentConfig;
 #[rtype(result = "IntentConfigHealth")]
 pub struct GetHealth;
 
-/// A command message to set a generic database adapter (for network broadcast via shared SessionManager).
-/// The adapter is a trait object that handles type conversion and broadcasting.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct SetDatabaseAdapter(
-    pub std::sync::Arc<dyn crate::database_message_adapter::BroadcastVia>,
-);
-
-/// A message containing a network message received from a peer.
-/// This is sent by the network layer (SessionManager/RoomHandler) to the IntentConfigActor.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct NetworkMessageReceived(pub crate::network_messages::IntentConfigNetworkMsg);
-
 /// A compact health struct exposing basic counters and last activity.
 #[derive(Clone, Debug, PartialEq, Default, Serialize, Deserialize)]
 pub struct IntentConfigHealth {
@@ -105,11 +91,7 @@ pub struct GetRoomChannels;
 #[derive(Clone)]
 pub struct GetRoomChannelsResponse {
     /// The room channels for component-to-component messaging, wrapped in Arc for sharing.
-    pub channels: Option<
-        std::sync::Arc<
-            zznet_room::room::RoomChannels<crate::network_messages::IntentConfigNetworkMsg>,
-        >,
-    >,
+    pub channels: Option<std::sync::Arc<zznet_room::room::RoomChannels>>,
 }
 
 /// A command message to create the room for component-to-component messaging.
@@ -127,9 +109,7 @@ pub struct GetRoomHandlerForSessionManager;
 /// Response containing a RoomHandle trait object for SessionManager.
 pub struct GetRoomHandlerResponse {
     /// A RoomHandle that SessionManager can use to route messages to this actor
-    pub handler: Box<
-        dyn zznet_session::peer_session::RoomHandle<crate::network_messages::IntentConfigNetworkMsg>,
-    >,
+    pub handler: Box<dyn zznet_session::peer_session::RoomHandle>,
 }
 
 #[cfg(test)]

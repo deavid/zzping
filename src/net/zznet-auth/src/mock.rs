@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// This provides a minimal role implementation with basic authorization rules
 /// suitable for unit and integration tests.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum MockRole {
     /// Administrative role with full access.
     Admin,

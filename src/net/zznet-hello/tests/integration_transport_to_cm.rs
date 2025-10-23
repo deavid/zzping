@@ -5,38 +5,7 @@ use zznet_api::transport::{TransportClient as _, TransportServer as _};
 use zznet_auth::mock::MockRole;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
-use zznet_session::room_message_trait::{
-    DeserializationError, RoomMessageTrait, SerializationError,
-};
 use zznet_transport_tcp::server::TcpTransportServer;
-
-// Minimal room message type implementing RoomMessageTrait for test
-#[derive(Debug, Clone)]
-struct EmptyMsg;
-
-impl RoomMessageTrait for EmptyMsg {
-    fn room_id(&self) -> zznet_session::types::RoomId {
-        zznet_session::types::RoomId::from("test")
-    }
-
-    fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
-        Ok(Vec::new())
-    }
-
-    fn deserialize_for_room(
-        _room_id: &zznet_session::types::RoomId,
-        _bytes: &[u8],
-    ) -> Result<Self, DeserializationError>
-    where
-        Self: Sized,
-    {
-        Ok(EmptyMsg)
-    }
-
-    fn supported_rooms() -> Vec<zznet_session::types::RoomId> {
-        vec![zznet_session::types::RoomId::from("test")]
-    }
-}
 
 #[tokio::test]
 async fn transport_accept_and_send_to_connection_manager() {
@@ -82,8 +51,7 @@ async fn transport_accept_and_send_to_connection_manager() {
                     as Box<
                         dyn Fn(&zznet_api::types::AuthContext) -> Option<MockRole> + Send + Sync,
                     >;
-            let mgr =
-                ConnectionManager::<EmptyMsg, MockRole>::new(offered_rooms, authorizer).start();
+            let mgr = ConnectionManager::<MockRole>::new(offered_rooms, authorizer).start();
 
             // Send transport using HandleTransport, ensure try_send succeeds
             let config = HelloConfig::default();

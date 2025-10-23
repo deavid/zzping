@@ -4,36 +4,28 @@ use crate::actor::CStateActor;
 use crate::messages::{
     CStateError, CStateHealth, GetCollectorState, GetHealth, UpdateHealthMetrics,
 };
-use crate::network_messages::CStateMessage;
 use crate::state::CollectorStateData;
 use actix::Addr;
 use zznet_auth::ApplicationRole;
-use zznet_session::{
-    room_message_trait::RoomMessageTrait, session_manager_like::SessionManagerLike,
-};
 
 /// A handle for interacting with the `CStateActor`.
 ///
 /// This provides a clean, async-friendly API for other components
 /// to communicate with the collector state component.
 #[derive(Clone)]
-pub struct CStateHandle<TMsg, TRole, SM>
+pub struct CStateHandle<TRole>
 where
-    TMsg: RoomMessageTrait + From<CStateMessage>,
     TRole: ApplicationRole,
-    SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
-    addr: Addr<CStateActor<TMsg, TRole, SM>>,
+    addr: Addr<CStateActor<TRole>>,
 }
 
-impl<TMsg, TRole, SM> CStateHandle<TMsg, TRole, SM>
+impl<TRole> CStateHandle<TRole>
 where
-    TMsg: RoomMessageTrait + From<CStateMessage>,
     TRole: ApplicationRole,
-    SM: SessionManagerLike<TMsg, TRole> + 'static,
 {
     /// Creates a new `CStateHandle`.
-    pub fn new(addr: Addr<CStateActor<TMsg, TRole, SM>>) -> Self {
+    pub fn new(addr: Addr<CStateActor<TRole>>) -> Self {
         Self { addr }
     }
 

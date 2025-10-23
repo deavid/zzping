@@ -20,7 +20,7 @@ use zznet_builder::{ClientBuilder, ServerBuilder};
 use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::types::{RoomId, SessionError};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum TestRole {
     Collector,
     Database,
@@ -50,11 +50,6 @@ impl zznet_auth::ApplicationRole for TestRole {
         true
     }
 }
-
-// Keep existing test code compiling which still references `AuthRole` by
-// providing a local alias to the test role. This demonstrates that zznet-builder
-// is generic and works with any ApplicationRole implementation.
-type AuthRole = TestRole;
 
 // Test message type for integration tests
 #[derive(Debug, Clone, PartialEq)]
@@ -135,15 +130,11 @@ async fn test_server_client_basic_connection() {
 
     // Shared session managers used in tests
     let server_session_manager = std::sync::Arc::new(tokio::sync::Mutex::new(
-        zznet_session::session_manager::SessionManager::<TestMessage, TestRole>::new(
-            server_rooms.clone(),
-        ),
+        zznet_session::session_manager::SessionManager::<TestRole>::new(server_rooms.clone()),
     ));
 
     let client_session_manager = std::sync::Arc::new(tokio::sync::Mutex::new(
-        zznet_session::session_manager::SessionManager::<TestMessage, TestRole>::new(
-            client_rooms.clone(),
-        ),
+        zznet_session::session_manager::SessionManager::<TestRole>::new(client_rooms.clone()),
     ));
 
     let server_authorizer =
@@ -215,19 +206,17 @@ async fn test_multiple_clients() {
     // Create server SessionManager + authorizer and start server
     let server_rooms = vec![RoomId::from("health")];
     let server_session_manager = std::sync::Arc::new(tokio::sync::Mutex::new(
-        zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(
-            server_rooms.clone(),
-        ),
+        zznet_session::session_manager::SessionManager::<TestRole>::new(server_rooms.clone()),
     ));
 
     let server_authorizer =
-        Box::new(|_auth_ctx: &zznet_api::types::AuthContext| AuthRole::from_cn("database").ok())
-            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
+        Box::new(|_auth_ctx: &zznet_api::types::AuthContext| TestRole::from_cn("database").ok())
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
     println!("Starting server on 127.0.0.1:18081...");
-    let (server, _server_manager) = ServerBuilder::new()
+    let (server, _server_manager) = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:18081")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(server_session_manager.clone())
         .with_authorizer(server_authorizer)
@@ -247,19 +236,17 @@ async fn test_multiple_clients() {
 
         let client_rooms = vec![RoomId::from("health")];
         let client_session_manager = std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(
-                client_rooms.clone(),
-            ),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(client_rooms.clone()),
         ));
 
         let client_authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| {
-            AuthRole::from_cn("database").ok()
+            TestRole::from_cn("database").ok()
         })
-            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
-        let client = ClientBuilder::new()
+        let client = ClientBuilder::<TestMessage, TestRole>::new()
             .connect_to("127.0.0.1:18081")
-            .as_role(AuthRole::Collector)
+            .as_role(TestRole::Collector)
             .offer_rooms(vec!["health".to_string()])
             .with_session_manager(client_session_manager.clone())
             .with_authorizer(client_authorizer)
@@ -303,14 +290,14 @@ async fn test_client_reconnection() {
 
     // Start server
     println!("Starting server on 127.0.0.1:18082...");
-    let server = ServerBuilder::new()
+    let server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:18082")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .start()
@@ -323,14 +310,14 @@ async fn test_client_reconnection() {
     // Start client with auto-reconnect enabled
     println!("Starting client with auto-reconnect...");
 
-    let client = ClientBuilder::new()
+    let client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:18082")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .auto_reconnect(true)
@@ -349,14 +336,14 @@ async fn test_client_reconnection() {
 
     // Restart server
     println!("Restarting server...");
-    let server2 = ServerBuilder::new()
+    let server2 = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:18082")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .start()
@@ -384,14 +371,14 @@ async fn test_graceful_shutdown() {
 
     // Start server
     println!("Starting server on 127.0.0.1:18083...");
-    let server = ServerBuilder::new()
+    let server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:18083")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .start()
@@ -402,14 +389,14 @@ async fn test_graceful_shutdown() {
 
     // Start client
     println!("Starting client...");
-    let client = ClientBuilder::new()
+    let client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:18083")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .auto_reconnect(false)
@@ -440,14 +427,14 @@ async fn test_server_bind_error() {
 
     // Try to bind to invalid address
     println!("Attempting to bind to invalid address...");
-    let result = ServerBuilder::new()
+    let result = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("999.999.999.999:99999")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .start()
@@ -466,14 +453,14 @@ async fn test_client_connection_failure() {
 
     // Connect to non-existent server (no auto-reconnect)
     println!("Connecting to non-existent server...");
-    let client = ClientBuilder::new()
+    let client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:19999")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .auto_reconnect(false)
@@ -506,21 +493,19 @@ async fn test_different_auth_roles() {
 
         // Create server SessionManager + authorizer
         let server_session_manager = std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(
-                server_rooms.clone(),
-            ),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(server_rooms.clone()),
         ));
 
         let server_authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| {
-            AuthRole::from_cn("database").ok()
+            TestRole::from_cn("database").ok()
         })
-            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
         // Start server and obtain its ConnectionManager addr
         println!("Starting server on ephemeral port (bind 127.0.0.1:0)...");
-        let (server, _server_manager) = ServerBuilder::new()
+        let (server, _server_manager) = ServerBuilder::<TestMessage, TestRole>::new()
             .bind("127.0.0.1:0")
-            .as_role(AuthRole::Database)
+            .as_role(TestRole::Database)
             .offer_rooms(vec!["health".to_string()])
             .with_session_manager(server_session_manager.clone())
             .with_authorizer(server_authorizer)
@@ -539,12 +524,12 @@ async fn test_different_auth_roles() {
             .expect("Server did not return addr");
 
         println!("Starting Collector client connecting to {}...", server_addr);
-        let client1 = ClientBuilder::new()
+        let client1 = ClientBuilder::<TestMessage, TestRole>::new()
             .connect_to(&server_addr)
-            .as_role(AuthRole::Collector)
+            .as_role(TestRole::Collector)
             .offer_rooms(vec!["health".to_string()])
             .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-                zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
+                zznet_session::session_manager::SessionManager::<TestRole>::new(vec![
                     RoomId::from("health"),
                 ]),
             )))
@@ -579,21 +564,19 @@ async fn test_end_to_end_message_exchange() {
         let client_rooms = vec![RoomId::from("health")];
 
         let server_session_manager = std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(
-                server_rooms.clone(),
-            ),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(server_rooms.clone()),
         ));
 
         let server_authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| {
-            AuthRole::from_cn("database").ok()
+            TestRole::from_cn("database").ok()
         })
-            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
         // Start server with ConnectionManager
         println!("Starting server on ephemeral port (bind 127.0.0.1:0)...");
-        let (server, server_manager) = ServerBuilder::new()
+        let (server, server_manager) = ServerBuilder::<TestMessage, TestRole>::new()
             .bind("127.0.0.1:0")
-            .as_role(AuthRole::Database)
+            .as_role(TestRole::Database)
             .offer_rooms(vec!["health".to_string()])
             .with_session_manager(server_session_manager.clone())
             .with_authorizer(server_authorizer)
@@ -613,19 +596,17 @@ async fn test_end_to_end_message_exchange() {
         // Start client with ConnectionManager
         println!("Starting client connecting to {}...", server_addr);
         let client_session_manager = std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(
-                client_rooms.clone(),
-            ),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(client_rooms.clone()),
         ));
 
         let client_authorizer = Box::new(|_auth_ctx: &zznet_api::types::AuthContext| {
-            AuthRole::from_cn("database").ok()
+            TestRole::from_cn("database").ok()
         })
-            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<AuthRole> + Send + Sync>;
+            as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
-        let (client, client_manager) = ClientBuilder::new()
+        let (client, client_manager) = ClientBuilder::<TestMessage, TestRole>::new()
             .connect_to(&server_addr)
-            .as_role(AuthRole::Collector)
+            .as_role(TestRole::Collector)
             .offer_rooms(vec!["health".to_string()])
             .with_session_manager(client_session_manager.clone())
             .with_authorizer(client_authorizer)
@@ -694,17 +675,17 @@ async fn test_end_to_end_message_exchange() {
 
         // Subscribe to inbound messages on both sides using actor messages
         let mut server_receiver = server_manager
-            .send(zznet_hello::connection_manager::SubscribePeerInbound::<
-                TestMessage,
-            >::new(server_peer_id.clone()))
+            .send(zznet_hello::connection_manager::SubscribePeerInbound::new(
+                server_peer_id.clone(),
+            ))
             .await
             .expect("Failed to subscribe server")
             .expect("Failed to subscribe server");
 
         let mut client_receiver = client_manager
-            .send(zznet_hello::connection_manager::SubscribePeerInbound::<
-                TestMessage,
-            >::new(client_peer_id.clone()))
+            .send(zznet_hello::connection_manager::SubscribePeerInbound::new(
+                client_peer_id.clone(),
+            ))
             .await
             .expect("Failed to subscribe client")
             .expect("Failed to subscribe client");
@@ -712,29 +693,29 @@ async fn test_end_to_end_message_exchange() {
         // Get senders for outbound messages using actor messages
         // client_sender sends to server, so use client's peer ID for server
         let client_sender = client_manager
-            .send(
-                zznet_hello::connection_manager::GetPeerSender::<TestMessage>::new(
-                    client_peer_id.clone(),
-                ),
-            )
+            .send(zznet_hello::connection_manager::GetPeerSender::new(
+                client_peer_id.clone(),
+            ))
             .await
             .expect("Failed to get client sender")
             .expect("Failed to get client sender");
         // server_sender sends to client, so use server's peer ID for client
         let server_sender = server_manager
-            .send(
-                zznet_hello::connection_manager::GetPeerSender::<TestMessage>::new(
-                    server_peer_id.clone(),
-                ),
-            )
+            .send(zznet_hello::connection_manager::GetPeerSender::new(
+                server_peer_id.clone(),
+            ))
             .await
             .expect("Failed to get server sender")
             .expect("Failed to get server sender");
 
         // Send message from client to server
         println!("Sending Ping(42) from client to server...");
+        let ping_msg = TestMessage::Ping(42);
+        let ping_bytes = ping_msg
+            .serialize_inner()
+            .expect("Failed to serialize Ping");
         client_sender
-            .try_send((RoomId::from("health"), TestMessage::Ping(42)))
+            .try_send((RoomId::from("health"), ping_bytes.clone()))
             .expect("Failed to send message");
 
         // Receive message on server side
@@ -749,7 +730,11 @@ async fn test_end_to_end_message_exchange() {
                     received_room_id, received_message
                 );
                 assert_eq!(received_room_id, RoomId::from("health"));
-                assert_eq!(received_message, TestMessage::Ping(42));
+                // Deserialize and compare
+                let deserialized =
+                    TestMessage::deserialize_for_room(&RoomId::from("health"), &received_message)
+                        .expect("Failed to deserialize message");
+                assert_eq!(deserialized, TestMessage::Ping(42));
             }
             Ok(Err(e)) => panic!("Broadcast recv error: {:?}", e),
             Err(_) => {
@@ -770,8 +755,12 @@ async fn test_end_to_end_message_exchange() {
 
         // Send response from server to client
         println!("Sending Pong(42) from server to client...");
+        let pong_msg = TestMessage::Pong(42);
+        let pong_bytes = pong_msg
+            .serialize_inner()
+            .expect("Failed to serialize Pong");
         server_sender
-            .try_send((RoomId::from("health"), TestMessage::Pong(42)))
+            .try_send((RoomId::from("health"), pong_bytes.clone()))
             .expect("Failed to send response");
 
         // Receive response on client side
@@ -786,7 +775,11 @@ async fn test_end_to_end_message_exchange() {
                     received_room_id, received_message
                 );
                 assert_eq!(received_room_id, RoomId::from("health"));
-                assert_eq!(received_message, TestMessage::Pong(42));
+                // Deserialize and compare
+                let deserialized =
+                    TestMessage::deserialize_for_room(&RoomId::from("health"), &received_message)
+                        .expect("Failed to deserialize message");
+                assert_eq!(deserialized, TestMessage::Pong(42));
             }
             Ok(Err(e)) => panic!("Broadcast recv error: {:?}", e),
             Err(_) => panic!("Timeout waiting for response on client side"),
@@ -814,14 +807,14 @@ async fn test_phase5_connection_manager_not_exposed() {
     println!("\n=== Phase 5 Test: ConnectionManager Not in Public API ===");
 
     // Start server using public API
-    let server = ServerBuilder::new()
+    let server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:18090")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .start() // Public API - returns Addr<ServerActor> only
@@ -831,14 +824,14 @@ async fn test_phase5_connection_manager_not_exposed() {
     println!("✓ Server started with public API");
 
     // Start client using public API
-    let client = ClientBuilder::new()
+    let client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:18090")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .auto_reconnect(false)
@@ -863,14 +856,14 @@ async fn test_phase5_connection_manager_not_exposed() {
 async fn test_phase5_client_control_messages() {
     println!("\n=== Phase 5 Test: Client Control Messages ===");
 
-    let server = ServerBuilder::new()
+    let server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:18091")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .start()
@@ -879,14 +872,14 @@ async fn test_phase5_client_control_messages() {
 
     tokio::time::sleep(Duration::from_millis(5)).await;
 
-    let client = ClientBuilder::new()
+    let client = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:18091")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .auto_reconnect(false)
@@ -928,14 +921,14 @@ async fn test_phase5_client_control_messages() {
 async fn test_phase5_client_reconnect() {
     println!("\n=== Phase 5 Test: Client Reconnect Message ===");
 
-    let (server, _) = ServerBuilder::new()
+    let (server, _) = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:18092")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .start_with_connection_manager()
@@ -944,14 +937,14 @@ async fn test_phase5_client_reconnect() {
 
     tokio::time::sleep(Duration::from_millis(5)).await;
 
-    let (client, _) = ClientBuilder::new()
+    let (client, _) = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:18092")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .auto_reconnect(true)
@@ -995,14 +988,14 @@ async fn test_phase5_client_reconnect() {
 async fn test_phase5_server_control_messages() {
     println!("\n=== Phase 5 Test: Server Control Messages ===");
 
-    let server = ServerBuilder::new()
+    let server = ServerBuilder::<TestMessage, TestRole>::new()
         .bind("127.0.0.1:0") // Ephemeral port
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_session_manager(std::sync::Arc::new(tokio::sync::Mutex::new(
-            zznet_session::session_manager::SessionManager::<TestMessage, AuthRole>::new(vec![
-                RoomId::from("health"),
-            ]),
+            zznet_session::session_manager::SessionManager::<TestRole>::new(vec![RoomId::from(
+                "health",
+            )]),
         )))
         .with_default_authorizer(false)
         .start()
@@ -1043,28 +1036,28 @@ async fn test_phase5_server_control_messages() {
 /// Test handler that forwards messages to a channel for testing
 struct TestRoomHandler {
     room_id: RoomId,
-    tx: tokio::sync::mpsc::UnboundedSender<TestMessage>,
+    tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 }
 
 impl TestRoomHandler {
-    fn new(room_id: RoomId, tx: tokio::sync::mpsc::UnboundedSender<TestMessage>) -> Self {
+    fn new(room_id: RoomId, tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>) -> Self {
         Self { room_id, tx }
     }
 }
 
-impl zznet_session::peer_session::RoomHandle<TestMessage> for TestRoomHandler {
+impl zznet_session::peer_session::RoomHandle for TestRoomHandler {
     fn room_id(&self) -> &RoomId {
         &self.room_id
     }
 
-    fn send_message(&mut self, msg: TestMessage) -> Result<(), zznet_session::types::SessionError> {
+    fn send_message(&mut self, msg: Vec<u8>) -> Result<(), zznet_session::types::SessionError> {
         self.tx.send(msg).map_err(|_| SessionError::SendFailed)?;
         Ok(())
     }
 
     fn spawn_forwarder(
         &mut self,
-        _tx: tokio::sync::mpsc::Sender<(RoomId, TestMessage)>,
+        _tx: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
     ) -> Result<(), zznet_session::types::SessionError> {
         Ok(())
     }
@@ -1072,20 +1065,17 @@ impl zznet_session::peer_session::RoomHandle<TestMessage> for TestRoomHandler {
 
 /// Factory for creating test room handlers
 struct TestRoomHandlerFactory {
-    tx: tokio::sync::mpsc::UnboundedSender<TestMessage>,
+    tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>,
 }
 
 impl TestRoomHandlerFactory {
-    fn new(tx: tokio::sync::mpsc::UnboundedSender<TestMessage>) -> Self {
+    fn new(tx: tokio::sync::mpsc::UnboundedSender<Vec<u8>>) -> Self {
         Self { tx }
     }
 }
 
-impl RoomHandlerFactory<TestMessage, AuthRole> for TestRoomHandlerFactory {
-    fn create_handler(
-        &self,
-        room_id: RoomId,
-    ) -> Box<dyn zznet_session::peer_session::RoomHandle<TestMessage>> {
+impl RoomHandlerFactory<TestMessage, TestRole> for TestRoomHandlerFactory {
+    fn create_handler(&self, room_id: RoomId) -> Box<dyn zznet_session::peer_session::RoomHandle> {
         Box::new(TestRoomHandler::new(room_id, self.tx.clone()))
     }
 }
@@ -1099,7 +1089,7 @@ async fn test_phase5_register_room_handler() {
 
     let server = ServerBuilder::new()
         .bind("127.0.0.1:18093")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_default_authorizer(true)
         .register_room_handler(
@@ -1112,9 +1102,9 @@ async fn test_phase5_register_room_handler() {
 
     tokio::time::sleep(Duration::from_millis(5)).await;
 
-    let (client, client_manager) = ClientBuilder::new()
+    let (client, client_manager) = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:18093")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
         .with_default_authorizer(true)
         .auto_reconnect(false)
@@ -1136,19 +1126,21 @@ async fn test_phase5_register_room_handler() {
 
     // Get sender
     let client_sender = client_manager
-        .send(
-            zznet_hello::connection_manager::GetPeerSender::<TestMessage>::new(
-                client_peer_id.clone(),
-            ),
-        )
+        .send(zznet_hello::connection_manager::GetPeerSender::new(
+            client_peer_id.clone(),
+        ))
         .await
         .expect("Failed to get client sender")
         .expect("Failed to get client sender");
 
     // Send a test message
     println!("Sending test message to server...");
+    let test_msg = TestMessage::Ping(123);
+    let serialized = test_msg
+        .serialize_inner()
+        .expect("Failed to serialize test message");
     client_sender
-        .try_send((RoomId::from("health"), TestMessage::Ping(123)))
+        .try_send((RoomId::from("health"), serialized.clone()))
         .expect("Failed to send message");
 
     // Check that the handler received the message
@@ -1157,7 +1149,7 @@ async fn test_phase5_register_room_handler() {
     match received {
         Ok(Some(msg)) => {
             println!("✓ Handler received message: {:?}", msg);
-            assert_eq!(msg, TestMessage::Ping(123));
+            assert_eq!(msg, serialized, "Received message should match sent bytes");
         }
         _ => panic!("Handler did not receive the message"),
     }
@@ -1188,7 +1180,7 @@ async fn test_phase5_wiring_failure_prevents_zombie_connections() {
     // Create a server with a working handler
     let server = ServerBuilder::new()
         .bind("127.0.0.1:18094")
-        .as_role(AuthRole::Database)
+        .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
         .with_default_authorizer(true)
         .register_room_handler(
@@ -1202,9 +1194,9 @@ async fn test_phase5_wiring_failure_prevents_zombie_connections() {
     tokio::time::sleep(Duration::from_millis(5)).await;
 
     // Create a client and connect
-    let (client, _client_manager) = ClientBuilder::<TestMessage, AuthRole>::new()
+    let (client, _client_manager) = ClientBuilder::<TestMessage, TestRole>::new()
         .connect_to("127.0.0.1:18094")
-        .as_role(AuthRole::Collector)
+        .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
         .with_default_authorizer(true)
         .auto_reconnect(false)
