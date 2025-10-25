@@ -60,9 +60,6 @@ pub mod messages;
 // Export public types
 pub use session_manager::SessionManager;
 
-/// A trait for mocking the SessionManager.
-pub mod session_manager_like;
-
 /// Common types used by session manager and peers.
 pub mod types;
 

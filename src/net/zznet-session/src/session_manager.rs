@@ -5,34 +5,11 @@ use tokio::sync::mpsc;
 use tracing;
 
 // NEW: Auth imports
-use crate::session_manager_like::SessionManagerLike;
-use async_trait::async_trait;
 use zznet_api::types::PeerIdentity;
 use zznet_auth::ApplicationRole;
 
 // NEW: Room registration imports
 use zznet_room::RoomRegistry;
-
-#[async_trait]
-impl<TRole> SessionManagerLike<TRole> for SessionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
-    async fn send_to_room(
-        &self,
-        peer_id: &PeerId,
-        room_id: &RoomId,
-        bytes: Vec<u8>,
-    ) -> Result<(), SessionError> {
-        <Self>::send_to_room(self, peer_id, room_id, bytes).await
-    }
-
-    fn get_peer_role(&self, peer_id: &PeerId) -> Option<TRole> {
-        // Return a cloned role if present. This requires TRole: Clone which is
-        // enforced on the trait declaration of SessionManagerLike.
-        self.get_peer_role_cloned(peer_id)
-    }
-}
 
 /// Manages all peer sessions for this process
 ///
@@ -238,11 +215,10 @@ where
         self.peers.get(peer_id)?.role()
     }
 
-    /// Convenience clone-returning wrapper for SessionManagerLike consumers.
+    /// Convenience clone-returning wrapper for consumers.
     ///
-    /// This returns an owned TRole if present. It is primarily intended for
-    /// places where the underlying SessionManagerLike trait is used and a
-    /// simple ownership-semantics helper is handy.
+    /// This returns an owned TRole if present. It is primarily intended as a
+    /// simple ownership-semantics helper for call sites that need an owned role.
     pub fn get_peer_role_cloned(&self, peer_id: &PeerId) -> Option<TRole>
     where
         TRole: Clone,
