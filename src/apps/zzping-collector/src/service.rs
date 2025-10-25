@@ -9,7 +9,6 @@ use zzping_auth::AuthRole;
 // Component imports
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
-use zzintent_config::network_messages::IntentConfigNetworkMsg;
 use zzintent_config::permissions::IntentConfigPermission;
 use zzintent_config::role::IntentConfigRole;
 
@@ -29,10 +28,6 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 
-use zznet_session::room_message_trait::RoomMessageTrait;
-use zznet_session::room_message_trait::{DeserializationError, SerializationError};
-use zznet_session::types::RoomId;
-
 // Room Handler Architecture
 //
 // This application uses the declarative room handler registration pattern provided by
@@ -46,54 +41,6 @@ use zznet_session::types::RoomId;
 //
 // This approach eliminates manual SessionManager locking and provides reusable,
 // testable room handler configuration. See `ROOM_REGISTRY_GUIDE.md` for details.
-
-/// Top-level message enum for the Collector service.
-///
-/// All network messages flow through this enum to ensure type safety
-/// and proper serialization/deserialization.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum CollectorMessage {
-    /// IntentConfig-related messages
-    Intent(IntentConfigNetworkMsg),
-}
-
-impl From<IntentConfigNetworkMsg> for CollectorMessage {
-    fn from(msg: IntentConfigNetworkMsg) -> Self {
-        CollectorMessage::Intent(msg)
-    }
-}
-
-impl RoomMessageTrait for CollectorMessage {
-    fn room_id(&self) -> RoomId {
-        match self {
-            CollectorMessage::Intent(msg) => msg.room_id(),
-        }
-    }
-
-    fn serialize_inner(&self) -> std::result::Result<Vec<u8>, SerializationError> {
-        ron::to_string(self)
-            .map(|s| s.into_bytes())
-            .map_err(|e| SerializationError::Failed(e.to_string()))
-    }
-
-    fn deserialize_for_room(
-        _room_id: &RoomId,
-        bytes: &[u8],
-    ) -> std::result::Result<Self, DeserializationError> {
-        // First try to deserialize as the full CollectorMessage enum
-        let s = std::str::from_utf8(bytes)
-            .map_err(|e| DeserializationError::Failed(format!("UTF-8 error: {}", e)))?;
-
-        ron::from_str::<CollectorMessage>(s)
-            .map_err(|e| DeserializationError::Failed(format!("RON deserialize error: {}", e)))
-    }
-
-    fn supported_rooms() -> Vec<RoomId> {
-        let mut rooms = Vec::new();
-        rooms.extend(IntentConfigNetworkMsg::supported_rooms());
-        rooms
-    }
-}
 
 /// Builders for all components (before wiring)
 ///

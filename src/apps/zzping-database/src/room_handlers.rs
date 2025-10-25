@@ -14,8 +14,6 @@ use zznet_session::peer_session::RoomHandle;
 use zznet_session::types::{RoomId, SessionError};
 use zzping_auth::AuthRole;
 
-use crate::service::DatabaseMessage;
-
 /// Factory for IntentConfig room handlers in the database.
 pub struct IntentConfigRoomHandlerFactory {
     intent_addr: Addr<IntentConfigActor<IntentConfigPermission>>,
@@ -28,7 +26,7 @@ impl IntentConfigRoomHandlerFactory {
     }
 }
 
-impl RoomHandlerFactory<DatabaseMessage, AuthRole> for IntentConfigRoomHandlerFactory {
+impl RoomHandlerFactory<AuthRole> for IntentConfigRoomHandlerFactory {
     fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle> {
         Box::new(DatabaseIntentConfigRoomHandler {
             intent_addr: self.intent_addr.clone(),
@@ -92,7 +90,7 @@ impl MemDBRoomHandlerFactory {
     }
 }
 
-impl RoomHandlerFactory<DatabaseMessage, AuthRole> for MemDBRoomHandlerFactory {
+impl RoomHandlerFactory<AuthRole> for MemDBRoomHandlerFactory {
     fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle> {
         Box::new(DatabaseMemDBRoomHandler {
             memdb_addr: self.memdb_addr.clone(),
@@ -155,7 +153,7 @@ impl CStateRoomHandlerFactory {
     }
 }
 
-impl RoomHandlerFactory<DatabaseMessage, AuthRole> for CStateRoomHandlerFactory {
+impl RoomHandlerFactory<AuthRole> for CStateRoomHandlerFactory {
     fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle> {
         Box::new(DatabaseCStateRoomHandler {
             cstate_addr: self.cstate_addr.clone(),

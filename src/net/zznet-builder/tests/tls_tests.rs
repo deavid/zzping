@@ -14,9 +14,6 @@ use std::time::Duration;
 use tokio::sync::Mutex;
 use zznet_auth::ApplicationRole;
 use zznet_builder::{ClientBuilder, ServerBuilder};
-use zznet_session::room_message_trait::{
-    DeserializationError, RoomMessageTrait, SerializationError,
-};
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
 use zznet_transport_tcp::config::TlsConfig;
@@ -78,33 +75,6 @@ impl zznet_auth::ApplicationRole for TestRole {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-enum TestMessage {
-    Ping(u64),
-    Pong(u64),
-}
-
-impl RoomMessageTrait for TestMessage {
-    fn room_id(&self) -> RoomId {
-        RoomId::from("test")
-    }
-
-    fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
-        bincode::serde::encode_to_vec(self, bincode::config::standard())
-            .map_err(|e| SerializationError::BincodeError(e.to_string()))
-    }
-
-    fn deserialize_for_room(_room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError> {
-        bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-            .map(|(value, _)| value)
-            .map_err(|e| DeserializationError::BincodeError(e.to_string()))
-    }
-
-    fn supported_rooms() -> Vec<RoomId> {
-        vec![RoomId::from("test")]
-    }
-}
-
 /// Helper: Create a SessionManager and an authorizer used by builders in tests
 type TestSessionManager = Arc<Mutex<SessionManager<TestRole>>>;
 
@@ -133,7 +103,7 @@ async fn test_tls_mutual_authentication() {
     // Create server with TLS
     let (server_session_manager, server_authorizer) = create_test_session_manager();
 
-    let _server = ServerBuilder::<TestMessage, TestRole>::new()
+    let _server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:19001")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
@@ -149,7 +119,7 @@ async fn test_tls_mutual_authentication() {
     // Create client with TLS
     let (client_session_manager, client_authorizer) = create_test_session_manager();
 
-    let _client = ClientBuilder::<TestMessage, TestRole>::new()
+    let _client = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:19001")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["test".to_string()])
@@ -177,7 +147,7 @@ async fn test_tls_multiple_clients() {
 
     let (server_session_manager, server_authorizer) = create_test_session_manager();
 
-    let _server = ServerBuilder::<TestMessage, TestRole>::new()
+    let _server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:19002")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
@@ -197,7 +167,7 @@ async fn test_tls_multiple_clients() {
 
         let (client_session_manager, client_authorizer) = create_test_session_manager();
 
-        let _client = ClientBuilder::<TestMessage, TestRole>::new()
+        let _client = ClientBuilder::<TestRole>::new()
             .connect_to("127.0.0.1:19002")
             .as_role(TestRole::Collector)
             .offer_rooms(vec!["test".to_string()])
@@ -228,7 +198,7 @@ async fn test_tls_different_roles() {
 
     let (server_session_manager, server_authorizer) = create_test_session_manager();
 
-    let _server = ServerBuilder::<TestMessage, TestRole>::new()
+    let _server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:19003")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
@@ -243,7 +213,7 @@ async fn test_tls_different_roles() {
 
     let (client_session_manager, client_authorizer) = create_test_session_manager();
 
-    let _client = ClientBuilder::<TestMessage, TestRole>::new()
+    let _client = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:19003")
         .as_role(TestRole::ClientRo)
         .offer_rooms(vec!["test".to_string()])
@@ -310,7 +280,7 @@ async fn test_plain_and_tls_coexist() {
     // Start plain TCP server
     let (plain_session_manager, plain_authorizer) = create_test_session_manager();
 
-    let _plain_server = ServerBuilder::<TestMessage, TestRole>::new()
+    let _plain_server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:19004")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
@@ -330,7 +300,7 @@ async fn test_plain_and_tls_coexist() {
 
     let (tls_session_manager, tls_authorizer) = create_test_session_manager();
 
-    let _tls_server = ServerBuilder::<TestMessage, TestRole>::new()
+    let _tls_server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:19005")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["test".to_string()])
@@ -346,7 +316,7 @@ async fn test_plain_and_tls_coexist() {
     // Connect plain client to plain server
     let (plain_client_session_manager, plain_client_authorizer) = create_test_session_manager();
 
-    let _plain_client = ClientBuilder::<TestMessage, TestRole>::new()
+    let _plain_client = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:19004")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["test".to_string()])
@@ -364,7 +334,7 @@ async fn test_plain_and_tls_coexist() {
 
     let (tls_client_session_manager, tls_client_authorizer) = create_test_session_manager();
 
-    let _tls_client = ClientBuilder::<TestMessage, TestRole>::new()
+    let _tls_client = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:19005")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["test".to_string()])

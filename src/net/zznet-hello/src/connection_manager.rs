@@ -267,21 +267,21 @@ where
 /// Internal message carrying the channels to start a SessionBridge inside the actor context.
 #[derive(Message)]
 #[rtype(result = "()")]
-struct HandshakePostProcessedInner<TMsg> {
+struct HandshakePostProcessedInner {
     peer_id: zznet_session::types::PeerId,
     hello_actor: Addr<HelloActor>,
-    outbound_rx: Option<tokio::sync::mpsc::Receiver<(RoomId, TMsg)>>,
-    conn_to_session_tx: tokio::sync::mpsc::Sender<(RoomId, TMsg)>,
+    outbound_rx: Option<tokio::sync::mpsc::Receiver<(RoomId, Vec<u8>)>>,
+    conn_to_session_tx: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
     hello_to_conn_rx: Option<tokio::sync::mpsc::Receiver<(String, Vec<u8>)>>,
 }
 
-impl<TRole> Handler<HandshakePostProcessedInner<Vec<u8>>> for ConnectionManager<TRole>
+impl<TRole> Handler<HandshakePostProcessedInner> for ConnectionManager<TRole>
 where
     TRole: ApplicationRole + 'static,
 {
     type Result = ();
 
-    fn handle(&mut self, msg: HandshakePostProcessedInner<Vec<u8>>, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: HandshakePostProcessedInner, _ctx: &mut Context<Self>) {
         // Store HelloActor address for future use
         self.hello_actors
             .insert(msg.peer_id.clone(), msg.hello_actor.clone());
@@ -590,7 +590,7 @@ where
 
                     // Send channels back to actor so it can start the SessionBridge inside
                     // the actor context (this avoids spawn_local being called outside LocalSet).
-                    let inner_msg = HandshakePostProcessedInner::<Vec<u8>> {
+                    let inner_msg = HandshakePostProcessedInner {
                         peer_id: zznet_session::types::PeerId::from(peer_id.as_str()),
                         hello_actor: send_hello_actor,
                         outbound_rx: Some(outbound_rx),

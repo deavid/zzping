@@ -9,7 +9,6 @@ use tokio::sync::Mutex;
 use zznet_auth::ApplicationRole;
 use zznet_hello::actor::{HelloConfig, start_hello_actor_with_session_manager};
 use zznet_hello::connection_manager::ConnectionManager;
-use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
 use zznet_transport_tcp::config::TlsConfig;
@@ -18,9 +17,8 @@ use zznet_transport_tcp::server::TcpTransportServer;
 /// Builder for creating TCP servers with automatic connection management
 ///
 ///
-pub struct ServerBuilder<TMsg, TRole>
+pub struct ServerBuilder<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     bind_addr: Option<String>,
@@ -34,14 +32,13 @@ where
     session_manager: Option<Arc<Mutex<SessionManager<TRole>>>>,
     /// Optional authorizer closure used when the builder creates the ConnectionManager.
     authorizer: Option<zznet_auth::acl::GenericAuthorizer<TRole>>,
-    room_handlers: std::collections::HashMap<RoomId, Arc<dyn RoomHandlerFactory<TMsg, TRole>>>,
+    room_handlers: std::collections::HashMap<RoomId, Arc<dyn RoomHandlerFactory<TRole>>>,
     /// Persistent room registry owned by the builder (created lazily)
-    room_registry: Option<Arc<Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>>>,
+    room_registry: Option<Arc<Mutex<crate::room_registry::RoomRegistry<TRole>>>>,
 }
 
-impl<TMsg, TRole> ServerBuilder<TMsg, TRole>
+impl<TRole> ServerBuilder<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     /// Create a new ServerBuilder with default configuration
@@ -163,7 +160,7 @@ where
     pub fn register_room_handler(
         mut self,
         room_id: impl Into<RoomId>,
-        factory: Arc<dyn RoomHandlerFactory<TMsg, TRole>>,
+        factory: Arc<dyn RoomHandlerFactory<TRole>>,
     ) -> Self {
         let room_id = room_id.into();
         self.room_handlers.insert(room_id.clone(), factory.clone());
@@ -193,41 +190,41 @@ where
     /// use zznet_session::room_message_trait::RoomMessageTrait;
     /// use zznet_session::types::RoomId;
     /// use serde::{Deserialize, Serialize};
-    /// 
+    ///
     /// #[derive(Debug, Clone)]
     /// enum TestMessages {
     ///     Test,
     /// }
-    /// 
+    ///
     /// impl RoomMessageTrait for TestMessages {
     ///     fn room_id(&self) -> RoomId {
     ///         RoomId::from("test")
     ///     }
-    /// 
+    ///
     ///     fn serialize_inner(
     ///         &self,
     ///     ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
     ///         Ok(vec![])
     ///     }
-    /// 
+    ///
     ///     fn deserialize_for_room(
     ///         _room_id: &RoomId,
     ///         _bytes: &[u8],
     ///     ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
     ///         Ok(TestMessages::Test)
     ///     }
-    /// 
+    ///
     ///     fn supported_rooms() -> Vec<RoomId> {
     ///         vec![RoomId::from("test")]
     ///     }
     /// }
-    /// 
+    ///
     /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     /// enum TestRole {
     ///     Collector,
     ///     Database,
     /// }
-    /// 
+    ///
     /// impl zznet_auth::ApplicationRole for TestRole {
     ///     fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
     ///         match cn {
@@ -236,24 +233,24 @@ where
     ///             _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
     ///         }
     ///     }
-    /// 
+    ///
     ///     fn as_str(&self) -> &'static str {
     ///         match self {
     ///             TestRole::Collector => "collector",
     ///             TestRole::Database => "database",
     ///         }
     ///     }
-    /// 
+    ///
     ///     fn can_connect_to(&self, _target: &Self) -> bool {
     ///         true
     ///     }
-    /// 
+    ///
     ///     fn can_access_room(&self, _room_name: &str) -> bool {
     ///         true
     ///     }
     /// }
-    /// 
-    /// let mut builder = ServerBuilder::<TestMessages, TestRole>::new()
+    ///
+    /// let mut builder = ServerBuilder::<TestRole>::new()
     ///     .offer_rooms(vec!["my-room".to_string()]);
     ///
     /// // Access the persistent registry
@@ -262,7 +259,7 @@ where
     ///
     /// // builder.start().await?;
     /// ```
-    pub fn room_registry(&mut self) -> Arc<Mutex<crate::room_registry::RoomRegistry<TMsg, TRole>>> {
+    pub fn room_registry(&mut self) -> Arc<Mutex<crate::room_registry::RoomRegistry<TRole>>> {
         if self.room_registry.is_none() {
             // Get or create SessionManager first
             let sm = self.session_manager();
@@ -294,41 +291,41 @@ where
     /// use zznet_session::room_message_trait::RoomMessageTrait;
     /// use zznet_session::types::RoomId;
     /// use serde::{Deserialize, Serialize};
-    /// 
+    ///
     /// #[derive(Debug, Clone)]
     /// enum TestMessages {
     ///     Test,
     /// }
-    /// 
+    ///
     /// impl RoomMessageTrait for TestMessages {
     ///     fn room_id(&self) -> RoomId {
     ///         RoomId::from("test")
     ///     }
-    /// 
+    ///
     ///     fn serialize_inner(
     ///         &self,
     ///     ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
     ///         Ok(vec![])
     ///     }
-    /// 
+    ///
     ///     fn deserialize_for_room(
     ///         _room_id: &RoomId,
     ///         _bytes: &[u8],
     ///     ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
     ///         Ok(TestMessages::Test)
     ///     }
-    /// 
+    ///
     ///     fn supported_rooms() -> Vec<RoomId> {
     ///         vec![RoomId::from("test")]
     ///     }
     /// }
-    /// 
+    ///
     /// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     /// enum TestRole {
     ///     Collector,
     ///     Database,
     /// }
-    /// 
+    ///
     /// impl zznet_auth::ApplicationRole for TestRole {
     ///     fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
     ///         match cn {
@@ -337,24 +334,24 @@ where
     ///             _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
     ///         }
     ///     }
-    /// 
+    ///
     ///     fn as_str(&self) -> &'static str {
     ///         match self {
     ///             TestRole::Collector => "collector",
     ///             TestRole::Database => "database",
     ///         }
     ///     }
-    /// 
+    ///
     ///     fn can_connect_to(&self, _target: &Self) -> bool {
     ///         true
     ///     }
-    /// 
+    ///
     ///     fn can_access_room(&self, _room_name: &str) -> bool {
     ///         true
     ///     }
     /// }
-    /// 
-    /// let mut builder = ServerBuilder::<TestMessages, TestRole>::new()
+    ///
+    /// let mut builder = ServerBuilder::<TestRole>::new()
     ///     .offer_rooms(vec!["my-room".to_string()]);
     ///
     /// // Access SessionManager before starting
@@ -592,9 +589,8 @@ where
     }
 }
 
-impl<TMsg, TRole> Default for ServerBuilder<TMsg, TRole>
+impl<TRole> Default for ServerBuilder<TRole>
 where
-    TMsg: RoomMessageTrait,
     TRole: ApplicationRole,
 {
     fn default() -> Self {
@@ -738,38 +734,6 @@ where
 mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
-    use zznet_session::room_message_trait::RoomMessageTrait;
-    use zznet_session::types::RoomId;
-
-    /// Minimal test message enum used by the server builder tests.
-    #[derive(Debug, Clone)]
-    enum TestMessages {
-        /// Simple unit test message.
-        Test,
-    }
-
-    impl RoomMessageTrait for TestMessages {
-        fn room_id(&self) -> RoomId {
-            RoomId::from("test")
-        }
-
-        fn serialize_inner(
-            &self,
-        ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
-            Ok(vec![])
-        }
-
-        fn deserialize_for_room(
-            _room_id: &RoomId,
-            _bytes: &[u8],
-        ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
-            Ok(TestMessages::Test)
-        }
-
-        fn supported_rooms() -> Vec<RoomId> {
-            vec![RoomId::from("test")]
-        }
-    }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
     enum TestRole {
@@ -804,7 +768,7 @@ mod tests {
 
     #[test]
     fn test_server_builder_new() {
-        let builder = ServerBuilder::<TestMessages, TestRole>::new();
+        let builder = ServerBuilder::<TestRole>::new();
         assert!(builder.bind_addr.is_none());
         assert!(builder.our_role.is_none());
         assert!(builder.offered_rooms.is_empty());
@@ -812,7 +776,7 @@ mod tests {
 
     #[test]
     fn test_server_builder_fluent_api() {
-        let builder = ServerBuilder::<TestMessages, TestRole>::new()
+        let builder = ServerBuilder::<TestRole>::new()
             .bind("127.0.0.1:8080")
             .as_role(TestRole::Collector)
             .offer_rooms(vec!["test".to_string()])
@@ -826,8 +790,7 @@ mod tests {
 
     #[test]
     fn test_validation_missing_bind_addr() {
-        let builder =
-            ServerBuilder::<TestMessages, TestRole>::new().offer_rooms(vec!["test".to_string()]);
+        let builder = ServerBuilder::<TestRole>::new().offer_rooms(vec!["test".to_string()]);
 
         let result = builder.validate();
         assert!(matches!(result, Err(BuilderError::MissingConfig(_))));
@@ -835,7 +798,7 @@ mod tests {
 
     #[test]
     fn test_validation_missing_rooms() {
-        let builder = ServerBuilder::<TestMessages, TestRole>::new().bind("127.0.0.1:8080");
+        let builder = ServerBuilder::<TestRole>::new().bind("127.0.0.1:8080");
 
         let result = builder.validate();
         assert!(matches!(result, Err(BuilderError::InvalidConfig(_))));
@@ -843,7 +806,7 @@ mod tests {
 
     #[test]
     fn test_validation_success() {
-        let builder = ServerBuilder::<TestMessages, TestRole>::new()
+        let builder = ServerBuilder::<TestRole>::new()
             .bind("127.0.0.1:8080")
             .offer_rooms(vec!["test".to_string()]);
 

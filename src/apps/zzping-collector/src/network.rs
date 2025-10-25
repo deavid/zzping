@@ -1,4 +1,3 @@
-use crate::service::CollectorMessage;
 use actix::Addr;
 use std::time::Duration;
 use zzintent_config::actor::IntentConfigActor;
@@ -52,7 +51,7 @@ impl CollectorNetwork {
             intent_addr.clone(),
         ));
 
-        let builder = ClientBuilder::<CollectorMessage, AuthRole>::new()
+        let builder = ClientBuilder::<AuthRole>::new()
             .connect_to(&self.remote_addr)
             .as_role(AuthRole::Collector)
             .offer_rooms(vec!["intent-config".to_string()])

@@ -496,3 +496,29 @@ Given that you're still early (only 2 apps), **now is the best time to make this
 5.  **Refine `zznet-room`:**
     *   **Error Handling:** The `Room<T>::send` method currently serializes and sends. If serialization fails, it returns an error. If the channel send fails, it also returns an error. This is good. How are deserialization errors in the `handle_message` function handled? They are currently logged. Consider if they should be propagated or reported somehow.
     *   **Serialization Format:** You've consistently used `bincode`. This is a good choice for performance. Previously, some components used `ron`. Standardizing on `bincode` for network messages is a solid decision.
+
+### Refined Recommendation
+
+**Path A (Full Refactor) is the correct choice.**
+
+Now that `zzcollector-state` is compiling, you are in an excellent position to complete the refactor. Here is a concrete, step-by-step plan:
+
+**Step 1: Make `SessionManager` Generic over `TRole` Only (The Core Change)**
+*   **File to change:** `src/net/zznet-session/src/session_manager.rs`
+*   **Action:** Modify the struct definition from `SessionManager<TMsg, TRole>` to `SessionManager<TRole>`.
+*   **Consequence:** This will cause a cascade of compilation errors throughout `zznet-session`, `zznet-hello`, `zznet-builder`, and the application crates. **This is expected and good.** It precisely identifies every location that needs to be updated.
+
+**Step 2: Update the Network Stack to Handle `Vec<u8>`**
+*   **Files to change:** `peer_session.rs`, `session_bridge.rs`, `connection_manager.rs`, builder crates.
+*   **Action:** Go through the compilation errors. Everywhere you see a `TMsg`, replace it with `Vec<u8>`. The `RoomHandle` trait should now be `fn send_message(&mut self, bytes: Vec<u8>)`. The `mpsc` channels will now be `mpsc::channel<(RoomId, Vec<u8>)>`.
+
+**Step 3: Eliminate Application Boilerplate (The Payoff)**
+*   **Files to change:** `src/apps/zzping-collector/service.rs`, `src/apps/zzping-database/service.rs`, and their respective `room_handlers.rs`.
+*   **Action:**
+    1.  Delete the `CollectorMessage` and `DatabaseMessage` enums.
+    2.  Delete the `impl From<...>` blocks for them.
+    3.  Delete the `impl RoomMessageTrait for ...` blocks.
+    4.  Update the `RoomHandlerFactory` implementations. They will no longer be generic over `DatabaseMessage`. Their `create_handler` method will return a `Box<dyn RoomHandle>`, and the handler itself will now implement `fn send_message(&mut self, bytes: Vec<u8>)`. Inside, it will `bincode::deserialize` the bytes and `do_send` the typed message to the actor.
+
+**Step 4: Delete Obsolete Code**
+*   **File to delete:** `src/net/zznet-session/src/room_message_trait.rs`. It serves no purpose in the new architecture.

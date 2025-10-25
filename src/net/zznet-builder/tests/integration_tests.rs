@@ -147,7 +147,7 @@ async fn test_server_client_basic_connection() {
 
     // Start server and obtain its ConnectionManager addr
     println!("Starting server on 127.0.0.1:18080...");
-    let (server, _server_manager) = ServerBuilder::<TestMessage, TestRole>::new()
+    let (server, _server_manager) = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:18080")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string(), "data".to_string()])
@@ -171,7 +171,7 @@ async fn test_server_client_basic_connection() {
 
     // Start client
     println!("Starting client connecting to {}...", server_addr);
-    let (client, _client_manager) = ClientBuilder::<TestMessage, TestRole>::new()
+    let (client, _client_manager) = ClientBuilder::<TestRole>::new()
         .connect_to(&server_addr)
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string(), "data".to_string()])
@@ -214,7 +214,7 @@ async fn test_multiple_clients() {
             as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
     println!("Starting server on 127.0.0.1:18081...");
-    let (server, _server_manager) = ServerBuilder::<TestMessage, TestRole>::new()
+    let (server, _server_manager) = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:18081")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
@@ -244,7 +244,7 @@ async fn test_multiple_clients() {
         })
             as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
-        let client = ClientBuilder::<TestMessage, TestRole>::new()
+        let client = ClientBuilder::<TestRole>::new()
             .connect_to("127.0.0.1:18081")
             .as_role(TestRole::Collector)
             .offer_rooms(vec!["health".to_string()])
@@ -290,7 +290,7 @@ async fn test_client_reconnection() {
 
     // Start server
     println!("Starting server on 127.0.0.1:18082...");
-    let server = ServerBuilder::<TestMessage, TestRole>::new()
+    let server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:18082")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
@@ -310,7 +310,7 @@ async fn test_client_reconnection() {
     // Start client with auto-reconnect enabled
     println!("Starting client with auto-reconnect...");
 
-    let client = ClientBuilder::<TestMessage, TestRole>::new()
+    let client = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:18082")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
@@ -336,7 +336,7 @@ async fn test_client_reconnection() {
 
     // Restart server
     println!("Restarting server...");
-    let server2 = ServerBuilder::<TestMessage, TestRole>::new()
+    let server2 = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:18082")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
@@ -371,7 +371,7 @@ async fn test_graceful_shutdown() {
 
     // Start server
     println!("Starting server on 127.0.0.1:18083...");
-    let server = ServerBuilder::<TestMessage, TestRole>::new()
+    let server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:18083")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
@@ -389,7 +389,7 @@ async fn test_graceful_shutdown() {
 
     // Start client
     println!("Starting client...");
-    let client = ClientBuilder::<TestMessage, TestRole>::new()
+    let client = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:18083")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
@@ -427,7 +427,7 @@ async fn test_server_bind_error() {
 
     // Try to bind to invalid address
     println!("Attempting to bind to invalid address...");
-    let result = ServerBuilder::<TestMessage, TestRole>::new()
+    let result = ServerBuilder::<TestRole>::new()
         .bind("999.999.999.999:99999")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
@@ -453,7 +453,7 @@ async fn test_client_connection_failure() {
 
     // Connect to non-existent server (no auto-reconnect)
     println!("Connecting to non-existent server...");
-    let client = ClientBuilder::<TestMessage, TestRole>::new()
+    let client = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:19999")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
@@ -503,7 +503,7 @@ async fn test_different_auth_roles() {
 
         // Start server and obtain its ConnectionManager addr
         println!("Starting server on ephemeral port (bind 127.0.0.1:0)...");
-        let (server, _server_manager) = ServerBuilder::<TestMessage, TestRole>::new()
+        let (server, _server_manager) = ServerBuilder::<TestRole>::new()
             .bind("127.0.0.1:0")
             .as_role(TestRole::Database)
             .offer_rooms(vec!["health".to_string()])
@@ -524,7 +524,7 @@ async fn test_different_auth_roles() {
             .expect("Server did not return addr");
 
         println!("Starting Collector client connecting to {}...", server_addr);
-        let client1 = ClientBuilder::<TestMessage, TestRole>::new()
+        let client1 = ClientBuilder::<TestRole>::new()
             .connect_to(&server_addr)
             .as_role(TestRole::Collector)
             .offer_rooms(vec!["health".to_string()])
@@ -574,7 +574,7 @@ async fn test_end_to_end_message_exchange() {
 
         // Start server with ConnectionManager
         println!("Starting server on ephemeral port (bind 127.0.0.1:0)...");
-        let (server, server_manager) = ServerBuilder::<TestMessage, TestRole>::new()
+        let (server, server_manager) = ServerBuilder::<TestRole>::new()
             .bind("127.0.0.1:0")
             .as_role(TestRole::Database)
             .offer_rooms(vec!["health".to_string()])
@@ -604,7 +604,7 @@ async fn test_end_to_end_message_exchange() {
         })
             as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<TestRole> + Send + Sync>;
 
-        let (client, client_manager) = ClientBuilder::<TestMessage, TestRole>::new()
+        let (client, client_manager) = ClientBuilder::<TestRole>::new()
             .connect_to(&server_addr)
             .as_role(TestRole::Collector)
             .offer_rooms(vec!["health".to_string()])
@@ -807,7 +807,7 @@ async fn test_phase5_connection_manager_not_exposed() {
     println!("\n=== Phase 5 Test: ConnectionManager Not in Public API ===");
 
     // Start server using public API
-    let server = ServerBuilder::<TestMessage, TestRole>::new()
+    let server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:18090")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
@@ -824,7 +824,7 @@ async fn test_phase5_connection_manager_not_exposed() {
     println!("✓ Server started with public API");
 
     // Start client using public API
-    let client = ClientBuilder::<TestMessage, TestRole>::new()
+    let client = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:18090")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
@@ -856,7 +856,7 @@ async fn test_phase5_connection_manager_not_exposed() {
 async fn test_phase5_client_control_messages() {
     println!("\n=== Phase 5 Test: Client Control Messages ===");
 
-    let server = ServerBuilder::<TestMessage, TestRole>::new()
+    let server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:18091")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
@@ -872,7 +872,7 @@ async fn test_phase5_client_control_messages() {
 
     tokio::time::sleep(Duration::from_millis(5)).await;
 
-    let client = ClientBuilder::<TestMessage, TestRole>::new()
+    let client = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:18091")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
@@ -921,7 +921,7 @@ async fn test_phase5_client_control_messages() {
 async fn test_phase5_client_reconnect() {
     println!("\n=== Phase 5 Test: Client Reconnect Message ===");
 
-    let (server, _) = ServerBuilder::<TestMessage, TestRole>::new()
+    let (server, _) = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:18092")
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
@@ -937,7 +937,7 @@ async fn test_phase5_client_reconnect() {
 
     tokio::time::sleep(Duration::from_millis(5)).await;
 
-    let (client, _) = ClientBuilder::<TestMessage, TestRole>::new()
+    let (client, _) = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:18092")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
@@ -988,7 +988,7 @@ async fn test_phase5_client_reconnect() {
 async fn test_phase5_server_control_messages() {
     println!("\n=== Phase 5 Test: Server Control Messages ===");
 
-    let server = ServerBuilder::<TestMessage, TestRole>::new()
+    let server = ServerBuilder::<TestRole>::new()
         .bind("127.0.0.1:0") // Ephemeral port
         .as_role(TestRole::Database)
         .offer_rooms(vec!["health".to_string()])
@@ -1074,7 +1074,7 @@ impl TestRoomHandlerFactory {
     }
 }
 
-impl RoomHandlerFactory<TestMessage, TestRole> for TestRoomHandlerFactory {
+impl RoomHandlerFactory<TestRole> for TestRoomHandlerFactory {
     fn create_handler(&self, room_id: RoomId) -> Box<dyn zznet_session::peer_session::RoomHandle> {
         Box::new(TestRoomHandler::new(room_id, self.tx.clone()))
     }
@@ -1102,7 +1102,7 @@ async fn test_phase5_register_room_handler() {
 
     tokio::time::sleep(Duration::from_millis(5)).await;
 
-    let (client, client_manager) = ClientBuilder::<TestMessage, TestRole>::new()
+    let (client, client_manager) = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:18093")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])
@@ -1194,7 +1194,7 @@ async fn test_phase5_wiring_failure_prevents_zombie_connections() {
     tokio::time::sleep(Duration::from_millis(5)).await;
 
     // Create a client and connect
-    let (client, _client_manager) = ClientBuilder::<TestMessage, TestRole>::new()
+    let (client, _client_manager) = ClientBuilder::<TestRole>::new()
         .connect_to("127.0.0.1:18094")
         .as_role(TestRole::Collector)
         .offer_rooms(vec!["health".to_string()])

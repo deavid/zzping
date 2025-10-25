@@ -1,27 +1,19 @@
 use crate::config::{DatabaseConfig, DatabaseTlsConfig};
 use crate::error::{DatabaseError, Result};
 use actix::{Actor, Addr};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use zzcollector_state::actor::CStateActor;
 use zzcollector_state::builder::CStateBuilder;
-use zzcollector_state::network_messages::CStateMessage;
 use zzcollector_state::role::CStateRole;
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
-use zzintent_config::network_messages::IntentConfigNetworkMsg;
 use zzintent_config::permissions::IntentConfigPermission;
 use zzintent_config::role::IntentConfigRole;
 use zzmem_db::actor::MemDBActor;
-use zzmem_db::network_messages::MemDBMessage;
 use zzmem_db::permissions::MemDBPermission;
 use zzmem_db::role::MemDBRole;
 use zznet_auth::role::ApplicationRole;
-use zznet_session::{
-    room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError},
-    session_manager::SessionManager,
-    types::RoomId,
-};
+use zznet_session::session_manager::SessionManager;
 use zzping_auth::AuthRole;
 
 // Room Handler Architecture
@@ -37,67 +29,6 @@ use zzping_auth::AuthRole;
 //
 // This approach eliminates manual SessionManager locking and provides reusable,
 // testable room handler configuration. See `ROOM_REGISTRY_GUIDE.md` for details.
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum DatabaseMessage {
-    Intent(IntentConfigNetworkMsg),
-    MemDB(MemDBMessage),
-    CState(CStateMessage),
-}
-
-impl From<IntentConfigNetworkMsg> for DatabaseMessage {
-    fn from(msg: IntentConfigNetworkMsg) -> Self {
-        DatabaseMessage::Intent(msg)
-    }
-}
-
-impl From<MemDBMessage> for DatabaseMessage {
-    fn from(msg: MemDBMessage) -> Self {
-        DatabaseMessage::MemDB(msg)
-    }
-}
-
-impl From<CStateMessage> for DatabaseMessage {
-    fn from(msg: CStateMessage) -> Self {
-        DatabaseMessage::CState(msg)
-    }
-}
-
-impl RoomMessageTrait for DatabaseMessage {
-    fn room_id(&self) -> RoomId {
-        match self {
-            DatabaseMessage::Intent(msg) => msg.room_id(),
-            DatabaseMessage::MemDB(msg) => msg.room_id(),
-            DatabaseMessage::CState(msg) => msg.room_id(),
-        }
-    }
-
-    fn serialize_inner(&self) -> std::result::Result<Vec<u8>, SerializationError> {
-        ron::to_string(self)
-            .map(|s| s.into_bytes())
-            .map_err(|e| SerializationError::Failed(e.to_string()))
-    }
-
-    fn deserialize_for_room(
-        _room_id: &RoomId,
-        bytes: &[u8],
-    ) -> std::result::Result<Self, DeserializationError> {
-        // First try to deserialize as the full DatabaseMessage enum
-        let s = std::str::from_utf8(bytes)
-            .map_err(|e| DeserializationError::Failed(format!("UTF-8 error: {}", e)))?;
-
-        ron::from_str::<DatabaseMessage>(s)
-            .map_err(|e| DeserializationError::Failed(format!("RON deserialize error: {}", e)))
-    }
-
-    fn supported_rooms() -> Vec<RoomId> {
-        let mut rooms = Vec::new();
-        rooms.extend(IntentConfigNetworkMsg::supported_rooms());
-        rooms.extend(MemDBMessage::supported_rooms());
-        rooms.extend(CStateMessage::supported_rooms());
-        rooms
-    }
-}
 
 /// Builders for all components (before wiring)
 ///
@@ -291,8 +222,7 @@ impl DatabaseService {
     /// transport connections or customize the connection handling.
     pub fn start_connection_manager(
         &self,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>>
-    {
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         use actix::prelude::*;
 
         // Reuse create_connection_manager() so it's used and kept in sync
@@ -310,8 +240,7 @@ impl DatabaseService {
     pub fn start_connection_manager_with_session_manager(
         &self,
         session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>>
-    {
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         use actix::prelude::*;
 
         let mgr = match self.create_connection_manager_with_session_manager(session_manager) {

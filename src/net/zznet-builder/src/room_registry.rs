@@ -7,7 +7,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use zznet_auth::ApplicationRole;
 use zznet_session::peer_session::RoomHandle;
-use zznet_session::room_message_trait::RoomMessageTrait;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
 
@@ -15,9 +14,8 @@ use zznet_session::types::RoomId;
 ///
 /// Applications implement this to define how a specific room type
 /// is handled for a given message type.
-pub trait RoomHandlerFactory<TMsg, TRole>: Send + Sync
+pub trait RoomHandlerFactory<TRole>: Send + Sync
 where
-    TMsg: RoomMessageTrait + Send + Sync + 'static,
     TRole: ApplicationRole,
 {
     /// Create a new room handler for the given room ID.
@@ -30,19 +28,17 @@ where
 /// 1. Define room handlers once
 /// 2. Register them with all peers (startup)
 /// 3. Register them with new peers (dynamic)
-pub struct RoomRegistry<TMsg, TRole>
+pub struct RoomRegistry<TRole>
 where
-    TMsg: RoomMessageTrait + Send + Sync + 'static,
     TRole: ApplicationRole,
 {
     session_manager: Arc<Mutex<SessionManager<TRole>>>,
     // Map of room_id -> factory for creating handlers
-    handlers: std::collections::HashMap<RoomId, Arc<dyn RoomHandlerFactory<TMsg, TRole>>>,
+    handlers: std::collections::HashMap<RoomId, Arc<dyn RoomHandlerFactory<TRole>>>,
 }
 
-impl<TMsg, TRole> RoomRegistry<TMsg, TRole>
+impl<TRole> RoomRegistry<TRole>
 where
-    TMsg: RoomMessageTrait + Send + Sync + 'static,
     TRole: ApplicationRole,
 {
     /// Create a new room registry.
@@ -61,7 +57,7 @@ where
     pub fn register_room_handler(
         &mut self,
         room_id: RoomId,
-        factory: Arc<dyn RoomHandlerFactory<TMsg, TRole>>,
+        factory: Arc<dyn RoomHandlerFactory<TRole>>,
     ) {
         self.handlers.insert(room_id, factory);
     }

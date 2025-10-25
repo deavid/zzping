@@ -101,7 +101,7 @@ where
     ///
     /// The caller must construct the PeerSession with its rooms already added.
     /// This allows the application to create Room<T> instances with different T types
-    /// and type-erase them to Box<dyn RoomHandle<TMsg>> before adding to the session.
+    /// and type-erase them to Box<dyn RoomHandle> before adding to the session.
     ///
     /// `peer_id`: Unique identifier for this peer
     /// `peer_session`: Pre-configured peer session with rooms

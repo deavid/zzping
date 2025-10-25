@@ -1,4 +1,4 @@
-use crate::service::{DatabaseMessage, StartedComponents};
+use crate::service::StartedComponents;
 use std::time::Duration;
 use zznet_builder::ServerBuilder;
 use zznet_transport_tcp::config::TlsConfig;
@@ -53,7 +53,7 @@ impl DatabaseNetwork {
             components.cstate.clone(),
         ));
 
-        let builder = ServerBuilder::<DatabaseMessage, AuthRole>::new()
+        let builder = ServerBuilder::<AuthRole>::new()
             .bind(&self.bind_addr)
             .as_role(AuthRole::Database)
             .offer_rooms(vec![

@@ -11,7 +11,6 @@ mod room_registry_integration_tests {
     use zznet_auth::ApplicationRole;
     use zznet_builder::{RoomHandlerFactory, RoomRegistry};
     use zznet_session::peer_session::RoomHandle;
-    use zznet_session::room_message_trait::RoomMessageTrait;
     use zznet_session::session_manager::SessionManager;
     use zznet_session::types::{RoomId, SessionError};
 
@@ -47,43 +46,6 @@ mod room_registry_integration_tests {
         }
     }
 
-    // Simple test message
-    #[derive(Debug, Clone, Serialize, Deserialize)]
-    enum TestMessage {
-        Data(String),
-    }
-
-    impl RoomMessageTrait for TestMessage {
-        fn room_id(&self) -> RoomId {
-            RoomId::from("test")
-        }
-
-        fn serialize_inner(
-            &self,
-        ) -> Result<Vec<u8>, zznet_session::room_message_trait::SerializationError> {
-            bincode::serde::encode_to_vec(self, bincode::config::standard()).map_err(|e| {
-                zznet_session::room_message_trait::SerializationError::BincodeError(e.to_string())
-            })
-        }
-
-        fn deserialize_for_room(
-            _room_id: &RoomId,
-            bytes: &[u8],
-        ) -> Result<Self, zznet_session::room_message_trait::DeserializationError> {
-            bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-                .map(|(v, _)| v)
-                .map_err(|e| {
-                    zznet_session::room_message_trait::DeserializationError::BincodeError(
-                        e.to_string(),
-                    )
-                })
-        }
-
-        fn supported_rooms() -> Vec<RoomId> {
-            vec![RoomId::from("test")]
-        }
-    }
-
     // Simple test handler
     struct TestRoomHandler {
         room_id: RoomId,
@@ -113,7 +75,7 @@ mod room_registry_integration_tests {
         message_count: Arc<Mutex<usize>>,
     }
 
-    impl RoomHandlerFactory<TestMessage, TestRole> for TestRoomHandlerFactory {
+    impl RoomHandlerFactory<TestRole> for TestRoomHandlerFactory {
         fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle> {
             Box::new(TestRoomHandler {
                 room_id,
@@ -128,8 +90,7 @@ mod room_registry_integration_tests {
             RoomId::from("test"),
         ])));
 
-        let _registry: RoomRegistry<TestMessage, TestRole> =
-            RoomRegistry::new(Arc::clone(&session_manager));
+        let _registry: RoomRegistry<TestRole> = RoomRegistry::new(Arc::clone(&session_manager));
         // Registry created successfully
     }
 

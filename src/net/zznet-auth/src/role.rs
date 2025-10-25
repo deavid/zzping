@@ -12,7 +12,18 @@ use std::hash::Hash;
 ///
 /// Applications should implement this trait for their custom role types.
 pub trait ApplicationRole:
-    Clone + Copy + Debug + PartialEq + Eq + Hash + Serialize + DeserializeOwned + Send + Sync + Unpin + 'static
+    Clone
+    + Copy
+    + Debug
+    + PartialEq
+    + Eq
+    + Hash
+    + Serialize
+    + DeserializeOwned
+    + Send
+    + Sync
+    + Unpin
+    + 'static
 {
     /// Create a role from a common name (CN) in a certificate.
     fn from_cn(cn: &str) -> Result<Self, AuthError>;

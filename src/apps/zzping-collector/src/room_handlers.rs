@@ -11,8 +11,6 @@ use zznet_session::peer_session::RoomHandle;
 use zznet_session::types::{RoomId, SessionError};
 use zzping_auth::AuthRole;
 
-use crate::service::CollectorMessage;
-
 /// Factory for IntentConfig room handlers in the collector.
 pub struct IntentConfigRoomHandlerFactory {
     intent_addr: Addr<IntentConfigActor<IntentConfigPermission>>,
@@ -25,7 +23,7 @@ impl IntentConfigRoomHandlerFactory {
     }
 }
 
-impl RoomHandlerFactory<CollectorMessage, AuthRole> for IntentConfigRoomHandlerFactory {
+impl RoomHandlerFactory<AuthRole> for IntentConfigRoomHandlerFactory {
     fn create_handler(&self, room_id: RoomId) -> Box<dyn RoomHandle> {
         Box::new(CollectorIntentConfigRoomHandler {
             intent_addr: self.intent_addr.clone(),
