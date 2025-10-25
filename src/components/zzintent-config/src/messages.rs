@@ -162,3 +162,18 @@ mod tests {
         assert!(result.unwrap_err().contains("unreasonably high"));
     }
 }
+
+/// Internal message: Process authorization result for config change request (Phase 3)
+///
+/// This message is sent internally after querying SessionManager for peer role.
+/// It's not part of the public API.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub(crate) struct ProcessRequestConfigChangeAuth<T: zznet_auth::role::ApplicationRole> {
+    pub sender_peer_id: String,
+    pub sender_role: Option<crate::permission_wrapper::PermissionWrapper<T>>,
+    pub targets: Vec<IpAddr>,
+    pub ping_rate_pps: u64,
+    pub session_manager:
+        actix::Addr<zznet_session::SessionManager<crate::permission_wrapper::PermissionWrapper<T>>>,
+}

@@ -51,7 +51,10 @@ async fn transport_accept_and_send_to_connection_manager() {
                     as Box<
                         dyn Fn(&zznet_api::types::AuthContext) -> Option<MockRole> + Send + Sync,
                     >;
-            let mgr = ConnectionManager::<MockRole>::new(offered_rooms, authorizer).start();
+            // Create a SessionManager actor and pass its Addr into ConnectionManager
+            use zznet_session::session_manager::SessionManager;
+            let session_mgr_addr = SessionManager::<MockRole>::new(offered_rooms).start();
+            let mgr = ConnectionManager::<MockRole>::new(session_mgr_addr, authorizer).start();
 
             // Send transport using HandleTransport, ensure try_send succeeds
             let config = HelloConfig::default();

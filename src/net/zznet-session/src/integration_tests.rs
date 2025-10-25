@@ -452,7 +452,6 @@ mod peer_session_integration_tests {
     #[actix::test]
     async fn test_peer_session_with_room_adapter() {
         // Create peer session
-        let mut peer_session = PeerSession::<MockRole>::new(PeerId::from("test_peer"));
 
         // Create rooms
         let actor1 = CollectorActor { received: vec![] }.start();
@@ -469,7 +468,18 @@ mod peer_session_integration_tests {
 
         // Create peer channels
         let (peer_tx, mut peer_rx) = mpsc::channel(10);
-        let (inbound_tx, inbound_rx) = mpsc::channel(10);
+        let (_inbound_tx, inbound_rx) = mpsc::channel(10);
+
+        // Create a connected PeerSession using the real peer channels
+        let mut peer_session = PeerSession::<MockRole>::new_connected(
+            PeerId::from("test_peer"),
+            None,
+            None,
+            peer_tx.clone(),
+            inbound_rx,
+        )
+        .await
+        .unwrap();
 
         // Create adapters
         let adapter1 = RoomAdapter::new(
@@ -495,8 +505,7 @@ mod peer_session_integration_tests {
             .await
             .unwrap();
 
-        // Connect peer session
-        peer_session.connect(inbound_tx, inbound_rx).await.unwrap();
+        // PeerSession is already connected via new_connected
 
         // Test outbound: Component → Room → Adapter → Peer
         room1
@@ -525,7 +534,18 @@ mod peer_session_integration_tests {
     #[actix::test]
     async fn test_peer_session_multiple_rooms_concurrent() {
         // Create peer session
-        let mut peer_session = PeerSession::<MockRole>::new(PeerId::from("test_peer"));
+        // Create peer channels
+        let (peer_tx, mut peer_rx) = mpsc::channel(10);
+        let (_inbound_tx, inbound_rx) = mpsc::channel(10);
+        let mut peer_session = PeerSession::<MockRole>::new_connected(
+            PeerId::from("test_peer"),
+            None,
+            None,
+            peer_tx.clone(),
+            inbound_rx,
+        )
+        .await
+        .unwrap();
 
         // Create 3 rooms
         let actor1 = CollectorActor { received: vec![] }.start();
@@ -542,10 +562,6 @@ mod peer_session_integration_tests {
         room1.spawn_receiver().unwrap();
         room2.spawn_receiver().unwrap();
         room3.spawn_receiver().unwrap();
-
-        // Create peer channels
-        let (peer_tx, mut peer_rx) = mpsc::channel(10);
-        let (inbound_tx, inbound_rx) = mpsc::channel(10);
 
         // Create adapters
         let adapter1 = RoomAdapter::new(
@@ -581,8 +597,7 @@ mod peer_session_integration_tests {
             .await
             .unwrap();
 
-        // Connect
-        peer_session.connect(inbound_tx, inbound_rx).await.unwrap();
+        // PeerSession was created connected via new_connected
 
         // Send messages from all rooms concurrently
         room1

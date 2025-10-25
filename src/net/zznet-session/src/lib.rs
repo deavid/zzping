@@ -54,6 +54,9 @@ pub mod room_message_trait;
 /// Manages lifetime and routing for multiple peer sessions.
 pub mod session_manager;
 
+/// Actix message types for SessionManager actor pattern
+pub mod messages;
+
 // Export public types
 pub use session_manager::SessionManager;
 
@@ -68,3 +71,6 @@ pub mod test_room_messages;
 
 #[cfg(test)]
 mod integration_tests;
+
+#[cfg(test)]
+mod actor_tests;

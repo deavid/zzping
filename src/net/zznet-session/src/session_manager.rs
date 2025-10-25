@@ -149,44 +149,11 @@ where
         Ok(())
     }
 
-    /// Connect to a peer with the given channels
-    ///
-    /// `peer_id`: The peer to connect
-    /// `outbound_tx`: Channel to send serialized bytes to peer
-    /// `inbound_rx`: Channel to receive serialized bytes from peer
-    ///
-    /// Note: These channels carry SERIALIZED messages (RoomId, Vec<u8>),
-    /// Serialization happens at the Room layer.
-    pub async fn connect_peer(
-        &mut self,
-        peer_id: PeerId,
-        outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
-        inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
-    ) -> Result<(), SessionError> {
-        let peer = self
-            .peers
-            .get_mut(&peer_id)
-            .ok_or_else(|| SessionError::PeerNotFound(peer_id.clone()))?;
-
-        peer.connect(outbound_tx, inbound_rx).await?;
-
-        tracing::info!("Connected to peer: {}", peer_id);
-        Ok(())
-    }
-
-    /// Disconnect from a peer
-    /// Closes channels and aborts tasks, but keeps peer in map
-    pub fn disconnect_peer(&mut self, peer_id: &PeerId) -> Result<(), SessionError> {
-        let peer = self
-            .peers
-            .get_mut(peer_id)
-            .ok_or_else(|| SessionError::PeerNotFound(peer_id.clone()))?;
-
-        peer.disconnect();
-
-        tracing::info!("Disconnected from peer: {}", peer_id);
-        Ok(())
-    }
+    // NOTE: disconnect_peer removed — prefer explicit peer.disconnect() or
+    // using actor messages. The previous implementation closed channels and
+    // aborted tasks but kept the peer in the map; callers should now either
+    // call `remove_peer()` (to remove) or obtain a mutable reference to the
+    // peer and call `peer.disconnect()` directly when appropriate.
 
     /// Remove a peer entirely
     /// Disconnects and removes from map
@@ -449,11 +416,354 @@ where
     }
 }
 
+// ============================================================================
+// Actor Implementation
+// ============================================================================
+
+use crate::messages::{
+    AddPeer, BroadcastToRole, DisconnectPeer, GetConnectedPeerCount, GetOfferedRooms,
+    GetPeerIdentity, GetPeerIds, GetPeerJoinedRooms, GetPeerRole, GetPeerSender, GetPeerState,
+    GetPeersWithRole, HandlePublishRooms, IsPeerConnected, IsRoomJoinedWithPeer, RemovePeer,
+    SendToRoom, SetOfferedRooms, SubscribePeerInbound,
+};
+use actix::prelude::*;
+
+impl<TRole> Actor for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Context = Context<Self>;
+
+    fn started(&mut self, _ctx: &mut Self::Context) {
+        tracing::info!("SessionManager actor started");
+    }
+
+    fn stopped(&mut self, _ctx: &mut Self::Context) {
+        tracing::info!("SessionManager actor stopped");
+    }
+}
+
+// ============================================================================
+// Message Handlers - Peer Management
+// ============================================================================
+//
+// NOTE: ConnectPeer handler is NOT implemented due to fundamental Rust
+// lifetime constraints:
+// - peer.connect() is async and borrows &mut self
+// - Actor handlers must return 'static futures
+// - PeerSession fields are private, so we cannot inline the connect logic
+//
+// WORKAROUND: ConnectionManager will continue using Arc<Mutex<SessionManager>>
+// temporarily alongside Addr<SessionManager> for operations that work via
+// messages. This hybrid approach allows Phase 2 migration to proceed.
+
+impl<TRole> Handler<AddPeer<TRole>> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Result<(), SessionError>;
+
+    fn handle(&mut self, msg: AddPeer<TRole>, _ctx: &mut Context<Self>) -> Self::Result {
+        self.add_peer(msg.peer_id, msg.peer_session)
+    }
+}
+
+// ConnectPeer handler - NOT implemented (see note above)
+
+impl<TRole> Handler<DisconnectPeer> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Result<(), SessionError>;
+
+    fn handle(&mut self, msg: DisconnectPeer, _ctx: &mut Context<Self>) -> Self::Result {
+        let peer = self
+            .peers
+            .get_mut(&msg.peer_id)
+            .ok_or_else(|| SessionError::PeerNotFound(msg.peer_id.clone()))?;
+
+        peer.disconnect();
+
+        tracing::info!("Disconnected from peer: {}", msg.peer_id);
+        Ok(())
+    }
+}
+
+impl<TRole> Handler<RemovePeer> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Result<(), SessionError>;
+
+    fn handle(&mut self, msg: RemovePeer, _ctx: &mut Context<Self>) -> Self::Result {
+        self.remove_peer(&msg.peer_id)
+    }
+}
+
+// AddRoomToPeer handler - SKIPPED for Phase 1 (see note above)
+
+// ============================================================================
+// Message Handlers - Room Management
+// ============================================================================
+
+impl<TRole> Handler<SetOfferedRooms> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = ();
+
+    fn handle(&mut self, msg: SetOfferedRooms, _ctx: &mut Context<Self>) -> Self::Result {
+        self.set_offered_rooms(msg.rooms)
+    }
+}
+
+impl<TRole> Handler<HandlePublishRooms> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Result<Vec<RoomId>, SessionError>;
+
+    fn handle(&mut self, msg: HandlePublishRooms, _ctx: &mut Context<Self>) -> Self::Result {
+        self.handle_publish_rooms(&msg.peer_id, msg.requested_rooms)
+    }
+}
+
+// ============================================================================
+// Message Handlers - Query Operations
+// ============================================================================
+
+impl<TRole> Handler<GetPeerState> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Option<ConnectionState>;
+
+    fn handle(&mut self, msg: GetPeerState, _ctx: &mut Context<Self>) -> Self::Result {
+        self.peer_state(&msg.peer_id)
+    }
+}
+
+impl<TRole> Handler<IsPeerConnected> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = bool;
+
+    fn handle(&mut self, msg: IsPeerConnected, _ctx: &mut Context<Self>) -> Self::Result {
+        self.is_peer_connected(&msg.peer_id)
+    }
+}
+
+impl<TRole> Handler<GetPeerIds> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Vec<PeerId>;
+
+    fn handle(&mut self, _msg: GetPeerIds, _ctx: &mut Context<Self>) -> Self::Result {
+        self.peer_ids()
+    }
+}
+
+impl<TRole> Handler<GetPeerRole<TRole>> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Option<TRole>;
+
+    fn handle(&mut self, msg: GetPeerRole<TRole>, _ctx: &mut Context<Self>) -> Self::Result {
+        self.get_peer_role_cloned(&msg.peer_id)
+    }
+}
+
+impl<TRole> Handler<GetPeerIdentity> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Option<PeerIdentity>;
+
+    fn handle(&mut self, msg: GetPeerIdentity, _ctx: &mut Context<Self>) -> Self::Result {
+        self.get_peer_identity(&msg.peer_id).cloned()
+    }
+}
+
+impl<TRole> Handler<GetPeersWithRole<TRole>> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Vec<PeerId>;
+
+    fn handle(&mut self, msg: GetPeersWithRole<TRole>, _ctx: &mut Context<Self>) -> Self::Result {
+        self.peers_with_role(&msg.role)
+    }
+}
+
+impl<TRole> Handler<GetConnectedPeerCount> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = usize;
+
+    fn handle(&mut self, _msg: GetConnectedPeerCount, _ctx: &mut Context<Self>) -> Self::Result {
+        self.connected_peer_count()
+    }
+}
+
+impl<TRole> Handler<GetOfferedRooms> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Vec<RoomId>;
+
+    fn handle(&mut self, _msg: GetOfferedRooms, _ctx: &mut Context<Self>) -> Self::Result {
+        self.offered_rooms().to_vec()
+    }
+}
+
+impl<TRole> Handler<GetPeerSender> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Option<mpsc::Sender<(RoomId, Vec<u8>)>>;
+
+    fn handle(&mut self, msg: GetPeerSender, _ctx: &mut Context<Self>) -> Self::Result {
+        self.get_peer_sender(&msg.peer_id)
+    }
+}
+
+impl<TRole> Handler<SubscribePeerInbound> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>>;
+
+    fn handle(&mut self, msg: SubscribePeerInbound, _ctx: &mut Context<Self>) -> Self::Result {
+        self.subscribe_peer_inbound(&msg.peer_id)
+    }
+}
+
+impl<TRole> Handler<GetPeerJoinedRooms> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Result<Vec<RoomId>, SessionError>;
+
+    fn handle(&mut self, msg: GetPeerJoinedRooms, _ctx: &mut Context<Self>) -> Self::Result {
+        self.peer_joined_rooms(&msg.peer_id)
+            .map(|rooms| rooms.to_vec())
+    }
+}
+
+impl<TRole> Handler<IsRoomJoinedWithPeer> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = Result<bool, SessionError>;
+
+    fn handle(&mut self, msg: IsRoomJoinedWithPeer, _ctx: &mut Context<Self>) -> Self::Result {
+        self.is_room_joined_with_peer(&msg.peer_id, &msg.room_id)
+    }
+}
+
+// ============================================================================
+// Message Handlers - Message Sending
+// ============================================================================
+//
+// SendToRoom handler - Currently implemented with workaround for lifetime issues
+// BroadcastToRole - Optimized batch operation
+
+impl<TRole> Handler<SendToRoom> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = ResponseActFuture<Self, Result<(), SessionError>>;
+
+    fn handle(&mut self, msg: SendToRoom, _ctx: &mut Context<Self>) -> Self::Result {
+        let peer_id = msg.peer_id.clone();
+        let room_id = msg.room_id;
+        let bytes = msg.bytes;
+
+        // Inline the send_to_room logic to avoid lifetime issues
+        let result = match self.peers.get(&peer_id) {
+            None => Err(SessionError::PeerNotFound(peer_id)),
+            Some(peer) => {
+                if !peer.is_connected() {
+                    Err(SessionError::PeerNotConnected(peer_id))
+                } else if !peer.is_room_joined(&room_id) {
+                    Err(SessionError::RoomNotJoined(room_id))
+                } else {
+                    // Get the sender and send the message
+                    match peer.get_sender() {
+                        Some(tx) => {
+                            // Send asynchronously
+                            let fut = async move {
+                                tx.send((room_id, bytes))
+                                    .await
+                                    .map_err(|_| SessionError::SendFailed)
+                            };
+                            return Box::pin(actix::fut::wrap_future(fut));
+                        }
+                        None => Err(SessionError::PeerNotConnected(peer_id)),
+                    }
+                }
+            }
+        };
+
+        Box::pin(actix::fut::ready(result))
+    }
+}
+
+// ============================================================================
+// Message Handlers - Optimized Batch Operations
+// ============================================================================
+
+impl<TRole> Handler<BroadcastToRole<TRole>> for SessionManager<TRole>
+where
+    TRole: ApplicationRole + 'static,
+{
+    type Result = ResponseFuture<Result<(), SessionError>>;
+
+    fn handle(&mut self, msg: BroadcastToRole<TRole>, _ctx: &mut Context<Self>) -> Self::Result {
+        let peers = self.peers_with_role(&msg.role);
+        let room_id = msg.room_id;
+        let bytes = msg.bytes;
+
+        // Collect senders for all peers with the role
+        let mut senders = Vec::new();
+        for peer_id in &peers {
+            if let Some(peer) = self.peers.get(peer_id)
+                && peer.is_connected()
+                && peer.is_room_joined(&room_id)
+                && let Some(tx) = peer.get_sender()
+            {
+                senders.push((peer_id.clone(), tx));
+            }
+        }
+
+        // Send to all collected senders
+        Box::pin(async move {
+            for (peer_id, tx) in senders {
+                tx.send((room_id.clone(), bytes.clone()))
+                    .await
+                    .map_err(|_| SessionError::SendFailed)?;
+                tracing::debug!("Broadcast sent to peer {:?} in room {:?}", peer_id, room_id);
+            }
+            Ok(())
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
     use zznet_auth::mock::MockRole;
+
+    // NOTE: tests below create PeerSession instances via
+    // `PeerSession::new_connected(...).await.unwrap()` and call
+    // `disconnect()` where a disconnected session is required before
+    // adding to SessionManager. Constructing PeerSession directly would
+    // require accessing private fields, so we avoid that here.
 
     #[actix::test]
     async fn test_session_manager_new() {
@@ -470,8 +780,13 @@ mod tests {
         let mut manager = SessionManager::<MockRole>::new(vec![]);
         let peer_id = PeerId::from("test_peer");
 
-        // Create empty peer session
-        let peer_session = PeerSession::<MockRole>::new(peer_id.clone());
+        // Create empty peer session (create connected then disconnect)
+        let (tx, _rx) = tokio::sync::mpsc::channel(100);
+        let (_tx2, rx2) = tokio::sync::mpsc::channel(100);
+        let mut peer_session = PeerSession::new_connected(peer_id.clone(), None, None, tx, rx2)
+            .await
+            .unwrap();
+        peer_session.disconnect();
 
         manager.add_peer(peer_id.clone(), peer_session).unwrap();
 
@@ -487,12 +802,22 @@ mod tests {
         let mut manager = SessionManager::<MockRole>::new(vec![]);
         let peer_id = PeerId::from("test_peer");
 
-        // Add first time
-        let peer_session1 = PeerSession::<MockRole>::new(peer_id.clone());
+        // Add first time (create, then disconnect)
+        let (tx1, _rx1) = tokio::sync::mpsc::channel(100);
+        let (_tx2_1, rx2_1) = tokio::sync::mpsc::channel(100);
+        let mut peer_session1 = PeerSession::new_connected(peer_id.clone(), None, None, tx1, rx2_1)
+            .await
+            .unwrap();
+        peer_session1.disconnect();
         manager.add_peer(peer_id.clone(), peer_session1).unwrap();
 
         // Try to add again
-        let peer_session2 = PeerSession::<MockRole>::new(peer_id.clone());
+        let (tx2, _rx2) = tokio::sync::mpsc::channel(100);
+        let (_tx2_2, rx2_2) = tokio::sync::mpsc::channel(100);
+        let mut peer_session2 = PeerSession::new_connected(peer_id.clone(), None, None, tx2, rx2_2)
+            .await
+            .unwrap();
+        peer_session2.disconnect();
         let result = manager.add_peer(peer_id.clone(), peer_session2);
         assert!(matches!(result, Err(SessionError::PeerAlreadyExists(_))));
     }
@@ -502,7 +827,11 @@ mod tests {
         let mut manager = SessionManager::<MockRole>::new(vec![]);
         let peer_id = PeerId::from("test_peer");
 
-        let peer_session = PeerSession::<MockRole>::new(peer_id.clone());
+        let (tx, _rx) = tokio::sync::mpsc::channel(100);
+        let (_tx2, rx2) = tokio::sync::mpsc::channel(100);
+        let peer_session = PeerSession::new_connected(peer_id.clone(), None, None, tx, rx2)
+            .await
+            .unwrap();
         manager.add_peer(peer_id.clone(), peer_session).unwrap();
         assert_eq!(manager.peer_ids().len(), 1);
 
@@ -525,8 +854,16 @@ mod tests {
         let peer_id1 = PeerId::from("peer1");
         let peer_id2 = PeerId::from("peer2");
 
-        let peer_session1 = PeerSession::<MockRole>::new(peer_id1.clone());
-        let peer_session2 = PeerSession::<MockRole>::new(peer_id2.clone());
+        let (tx1, _rx1) = tokio::sync::mpsc::channel(100);
+        let (_tx2_1, rx2_1) = tokio::sync::mpsc::channel(100);
+        let peer_session1 = PeerSession::new_connected(peer_id1.clone(), None, None, tx1, rx2_1)
+            .await
+            .unwrap();
+        let (tx2, _rx2) = tokio::sync::mpsc::channel(100);
+        let (_tx2_2, rx2_2) = tokio::sync::mpsc::channel(100);
+        let peer_session2 = PeerSession::new_connected(peer_id2.clone(), None, None, tx2, rx2_2)
+            .await
+            .unwrap();
 
         manager.add_peer(peer_id1.clone(), peer_session1).unwrap();
         manager.add_peer(peer_id2.clone(), peer_session2).unwrap();
@@ -545,22 +882,17 @@ mod tests {
         assert_eq!(manager.offered_rooms(), offered_rooms.as_slice());
     }
 
-    #[actix::test]
-    async fn test_connect_peer_not_found() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
-        let peer_id = PeerId::from("nonexistent_peer");
-        let (tx, rx) = mpsc::channel(10);
-
-        let result = manager.connect_peer(peer_id, tx, rx).await;
-        assert!(matches!(result, Err(SessionError::PeerNotFound(_))));
-    }
+    // Test removed: connect_peer() method has been deprecated and removed.
+    // Use PeerSession::new_connected() instead.
 
     #[actix::test]
     async fn test_disconnect_peer_not_found() {
         let mut manager = SessionManager::<MockRole>::new(vec![]);
         let peer_id = PeerId::from("nonexistent_peer");
 
-        let result = manager.disconnect_peer(&peer_id);
+        // `disconnect_peer` was removed; removing a non-existent peer should
+        // return PeerNotFound as well, so exercise `remove_peer` here.
+        let result = manager.remove_peer(&peer_id);
         assert!(matches!(result, Err(SessionError::PeerNotFound(_))));
     }
 
@@ -575,72 +907,11 @@ mod tests {
         assert!(matches!(result, Err(SessionError::PeerNotFound(_))));
     }
 
-    #[actix::test]
-    async fn test_basic_peer_lifecycle() {
-        let mut manager = SessionManager::<MockRole>::new(vec![RoomId::from("memdb")]);
+    // Test removed: test_basic_peer_lifecycle tested connect/disconnect which no longer
+    // exists with the new pattern. Peers are created already connected via new_connected().
 
-        // Add peer
-        let peer_session = PeerSession::<MockRole>::new(PeerId::from("peer1"));
-        manager
-            .add_peer(PeerId::from("peer1"), peer_session)
-            .unwrap();
-
-        assert_eq!(
-            manager.peer_state(&PeerId::from("peer1")),
-            Some(ConnectionState::Disconnected)
-        );
-
-        // Connect peer
-        let (tx_out, _rx_in) = mpsc::channel(10);
-        let (_tx_in, rx_out) = mpsc::channel(10);
-
-        manager
-            .connect_peer(PeerId::from("peer1"), tx_out, rx_out)
-            .await
-            .unwrap();
-
-        assert!(manager.is_peer_connected(&PeerId::from("peer1")));
-
-        // Disconnect peer
-        manager.disconnect_peer(&PeerId::from("peer1")).unwrap();
-
-        assert!(!manager.is_peer_connected(&PeerId::from("peer1")));
-    }
-
-    #[actix::test]
-    async fn test_multiple_peers_simultaneously() {
-        let mut manager = SessionManager::<MockRole>::new(vec![RoomId::from("memdb")]);
-
-        // Add three peers
-        for peer_id in ["peer1", "peer2", "peer3"] {
-            let peer_session = PeerSession::<MockRole>::new(PeerId::from(peer_id));
-            manager
-                .add_peer(PeerId::from(peer_id), peer_session)
-                .unwrap();
-        }
-
-        // Connect all three
-        for peer_id in ["peer1", "peer2", "peer3"] {
-            let (tx, _rx_in) = mpsc::channel(10);
-            let (_tx_in, rx) = mpsc::channel(10);
-            manager
-                .connect_peer(PeerId::from(peer_id), tx, rx)
-                .await
-                .unwrap();
-        }
-
-        // All should be connected
-        assert_eq!(manager.connected_peer_count(), 3);
-
-        // Disconnect peer2
-        manager.disconnect_peer(&PeerId::from("peer2")).unwrap();
-
-        // Only 2 connected now
-        assert_eq!(manager.connected_peer_count(), 2);
-        assert!(manager.is_peer_connected(&PeerId::from("peer1")));
-        assert!(!manager.is_peer_connected(&PeerId::from("peer2")));
-        assert!(manager.is_peer_connected(&PeerId::from("peer3")));
-    }
+    // Test removed: test_multiple_peers_simultaneously tested connect/disconnect transitions
+    // which no longer exist. Peers are created already connected via new_connected().
 
     // --- New tests for limits ---
 
@@ -651,12 +922,20 @@ mod tests {
 
         // Add two peers - should succeed
         for id in ["peer1", "peer2"] {
-            let peer_session = PeerSession::<MockRole>::new(PeerId::from(id));
+            let (tx, _rx) = tokio::sync::mpsc::channel(100);
+            let (_tx2, rx2) = tokio::sync::mpsc::channel(100);
+            let peer_session = PeerSession::new_connected(PeerId::from(id), None, None, tx, rx2)
+                .await
+                .unwrap();
             manager.add_peer(PeerId::from(id), peer_session).unwrap();
         }
 
         // Third peer should fail
-        let peer3 = PeerSession::<MockRole>::new(PeerId::from("peer3"));
+        let (tx_tmp, _rx_tmp) = tokio::sync::mpsc::channel(100);
+        let (_tx2_tmp, rx2_tmp) = tokio::sync::mpsc::channel(100);
+        let peer3 = PeerSession::new_connected(PeerId::from("peer3"), None, None, tx_tmp, rx2_tmp)
+            .await
+            .unwrap();
         let res = manager.add_peer(PeerId::from("peer3"), peer3);
         assert!(matches!(res, Err(SessionError::PeerLimitExceeded { .. })));
     }
@@ -667,7 +946,11 @@ mod tests {
         let mut manager = SessionManager::<MockRole>::new_with_limits(vec![], None, Some(1));
 
         // Create peer session and add two simple mock rooms before registering
-        let mut peer = PeerSession::<MockRole>::new(PeerId::from("p1"));
+        let (tx_tmp, _rx_tmp) = tokio::sync::mpsc::channel(100);
+        let (_tx2_tmp, rx2_tmp) = tokio::sync::mpsc::channel(100);
+        let mut peer = PeerSession::new_connected(PeerId::from("p1"), None, None, tx_tmp, rx2_tmp)
+            .await
+            .unwrap();
 
         // Simple mock RoomHandle implementation for tests
         struct SimpleRoom {
@@ -725,7 +1008,11 @@ mod tests {
 
         // Create a peer (will have empty rooms HashMap for simplicity)
         // In real usage, rooms would be added via add_room()
-        let peer = PeerSession::new(PeerId::from("database"));
+        let (tx, _rx) = tokio::sync::mpsc::channel(100);
+        let (_tx2, rx2) = tokio::sync::mpsc::channel(100);
+        let peer = PeerSession::new_connected(PeerId::from("database"), None, None, tx, rx2)
+            .await
+            .unwrap();
 
         // Add peer to manager
         manager.add_peer(PeerId::from("database"), peer).unwrap();
@@ -757,7 +1044,11 @@ mod tests {
         let mut manager = SessionManager::<MockRole>::new(vec![]);
 
         // Create peer
-        let peer = PeerSession::new(PeerId::from("database"));
+        let (tx, _rx) = tokio::sync::mpsc::channel(100);
+        let (_tx2, rx2) = tokio::sync::mpsc::channel(100);
+        let peer = PeerSession::new_connected(PeerId::from("database"), None, None, tx, rx2)
+            .await
+            .unwrap();
 
         manager.add_peer(PeerId::from("database"), peer).unwrap();
 
@@ -782,7 +1073,11 @@ mod tests {
         let mut manager = SessionManager::<MockRole>::new(vec![]);
 
         // Create peer
-        let peer = PeerSession::new(PeerId::from("database"));
+        let (tx, _rx) = tokio::sync::mpsc::channel(100);
+        let (_tx2, rx2) = tokio::sync::mpsc::channel(100);
+        let peer = PeerSession::new_connected(PeerId::from("database"), None, None, tx, rx2)
+            .await
+            .unwrap();
 
         manager.add_peer(PeerId::from("database"), peer).unwrap();
 

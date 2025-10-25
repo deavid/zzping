@@ -32,38 +32,35 @@ impl DummyRoomHandle {
 /// Connect two SessionManager instances in-memory by wiring their peer channels
 /// together using tokio mpsc channels. This creates bidirectional channels so
 /// that manager_a can send to peer_b and manager_b can send to peer_a.
+///
+/// **DEPRECATED & REMOVED**: This function relied on the old two-step peer creation
+/// pattern (create disconnected, then connect). With Phase 4 complete, peers must be
+/// created already connected using `PeerSession::new_connected()`.
+///
+/// Tests using this function need to be updated to:
+/// 1. Create channels manually: `mpsc::channel(16)`
+/// 2. Create peers with `PeerSession::new_connected(peer_id, role, identity, tx, rx).await`
+/// 3. Add peers to managers with `manager.add_peer(peer_id, peer)`
+///
+/// This function now panics to force test updates.
+#[deprecated(note = "Tests must create peers with PeerSession::new_connected() directly")]
 pub async fn connect_managers_in_memory<TRole>(
-    manager_a: &mut zznet_session::session_manager::SessionManager<TRole>,
-    peer_id_a: &zznet_session::types::PeerId,
-    manager_b: &mut zznet_session::session_manager::SessionManager<TRole>,
-    peer_id_b: &zznet_session::types::PeerId,
+    _manager_a: &mut zznet_session::session_manager::SessionManager<TRole>,
+    _peer_id_a: &zznet_session::types::PeerId,
+    _manager_b: &mut zznet_session::session_manager::SessionManager<TRole>,
+    _peer_id_b: &zznet_session::types::PeerId,
 ) -> Result<(), zznet_session::types::SessionError>
 where
     TRole: zznet_auth::ApplicationRole,
 {
-    use tokio::sync::mpsc;
-
-    // Channel: A -> B
-    let (tx_a_to_b, rx_a_to_b) = mpsc::channel::<(RoomId, Vec<u8>)>(16);
-    // Channel: B -> A
-    let (tx_b_to_a, rx_b_to_a) = mpsc::channel::<(RoomId, Vec<u8>)>(16);
-
-    // Manager A connects to peer B with outbound tx A->B and inbound rx B->A
-    manager_a
-        .connect_peer(peer_id_b.clone(), tx_a_to_b, rx_b_to_a)
-        .await?;
-
-    // Manager B connects to peer A with outbound tx B->A and inbound rx A->B
-    manager_b
-        .connect_peer(peer_id_a.clone(), tx_b_to_a, rx_a_to_b)
-        .await?;
-
-    Ok(())
+    panic!(
+        "connect_managers_in_memory() is deprecated. Create peers with PeerSession::new_connected() instead."
+    );
 }
 
 /// Convenience helper to create a fully configured peer with rooms and permissions.
 /// This reduces boilerplate in tests by handling the common pattern of:
-/// 1. Creating a peer
+/// 1. Creating a peer (already connected with dummy channels)
 /// 2. Adding rooms
 /// 3. Setting role/permissions
 /// 4. Adding to manager
@@ -77,8 +74,21 @@ pub async fn create_and_add_peer<TRole>(
 where
     TRole: zznet_auth::ApplicationRole,
 {
-    // Create peer
-    let mut peer = zznet_session::peer_session::PeerSession::<TRole>::new(peer_id.clone());
+    use tokio::sync::mpsc;
+
+    // Create dummy channels (16 buffer size)
+    let (tx, _rx_unused) = mpsc::channel::<(RoomId, Vec<u8>)>(16);
+    let (_tx_unused, rx) = mpsc::channel::<(RoomId, Vec<u8>)>(16);
+
+    // Create peer already connected with dummy channels
+    let mut peer = zznet_session::peer_session::PeerSession::<TRole>::new_connected(
+        peer_id.clone(),
+        role,
+        None, // No identity for test peers
+        tx,
+        rx,
+    )
+    .await?;
 
     // Add rooms
     for room_id in &rooms {
@@ -87,11 +97,6 @@ where
             Box::new(DummyRoomHandle::new(room_id.clone())),
         )
         .await?;
-    }
-
-    // Set role if provided
-    if let Some(role) = role {
-        peer.set_role(Some(role));
     }
 
     // Add peer to manager
@@ -193,8 +198,11 @@ impl Default for MessageCaptureChannels {
     }
 }
 
-/// Convenience helper that creates a peer, connects it to capture messages, and returns the capture handle.
-/// This combines create_and_add_peer + MessageCapture setup for the most common test pattern.
+/// Convenience helper that creates a peer with message capture channels.
+/// This combines peer creation + MessageCapture setup for the most common test pattern.
+///
+/// Note: With Phase 4, peers must be created already connected. This function creates
+/// a peer with capture channels from the start, rather than connecting them after creation.
 pub async fn create_peer_with_message_capture<TRole>(
     manager: &mut zznet_session::session_manager::SessionManager<TRole>,
     peer_id: &zznet_session::types::PeerId,
@@ -204,16 +212,33 @@ pub async fn create_peer_with_message_capture<TRole>(
 where
     TRole: zznet_auth::ApplicationRole,
 {
-    // Create and add the peer
-    create_and_add_peer(manager, peer_id, rooms, role).await?;
-
-    // Set up message capture
+    // Set up message capture channels
     let channels = MessageCaptureChannels::new();
 
-    // Connect the peer
-    manager
-        .connect_peer(peer_id.clone(), channels.tx_out, channels.rx_in)
+    // Create peer already connected with capture channels
+    let mut peer = zznet_session::peer_session::PeerSession::<TRole>::new_connected(
+        peer_id.clone(),
+        role,
+        None, // No identity for test peers
+        channels.tx_out,
+        channels.rx_in,
+    )
+    .await?;
+
+    // Add rooms
+    for room_id in &rooms {
+        peer.add_room(
+            room_id.clone(),
+            Box::new(DummyRoomHandle::new(room_id.clone())),
+        )
         .await?;
+    }
+
+    // Add peer to manager
+    manager.add_peer(peer_id.clone(), peer)?;
+
+    // Publish rooms
+    manager.handle_publish_rooms(peer_id, rooms)?;
 
     Ok(channels.capture)
 }

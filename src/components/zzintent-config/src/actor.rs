@@ -3,7 +3,8 @@
 
 use crate::messages::{
     CreateRoom, GetCurrentConfig, GetHealth, GetRoomChannels, GetRoomChannelsResponse,
-    IntentConfigData, IntentConfigHealth, Subscribe, Unsubscribe, UpdateConfig,
+    IntentConfigData, IntentConfigHealth, ProcessRequestConfigChangeAuth, Subscribe, Unsubscribe,
+    UpdateConfig,
 };
 use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permission_wrapper::PermissionWrapper;
@@ -12,7 +13,6 @@ use crate::role::IntentConfigRole;
 use actix::ResponseFuture;
 use actix::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
 use zznet_auth::role::ApplicationRole;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
@@ -27,8 +27,8 @@ pub struct IntentConfigActor<T: ApplicationRole> {
     /// Role configuration (Collector or Database)
     role: IntentConfigRole,
 
-    /// SessionManager for network communication (Phase 3)
-    session_manager: Option<Arc<Mutex<SessionManager<PermissionWrapper<T>>>>>,
+    /// SessionManager actor for network communication (Phase 3: Pure Actor Pattern)
+    session_manager: Option<Addr<SessionManager<PermissionWrapper<T>>>>,
 
     /// Room for typed network messaging (Room<T> architecture)
     room: Option<zznet_room::room::Room<IntentConfigNetworkMsg>>,
@@ -102,10 +102,10 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
         &self.role
     }
 
-    /// Set the SessionManager for network communication
+    /// Set the SessionManager actor for network communication (Phase 3: Pure Actor Pattern)
     pub fn set_session_manager(
         &mut self,
-        session_manager: Arc<Mutex<SessionManager<PermissionWrapper<T>>>>,
+        session_manager: Addr<SessionManager<PermissionWrapper<T>>>,
     ) {
         self.session_manager = Some(session_manager);
     }
@@ -170,35 +170,54 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
                 }
             };
 
-            // Get all peers with ReceiveConfigUpdates permission
-            let peers = session_manager
-                .lock()
-                .unwrap()
-                .peers_with_role(&receive_role);
-
-            log::info!("Sending ConfigUpdate to {} collector peers", peers.len());
-
-            // Clone SessionManager for async task
-            let session_manager = Arc::clone(session_manager);
+            // Clone SessionManager actor address for async task
+            let session_manager = session_manager.clone();
             let room_id = RoomId::from("intent-config");
 
-            // Spawn async task to send to all peers
+            // Spawn async task to query peers and send to all
             ctx.spawn(
-                #[allow(clippy::await_holding_lock)]
                 async move {
+                    use zznet_session::messages::GetPeersWithRole;
+
+                    // Query SessionManager for peers with ReceiveConfigUpdates permission
+                    let peers = match session_manager
+                        .send(GetPeersWithRole { role: receive_role })
+                        .await
+                    {
+                        Ok(peer_list) => peer_list,
+                        Err(e) => {
+                            log::error!("Failed to query peers from SessionManager: {}", e);
+                            return;
+                        }
+                    };
+
+                    log::info!("Sending ConfigUpdate to {} collector peers", peers.len());
+
+                    // Send to all peers via message passing
                     for peer_id in peers {
+                        use zznet_session::messages::SendToRoom;
+
                         match session_manager
-                            .lock()
-                            .unwrap()
-                            .send_to_room(&peer_id, &room_id, bytes.clone())
+                            .send(SendToRoom {
+                                peer_id: peer_id.clone(),
+                                room_id: room_id.clone(),
+                                bytes: bytes.clone(),
+                            })
                             .await
                         {
-                            Ok(_) => {
+                            Ok(Ok(())) => {
                                 log::debug!("✓ ConfigUpdate sent to peer {}", peer_id);
+                            }
+                            Ok(Err(e)) => {
+                                log::error!(
+                                    "Failed to send ConfigUpdate to peer {}: {}",
+                                    peer_id,
+                                    e
+                                );
                             }
                             Err(e) => {
                                 log::error!(
-                                    "Failed to send ConfigUpdate to peer {}: {}",
+                                    "Actor mailbox error sending to peer {}: {}",
                                     peer_id,
                                     e
                                 );
@@ -263,43 +282,41 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
 
         // AUTHORIZATION CHECK: Only ClientAdmin can change config
         if let Some(session_manager) = &self.session_manager {
-            // Look up the sender's role
-            let sm_lock = session_manager.lock().unwrap();
-            let sender_role =
-                sm_lock.get_peer_role(&zznet_session::types::PeerId::from(sender_peer_id.as_str()));
+            // Query the sender's role via message passing
+            let session_manager_clone = session_manager.clone();
+            let sender_peer_id_clone = sender_peer_id.clone();
+            let self_addr = ctx.address();
 
-            if let Some(sender_role) = sender_role {
-                if !self.has_update_permission(&sender_role.permission) {
-                    log::warn!(
-                        "✗ Config change REJECTED from peer '{}' - role {:?} is not authorized",
-                        sender_peer_id,
-                        sender_role
-                    );
+            ctx.spawn(
+                async move {
+                    use zznet_session::messages::GetPeerRole;
+                    use zznet_session::types::PeerId;
 
-                    // Try to send an Error message back to the requester
-                    Self::spawn_send_error(
-                        Arc::clone(session_manager),
-                        sender_peer_id.clone(),
-                        "unauthorized: insufficient permission".to_string(),
-                    );
+                    let peer_id = PeerId::from(sender_peer_id_clone.as_str());
 
-                    return Box::pin(async {});
+                    // Query peer role from SessionManager
+                    let sender_role =
+                        match session_manager_clone.send(GetPeerRole::new(peer_id)).await {
+                            Ok(role_opt) => role_opt,
+                            Err(e) => {
+                                log::error!("Failed to query peer role from SessionManager: {}", e);
+                                return;
+                            }
+                        };
+
+                    // Send result back to self for processing
+                    self_addr.do_send(ProcessRequestConfigChangeAuth {
+                        sender_peer_id: sender_peer_id_clone,
+                        sender_role,
+                        targets,
+                        ping_rate_pps,
+                        session_manager: session_manager_clone,
+                    });
                 }
-            } else {
-                log::warn!(
-                    "✗ Config change REJECTED from peer '{}' - no role information available (ACL not configured?)",
-                    sender_peer_id
-                );
+                .into_actor(self),
+            );
 
-                // Send explicit error if possible
-                Self::spawn_send_error(
-                    Arc::clone(session_manager),
-                    sender_peer_id.clone(),
-                    "no-role: ACL not configured".to_string(),
-                );
-
-                return Box::pin(async {});
-            }
+            return Box::pin(async {});
         } else {
             // No SessionManager configured - this should only happen in unit tests
             // NOTE: In debug builds we allow config changes when no SessionManager is
@@ -322,7 +339,7 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
             }
         }
 
-        // Proceed with configuration update
+        // Proceed with configuration update (only reached in test mode without SessionManager)
         let new_config = IntentConfigData {
             targets,
             ping_rate_pps,
@@ -331,16 +348,6 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
             self.current_config = new_config;
             if let Err(e) = self.persist_config() {
                 log::error!("Failed to persist config: {}", e);
-
-                // Try inform the requester of the persistence failure
-                if let Some(session_manager) = &self.session_manager {
-                    Self::spawn_send_error(
-                        Arc::clone(session_manager),
-                        sender_peer_id.clone(),
-                        format!("persist-failure: {}", e),
-                    );
-                }
-
                 Box::pin(async {})
             } else {
                 self.broadcast_config();
@@ -358,13 +365,84 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
         }
     }
 
+    /// Process authorization result and apply config change if authorized
+    fn handle_process_request_config_change_auth(
+        &mut self,
+        sender_peer_id: String,
+        sender_role: Option<PermissionWrapper<T>>,
+        targets: Vec<std::net::IpAddr>,
+        ping_rate_pps: u64,
+        session_manager: Addr<SessionManager<PermissionWrapper<T>>>,
+        ctx: &mut Context<Self>,
+    ) where
+        Self: PermissionCheck<T>,
+    {
+        if let Some(sender_role) = sender_role {
+            if !self.has_update_permission(&sender_role.permission) {
+                log::warn!(
+                    "✗ Config change REJECTED from peer '{}' - role {:?} is not authorized",
+                    sender_peer_id,
+                    sender_role
+                );
+
+                // Try to send an Error message back to the requester
+                Self::spawn_send_error(
+                    session_manager,
+                    sender_peer_id.clone(),
+                    "unauthorized: insufficient permission".to_string(),
+                );
+                return;
+            }
+        } else {
+            log::warn!(
+                "✗ Config change REJECTED from peer '{}' - no role information available (ACL not configured?)",
+                sender_peer_id
+            );
+
+            // Send explicit error if possible
+            Self::spawn_send_error(
+                session_manager,
+                sender_peer_id.clone(),
+                "no-role: ACL not configured".to_string(),
+            );
+            return;
+        }
+
+        // Proceed with configuration update
+        let new_config = IntentConfigData {
+            targets,
+            ping_rate_pps,
+        };
+        if new_config != self.current_config {
+            self.current_config = new_config;
+            if let Err(e) = self.persist_config() {
+                log::error!("Failed to persist config: {}", e);
+
+                // Try inform the requester of the persistence failure
+                Self::spawn_send_error(
+                    session_manager,
+                    sender_peer_id.clone(),
+                    format!("persist-failure: {}", e),
+                );
+            } else {
+                self.broadcast_config();
+                self.send_config_update_to_peers(ctx);
+                log::info!(
+                    "Config updated and sent to peers: targets={:?}, ping_rate_pps={}",
+                    self.current_config.targets,
+                    self.current_config.ping_rate_pps
+                );
+            }
+        } else {
+            log::info!("Config unchanged, no action needed");
+        }
+    }
+
     /// Spawn a fire-and-forget task to send an Error message to a specific peer.
     ///
-    /// Note: This currently uses SessionManager directly for point-to-point messaging.
-    /// TODO: Consider using Room<T> for point-to-point messages when Room supports
-    /// peer-specific sends, or use Room::serialize helper to avoid manual bincode.
+    /// Uses SessionManager actor for point-to-point messaging (Phase 3: Pure Actor Pattern).
     fn spawn_send_error(
-        session_manager: Arc<Mutex<SessionManager<PermissionWrapper<T>>>>,
+        session_manager: Addr<SessionManager<PermissionWrapper<T>>>,
         peer: String,
         reason: impl Into<String>,
     ) {
@@ -387,28 +465,37 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
             }
         };
 
-        // Spawn async task to send via SessionManager
-        actix::spawn(
-            #[allow(clippy::await_holding_lock)]
-            async move {
-                let peer_id = zznet_session::types::PeerId::from(peer.as_str());
-                let room_id = RoomId::from("intent-config");
+        // Spawn async task to send via SessionManager actor
+        actix::spawn(async move {
+            use zznet_session::messages::SendToRoom;
+            use zznet_session::types::PeerId;
 
-                match session_manager
-                    .lock()
-                    .unwrap()
-                    .send_to_room(&peer_id, &room_id, bytes)
-                    .await
-                {
-                    Ok(_) => {
-                        log::info!("✓ Error message sent to peer {}", peer);
-                    }
-                    Err(e) => {
-                        log::error!("Failed to send Error message to peer {}: {}", peer, e);
-                    }
+            let peer_id = PeerId::from(peer.as_str());
+            let room_id = RoomId::from("intent-config");
+
+            match session_manager
+                .send(SendToRoom {
+                    peer_id,
+                    room_id,
+                    bytes,
+                })
+                .await
+            {
+                Ok(Ok(())) => {
+                    log::info!("✓ Error message sent to peer {}", peer);
                 }
-            },
-        );
+                Ok(Err(e)) => {
+                    log::error!("Failed to send Error message to peer {}: {}", peer, e);
+                }
+                Err(e) => {
+                    log::error!(
+                        "Actor mailbox error sending Error message to peer {}: {}",
+                        peer,
+                        e
+                    );
+                }
+            }
+        });
     }
 }
 
@@ -571,6 +658,33 @@ impl<T: ApplicationRole> Handler<GetCurrentConfig> for IntentConfigActor<T> {
     fn handle(&mut self, _msg: GetCurrentConfig, _ctx: &mut Context<Self>) -> Self::Result {
         log::debug!("Returning current config state");
         MessageResult(self.current_config.clone())
+    }
+}
+
+/// Handler for internal ProcessRequestConfigChangeAuth message (Phase 3)
+///
+/// This message is sent internally after querying SessionManager for peer role.
+/// It processes the authorization result and applies config change if authorized.
+impl<T: ApplicationRole + 'static> Handler<ProcessRequestConfigChangeAuth<T>>
+    for IntentConfigActor<T>
+where
+    IntentConfigActor<T>: PermissionCheck<T>,
+{
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: ProcessRequestConfigChangeAuth<T>,
+        ctx: &mut Context<Self>,
+    ) -> Self::Result {
+        self.handle_process_request_config_change_auth(
+            msg.sender_peer_id,
+            msg.sender_role,
+            msg.targets,
+            msg.ping_rate_pps,
+            msg.session_manager,
+            ctx,
+        );
     }
 }
 
@@ -1337,7 +1451,7 @@ mod tests {
     async fn test_database_query_current_config_broadcasts_correct_data() {
         setup();
 
-        // Create SessionManager and add connected peer
+        // Create SessionManager actor and add connected peer
         use zznet_session::peer_session::PeerSession;
         use zznet_session::types::PeerId;
 
@@ -1349,14 +1463,22 @@ mod tests {
 
         // Add peer with User role
         let peer_id = PeerId::from("peer-data-check");
-        let mut peer_session = PeerSession::new(peer_id.clone());
-        peer_session.set_role(Some(PermissionWrapper {
-            permission: MockRole::User,
-        }));
 
         let (_inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(10);
         let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::channel(10);
-        peer_session.connect(outbound_tx, inbound_rx).await.unwrap();
+
+        // Create peer already connected (Phase 3: Pure Actor Pattern)
+        let peer_session = PeerSession::new_connected(
+            peer_id.clone(),
+            Some(PermissionWrapper {
+                permission: MockRole::User,
+            }),
+            None,
+            outbound_tx,
+            inbound_rx,
+        )
+        .await
+        .unwrap();
 
         // Collect messages sent to peer
         let (msg_tx, mut msg_rx) = tokio::sync::mpsc::channel(10);
@@ -1370,8 +1492,8 @@ mod tests {
             .add_peer(peer_id.clone(), peer_session)
             .unwrap();
 
-        // Wrap in Arc<Mutex<>> and attach to actor
-        let arc_sm = Arc::new(Mutex::new(session_manager));
+        // Start SessionManager as actor (Phase 3)
+        let session_manager_addr = session_manager.start();
 
         let temp_dir = tempfile::tempdir().unwrap();
         let config_path = temp_dir.path().join("test.ron");
@@ -1379,7 +1501,7 @@ mod tests {
             config_file_path: config_path,
         };
         let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
-        actor.set_session_manager(Arc::clone(&arc_sm));
+        actor.set_session_manager(session_manager_addr);
 
         // Set specific config that should be broadcast
         let expected_targets = vec!["192.168.1.1".parse().unwrap(), "10.0.0.1".parse().unwrap()];

@@ -47,8 +47,8 @@ use std::sync::Arc;
 ///
 /// Contains the builders for each component, used internally during service initialization.
 pub struct ComponentBuilders {
-    /// Shared SessionManager for network integration
-    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
+    /// Shared SessionManager actor for network integration
+    pub session_manager: actix::Addr<SessionManager<AuthRole>>,
     /// Builder for IntentConfig component
     pub intent_config: IntentConfigBuilder<IntentConfigPermission>,
     /// Builder for Pinger component
@@ -62,8 +62,8 @@ pub struct ComponentBuilders {
 /// Contains all the running component actors after they have been started.
 /// Useful for testing, embedding, and custom service composition.
 pub struct StartedComponents {
-    /// Shared SessionManager for network integration
-    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
+    /// Shared SessionManager actor for network integration
+    pub session_manager: actix::Addr<SessionManager<AuthRole>>,
     /// Address of the running IntentConfig actor
     pub intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
     /// Handle to the running Pinger actor
@@ -185,11 +185,9 @@ impl CollectorService {
             // Collector-specific rooms as needed
         ];
 
-        let session_manager = Arc::new(tokio::sync::Mutex::new(SessionManager::<AuthRole>::new(
-            offered_rooms,
-        )));
+        let session_manager = SessionManager::<AuthRole>::new(offered_rooms).start();
 
-        tracing::info!("Created shared SessionManager for components");
+        tracing::info!("Created shared SessionManager actor for components");
 
         // FIXME(deavid): This file needs cleanup, it needs to properly use zznet-builder for everything and stop re-implementing stuff.
         // .. -   Both `CollectorService` and `DatabaseService` contain their own logic for creating a `ConnectionManager`,
@@ -364,6 +362,7 @@ impl CollectorService {
     fn create_connection_manager(
         &self,
     ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
+        use zznet_session::SessionManager;
         use zznet_session::types::RoomId;
 
         // Collector offers intent-config related rooms
@@ -372,10 +371,15 @@ impl CollectorService {
         // Create an authorizer using the service helper
         let authorizer: zzping_auth::Authorizer = self.make_authorizer();
 
-        Ok(zznet_hello::connection_manager::ConnectionManager::new(
-            offered_rooms,
-            authorizer,
-        ))
+        // Create SessionManager as an actor
+        let session_manager = SessionManager::new(offered_rooms.clone()).start();
+
+        Ok(
+            zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
+                session_manager,
+                authorizer,
+            ),
+        )
     }
 
     /// Create ConnectionManager with a provided shared SessionManager.
@@ -384,9 +388,7 @@ impl CollectorService {
     /// with all components, ensuring messages flow properly.
     fn create_connection_manager_with_session_manager(
         &self,
-        session_manager: Arc<
-            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<AuthRole>>,
-        >,
+        session_manager: actix::Addr<zznet_session::session_manager::SessionManager<AuthRole>>,
     ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         let authorizer: zzping_auth::Authorizer = self.make_authorizer();
 
@@ -470,9 +472,7 @@ impl CollectorService {
     /// with all components, ensuring messages flow properly.
     pub fn start_connection_manager_with_session_manager(
         &self,
-        session_manager: Arc<
-            tokio::sync::Mutex<zznet_session::session_manager::SessionManager<AuthRole>>,
-        >,
+        session_manager: actix::Addr<zznet_session::session_manager::SessionManager<AuthRole>>,
     ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
         use actix::prelude::*;
 
@@ -486,7 +486,6 @@ impl CollectorService {
         mgr.start()
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

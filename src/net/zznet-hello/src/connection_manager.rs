@@ -13,7 +13,6 @@ use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use zznet_api::transport::TransportConnection;
 use zznet_api::types::AuthContext;
@@ -35,15 +34,15 @@ pub struct ConnectionManager<TRole>
 where
     TRole: ApplicationRole,
 {
-    /// Manages all peer sessions (shared with components via Arc<Mutex<...>>)
+    /// SessionManager actor address for message-passing communication
     ///
-    /// DESIGN: Wrapped in Arc<Mutex<...>> to enable sharing with components.
-    /// - ConnectionManager needs &mut access for add_peer(), connect_peer()
-    /// - Components need &self access for broadcast_to_room()
-    /// - Arc<Mutex<...>> provides interior mutability for both use cases
-    /// - All share the SAME SessionManager instance
-    /// - This allows messages to flow: Network → SessionManager ← Components
-    session_manager: Arc<Mutex<SessionManager<TRole>>>,
+    /// DESIGN: Uses Actix Addr<> for pure actor-based communication.
+    /// - ConnectionManager sends messages to SessionManager actor
+    /// - All operations use message passing (AddPeer, GetPeerIds, etc.)
+    /// - Components receive their own Addr<SessionManager> for direct access
+    /// - This enables concurrent access without blocking
+    /// - Message passing provides natural backpressure and error handling
+    session_manager: Addr<SessionManager<TRole>>,
 
     /// Maps PeerId to HelloActor address
     /// Used to send InboundRoomMessage to the correct HelloActor
@@ -53,14 +52,14 @@ where
     /// Takes PeerIdentity (from TLS certificate) and returns role if allowed.
     authorizer: Authorizer<TRole>,
     /// Optional callback for wiring room handlers to newly-connected peers.
-    /// Called from HandshakeComplete handler with the SessionManager and new peer ID.
+    /// Called from HandshakeComplete handler with the SessionManager address and new peer ID.
     /// IMPORTANT: This is now ASYNC and TRANSACTIONAL. If wiring fails, the connection
     /// is automatically terminated to prevent "zombie" connections.
     /// Returns a Result indicating success or failure of handler wiring.
     room_handler_wirer: Option<
         Arc<
             dyn Fn(
-                    Arc<Mutex<SessionManager<TRole>>>,
+                    Addr<SessionManager<TRole>>,
                     &PeerId,
                 ) -> std::pin::Pin<
                     Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
@@ -76,47 +75,29 @@ where
 {
     /// Create a new ConnectionManager with a REQUIRED authorizer function.
     ///
-    /// SECURITY: An authorizer is MANDATORY.
-    /// There is no code path that allows connections without authorization.
-    ///
-    /// # Arguments
-    /// - `offered_rooms`: Rooms this manager offers to peers
-    /// - `authorizer`: Function that maps PeerIdentity → Option<Role>
-    ///   Returns Some(role) if authorized, None to reject
-    pub fn new(offered_rooms: Vec<RoomId>, authorizer: Authorizer<TRole>) -> Self {
-        Self {
-            session_manager: Arc::new(Mutex::new(SessionManager::new_with_limits(
-                offered_rooms,
-                None,
-                None,
-            ))),
-            hello_actors: HashMap::new(),
-            authorizer,
-            room_handler_wirer: None,
-        }
-    }
-
-    /// Create a new ConnectionManager with a provided shared SessionManager.
+    /// **DEPRECATED**: Use `new_with_session_manager()` instead. This constructor
+    /// creates a SessionManager internally which cannot be shared with components.
+    /// Create a new ConnectionManager with a provided SessionManager actor address.
     ///
     /// This is the CORRECT way to create ConnectionManager for production use.
-    /// It ensures that the ConnectionManager shares the SAME SessionManager instance
+    /// It ensures that the ConnectionManager uses the SAME SessionManager instance
     /// that components use, allowing proper message flow between network and components.
     ///
     /// SECURITY: An authorizer is MANDATORY.
     ///
     /// # Arguments
-    /// - `session_manager`: Shared SessionManager instance (Arc<Mutex<...>>-wrapped)
+    /// - `session_manager`: SessionManager actor address (Addr<SessionManager<TRole>>)
     /// - `authorizer`: Function that maps PeerIdentity → Option<Role>
     ///
     /// # Design Principle
     /// "Per-Process Singleton: One SessionManager manages all connections for a process"
     /// - Create ONE SessionManager in the service initialization
-    /// - Wrap it in Arc<Mutex<...>>
-    /// - Pass it to ALL components via Arc::clone()
-    /// - Pass it to ConnectionManager via this constructor
-    /// - This ensures messages broadcast to SessionManager reach all components
-    pub fn new_with_session_manager(
-        session_manager: Arc<Mutex<SessionManager<TRole>>>,
+    /// - Start it as an actor with `.start()` to get Addr<>
+    /// - Pass the Addr to ALL components via clone()
+    /// - Pass the Addr to ConnectionManager via this constructor
+    /// - This ensures messages reach SessionManager from all sources
+    pub fn new(
+        session_manager: Addr<SessionManager<TRole>>,
         authorizer: Authorizer<TRole>,
     ) -> Self {
         Self {
@@ -125,6 +106,17 @@ where
             authorizer,
             room_handler_wirer: None,
         }
+    }
+
+    /// Create a new ConnectionManager with a provided SessionManager actor address.
+    ///
+    /// Alias for `new()` - both names work the same way now.
+    /// Use whichever name is clearer in your context.
+    pub fn new_with_session_manager(
+        session_manager: Addr<SessionManager<TRole>>,
+        authorizer: Authorizer<TRole>,
+    ) -> Self {
+        Self::new(session_manager, authorizer)
     }
 
     /// Set the room handler wirer callback
@@ -136,11 +128,13 @@ where
     /// - If wiring succeeds (returns Ok(())), the connection is considered complete
     /// - If wiring fails (returns Err(...)), the connection is terminated immediately
     /// - This prevents "zombie" connections where the transport is up but application logic isn't
+    ///
+    /// The wirer receives an Addr<SessionManager> for message-based communication.
     pub fn with_room_handler_wirer(
         mut self,
         wirer: Arc<
             dyn Fn(
-                    Arc<Mutex<SessionManager<TRole>>>,
+                    Addr<SessionManager<TRole>>,
                     &PeerId,
                 ) -> std::pin::Pin<
                     Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
@@ -150,19 +144,6 @@ where
     ) -> Self {
         self.room_handler_wirer = Some(wirer);
         self
-    }
-    /// Add a pre-configured PeerSession to the SessionManager
-    ///
-    /// This allows the application to create Room<T> instances with
-    /// different T types before adding to the session.
-    pub fn add_peer(&mut self, peer_id: PeerId, peer_session: PeerSession<TRole>) {
-        if let Err(e) = self
-            .session_manager
-            .blocking_lock()
-            .add_peer(peer_id.clone(), peer_session)
-        {
-            tracing::error!("Failed to add peer {}: {:?}", peer_id, e);
-        }
     }
 
     /// Spawn a new HelloActor for an incoming/outgoing connection
@@ -186,52 +167,6 @@ where
 
         self.hello_actors.insert(peer_id, addr.clone());
         addr
-    }
-
-    /// Get a cloneable sender for a specific peer
-    ///
-    /// This is the proper way for application code to send messages to peers.
-    /// The returned sender can be cloned and used from any async context without
-    /// needing to go through the actor system.
-    ///
-    ///
-    /// Get the sender for sending messages to a peer
-    ///
-    /// Returns `None` if peer doesn't exist or isn't connected.
-    pub fn get_peer_sender(&self, peer_id: &PeerId) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>> {
-        self.session_manager
-            .try_lock()
-            .ok()
-            .and_then(|sm| sm.get_peer_sender(peer_id))
-    }
-
-    /// Subscribe to inbound messages from a specific peer
-    ///
-    /// Returns a broadcast receiver that will receive all inbound messages from the peer.
-    /// This is useful for clients that want to handle messages directly without using
-    /// the Room abstraction (e.g., request-response patterns).
-    ///
-    /// Multiple subscribers can call this method to get independent receivers.
-    ///
-    ///
-    ///
-    /// Returns `None` if peer doesn't exist or isn't connected.
-    pub fn subscribe_peer_inbound(
-        &mut self,
-        peer_id: &PeerId,
-    ) -> Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>> {
-        self.session_manager
-            .try_lock()
-            .ok()
-            .and_then(|mut sm| sm.subscribe_peer_inbound(peer_id))
-    }
-
-    /// Get list of connected peer IDs
-    pub fn peer_ids(&self) -> Vec<PeerId> {
-        self.session_manager
-            .try_lock()
-            .map(|sm| sm.peer_ids())
-            .unwrap_or_default()
     }
 }
 
@@ -341,15 +276,21 @@ where
 #[rtype(result = "Vec<PeerId>")]
 pub struct GetPeers;
 
-/// Handler for GetPeers - Return list of connected peer IDs
+/// Handler for GetPeers - Forward to SessionManager via message passing
 impl<TRole> Handler<GetPeers> for ConnectionManager<TRole>
 where
-    TRole: ApplicationRole,
+    TRole: ApplicationRole + 'static,
 {
-    type Result = Vec<PeerId>;
+    type Result = ResponseFuture<Vec<PeerId>>;
 
     fn handle(&mut self, _msg: GetPeers, _ctx: &mut Context<Self>) -> Self::Result {
-        self.peer_ids()
+        let sm_addr = self.session_manager.clone();
+        Box::pin(async move {
+            sm_addr
+                .send(zznet_session::messages::GetPeerIds)
+                .await
+                .unwrap_or_default()
+        })
     }
 }
 
@@ -368,15 +309,24 @@ impl GetPeerSender {
     }
 }
 
-/// Handler for GetPeerSender - Return cloneable sender for a peer
+/// Handler for GetPeerSender - Forward to SessionManager via message passing
 impl<TRole> Handler<GetPeerSender> for ConnectionManager<TRole>
 where
-    TRole: ApplicationRole,
+    TRole: ApplicationRole + 'static,
 {
-    type Result = Option<mpsc::Sender<(RoomId, Vec<u8>)>>;
+    type Result = ResponseFuture<Option<mpsc::Sender<(RoomId, Vec<u8>)>>>;
 
     fn handle(&mut self, msg: GetPeerSender, _ctx: &mut Context<Self>) -> Self::Result {
-        self.get_peer_sender(&msg.peer_id)
+        let sm_addr = self.session_manager.clone();
+        Box::pin(async move {
+            sm_addr
+                .send(zznet_session::messages::GetPeerSender {
+                    peer_id: msg.peer_id,
+                })
+                .await
+                .ok()
+                .flatten()
+        })
     }
 }
 
@@ -395,15 +345,24 @@ impl SubscribePeerInbound {
     }
 }
 
-/// Handler for SubscribePeerInbound - Subscribe to inbound messages from peer
+/// Handler for SubscribePeerInbound - Forward to SessionManager via message passing
 impl<TRole> Handler<SubscribePeerInbound> for ConnectionManager<TRole>
 where
-    TRole: ApplicationRole,
+    TRole: ApplicationRole + 'static,
 {
-    type Result = Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>>;
+    type Result = ResponseFuture<Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>>>;
 
     fn handle(&mut self, msg: SubscribePeerInbound, _ctx: &mut Context<Self>) -> Self::Result {
-        self.subscribe_peer_inbound(&msg.peer_id)
+        let sm_addr = self.session_manager.clone();
+        Box::pin(async move {
+            sm_addr
+                .send(zznet_session::messages::SubscribePeerInbound {
+                    peer_id: msg.peer_id,
+                })
+                .await
+                .ok()
+                .flatten()
+        })
     }
 }
 
@@ -486,65 +445,73 @@ where
                 );
 
                 // Prepare data to perform session mutations asynchronously without blocking the actor thread.
-                let sm = Arc::clone(&self.session_manager);
+                let sm_addr = self.session_manager.clone();
                 let hello_actor = msg.hello_actor.clone();
                 let actor_addr = _ctx.address();
                 let room_handler_wirer = self.room_handler_wirer.clone();
-
-                // Create PeerSession for this peer and set auth context
-                let mut peer_session =
-                    PeerSession::new(zznet_session::types::PeerId::from(peer_id.as_str()));
-                peer_session.set_role(Some(role));
-                peer_session.set_identity(msg.peer_identity.clone());
 
                 // Create channels for SessionBridge
                 let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(100);
                 let (conn_to_session_tx, conn_to_session_rx) = tokio::sync::mpsc::channel(100);
                 let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
 
-                // Spawn an async task to mutate the SessionManager. After this completes
-                // we'll send the channels back to the actor so it can start the SessionBridge
-                // from within the actor context (avoids spawn_local runtime issues).
+                // Spawn an async task to create connected peer session and add to SessionManager
                 tokio::spawn(async move {
-                    // Lock the session manager asynchronously
-                    let mut guard = sm.lock().await;
-
-                    if let Err(e) = guard.add_peer(
+                    // Create peer session ALREADY CONNECTED (eliminates need for connect_peer call)
+                    let peer_session_result = PeerSession::new_connected(
                         zznet_session::types::PeerId::from(peer_id.as_str()),
-                        peer_session,
-                    ) {
-                        tracing::error!(
-                            "Failed to add peer {} to SessionManager: {:?}",
-                            peer_id,
-                            e
-                        );
-                        return;
-                    }
+                        Some(role),
+                        Some(msg.peer_identity.clone()),
+                        outbound_tx.clone(),
+                        conn_to_session_rx,
+                    )
+                    .await;
 
-                    if let Err(e) = guard
-                        .connect_peer(
-                            zznet_session::types::PeerId::from(peer_id.as_str()),
-                            outbound_tx.clone(),
-                            conn_to_session_rx,
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            "Failed to connect peer {} in SessionManager: {:?}",
-                            peer_id,
-                            e
-                        );
-                        return;
-                    }
+                    let peer_session = match peer_session_result {
+                        Ok(ps) => ps,
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to create connected peer session for {}: {:?}",
+                                peer_id,
+                                e
+                            );
+                            return;
+                        }
+                    };
 
-                    // Release the lock BEFORE calling the wirer to avoid deadlocks
-                    // (the wirer might need to lock the SessionManager again)
-                    drop(guard);
+                    // Add the fully-connected peer to SessionManager via message passing
+                    let add_result = sm_addr
+                        .send(zznet_session::messages::AddPeer {
+                            peer_id: zznet_session::types::PeerId::from(peer_id.as_str()),
+                            peer_session,
+                        })
+                        .await;
+
+                    // Check the result
+                    match add_result {
+                        Ok(result) => {
+                            if let Err(session_error) = result {
+                                tracing::error!(
+                                    "SessionManager rejected peer {}: {:?}",
+                                    peer_id,
+                                    session_error
+                                );
+                                return;
+                            }
+                        }
+                        Err(mailbox_error) => {
+                            tracing::error!(
+                                "Failed to send AddPeer to SessionManager: {:?}",
+                                mailbox_error
+                            );
+                            return;
+                        }
+                    }
 
                     // Wire room handlers for the newly-connected peer (transactional)
                     if let Some(wirer) = &room_handler_wirer {
                         match wirer(
-                            Arc::clone(&sm),
+                            sm_addr.clone(),
                             &zznet_session::types::PeerId::from(peer_id.as_str()),
                         )
                         .await
@@ -559,14 +526,18 @@ where
                                     e
                                 );
                                 // Wiring failed - disconnect this peer to prevent a "zombie" connection
-                                let mut guard = sm.lock().await;
-                                if let Err(e) = guard.disconnect_peer(
-                                    &zznet_session::types::PeerId::from(peer_id.as_str()),
-                                ) {
+                                if let Err(send_err) = sm_addr
+                                    .send(zznet_session::messages::DisconnectPeer {
+                                        peer_id: zznet_session::types::PeerId::from(
+                                            peer_id.as_str(),
+                                        ),
+                                    })
+                                    .await
+                                {
                                     tracing::error!(
-                                        "Failed to disconnect peer {} after wiring failure: {:?}",
+                                        "Failed to send disconnect message for peer {} after wiring failure: {:?}",
                                         peer_id,
-                                        e
+                                        send_err
                                     );
                                 }
                                 // Send disconnect to HelloActor as well
@@ -683,7 +654,11 @@ mod tests {
         let authorizer: Authorizer<zznet_auth::mock::MockRole> =
             Box::new(|_peer_identity| Some(zznet_auth::mock::MockRole::Admin));
 
-        let _manager = ConnectionManager::<zznet_auth::mock::MockRole>::new(rooms, authorizer);
+        // Create SessionManager and start it as an actor
+        let session_manager = SessionManager::<zznet_auth::mock::MockRole>::new(rooms).start();
+
+        let _manager =
+            ConnectionManager::<zznet_auth::mock::MockRole>::new(session_manager, authorizer);
         // Just test it compiles and constructs
     }
 }

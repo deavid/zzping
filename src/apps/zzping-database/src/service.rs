@@ -1,7 +1,6 @@
 use crate::config::{DatabaseConfig, DatabaseTlsConfig};
 use crate::error::{DatabaseError, Result};
 use actix::{Actor, Addr};
-use std::sync::Arc;
 use zzcollector_state::actor::CStateActor;
 use zzcollector_state::builder::CStateBuilder;
 use zzcollector_state::role::CStateRole;
@@ -41,8 +40,8 @@ pub struct ComponentBuilders {
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
     /// Address of the running CState actor (database role)
     pub cstate_addr: CStateActorAddr,
-    /// Shared SessionManager for network communication
-    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
+    /// SessionManager actor address for network communication (pure actor approach)
+    pub session_manager: Addr<SessionManager<AuthRole>>,
 }
 
 type CStateActorAddr = Addr<CStateActor<AuthRole>>;
@@ -59,9 +58,9 @@ pub struct StartedComponents {
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
     /// Address of the running CState actor (database role)
     pub cstate: CStateActorAddr,
-    /// Shared SessionManager for network communication
+    /// SessionManager actor address for network communication (pure actor approach)
     /// Phase 3: Components use this for Room<T> auto-registration
-    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
+    pub session_manager: Addr<SessionManager<AuthRole>>,
 }
 
 // Per-connection handler for collector connections
@@ -139,6 +138,7 @@ impl DatabaseService {
     fn create_connection_manager(
         &self,
     ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
+        use zznet_session::SessionManager;
         use zznet_session::types::RoomId;
 
         // FIXME(deavid): This file needs cleanup, it needs to properly use zznet-builder for everything and stop re-implementing stuff.
@@ -155,10 +155,15 @@ impl DatabaseService {
 
         let authorizer = self.make_authorizer();
 
-        Ok(zznet_hello::connection_manager::ConnectionManager::new(
-            offered_rooms,
-            authorizer,
-        ))
+        // Create SessionManager as an actor
+        let session_manager = SessionManager::new(offered_rooms.clone()).start();
+
+        Ok(
+            zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
+                session_manager,
+                authorizer,
+            ),
+        )
     }
 
     /// Create ConnectionManager with a provided shared SessionManager.
@@ -167,15 +172,20 @@ impl DatabaseService {
     /// with all components, ensuring messages flow properly.
     fn create_connection_manager_with_session_manager(
         &self,
-        session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
+        session_manager: Addr<SessionManager<AuthRole>>,
+    ) -> std::result::Result<
+        Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>>,
+        String,
+    > {
         let authorizer = self.make_authorizer();
 
         Ok(
             zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
                 session_manager,
                 authorizer,
-            ),
+            )
+            // TODO: Add room handler wirer when Database-specific room handlers are implemented
+            .start(),
         )
     }
 
@@ -239,24 +249,21 @@ impl DatabaseService {
         mgr.start()
     }
 
-    /// Start ConnectionManager with a provided shared SessionManager.
+    /// Start ConnectionManager with a provided SessionManager actor
     ///
     /// This is the correct way to start ConnectionManager - it shares the SessionManager
     /// with all components, ensuring messages flow properly.
     pub fn start_connection_manager_with_session_manager(
         &self,
-        session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
+        session_manager: Addr<SessionManager<AuthRole>>,
     ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
-        use actix::prelude::*;
-
-        let mgr = match self.create_connection_manager_with_session_manager(session_manager) {
-            Ok(m) => m,
+        match self.create_connection_manager_with_session_manager(session_manager) {
+            Ok(addr) => addr,
             Err(e) => panic!(
                 "Failed to create ConnectionManager with session_manager: {:?}",
                 e
             ),
-        };
-        mgr.start()
+        }
     }
 
     /// Creates component builders for all database components.
@@ -280,11 +287,10 @@ impl DatabaseService {
             zznet_session::types::RoomId::from("query"),
         ];
 
-        let session_manager = Arc::new(tokio::sync::Mutex::new(SessionManager::<AuthRole>::new(
-            offered_rooms,
-        )));
+        // Create SessionManager as an actor (pure actor approach)
+        let session_manager = SessionManager::<AuthRole>::new(offered_rooms).start();
 
-        tracing::info!("Created shared SessionManager for components");
+        tracing::info!("Created shared SessionManager actor for components");
 
         // Create IntentConfig builder - DATABASE ROLE
         let data_dir = std::path::PathBuf::from(&self.config.data_dir);
@@ -294,7 +300,8 @@ impl DatabaseService {
             IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Database {
                 config_file_path: config_path,
             });
-        // Phase 3 TODO: Add .session_manager(session_manager.clone()) when IntentConfig supports it
+        // Phase 3 NOTE: IntentConfig SessionManager wiring needs type alignment (AuthRole vs PermissionWrapper<IntentConfigPermission>)
+        // This is optional - IntentConfig works without SessionManager for local operations
 
         // Create MemDB actor - DATABASE ROLE
         let memdb_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
@@ -309,7 +316,7 @@ impl DatabaseService {
             stale_timeout_secs: self.config.components.stale_timeout_secs,
             max_collectors: Some(self.config.components.max_collectors),
         })
-        .with_session_manager(session_manager.clone()) // Phase 3: CState supports SessionManager ✓
+        // TODO: Add .with_session_manager(session_manager.clone()) when CState supports Addr<>
         .build();
 
         Ok(ComponentBuilders {

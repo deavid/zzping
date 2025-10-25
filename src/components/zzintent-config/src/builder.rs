@@ -4,7 +4,6 @@ use crate::actor::IntentConfigActor;
 use crate::permission_wrapper::PermissionWrapper;
 use crate::role::IntentConfigRole;
 use actix::prelude::*;
-use std::sync::{Arc, Mutex};
 use zznet_session::session_manager::SessionManager;
 
 use crate::permissions::IntentConfigPermission;
@@ -18,7 +17,7 @@ use zznet_auth::role::ApplicationRole;
 /// is constructed and started in a controlled manner.
 pub struct IntentConfigBuilder<T: ApplicationRole = IntentConfigPermission> {
     role: IntentConfigRole,
-    session_manager: Option<Arc<Mutex<SessionManager<PermissionWrapper<T>>>>>,
+    session_manager: Option<Addr<SessionManager<PermissionWrapper<T>>>>,
     /// Per-peer broadcast timeout used when sending messages via SessionManager
     broadcast_timeout: Duration,
 }
@@ -50,10 +49,10 @@ impl<T: ApplicationRole> IntentConfigBuilder<T> {
         self
     }
 
-    /// Set the SessionManager for network communication
+    /// Set the SessionManager actor for network communication (Phase 3: Pure Actor Pattern)
     pub fn session_manager(
         mut self,
-        session_manager: Arc<Mutex<SessionManager<PermissionWrapper<T>>>>,
+        session_manager: Addr<SessionManager<PermissionWrapper<T>>>,
     ) -> Self {
         self.session_manager = Some(session_manager);
         self
