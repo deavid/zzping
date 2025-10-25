@@ -110,6 +110,11 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
         self.session_manager = Some(session_manager);
     }
 
+    /// Set the Room for typed network messaging
+    pub fn set_room(&mut self, room: zznet_room::room::Room<IntentConfigNetworkMsg>) {
+        self.room = Some(room);
+    }
+
     /// The logic to broadcast the current configuration to all subscribers.
     fn broadcast_config(&mut self) {
         // Local synchronous broadcasts to registered subscribers.
@@ -153,7 +158,10 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
                 ping_rate_pps: self.current_config.ping_rate_pps,
             };
 
-            // Serialize the message once
+            // Serialize the message once for broadcast
+            // Note: Broadcasting is a legitimate SessionManager use case per architecture.
+            // Room<T> is designed for bidirectional point-to-point communication.
+            // For multi-peer broadcasts, SessionManager is the appropriate abstraction.
             let bytes = match bincode::serde::encode_to_vec(&msg, bincode::config::standard()) {
                 Ok(b) => b,
                 Err(e) => {
@@ -351,6 +359,10 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
     }
 
     /// Spawn a fire-and-forget task to send an Error message to a specific peer.
+    ///
+    /// Note: This currently uses SessionManager directly for point-to-point messaging.
+    /// TODO: Consider using Room<T> for point-to-point messages when Room supports
+    /// peer-specific sends, or use Room::serialize helper to avoid manual bincode.
     fn spawn_send_error(
         session_manager: Arc<Mutex<SessionManager<PermissionWrapper<T>>>>,
         peer: String,
@@ -364,7 +376,9 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
             reason: reason_string.clone(),
         };
 
-        // Serialize the message
+        // Serialize the message using bincode (same as TypedSender would use)
+        // Note: Keeping manual serialization here for now since this is point-to-point
+        // via SessionManager. Room<T> is designed for bidirectional channels.
         let bytes = match bincode::serde::encode_to_vec(&error_msg, bincode::config::standard()) {
             Ok(b) => b,
             Err(e) => {

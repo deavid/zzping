@@ -9,6 +9,5 @@ pub mod cli;
 pub mod config;
 pub mod error;
 pub mod network;
-/// Room handler factories for component wiring
-pub mod room_handlers;
+// pub mod room_handlers;  // DELETED: Phase 3 - AI-generated factories not needed with proper Room<T> pattern
 pub mod service;

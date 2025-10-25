@@ -116,19 +116,9 @@ where
                         connection_nonce: state.connection_nonce,
                     };
 
-                    let sender = room.sender();
+                    let sender = room.typed_sender();
                     actix::spawn(async move {
-                        let bytes = match bincode::serde::encode_to_vec(
-                            &msg,
-                            bincode::config::standard(),
-                        ) {
-                            Ok(b) => b,
-                            Err(e) => {
-                                warn!("Failed to serialize heartbeat: {}", e);
-                                return;
-                            }
-                        };
-                        if let Err(e) = sender.send(bytes).await {
+                        if let Err(e) = sender.send(msg).await {
                             warn!("Failed to send heartbeat: {}", e);
                         }
                     });
@@ -243,7 +233,7 @@ where
                             if reject {
                                 // Send rejection message back to collector
                                 if let Some(room) = &self.room {
-                                    let sender = room.sender();
+                                    let sender = room.typed_sender();
                                     let rejection = CStateMessage::RegistrationRejected {
                                         reason: format!(
                                             "Database at capacity (max {})",
@@ -251,12 +241,7 @@ where
                                         ),
                                     };
                                     actix::spawn(async move {
-                                        if let Ok(bytes) = bincode::serde::encode_to_vec(
-                                            &rejection,
-                                            bincode::config::standard(),
-                                        ) {
-                                            let _ = sender.send(bytes).await;
-                                        }
+                                        let _ = sender.send(rejection).await;
                                     });
                                 }
                             } else {
@@ -282,7 +267,7 @@ where
 
                                 // Send acknowledgment
                                 if let Some(room) = &self.room {
-                                    let sender = room.sender();
+                                    let sender = room.typed_sender();
                                     let ack = CStateMessage::HeartbeatAck {
                                         timestamp_ms: std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
@@ -296,12 +281,7 @@ where
                                             as u64,
                                     };
                                     actix::spawn(async move {
-                                        if let Ok(bytes) = bincode::serde::encode_to_vec(
-                                            &ack,
-                                            bincode::config::standard(),
-                                        ) {
-                                            let _ = sender.send(bytes).await;
-                                        }
+                                        let _ = sender.send(ack).await;
                                     });
                                 }
                             }
@@ -309,7 +289,7 @@ where
                         CStateMessage::QueryCollectors => {
                             debug!("Received collector list query");
                             if let Some(room) = &self.room {
-                                let sender = room.sender();
+                                let sender = room.typed_sender();
                                 let collectors: Vec<crate::network_messages::CollectorInfo> = state
                                     .collectors
                                     .values()
@@ -325,12 +305,7 @@ where
 
                                 let response = CStateMessage::CollectorList { collectors };
                                 actix::spawn(async move {
-                                    if let Ok(bytes) = bincode::serde::encode_to_vec(
-                                        &response,
-                                        bincode::config::standard(),
-                                    ) {
-                                        let _ = sender.send(bytes).await;
-                                    }
+                                    let _ = sender.send(response).await;
                                 });
                             }
                         }

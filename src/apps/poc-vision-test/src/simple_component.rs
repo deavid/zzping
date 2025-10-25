@@ -151,8 +151,8 @@ impl Handler<SendViaRoom> for SimpleActor {
     type Result = ResponseFuture<Result<(), String>>;
 
     fn handle(&mut self, msg: SendViaRoom, _ctx: &mut Self::Context) -> Self::Result {
-        let room = match &self.room {
-            Some(r) => r.sender(), // Clone just the sender
+        let sender = match &self.room {
+            Some(r) => r.typed_sender(),
             None => return Box::pin(async { Err("No room configured".to_string()) }),
         };
 
@@ -161,14 +161,9 @@ impl Handler<SendViaRoom> for SimpleActor {
         Box::pin(async move {
             tracing::info!("{}: Sending message via room: {:?}", name, msg.0);
 
-            // Serialize the message
-            let bytes = match bincode::serde::encode_to_vec(&msg.0, bincode::config::standard()) {
-                Ok(b) => b,
-                Err(e) => return Err(format!("Serialization failed: {:?}", e)),
-            };
-
-            // Send via room's sender
-            room.send(bytes)
+            // Send typed message via room's typed sender
+            sender
+                .send(msg.0)
                 .await
                 .map_err(|e| format!("Send failed: {:?}", e))
         })

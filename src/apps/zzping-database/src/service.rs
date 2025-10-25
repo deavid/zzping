@@ -33,6 +33,7 @@ use zzping_auth::AuthRole;
 /// Builders for all components (before wiring)
 ///
 /// Contains the builders for each component, used internally during service initialization.
+/// Phase 3: Now includes SessionManager for proper Room<T> integration.
 pub struct ComponentBuilders {
     /// Builder for IntentConfig component
     pub intent_config: IntentConfigBuilder<IntentConfigPermission>,
@@ -40,13 +41,15 @@ pub struct ComponentBuilders {
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
     /// Address of the running CState actor (database role)
     pub cstate_addr: CStateActorAddr,
+    /// Shared SessionManager for network communication
+    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
 }
 
 type CStateActorAddr = Addr<CStateActor<AuthRole>>;
 /// Started components (running actors).
 ///
 /// These addresses are cloned for each connection handler and will be used
-/// in Phase 6 to route messages to components via Actix messaging.
+/// to route messages to components via the vision architecture (Room<T> pattern).
 /// Useful for testing, embedding, and custom service composition.
 #[derive(Clone)]
 pub struct StartedComponents {
@@ -56,6 +59,9 @@ pub struct StartedComponents {
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
     /// Address of the running CState actor (database role)
     pub cstate: CStateActorAddr,
+    /// Shared SessionManager for network communication
+    /// Phase 3: Components use this for Room<T> auto-registration
+    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
 }
 
 // Per-connection handler for collector connections
@@ -266,6 +272,20 @@ impl DatabaseService {
     /// let components = DatabaseService::start_components(builders).await?;
     /// ```
     pub fn create_builders(&self) -> Result<ComponentBuilders> {
+        // Phase 3: Create SessionManager FIRST (before components)
+        // This is the shared message router that all components will use
+        let offered_rooms = vec![
+            zznet_session::types::RoomId::from("intent-config"),
+            zznet_session::types::RoomId::from("memdb"),
+            zznet_session::types::RoomId::from("query"),
+        ];
+
+        let session_manager = Arc::new(tokio::sync::Mutex::new(SessionManager::<AuthRole>::new(
+            offered_rooms,
+        )));
+
+        tracing::info!("Created shared SessionManager for components");
+
         // Create IntentConfig builder - DATABASE ROLE
         let data_dir = std::path::PathBuf::from(&self.config.data_dir);
         let config_path = data_dir.join("intent.ron");
@@ -274,6 +294,7 @@ impl DatabaseService {
             IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Database {
                 config_file_path: config_path,
             });
+        // Phase 3 TODO: Add .session_manager(session_manager.clone()) when IntentConfig supports it
 
         // Create MemDB actor - DATABASE ROLE
         let memdb_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
@@ -281,18 +302,21 @@ impl DatabaseService {
             persistence_path: None,
         });
         let memdb_addr = memdb_actor.start();
+        // Phase 3 TODO: Pass session_manager to MemDB when it has a builder
 
         // Create CState actor - DATABASE ROLE
         let cstate_addr = CStateBuilder::<AuthRole>::new(CStateRole::Database {
             stale_timeout_secs: self.config.components.stale_timeout_secs,
             max_collectors: Some(self.config.components.max_collectors),
         })
+        .with_session_manager(session_manager.clone()) // Phase 3: CState supports SessionManager ✓
         .build();
 
         Ok(ComponentBuilders {
             intent_config,
             memdb_addr,
             cstate_addr,
+            session_manager, // Phase 3: Pass SessionManager through
         })
     }
 
@@ -319,6 +343,7 @@ impl DatabaseService {
             intent_config: intent_addr,
             memdb_addr: builders.memdb_addr,
             cstate: builders.cstate_addr,
+            session_manager: builders.session_manager, // Phase 3: Pass SessionManager through
         })
     }
 

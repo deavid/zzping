@@ -2564,23 +2564,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zznet-builder"
-version = "0.3.0-dev"
-dependencies = [
- "actix",
- "bincode",
- "serde",
- "thiserror 2.0.17",
- "tokio",
- "tracing",
- "zznet-api",
- "zznet-auth",
- "zznet-hello",
- "zznet-session",
- "zznet-transport-tcp",
-]
-
-[[package]]
 name = "zznet-hello"
 version = "0.3.0-dev"
 dependencies = [
@@ -2684,8 +2667,8 @@ dependencies = [
  "zzmem-db",
  "zznet-api",
  "zznet-auth",
- "zznet-builder",
  "zznet-hello",
+ "zznet-room",
  "zznet-session",
  "zznet-transport-tcp",
  "zzping-auth",
@@ -2719,8 +2702,8 @@ dependencies = [
  "zzmem-db",
  "zznet-api",
  "zznet-auth",
- "zznet-builder",
  "zznet-hello",
+ "zznet-room",
  "zznet-session",
  "zznet-transport-tcp",
  "zzping-auth",

@@ -18,7 +18,8 @@ zzping-auth.workspace = true
 
 # Network layer dependencies
 zznet-session.workspace = true
-zznet-builder.workspace = true
+# zznet-builder.workspace = true  # DEPRECATED - Phase 3 migration to zznet-room
+zznet-room.workspace = true          # Vision-aligned Room<T> pattern
 zznet-transport-tcp.workspace = true
 zznet-auth.workspace = true
 zznet-api.workspace = true

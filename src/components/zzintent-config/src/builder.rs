@@ -77,6 +77,16 @@ impl<T: ApplicationRole> IntentConfigBuilder<T> {
     /// It internally creates the `IntentConfigActor` and starts it on the
     /// currently running Actix System.
     ///
+    /// # TODO: Room Auto-Registration
+    ///
+    /// Currently, IntentConfig uses std::sync::Mutex for SessionManager, but Room<T>
+    /// auto-registration requires tokio::sync::Mutex. To enable auto-registration:
+    /// 1. Change SessionManager type to Arc<tokio::sync::Mutex<SessionManager>>
+    /// 2. Update all SessionManager usage to use async .lock().await
+    /// 3. Add Room creation logic similar to CStateBuilder
+    ///
+    /// For now, Room must be created and set manually if needed.
+    ///
     /// # Errors
     ///
     /// Returns an error if role validation fails (e.g., Collector with empty file path).
@@ -97,9 +107,6 @@ impl<T: ApplicationRole> IntentConfigBuilder<T> {
             "Starting IntentConfigActor via builder. role={:?}",
             actor.role()
         );
-
-        // TODO: Broadcast timeout removed during Room<T> migration
-        // Timeout configuration will be reimplemented if needed
 
         // Set session manager if provided
         if let Some(session_manager) = self.session_manager.take() {

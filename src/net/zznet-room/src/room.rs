@@ -5,6 +5,37 @@ use thiserror::Error;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
+/// A cloneable typed sender for Room<T> messages
+///
+/// This wrapper provides typed message sending with automatic serialization,
+/// and can be cloned and moved across async boundaries (unlike Room<T> itself).
+#[derive(Clone)]
+pub struct TypedSender<T>
+where
+    T: Serialize,
+{
+    outbound_tx: mpsc::Sender<Vec<u8>>,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<T> TypedSender<T>
+where
+    T: Serialize,
+{
+    /// Send a typed message, automatically serializing it
+    pub async fn send(&self, msg: T) -> Result<(), SendError> {
+        let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard())
+            .map_err(|e| SendError::SerializationFailed(e.to_string()))?;
+
+        self.outbound_tx
+            .send(bytes)
+            .await
+            .map_err(|_| SendError::ChannelClosed)?;
+
+        Ok(())
+    }
+}
+
 /// A bidirectional typed communication channel between two components.
 ///
 /// A `Room<T>` allows a local component to send and receive typed messages
@@ -247,6 +278,17 @@ where
     /// the same channel safely.
     pub fn sender(&self) -> mpsc::Sender<Vec<u8>> {
         self.outbound_tx.clone()
+    }
+
+    /// Get a cloneable typed sender that handles serialization automatically
+    ///
+    /// This returns a wrapper that can be cloned and moved into async contexts,
+    /// allowing you to send typed messages without manual serialization.
+    pub fn typed_sender(&self) -> TypedSender<T> {
+        TypedSender {
+            outbound_tx: self.outbound_tx.clone(),
+            _phantom: std::marker::PhantomData,
+        }
     }
 
     /// Process one inbound message manually (for testing)

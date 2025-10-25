@@ -13,7 +13,6 @@ members = [
     "src/net/zznet-api",
     "src/net/zznet-auth",
     "src/net/zznet-hello",
-    "src/net/zznet-builder",
     "src/net/zznet-room",
     "src/net/zznet-session",
     "src/net/zznet-transport-tcp",
@@ -51,7 +50,6 @@ zzping-auth = { path = "src/common/zzping-auth" }
 
 zznet-auth = { path = "src/net/zznet-auth" }
 zznet-session = { path = "src/net/zznet-session" }
-zznet-builder = { path = "src/net/zznet-builder" }
 zznet-transport-tcp = { path = "src/net/zznet-transport-tcp" }
 zznet-api = { path = "src/net/zznet-api" }
 zznet-hello = { path = "src/net/zznet-hello" }

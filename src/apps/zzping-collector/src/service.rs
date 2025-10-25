@@ -4,6 +4,7 @@ use crate::error::{CollectorError, Result};
 
 use actix::{Actor, Addr};
 use zznet_auth::ApplicationRole;
+use zznet_session::session_manager::SessionManager;
 use zzping_auth::AuthRole;
 
 // Component imports
@@ -46,6 +47,8 @@ use std::sync::Arc;
 ///
 /// Contains the builders for each component, used internally during service initialization.
 pub struct ComponentBuilders {
+    /// Shared SessionManager for network integration
+    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
     /// Builder for IntentConfig component
     pub intent_config: IntentConfigBuilder<IntentConfigPermission>,
     /// Builder for Pinger component
@@ -59,6 +62,8 @@ pub struct ComponentBuilders {
 /// Contains all the running component actors after they have been started.
 /// Useful for testing, embedding, and custom service composition.
 pub struct StartedComponents {
+    /// Shared SessionManager for network integration
+    pub session_manager: Arc<tokio::sync::Mutex<SessionManager<AuthRole>>>,
     /// Address of the running IntentConfig actor
     pub intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
     /// Handle to the running Pinger actor
@@ -109,12 +114,18 @@ impl CollectorService {
             self.config.database_host, self.config.database_port
         );
         let reconnect_delay = std::time::Duration::from_millis(self.config.reconnect_delay_ms);
-        let network = crate::network::CollectorNetwork::new(&addr, tls_cfg, reconnect_delay);
+        let handshake_timeout = std::time::Duration::from_secs(10); // TODO: Make configurable
+        let network = crate::network::CollectorNetwork::new(
+            &addr,
+            tls_cfg,
+            reconnect_delay,
+            handshake_timeout,
+        );
 
         tracing::info!("Collector service connecting to database via ConnectionManager");
 
         network
-            .connect(&_started.intent_config)
+            .connect(&_started)
             .await
             .map_err(|e| CollectorError::Service(format!("Network error: {}", e)))?;
 
@@ -166,6 +177,20 @@ impl CollectorService {
     /// let components = CollectorService::start_components(builders).await?;
     /// ```
     pub fn create_builders(&self) -> Result<ComponentBuilders> {
+        // Phase 3: Create SessionManager FIRST (before components)
+        // This is the shared message router that all components will use
+        let offered_rooms = vec![
+            zznet_session::types::RoomId::from("intent-config"),
+            zznet_session::types::RoomId::from("memdb"),
+            // Collector-specific rooms as needed
+        ];
+
+        let session_manager = Arc::new(tokio::sync::Mutex::new(SessionManager::<AuthRole>::new(
+            offered_rooms,
+        )));
+
+        tracing::info!("Created shared SessionManager for components");
+
         // FIXME(deavid): This file needs cleanup, it needs to properly use zznet-builder for everything and stop re-implementing stuff.
         // .. -   Both `CollectorService` and `DatabaseService` contain their own logic for creating a `ConnectionManager`,
         //        creating an `Authorizer`, and loading TLS certificates from disk (`load_tls_config`, `build_transport_tls_config`).
@@ -179,6 +204,7 @@ impl CollectorService {
         // Create IntentConfig builder with role only
         let intent_config =
             IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Collector);
+        // Phase 3 TODO: Add .session_manager(session_manager.clone()) when IntentConfig supports it
 
         // Create Pinger builder
         let pinger = PingerBuilder::new().enabled(true);
@@ -193,6 +219,7 @@ impl CollectorService {
         let pinger = pinger.memdb_addr(memdb_addr.clone());
 
         Ok(ComponentBuilders {
+            session_manager,
             intent_config,
             pinger,
             memdb_addr,
@@ -221,6 +248,9 @@ impl CollectorService {
     /// let components = CollectorService::start_components(builders).await?;
     /// ```
     pub async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
+        // Keep SessionManager reference before moving builders
+        let session_manager = builders.session_manager.clone();
+
         // Start IntentConfig
         let intent_addr = builders
             .intent_config
@@ -231,6 +261,7 @@ impl CollectorService {
         let pinger_handle = builders.pinger.start()?;
 
         Ok(StartedComponents {
+            session_manager,
             intent_config: intent_addr,
             pinger: pinger_handle,
             memdb_addr: builders.memdb_addr,
@@ -605,8 +636,12 @@ mod tests {
         let service = CollectorService::new(config).unwrap();
         let _builders = service.create_builders().unwrap();
         // Test network creation without TLS
-        let _network =
-            crate::network::CollectorNetwork::new("127.0.0.1:8443", None, Duration::from_secs(5));
+        let _network = crate::network::CollectorNetwork::new(
+            "127.0.0.1:8443",
+            None,
+            Duration::from_secs(5),
+            Duration::from_secs(10),
+        );
         // Network created successfully if we get here
 
         // Test network creation with TLS
@@ -616,6 +651,7 @@ mod tests {
                 "127.0.0.1:8443",
                 Some(tls_config),
                 Duration::from_secs(5),
+                Duration::from_secs(10),
             );
             // Network created successfully if we get here
         }
