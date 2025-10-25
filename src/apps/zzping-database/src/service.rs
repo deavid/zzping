@@ -275,14 +275,14 @@ impl DatabaseService {
                 config_file_path: config_path,
             });
 
-        // Create MemDB actor - DATABASE ROLE (no builder pattern!)
+        // Create MemDB actor - DATABASE ROLE
         let memdb_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
             max_results_per_target: 10000,
             persistence_path: None,
         });
         let memdb_addr = memdb_actor.start();
 
-        // Create CState actor
+        // Create CState actor - DATABASE ROLE
         let cstate_addr = CStateBuilder::<AuthRole>::new(CStateRole::Database {
             stale_timeout_secs: self.config.components.stale_timeout_secs,
             max_collectors: Some(self.config.components.max_collectors),

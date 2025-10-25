@@ -25,6 +25,7 @@ members = [
 
     "src/apps/zzping-collector",
     "src/apps/zzping-database",
+    "src/apps/poc-vision-test",
 
 ]
 

@@ -12,11 +12,8 @@ use crate::permission_wrapper::PermissionWrapper;
 use crate::role::MemDBRole;
 use crate::storage::StorageBackend;
 use actix::prelude::*;
-use std::rc::Rc;
-use std::sync::{
-    Arc,
-    atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use zznet_auth::role::ApplicationRole;
 use zznet_session::peer_session::RoomHandle;
 use zznet_session::session_manager::SessionManager;
@@ -27,7 +24,7 @@ use zznet_session::types::RoomId;
 #[rtype(result = "()")]
 pub struct SetSessionManager<T: ApplicationRole> {
     /// The session manager to set
-    pub session_manager: Rc<SessionManager<PermissionWrapper<T>>>,
+    pub session_manager: Arc<Mutex<SessionManager<PermissionWrapper<T>>>>,
 }
 
 /// Room handle that forwards MemDB messages to the MemDBActor
@@ -98,7 +95,7 @@ pub struct MemDBActor<T: ApplicationRole> {
     // Temporarily commented out Handler<MemDBMessage>
 
     // Network message handler for MemDBMessage
-    session_manager: Option<Rc<SessionManager<PermissionWrapper<T>>>>,
+    session_manager: Option<Arc<Mutex<SessionManager<PermissionWrapper<T>>>>>,
     /// Health counters for operational visibility
     successful_batches: Arc<AtomicU64>,
     failed_batches: Arc<AtomicU64>,
@@ -129,7 +126,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
     /// Create a new MemDBActor with role and optional SessionManager
     pub fn new_with_role_and_session_manager(
         role: MemDBRole,
-        session_manager: Option<Rc<SessionManager<PermissionWrapper<T>>>>,
+        session_manager: Option<Arc<Mutex<SessionManager<PermissionWrapper<T>>>>>,
     ) -> Self {
         // Validate the role configuration
         if let Err(e) = role.validate() {
@@ -166,7 +163,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
     /// Set the SessionManager for network communication
     pub fn set_session_manager(
         &mut self,
-        session_manager: Rc<SessionManager<PermissionWrapper<T>>>,
+        session_manager: Arc<Mutex<SessionManager<PermissionWrapper<T>>>>,
     ) {
         self.session_manager = Some(session_manager);
     }
@@ -223,15 +220,16 @@ impl<T: ApplicationRole> MemDBActor<T> {
         };
 
         // If we have a session manager, send to Database peers
-        if let Some(sm_rc) = &self.session_manager {
+        if let Some(sm_arc) = &self.session_manager {
             let memdb_room = zznet_session::types::RoomId::from("memdb");
+            let sm_lock = sm_arc.lock().unwrap();
             // Iterate peers and send to those with memdb room joined
-            for peer_id in sm_rc.peer_ids() {
-                let joined = sm_rc
+            for peer_id in sm_lock.peer_ids() {
+                let joined = sm_lock
                     .is_room_joined_with_peer(&peer_id, &memdb_room)
                     .unwrap_or(false);
-                if joined && sm_rc.get_peer_sender(&peer_id).is_some() {
-                    let sender = sm_rc.get_peer_sender(&peer_id).unwrap();
+                if joined && sm_lock.get_peer_sender(&peer_id).is_some() {
+                    let sender = sm_lock.get_peer_sender(&peer_id).unwrap();
                     let msg_to_send = batch.clone();
                     let room_clone = memdb_room.clone();
 
@@ -455,11 +453,15 @@ impl<T: ApplicationRole> Handler<MemDBMessage> for MemDBActor<T> {
                 let maybe_sm = self.session_manager.clone();
 
                 Box::pin(async move {
-                    if let Some(sm_rc) = maybe_sm {
+                    if let Some(sm_arc) = maybe_sm {
                         // Build PeerId from the provided sender_peer_id string
                         let peer = zznet_session::types::PeerId::from(sender_peer_id.as_str());
                         // Try to obtain a sender for the original peer
-                        if let Some(sender) = sm_rc.get_peer_sender(&peer) {
+                        let sender = {
+                            let sm_lock = sm_arc.lock().unwrap();
+                            sm_lock.get_peer_sender(&peer)
+                        };
+                        if let Some(sender) = sender {
                             // Send the ack via the cloned sender
                             let room = zznet_session::types::RoomId::from("memdb");
                             // Serialize the message
@@ -523,10 +525,14 @@ impl<T: ApplicationRole> Handler<MemDBMessage> for MemDBActor<T> {
                 let maybe_sm = self.session_manager.clone();
 
                 Box::pin(async move {
-                    if let Some(sm_rc) = maybe_sm {
+                    if let Some(sm_arc) = maybe_sm {
                         // Build PeerId from the provided sender_peer_id string
                         let peer = zznet_session::types::PeerId::from(sender_peer_id.as_str());
-                        if let Some(sender) = sm_rc.get_peer_sender(&peer) {
+                        let sender = {
+                            let sm_lock = sm_arc.lock().unwrap();
+                            sm_lock.get_peer_sender(&peer)
+                        };
+                        if let Some(sender) = sender {
                             let room = zznet_session::types::RoomId::from("memdb");
                             // Serialize the message
                             let config = bincode::config::standard();

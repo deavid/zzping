@@ -27,5 +27,8 @@ pub mod connector;
 /// Typed in-memory room abstraction for local component messaging.
 pub mod room;
 
+// Export public types
+pub use room::{Room, RoomChannels, RoomError, RoomRegistry, SendError};
+
 #[cfg(test)]
 mod tests;

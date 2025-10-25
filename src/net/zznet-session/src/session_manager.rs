@@ -10,6 +10,9 @@ use async_trait::async_trait;
 use zznet_api::types::PeerIdentity;
 use zznet_auth::ApplicationRole;
 
+// NEW: Room registration imports
+use zznet_room::RoomRegistry;
+
 #[async_trait]
 impl<TRole> SessionManagerLike<TRole> for SessionManager<TRole>
 where
@@ -53,6 +56,11 @@ where
 
     /// Optional maximum number of rooms per peer
     max_rooms_per_peer: Option<usize>,
+
+    /// Room handlers registered for auto-registration
+    /// Maps room_id -> (inbound_tx, outbound_rx) channels
+    /// These are stored and activated when peers connect
+    room_handlers: HashMap<RoomId, (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>)>,
 }
 
 impl<TRole> SessionManager<TRole>
@@ -73,6 +81,7 @@ where
             offered_rooms,
             max_peers: None,
             max_rooms_per_peer: None,
+            room_handlers: HashMap::new(),
         }
     }
 
@@ -94,6 +103,7 @@ where
             offered_rooms,
             max_peers,
             max_rooms_per_peer,
+            room_handlers: HashMap::new(),
         }
     }
 
@@ -407,6 +417,35 @@ where
             .ok_or_else(|| SessionError::PeerNotFound(peer_id.clone()))?;
 
         Ok(peer.is_room_joined(room_id))
+    }
+}
+
+/// RoomRegistry implementation for SessionManager
+/// Allows Room<T> instances to auto-register their channels with SessionManager
+impl<TRole> RoomRegistry for SessionManager<TRole>
+where
+    TRole: ApplicationRole,
+{
+    fn register_room_handler(
+        &mut self,
+        room_id: String,
+        inbound_tx: mpsc::Sender<Vec<u8>>,
+        outbound_rx: mpsc::Receiver<Vec<u8>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let room_id_typed = RoomId::new(room_id.clone());
+
+        // Check if room is already registered
+        if self.room_handlers.contains_key(&room_id_typed) {
+            return Err(format!("Room {} already registered", room_id).into());
+        }
+
+        // Store the channels for later activation when peers connect
+        self.room_handlers
+            .insert(room_id_typed, (inbound_tx, outbound_rx));
+
+        tracing::debug!("Registered room handler for room_id: {}", room_id);
+
+        Ok(())
     }
 }
 
@@ -769,5 +808,70 @@ mod tests {
             .is_room_joined_with_peer(&PeerId::from("unknown"), &RoomId::from("intentconfig"));
 
         assert!(matches!(result, Err(SessionError::PeerNotFound(_))));
+    }
+
+    // --- RoomRegistry Tests ---
+
+    #[test]
+    fn test_register_room_handler_success() {
+        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let (tx, rx) = mpsc::channel(100);
+
+        let result = manager.register_room_handler("test-room".to_string(), tx, rx);
+
+        assert!(result.is_ok());
+        assert_eq!(manager.room_handlers.len(), 1);
+    }
+
+    #[test]
+    fn test_register_room_handler_duplicate_fails() {
+        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let (tx1, rx1) = mpsc::channel(100);
+        let (tx2, rx2) = mpsc::channel(100);
+
+        // First registration should succeed
+        let result1 = manager.register_room_handler("duplicate".to_string(), tx1, rx1);
+        assert!(result1.is_ok());
+
+        // Second registration should fail
+        let result2 = manager.register_room_handler("duplicate".to_string(), tx2, rx2);
+        assert!(result2.is_err());
+        assert!(
+            result2
+                .unwrap_err()
+                .to_string()
+                .contains("already registered")
+        );
+    }
+
+    #[test]
+    fn test_register_multiple_rooms() {
+        let mut manager = SessionManager::<MockRole>::new(vec![]);
+
+        for i in 0..5 {
+            let (tx, rx) = mpsc::channel(100);
+            let room_id = format!("room-{}", i);
+            let result = manager.register_room_handler(room_id, tx, rx);
+            assert!(result.is_ok());
+        }
+
+        assert_eq!(manager.room_handlers.len(), 5);
+    }
+
+    #[test]
+    fn test_register_room_handler_stores_channels() {
+        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let (tx, rx) = mpsc::channel(100);
+
+        manager
+            .register_room_handler("test-channel".to_string(), tx.clone(), rx)
+            .unwrap();
+
+        // Verify channels were stored
+        assert!(
+            manager
+                .room_handlers
+                .contains_key(&RoomId::new("test-channel"))
+        );
     }
 }

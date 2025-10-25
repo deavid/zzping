@@ -21,7 +21,7 @@ use std::{
 };
 use tokio_stream::wrappers::IntervalStream;
 use zznet_auth::ApplicationRole;
-use zznet_room::room::{Room, RoomChannels};
+use zznet_room::room::Room;
 
 /// The main actor for the `zzcollector-state` component.
 ///
@@ -41,10 +41,8 @@ where
     heartbeats_failed: Arc<AtomicU64>,
 
     /// Room instance for component-to-component messaging
+    /// Auto-registered with SessionManager if created via builder.with_session_manager()
     room: Option<Room<CStateMessage>>,
-
-    /// Room channels for SessionManager wiring
-    room_channels: Option<Arc<RoomChannels>>,
 
     _phantom: PhantomData<TRole>,
 }
@@ -54,7 +52,16 @@ where
     TRole: ApplicationRole,
 {
     /// Creates a new `CStateActor`.
-    pub fn new(role: CStateRole) -> Self {
+    ///
+    /// The session_manager parameter is for future use when the component
+    /// is started with auto-registration. For now, the room should be
+    /// added separately via with_room().
+    pub fn new(
+        role: CStateRole,
+        _session_manager: Option<
+            std::sync::Arc<tokio::sync::Mutex<zznet_session::SessionManager<TRole>>>,
+        >,
+    ) -> Self {
         let mut actor = Self {
             role,
             collector_state: None,
@@ -63,7 +70,6 @@ where
             heartbeats_acked: Arc::new(AtomicU64::new(0)),
             heartbeats_failed: Arc::new(AtomicU64::new(0)),
             room: None,
-            room_channels: None,
             _phantom: PhantomData,
         };
 
@@ -92,12 +98,6 @@ where
     /// Sets the room for this actor.
     pub fn with_room(mut self, room: Room<CStateMessage>) -> Self {
         self.room = Some(room);
-        self
-    }
-
-    /// Sets the room channels for this actor.
-    pub fn with_room_channels(mut self, channels: Arc<RoomChannels>) -> Self {
-        self.room_channels = Some(channels);
         self
     }
 

@@ -1213,6 +1213,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "poc-vision-test"
+version = "0.3.0-dev"
+dependencies = [
+ "actix",
+ "bincode",
+ "serde",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "zzintent-config",
+ "zznet-auth",
+ "zznet-room",
+ "zznet-session",
+ "zzping-auth",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

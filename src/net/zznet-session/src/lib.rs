@@ -54,6 +54,9 @@ pub mod room_message_trait;
 /// Manages lifetime and routing for multiple peer sessions.
 pub mod session_manager;
 
+// Export public types
+pub use session_manager::SessionManager;
+
 /// A trait for mocking the SessionManager.
 pub mod session_manager_like;
 
