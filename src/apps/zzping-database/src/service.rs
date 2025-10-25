@@ -316,7 +316,8 @@ impl DatabaseService {
             stale_timeout_secs: self.config.components.stale_timeout_secs,
             max_collectors: Some(self.config.components.max_collectors),
         })
-        // TODO: Add .with_session_manager(session_manager.clone()) when CState supports Addr<>
+        // Phase 3: wire SessionManager actor Addr for auto-registration
+        .with_session_manager(session_manager.clone())
         .build();
 
         Ok(ComponentBuilders {

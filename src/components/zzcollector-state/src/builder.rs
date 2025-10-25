@@ -2,8 +2,7 @@
 
 use crate::{actor::CStateActor, role::CStateRole};
 use actix::prelude::*;
-use std::{marker::PhantomData, sync::Arc};
-use tokio::sync::Mutex;
+use std::marker::PhantomData;
 use zznet_auth::ApplicationRole;
 use zznet_session::SessionManager;
 
@@ -13,7 +12,7 @@ where
     TRole: ApplicationRole,
 {
     role: CStateRole,
-    session_manager: Option<Arc<Mutex<SessionManager<TRole>>>>,
+    session_manager: Option<actix::Addr<SessionManager<TRole>>>,
     _phantom: PhantomData<TRole>,
 }
 
@@ -37,7 +36,7 @@ where
     /// eliminating the need for manual channel wiring.
     pub fn with_session_manager(
         mut self,
-        session_manager: Arc<Mutex<SessionManager<TRole>>>,
+        session_manager: actix::Addr<SessionManager<TRole>>,
     ) -> Self {
         self.session_manager = Some(session_manager);
         self
