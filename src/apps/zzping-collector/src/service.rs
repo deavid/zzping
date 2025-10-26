@@ -30,7 +30,6 @@ use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
 use zzintent_config::role::IntentConfigRole;
 use zzmem_db::actor::MemDBActor;
-use zzmem_db::permissions::MemDBPermission;
 use zzmem_db::role::MemDBRole;
 use zznet_auth::ApplicationRole;
 use zznet_session::session_manager::SessionManager;
@@ -63,7 +62,7 @@ pub struct ComponentBuilders {
     /// Builder for Pinger component
     pub pinger: PingerBuilder,
     /// Address of the running MemDB actor
-    pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
+    pub memdb_addr: Addr<MemDBActor>,
 }
 
 /// Started components (running actors)
@@ -78,7 +77,7 @@ pub struct StartedComponents {
     /// Handle to the running Pinger actor
     pub pinger: PingerHandle,
     /// Address of the running MemDB actor
-    pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
+    pub memdb_addr: Addr<MemDBActor>,
 }
 
 #[derive(Debug)]
@@ -216,7 +215,7 @@ impl CollectorService {
         let pinger = PingerBuilder::new().enabled(true);
 
         // Create MemDB actor (no builder)
-        let memdb_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector {
+        let memdb_actor = MemDBActor::new_with_role(MemDBRole::Collector {
             buffer_size: self.config.components.memdb_batch_size,
         });
         let memdb_addr = memdb_actor.start();

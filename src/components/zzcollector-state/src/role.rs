@@ -1,6 +1,7 @@
 //! Defines the operational roles for the `zzcollector-state` component.
 
 /// Specifies the role of a `CStateActor` instance.
+#[deprecated(note = "Components MUST NOT know about roles")]
 #[derive(Debug, Clone)]
 pub enum CStateRole {
     /// The Collector role is responsible for reporting its health status

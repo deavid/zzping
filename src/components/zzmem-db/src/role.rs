@@ -13,6 +13,7 @@ use std::path::PathBuf;
 ///
 /// This follows the Vision pattern: "Same component code on both sides,
 /// just configured differently."
+#[deprecated(note = "Components MUST NOT know about roles")]
 #[derive(Clone, Debug, PartialEq)]
 pub enum MemDBRole {
     /// Database role: Receives batches, stores data, provides queries

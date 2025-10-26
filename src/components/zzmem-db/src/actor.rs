@@ -11,10 +11,8 @@ use crate::network_messages::{MemDBMessage, PingResult};
 use crate::role::MemDBRole;
 use crate::storage::StorageBackend;
 use actix::prelude::*;
-use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use zznet_auth::role::ApplicationRole;
 use zznet_session::peer_session::RoomHandle;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
@@ -22,22 +20,20 @@ use zznet_session::types::RoomId;
 /// Message to set the session manager on a running actor
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct SetSessionManager<T: ApplicationRole> {
+pub struct SetSessionManager {
     /// The session manager to set
     pub session_manager: Addr<SessionManager>,
-    /// Marker to keep the generic T in the type so handlers can remain generic
-    _marker: PhantomData<T>,
 }
 
 /// Room handle that forwards MemDB messages to the MemDBActor
-pub struct MemDBRoomHandle<T: ApplicationRole> {
-    addr: Addr<MemDBActor<T>>,
+pub struct MemDBRoomHandle {
+    addr: Addr<MemDBActor>,
     room_id: RoomId,
 }
 
-impl<T: ApplicationRole> MemDBRoomHandle<T> {
+impl MemDBRoomHandle {
     /// Create a new MemDBRoomHandle that forwards messages to the given actor address
-    pub fn new(addr: Addr<MemDBActor<T>>) -> Self {
+    pub fn new(addr: Addr<MemDBActor>) -> Self {
         Self {
             addr,
             room_id: RoomId::from("memdb"),
@@ -45,7 +41,7 @@ impl<T: ApplicationRole> MemDBRoomHandle<T> {
     }
 }
 
-impl<T: ApplicationRole> RoomHandle for MemDBRoomHandle<T> {
+impl RoomHandle for MemDBRoomHandle {
     fn room_id(&self) -> &RoomId {
         &self.room_id
     }
@@ -83,7 +79,7 @@ impl<T: ApplicationRole> RoomHandle for MemDBRoomHandle<T> {
 /// This actor operates in two roles:
 /// - **Collector**: Buffers ping results and sends batches to Database peers
 /// - **Database**: Receives batches, stores data, and provides query interface
-pub struct MemDBActor<T: ApplicationRole> {
+pub struct MemDBActor {
     /// Role configuration (Collector or Database)
     role: MemDBRole,
 
@@ -111,17 +107,15 @@ pub struct MemDBActor<T: ApplicationRole> {
 
     /// Room channels for SessionManager wiring
     room_channels: Option<std::sync::Arc<zznet_room::room::RoomChannels>>,
-    /// Marker to keep the generic T in the type so impl<T: ApplicationRole> remains meaningful
-    _marker: PhantomData<T>,
 }
 
-impl<T: ApplicationRole> Default for MemDBActor<T> {
+impl Default for MemDBActor {
     fn default() -> Self {
         Self::new_with_role(MemDBRole::default())
     }
 }
 
-impl<T: ApplicationRole> MemDBActor<T> {
+impl MemDBActor {
     /// Create a new MemDBActor with the specified role
     pub fn new_with_role(role: MemDBRole) -> Self {
         Self::new_with_role_and_session_manager(role, None)
@@ -156,7 +150,6 @@ impl<T: ApplicationRole> MemDBActor<T> {
             outstanding_batch: None,
             room: None,
             room_channels: None,
-            _marker: PhantomData,
         }
     }
 
@@ -316,7 +309,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
     }
 }
 
-impl<T: ApplicationRole> Actor for MemDBActor<T> {
+impl Actor for MemDBActor {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Context<Self>) {
@@ -330,15 +323,15 @@ impl<T: ApplicationRole> Actor for MemDBActor<T> {
 
 // Message handlers
 
-impl<T: ApplicationRole> Handler<SetSessionManager<T>> for MemDBActor<T> {
+impl Handler<SetSessionManager> for MemDBActor {
     type Result = ();
 
-    fn handle(&mut self, msg: SetSessionManager<T>, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: SetSessionManager, _ctx: &mut Context<Self>) {
         self.session_manager = Some(msg.session_manager);
     }
 }
 
-impl<T: ApplicationRole> Handler<StorePingResult> for MemDBActor<T> {
+impl Handler<StorePingResult> for MemDBActor {
     type Result = Result<(), MemDBError>;
 
     fn handle(&mut self, msg: StorePingResult, ctx: &mut Context<Self>) -> Self::Result {
@@ -365,7 +358,7 @@ impl<T: ApplicationRole> Handler<StorePingResult> for MemDBActor<T> {
     }
 }
 
-impl<T: ApplicationRole> Handler<ClearBuffer> for MemDBActor<T> {
+impl Handler<ClearBuffer> for MemDBActor {
     type Result = Result<(), MemDBError>;
 
     fn handle(&mut self, _msg: ClearBuffer, _ctx: &mut Context<Self>) -> Self::Result {
@@ -381,7 +374,7 @@ impl<T: ApplicationRole> Handler<ClearBuffer> for MemDBActor<T> {
     }
 }
 
-impl<T: ApplicationRole> Handler<GetHealth> for MemDBActor<T> {
+impl Handler<GetHealth> for MemDBActor {
     type Result = Result<MemDBHealth, MemDBError>;
 
     fn handle(&mut self, _msg: GetHealth, _ctx: &mut Context<Self>) -> Self::Result {
@@ -407,7 +400,7 @@ impl<T: ApplicationRole> Handler<GetHealth> for MemDBActor<T> {
     }
 }
 
-impl<T: ApplicationRole> Handler<GetStats> for MemDBActor<T> {
+impl Handler<GetStats> for MemDBActor {
     type Result = Result<TargetStats, MemDBError>;
 
     fn handle(&mut self, msg: GetStats, _ctx: &mut Context<Self>) -> Self::Result {
@@ -425,7 +418,7 @@ impl<T: ApplicationRole> Handler<GetStats> for MemDBActor<T> {
 /// The behavior depends on the actor's role:
 /// - **Collector**: Receives BatchAck responses from Database peers
 /// - **Database**: Receives SubmitBatch and Query requests, sends responses
-impl<T: ApplicationRole> Handler<MemDBMessage> for MemDBActor<T> {
+impl Handler<MemDBMessage> for MemDBActor {
     type Result = ResponseFuture<()>;
 
     fn handle(&mut self, msg: MemDBMessage, _ctx: &mut Context<Self>) -> Self::Result {
@@ -647,7 +640,7 @@ impl<T: ApplicationRole> Handler<MemDBMessage> for MemDBActor<T> {
 
 /// Handles the `CreateRoom` message, creating typed channels for network messaging.
 /// The channels are stored for SessionManager to use for message routing.
-impl<T: ApplicationRole> Handler<CreateRoom> for MemDBActor<T> {
+impl Handler<CreateRoom> for MemDBActor {
     type Result = ();
 
     fn handle(&mut self, _msg: CreateRoom, _ctx: &mut Context<Self>) -> Self::Result {
@@ -667,7 +660,7 @@ impl<T: ApplicationRole> Handler<CreateRoom> for MemDBActor<T> {
 
 /// Handles the `GetRoomChannels` message, creating and returning room channels for network messaging.
 /// If channels don't exist yet, they are created on-demand.
-impl<T: ApplicationRole> Handler<GetRoomChannels> for MemDBActor<T> {
+impl Handler<GetRoomChannels> for MemDBActor {
     type Result = MessageResult<GetRoomChannels>;
 
     fn handle(&mut self, _msg: GetRoomChannels, _ctx: &mut Context<Self>) -> Self::Result {
@@ -694,15 +687,13 @@ impl<T: ApplicationRole> Handler<GetRoomChannels> for MemDBActor<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::permissions::MemDBPermission;
 
     #[test]
     fn test_actor_creation() {
-        let collector_actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let collector_actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
         assert!(collector_actor.role().is_collector());
 
-        let database_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
+        let database_actor = MemDBActor::new_with_role(MemDBRole::Database {
             max_results_per_target: 1000,
             persistence_path: None,
         });
@@ -711,7 +702,7 @@ mod tests {
 
     #[test]
     fn test_actor_default() {
-        let actor = MemDBActor::<MemDBPermission>::default();
+        let actor = MemDBActor::default();
 
         // Default role should be Collector with buffer_size 1000
         match actor.role {
@@ -731,7 +722,7 @@ mod tests {
 
     #[actix::test]
     async fn test_send_batch_database_role_fails() {
-        let actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
+        let actor = MemDBActor::new_with_role(MemDBRole::Database {
             max_results_per_target: 1000,
             persistence_path: None,
         });
@@ -746,8 +737,7 @@ mod tests {
 
     #[actix::test]
     async fn test_send_batch_empty_buffer() {
-        let actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
 
         // Buffer is empty - start actor and verify buffer remains empty
         let _addr = actor.start();
@@ -757,8 +747,7 @@ mod tests {
 
     #[actix::test]
     async fn test_send_batch_with_outstanding_batch() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
 
         // Add a result to buffer
         actor.buffer.push(PingResult {
@@ -778,8 +767,7 @@ mod tests {
 
     #[actix::test]
     async fn test_send_batch_no_session_manager() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
 
         // Add a result to buffer
         actor.buffer.push(PingResult {
@@ -799,8 +787,7 @@ mod tests {
 
     #[test]
     fn test_set_session_manager_message_handler() {
-        let actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
 
         // Initially no session manager
         assert!(actor.session_manager.is_none());
@@ -815,8 +802,7 @@ mod tests {
 
     #[actix::test]
     async fn test_actor_lifecycle_started() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
         let mut ctx = Context::new();
 
         // Call the started method
@@ -828,8 +814,7 @@ mod tests {
 
     #[actix::test]
     async fn test_actor_lifecycle_stopped() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
         let mut ctx = Context::new();
 
         // Call the stopped method
@@ -841,8 +826,7 @@ mod tests {
 
     #[test]
     fn test_store_result_collector() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 10 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 10 });
 
         let result = PingResult {
             target: "8.8.8.8".to_string(),
@@ -860,7 +844,7 @@ mod tests {
 
     #[test]
     fn test_store_result_database() {
-        let mut actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Database {
             max_results_per_target: 1000,
             persistence_path: None,
         });
@@ -892,8 +876,7 @@ mod tests {
 
     #[test]
     fn test_clear_buffer_collector() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 10 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 10 });
 
         // Add some results to buffer
         actor.buffer.push(PingResult {
@@ -912,7 +895,7 @@ mod tests {
 
     #[test]
     fn test_clear_buffer_database_fails() {
-        let mut actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Database {
             max_results_per_target: 1000,
             persistence_path: None,
         });
@@ -925,8 +908,7 @@ mod tests {
 
     #[test]
     fn test_get_health() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 10 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 10 });
 
         let msg = GetHealth {};
         let result = actor.handle(msg, &mut Context::new());
@@ -939,7 +921,7 @@ mod tests {
 
     #[test]
     fn test_get_stats_database() {
-        let mut actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Database {
             max_results_per_target: 1000,
             persistence_path: None,
         });
@@ -966,8 +948,7 @@ mod tests {
 
     #[test]
     fn test_get_stats_collector_fails() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 10 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 10 });
 
         let msg = GetStats {
             target: "8.8.8.8".to_string(),
@@ -985,8 +966,7 @@ mod tests {
 
     #[actix::test]
     async fn test_memdb_room_handle_new() {
-        let actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
         let addr = actor.start();
         let room_handle = MemDBRoomHandle::new(addr);
 
@@ -996,7 +976,7 @@ mod tests {
 
     #[actix::test]
     async fn test_memdb_room_handle_send_message() {
-        let actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
+        let actor = MemDBActor::new_with_role(MemDBRole::Database {
             max_results_per_target: 100,
             persistence_path: None,
         });
@@ -1021,8 +1001,7 @@ mod tests {
 
     #[actix::test]
     async fn test_memdb_room_handle_spawn_forwarder() {
-        let actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
         let addr = actor.start();
         let mut room_handle = MemDBRoomHandle::new(addr);
 
@@ -1036,8 +1015,7 @@ mod tests {
 
     #[actix::test]
     async fn test_batch_ack_handling() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
 
         // Set an outstanding batch with a specific timestamp
         let batch_timestamp = 1234567890;
@@ -1056,8 +1034,7 @@ mod tests {
 
     #[actix::test]
     async fn test_batch_ack_wrong_timestamp() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
 
         // Set an outstanding batch
         let batch_timestamp = 1234567890;
@@ -1077,7 +1054,7 @@ mod tests {
 
     #[actix::test]
     async fn test_database_handles_submit_batch() {
-        let mut actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Database {
             max_results_per_target: 1000,
             persistence_path: None,
         });
@@ -1123,8 +1100,7 @@ mod tests {
 
     #[actix::test]
     async fn test_collector_ignores_submit_batch() {
-        let mut actor =
-            MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Collector { buffer_size: 100 });
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Collector { buffer_size: 100 });
 
         let msg = MemDBMessage::SubmitBatch {
             sender_peer_id: "peer1".to_string(),
@@ -1146,7 +1122,7 @@ mod tests {
 
     #[actix::test]
     async fn test_database_ignores_query_response() {
-        let mut actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
+        let mut actor = MemDBActor::new_with_role(MemDBRole::Database {
             max_results_per_target: 1000,
             persistence_path: None,
         });

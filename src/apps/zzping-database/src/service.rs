@@ -8,7 +8,6 @@ use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
 use zzintent_config::role::IntentConfigRole;
 use zzmem_db::actor::MemDBActor;
-use zzmem_db::permissions::MemDBPermission;
 use zzmem_db::role::MemDBRole;
 use zznet_auth::role::ApplicationRole;
 use zznet_session::session_manager::SessionManager;
@@ -36,7 +35,7 @@ pub struct ComponentBuilders {
     /// Builder for IntentConfig component
     pub intent_config: IntentConfigBuilder,
     /// Address of the running MemDB actor
-    pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
+    pub memdb_addr: Addr<MemDBActor>,
     /// Address of the running CState actor (database role)
     pub cstate_addr: CStateActorAddr,
     /// SessionManager actor address for network communication (pure actor approach)
@@ -54,7 +53,7 @@ pub struct StartedComponents {
     /// Address of the running IntentConfig actor
     pub intent_config: Addr<IntentConfigActor>,
     /// Address of the running MemDB actor
-    pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
+    pub memdb_addr: Addr<MemDBActor>,
     /// Address of the running CState actor (database role)
     pub cstate: CStateActorAddr,
     /// SessionManager actor address for network communication (pure actor approach)
@@ -300,7 +299,7 @@ impl DatabaseService {
         });
 
         // Create MemDB actor - DATABASE ROLE
-        let memdb_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {
+        let memdb_actor = MemDBActor::new_with_role(MemDBRole::Database {
             max_results_per_target: 10000,
             persistence_path: None,
         });

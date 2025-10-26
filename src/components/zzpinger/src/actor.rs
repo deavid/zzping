@@ -6,7 +6,6 @@ use tokio::task::JoinHandle;
 
 use actix::prelude::Recipient;
 use zzmem_db::messages::StorePingResult;
-use zzmem_db::permissions::MemDBPermission;
 
 use crate::error::PingerError;
 use crate::messages::{GetHealth, PingerHealth, SetPingingEnabled, TargetConfig, UpdateTargets};
@@ -78,10 +77,7 @@ impl PingerActor {
     }
 
     /// Configures MemDB recipient for result submission. Uses Addr.recipient() for loose coupling.
-    pub fn with_memdb_addr(
-        mut self,
-        addr: Addr<zzmem_db::actor::MemDBActor<MemDBPermission>>,
-    ) -> Self {
+    pub fn with_memdb_addr(mut self, addr: Addr<zzmem_db::actor::MemDBActor>) -> Self {
         // store only the recipient for the StorePingResult message to decouple typing
         self.memdb_addr = Some(addr.recipient());
         self

@@ -11,8 +11,6 @@ pub mod api;
 pub mod builder;
 pub mod messages;
 pub mod network_messages;
-/// Permissions module for the component (defines `CStatePermission`).
-pub mod permissions;
 pub mod role;
 pub mod state;
 

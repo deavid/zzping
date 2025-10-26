@@ -22,8 +22,6 @@ pub mod actor;
 pub mod messages;
 /// Network protocol messages
 pub mod network_messages;
-/// Permission definitions for MemDB
-pub mod permissions;
 /// Role-based configuration
 pub mod role;
 /// Storage backend for Database role

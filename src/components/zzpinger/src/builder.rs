@@ -3,17 +3,14 @@
 //! Provides fluent API for configuring pingers with targets, backends, and MemDB integration.
 //! Enables testable construction by allowing backend injection.
 
-use actix::{Actor, Addr};
-
-use zzmem_db::actor::MemDBActor;
-use zzmem_db::permissions::MemDBPermission;
-
 use crate::actor::PingerActor;
 use crate::api::PingerHandle;
 use crate::error::PingerError;
 use crate::messages::TargetConfig;
 use crate::pinger::PingBackend;
+use actix::{Actor, Addr};
 use std::sync::Arc;
+use zzmem_db::actor::MemDBActor;
 
 /// A builder for configuring and starting a `PingerActor`.
 ///
@@ -21,7 +18,7 @@ use std::sync::Arc;
 /// including its targets, backend implementation, and integration with a results collector.
 /// It ensures that the actor is always created in a valid and consistent state.
 pub struct PingerBuilder {
-    memdb_addr: Option<Addr<MemDBActor<MemDBPermission>>>,
+    memdb_addr: Option<Addr<MemDBActor>>,
     memdb_recipient: Option<actix::Recipient<zzmem_db::messages::StorePingResult>>,
     initial_targets: Vec<TargetConfig>,
     enabled: bool,
@@ -46,7 +43,7 @@ impl PingerBuilder {
     /// Configures the address of a `MemDBActor` for result submission.
     ///
     /// This is the standard method for integrating with `zzmem-db` in a production environment.
-    pub fn memdb_addr(mut self, addr: Addr<MemDBActor<MemDBPermission>>) -> Self {
+    pub fn memdb_addr(mut self, addr: Addr<MemDBActor>) -> Self {
         self.memdb_addr = Some(addr);
         self
     }
