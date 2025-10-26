@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::CollectorError;
+
 /// Collector application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectorConfig {
@@ -55,12 +57,6 @@ impl ComponentConfig {
     /// Uses shorter intervals than production defaults:
     /// - Heartbeat: 100ms instead of 5000ms
     /// - Batch size: 5 instead of 50
-    ///
-    /// # Example
-    /// ```ignore
-    /// let config = ComponentConfig::fast_timing();
-    /// assert_eq!(config.heartbeat_interval_ms, 100);
-    /// ```
     pub fn fast_timing() -> Self {
         Self {
             heartbeat_interval_ms: 100,
@@ -77,15 +73,6 @@ impl CollectorConfig {
     /// - localhost database connection
     /// - Fast timing intervals for testing
     /// - Minimal resource usage
-    ///
-    /// # Example
-    /// ```ignore
-    /// use zzping_collector::config::CollectorConfig;
-    ///
-    /// let config = CollectorConfig::for_testing("test-collector-01");
-    /// assert_eq!(config.collector_id, "test-collector-01");
-    /// assert!(config.tls.is_none()); // No TLS in test mode
-    /// ```
     pub fn for_testing(collector_id: impl Into<String>) -> Self {
         Self {
             collector_id: collector_id.into(),
@@ -98,74 +85,62 @@ impl CollectorConfig {
     }
 
     /// Load configuration from a RON file.
-    ///
-    /// # Errors
-    /// Returns error if file cannot be read or parsed.
-    pub fn load(path: &str) -> crate::error::Result<Self> {
+    pub fn load(path: &str) -> anyhow::Result<Self> {
         let content = std::fs::read_to_string(path).map_err(|e| {
-            crate::error::CollectorError::Config(format!(
-                "Failed to read config file {}: {}",
-                path, e
-            ))
+            CollectorError::Config(format!("Failed to read config file {}: {}", path, e))
         })?;
 
-        let config: Self = ron::from_str(&content).map_err(|e| {
-            crate::error::CollectorError::Config(format!("Failed to parse config: {}", e))
-        })?;
+        let config: Self = ron::from_str(&content)
+            .map_err(|e| CollectorError::Config(format!("Failed to parse config: {}", e)))?;
 
         Ok(config)
     }
 
     /// Validate configuration values.
-    ///
-    /// # Errors
-    /// Returns error if configuration has invalid values.
-    pub fn validate(&self) -> crate::error::Result<()> {
+    pub fn validate(&self) -> anyhow::Result<()> {
         if self.collector_id.is_empty() {
-            return Err(crate::error::CollectorError::Config(
+            Err(CollectorError::Config(
                 "collector_id cannot be empty".into(),
-            ));
+            ))?;
         }
 
         if self.components.heartbeat_interval_ms == 0 {
-            return Err(crate::error::CollectorError::Config(
+            Err(CollectorError::Config(
                 "heartbeat_interval_ms cannot be 0".into(),
-            ));
+            ))?;
         }
 
         if self.database_host.is_empty() {
-            return Err(crate::error::CollectorError::Config(
+            Err(CollectorError::Config(
                 "database_host cannot be empty".into(),
-            ));
+            ))?;
         }
 
         if self.database_port == 0 {
-            return Err(crate::error::CollectorError::Config(
-                "database_port cannot be 0".into(),
-            ));
+            Err(CollectorError::Config("database_port cannot be 0".into()))?;
         }
 
         // Validate TLS file paths exist (only if TLS is enabled)
         if let Some(tls) = &self.tls {
             if !std::path::Path::new(&tls.ca_cert_path).exists() {
-                return Err(crate::error::CollectorError::Config(format!(
+                Err(CollectorError::Config(format!(
                     "CA certificate not found: {}",
                     tls.ca_cert_path
-                )));
+                )))?;
             }
 
             if !std::path::Path::new(&tls.client_cert_path).exists() {
-                return Err(crate::error::CollectorError::Config(format!(
+                Err(CollectorError::Config(format!(
                     "Client certificate not found: {}",
                     tls.client_cert_path
-                )));
+                )))?;
             }
 
             if !std::path::Path::new(&tls.client_key_path).exists() {
-                return Err(crate::error::CollectorError::Config(format!(
+                Err(CollectorError::Config(format!(
                     "Client private key not found: {}",
                     tls.client_key_path
-                )));
+                )))?;
             }
         } else {
             tracing::warn!("Running without TLS - connections will use plain TCP");

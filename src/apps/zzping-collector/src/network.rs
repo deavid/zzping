@@ -1,12 +1,27 @@
+//! Collector network support for the zzping collector application.
+//!
+//! This module provides `CollectorNetwork`, a small, vision-aligned component that
+//! manages outgoing client connections to a remote zznet server. Responsibilities include:
+//! - creating a TCP transport client (optionally with TLS)
+//! - handing the transport to the `ConnectionManager` which spawns a `HelloActor` and
+//!   performs the HELLO handshake
+//! - integrating with the shared `SessionManager` so components can auto-register via
+//!   `Room<T>` channels
+//! - performing a simple automatic reconnection loop on failure
+//!
+//! The heavy lifting (per-connection actors, registration and routing) is performed by
+//! `ConnectionManager` and the HELLO protocol actors; `CollectorNetwork` focuses on
+//! establishing transports and mapping HELLO authentication into canonical `Role`s.
+//! See `CollectorNetwork::connect` and `try_connect` for details.
+
 use crate::service::StartedComponents;
-use actix::Actor; // For .start() method
+use actix::Actor;
 use std::time::Duration;
 use zznet_api::transport::TransportClient;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
-use zzping_auth::AuthRole;
 
 /// CollectorNetwork manages client-side connections following the vision architecture.
 ///
@@ -95,7 +110,7 @@ impl CollectorNetwork {
     /// Attempt a single connection to the database server
     async fn try_connect(
         &self,
-        connection_manager_addr: &actix::Addr<ConnectionManager<AuthRole>>,
+        connection_manager_addr: &actix::Addr<ConnectionManager>,
     ) -> Result<(), String> {
         // Step 1: Create TCP transport client
         let client = if let Some(tls_config) = &self.tls_config {
@@ -148,9 +163,10 @@ impl CollectorNetwork {
 
 /// Create the authorizer function for collector connections
 ///
-/// This validates HELLO role against TLS certificate and maps to AuthRole.
-fn create_collector_authorizer() -> zznet_auth::acl::GenericAuthorizer<AuthRole> {
-    Box::new(|auth_ctx| {
+/// This validates HELLO role against TLS certificate and maps to canonical network `Role`.
+fn create_collector_authorizer()
+-> Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<zznet_api::types::Role> + Send + Sync> {
+    Box::new(|auth_ctx: &zznet_api::types::AuthContext| {
         tracing::debug!(
             "Collector authorizer checking HELLO role: {}",
             auth_ctx.hello_role_str
@@ -176,10 +192,10 @@ fn create_collector_authorizer() -> zznet_auth::acl::GenericAuthorizer<AuthRole>
             tracing::debug!("No TLS - allowing plain connection");
         }
 
-        // Map HELLO role string to AuthRole enum
+        // Map HELLO role string to AuthRole enum then to canonical Role
         match auth_ctx.hello_role_str.as_str() {
-            "database" => Some(AuthRole::Database),
-            "collector" => Some(AuthRole::Collector),
+            "database" => Some(zznet_api::types::Role::new("database")),
+            "collector" => Some(zznet_api::types::Role::new("collector")),
             _ => {
                 tracing::error!("Unknown HELLO role: {}", auth_ctx.hello_role_str);
                 None

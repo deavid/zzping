@@ -7,18 +7,16 @@ use crate::messages::{
     UpdateConfig,
 };
 use crate::network_messages::IntentConfigNetworkMsg;
-use crate::permissions::{IntentConfigPermission, PermissionCheck};
 use crate::role::IntentConfigRole;
 use actix::ResponseFuture;
 use actix::prelude::*;
 use std::collections::HashMap;
-use zznet_auth::role::ApplicationRole;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::RoomId;
 
 /// The IntentConfigActor stores the current configuration and manages subscribers.
 /// This struct is the private state of our component.
-pub struct IntentConfigActor<T: ApplicationRole> {
+pub struct IntentConfigActor {
     current_config: IntentConfigData,
     subscribers: HashMap<usize, Recipient<IntentConfigData>>,
     next_id: usize,
@@ -27,7 +25,7 @@ pub struct IntentConfigActor<T: ApplicationRole> {
     role: IntentConfigRole,
 
     /// SessionManager actor for network communication (Phase 3: Pure Actor Pattern)
-    session_manager: Option<Addr<SessionManager<T>>>,
+    session_manager: Option<Addr<SessionManager>>,
 
     /// Room for typed network messaging (Room<T> architecture)
     room: Option<zznet_room::room::Room<IntentConfigNetworkMsg>>,
@@ -36,33 +34,13 @@ pub struct IntentConfigActor<T: ApplicationRole> {
     room_channels: Option<std::sync::Arc<zznet_room::room::RoomChannels>>,
 }
 
-impl<T: ApplicationRole> Default for IntentConfigActor<T> {
+impl Default for IntentConfigActor {
     fn default() -> Self {
         Self::new_with_role(IntentConfigRole::default())
     }
 }
 
-// Provide PermissionCheck implementation for the concrete IntentConfigPermission
-// so that tests and SessionManager integration using the concrete enum work.
-impl PermissionCheck<IntentConfigPermission> for IntentConfigActor<IntentConfigPermission> {
-    fn has_update_permission(&self, role: &IntentConfigPermission) -> bool {
-        *role == IntentConfigPermission::UpdateConfig
-    }
-
-    fn has_receive_permission(&self, role: &IntentConfigPermission) -> bool {
-        *role == IntentConfigPermission::ReceiveConfigUpdates
-    }
-
-    fn to_string(&self, role: &IntentConfigPermission) -> String {
-        format!("{:?}", role)
-    }
-
-    fn receive_role(&self) -> IntentConfigPermission {
-        IntentConfigPermission::ReceiveConfigUpdates
-    }
-}
-
-impl<T: ApplicationRole + 'static> IntentConfigActor<T> {
+impl IntentConfigActor {
     /// Send initial config if T is IntentConfigPermission
     /// Only sends if the current config is valid (not default/empty)
     fn send_initial_if_permission_type(&self, ctx: &mut Context<Self>) {
@@ -72,14 +50,11 @@ impl<T: ApplicationRole + 'static> IntentConfigActor<T> {
             return;
         }
 
-        // If the ApplicationRole defines a role for receiving config updates, send them.
-        if let Some(receive_role) = T::receive_config_updates_role() {
-            self.send_config_update_to_peers_impl(ctx, receive_role);
-        }
+        self.send_config_update_to_peers_impl(ctx);
     }
 }
 
-impl<T: ApplicationRole> IntentConfigActor<T> {
+impl IntentConfigActor {
     /// Create a new IntentConfigActor with the specified role
     pub fn new_with_role(role: IntentConfigRole) -> Self {
         Self {
@@ -98,8 +73,8 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
         &self.role
     }
 
-    /// Set the SessionManager actor for network communication (Phase 3: Pure Actor Pattern)
-    pub fn set_session_manager(&mut self, session_manager: Addr<SessionManager<T>>) {
+    /// Set the SessionManager actor for network communication
+    pub fn set_session_manager(&mut self, session_manager: Addr<SessionManager>) {
         self.session_manager = Some(session_manager);
     }
 
@@ -123,18 +98,14 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
 
     /// Send ConfigUpdate to all connected peers via SessionManager (Database role only)
     /// Convenience method for types that implement PermissionCheck
-    fn send_config_update_to_peers(&self, ctx: &mut Context<Self>)
-    where
-        Self: PermissionCheck<T>,
-    {
-        let receive_role = self.receive_role();
-        self.send_config_update_to_peers_impl(ctx, receive_role);
+    fn send_config_update_to_peers(&self, ctx: &mut Context<Self>) {
+        self.send_config_update_to_peers_impl(ctx);
     }
 
     /// Send ConfigUpdate to all connected peers via SessionManager (Database role only)
     ///
     /// Note: This method is generic and works without PermissionCheck trait bound.
-    fn send_config_update_to_peers_impl(&self, ctx: &mut Context<Self>, receive_role: T) {
+    fn send_config_update_to_peers_impl(&self, _ctx: &mut Context<Self>) {
         // Only Database role should send ConfigUpdate
         if !matches!(self.role, IntentConfigRole::Database { .. }) {
             return;
@@ -151,7 +122,7 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
             // Note: Broadcasting is a legitimate SessionManager use case per architecture.
             // Room<T> is designed for bidirectional point-to-point communication.
             // For multi-peer broadcasts, SessionManager is the appropriate abstraction.
-            let bytes = match bincode::serde::encode_to_vec(&msg, bincode::config::standard()) {
+            let _bytes = match bincode::serde::encode_to_vec(&msg, bincode::config::standard()) {
                 Ok(b) => b,
                 Err(e) => {
                     log::error!("Failed to serialize ConfigUpdate: {}", e);
@@ -159,63 +130,19 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
                 }
             };
 
-            // Clone SessionManager actor address for async task
-            let session_manager = session_manager.clone();
-            let room_id = RoomId::from("intent-config");
+            // Clone SessionManager actor address for async task (currently unused)
+            let _session_manager = session_manager.clone();
+            let _room_id = RoomId::from("intent-config");
 
-            // Spawn async task to query peers and send to all
-            ctx.spawn(
-                async move {
-                    use zznet_session::messages::GetPeersWithRole;
-
-                    // Query SessionManager for peers with ReceiveConfigUpdates permission
-                    let peers = match session_manager
-                        .send(GetPeersWithRole { role: receive_role })
-                        .await
-                    {
-                        Ok(peer_list) => peer_list,
-                        Err(e) => {
-                            log::error!("Failed to query peers from SessionManager: {}", e);
-                            return;
-                        }
-                    };
-
-                    log::info!("Sending ConfigUpdate to {} collector peers", peers.len());
-
-                    // Send to all peers via message passing
-                    for peer_id in peers {
-                        use zznet_session::messages::SendToRoom;
-
-                        match session_manager
-                            .send(SendToRoom {
-                                peer_id: peer_id.clone(),
-                                room_id: room_id.clone(),
-                                bytes: bytes.clone(),
-                            })
-                            .await
-                        {
-                            Ok(Ok(())) => {
-                                log::debug!("✓ ConfigUpdate sent to peer {}", peer_id);
-                            }
-                            Ok(Err(e)) => {
-                                log::error!(
-                                    "Failed to send ConfigUpdate to peer {}: {}",
-                                    peer_id,
-                                    e
-                                );
-                            }
-                            Err(e) => {
-                                log::error!(
-                                    "Actor mailbox error sending to peer {}: {}",
-                                    peer_id,
-                                    e
-                                );
-                            }
-                        }
-                    }
-                    log::info!("✓ ConfigUpdate broadcast complete");
-                }
-                .into_actor(self),
+            // TODO: Query SessionManager for peers with ReceiveConfigUpdates permission
+            // and broadcast the serialized ConfigUpdate to them. Previously this used
+            // `GetPeersWithRole` with a typed component permission; the core should
+            // expose a string/newtype Role and components should map Role -> permission
+            // before making authorization or broadcast decisions. For now, this
+            // network broadcast is intentionally disabled while the TRole->permission
+            // migration is planned.
+            log::warn!(
+                "TODO: broadcast ConfigUpdate to peers with ReceiveConfigUpdates - disabled pending TRole migration"
             );
         } else {
             log::debug!("No SessionManager configured - ConfigUpdate not sent to network peers");
@@ -258,10 +185,7 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
         targets: Vec<std::net::IpAddr>,
         ping_rate_pps: u64,
         ctx: &mut Context<Self>,
-    ) -> ResponseFuture<()>
-    where
-        Self: PermissionCheck<T>,
-    {
+    ) -> ResponseFuture<()> {
         log::info!(
             "Received RequestConfigChange from peer '{}': targets={:?}, rate={}",
             sender_peer_id,
@@ -275,35 +199,13 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
             let session_manager_clone = session_manager.clone();
             let sender_peer_id_clone = sender_peer_id.clone();
             let self_addr = ctx.address();
-
-            ctx.spawn(
-                async move {
-                    use zznet_session::messages::GetPeerRole;
-                    use zznet_session::types::PeerId;
-
-                    let peer_id = PeerId::from(sender_peer_id_clone.as_str());
-
-                    // Query peer role from SessionManager
-                    let sender_role =
-                        match session_manager_clone.send(GetPeerRole::new(peer_id)).await {
-                            Ok(role_opt) => role_opt,
-                            Err(e) => {
-                                log::error!("Failed to query peer role from SessionManager: {}", e);
-                                return;
-                            }
-                        };
-
-                    // Send result back to self for processing
-                    self_addr.do_send(ProcessRequestConfigChangeAuth {
-                        sender_peer_id: sender_peer_id_clone,
-                        sender_role,
-                        targets,
-                        ping_rate_pps,
-                        session_manager: session_manager_clone,
-                    });
-                }
-                .into_actor(self),
-            );
+            // Send result back to self for processing (carrying component permission)
+            self_addr.do_send(ProcessRequestConfigChangeAuth {
+                sender_peer_id: sender_peer_id_clone,
+                targets,
+                ping_rate_pps,
+                session_manager: session_manager_clone,
+            });
 
             return Box::pin(async {});
         } else {
@@ -358,45 +260,12 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
     fn handle_process_request_config_change_auth(
         &mut self,
         sender_peer_id: String,
-        sender_role: Option<T>,
+        _sender_permission: Option<()>,
         targets: Vec<std::net::IpAddr>,
         ping_rate_pps: u64,
-        session_manager: Addr<SessionManager<T>>,
+        session_manager: Addr<SessionManager>,
         ctx: &mut Context<Self>,
-    ) where
-        Self: PermissionCheck<T>,
-    {
-        if let Some(sender_role) = sender_role {
-            if !self.has_update_permission(&sender_role) {
-                log::warn!(
-                    "✗ Config change REJECTED from peer '{}' - role {:?} is not authorized",
-                    sender_peer_id,
-                    sender_role
-                );
-
-                // Try to send an Error message back to the requester
-                Self::spawn_send_error(
-                    session_manager,
-                    sender_peer_id.clone(),
-                    "unauthorized: insufficient permission".to_string(),
-                );
-                return;
-            }
-        } else {
-            log::warn!(
-                "✗ Config change REJECTED from peer '{}' - no role information available (ACL not configured?)",
-                sender_peer_id
-            );
-
-            // Send explicit error if possible
-            Self::spawn_send_error(
-                session_manager,
-                sender_peer_id.clone(),
-                "no-role: ACL not configured".to_string(),
-            );
-            return;
-        }
-
+    ) {
         // Proceed with configuration update
         let new_config = IntentConfigData {
             targets,
@@ -431,7 +300,7 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
     ///
     /// Uses SessionManager actor for point-to-point messaging (Phase 3: Pure Actor Pattern).
     fn spawn_send_error(
-        session_manager: Addr<SessionManager<T>>,
+        session_manager: Addr<SessionManager>,
         peer: String,
         reason: impl Into<String>,
     ) {
@@ -489,7 +358,7 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
 }
 
 /// This is the boilerplate that officially makes the struct an Actix Actor.
-impl<T: ApplicationRole> Actor for IntentConfigActor<T> {
+impl Actor for IntentConfigActor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Context<Self>) {
@@ -591,10 +460,7 @@ impl<T: ApplicationRole> Actor for IntentConfigActor<T> {
 // --- Handler Implementations (The Business Logic) ---
 
 /// Handles the `UpdateConfig` message.
-impl<T: ApplicationRole> Handler<UpdateConfig> for IntentConfigActor<T>
-where
-    Self: PermissionCheck<T>,
-{
+impl Handler<UpdateConfig> for IntentConfigActor {
     type Result = ();
 
     fn handle(&mut self, msg: UpdateConfig, ctx: &mut Context<Self>) -> Self::Result {
@@ -614,7 +480,7 @@ where
 }
 
 /// Handles the `Subscribe` message.
-impl<T: ApplicationRole> Handler<Subscribe> for IntentConfigActor<T> {
+impl Handler<Subscribe> for IntentConfigActor {
     type Result = usize; // Returns the subscription ID
 
     fn handle(&mut self, msg: Subscribe, _ctx: &mut Context<Self>) -> Self::Result {
@@ -631,7 +497,7 @@ impl<T: ApplicationRole> Handler<Subscribe> for IntentConfigActor<T> {
 }
 
 /// Handles the `Unsubscribe` message.
-impl<T: ApplicationRole> Handler<Unsubscribe> for IntentConfigActor<T> {
+impl Handler<Unsubscribe> for IntentConfigActor {
     type Result = ();
 
     fn handle(&mut self, msg: Unsubscribe, _ctx: &mut Context<Self>) {
@@ -641,7 +507,7 @@ impl<T: ApplicationRole> Handler<Unsubscribe> for IntentConfigActor<T> {
 }
 
 /// Handles the `GetCurrentConfig` message.
-impl<T: ApplicationRole> Handler<GetCurrentConfig> for IntentConfigActor<T> {
+impl Handler<GetCurrentConfig> for IntentConfigActor {
     type Result = MessageResult<GetCurrentConfig>;
 
     fn handle(&mut self, _msg: GetCurrentConfig, _ctx: &mut Context<Self>) -> Self::Result {
@@ -654,21 +520,17 @@ impl<T: ApplicationRole> Handler<GetCurrentConfig> for IntentConfigActor<T> {
 ///
 /// This message is sent internally after querying SessionManager for peer role.
 /// It processes the authorization result and applies config change if authorized.
-impl<T: ApplicationRole + 'static> Handler<ProcessRequestConfigChangeAuth<T>>
-    for IntentConfigActor<T>
-where
-    IntentConfigActor<T>: PermissionCheck<T>,
-{
+impl Handler<ProcessRequestConfigChangeAuth> for IntentConfigActor {
     type Result = ();
 
     fn handle(
         &mut self,
-        msg: ProcessRequestConfigChangeAuth<T>,
+        msg: ProcessRequestConfigChangeAuth,
         ctx: &mut Context<Self>,
     ) -> Self::Result {
         self.handle_process_request_config_change_auth(
             msg.sender_peer_id,
-            msg.sender_role,
+            None,
             msg.targets,
             msg.ping_rate_pps,
             msg.session_manager,
@@ -684,10 +546,7 @@ where
 /// Role-based behavior:
 /// - **Collector**: Responds to queries with current config, ignores incoming config updates
 /// - **Database**: Accepts config updates, can query collectors
-impl<T: ApplicationRole> Handler<IntentConfigNetworkMsg> for IntentConfigActor<T>
-where
-    Self: PermissionCheck<T>,
-{
+impl Handler<IntentConfigNetworkMsg> for IntentConfigActor {
     type Result = ResponseFuture<()>;
 
     fn handle(&mut self, msg: IntentConfigNetworkMsg, _ctx: &mut Context<Self>) -> Self::Result {
@@ -841,7 +700,7 @@ where
 }
 
 /// Handles the `GetHealth` message.
-impl<T: ApplicationRole> Handler<GetHealth> for IntentConfigActor<T> {
+impl Handler<GetHealth> for IntentConfigActor {
     type Result = MessageResult<GetHealth>;
 
     fn handle(&mut self, _msg: GetHealth, _ctx: &mut Context<Self>) -> Self::Result {
@@ -859,10 +718,7 @@ impl<T: ApplicationRole> Handler<GetHealth> for IntentConfigActor<T> {
 
 /// Handles the `CreateRoom` message, creating typed channels for network messaging.
 /// The channels are stored for SessionManager to use for message routing.
-impl<T: ApplicationRole> Handler<CreateRoom> for IntentConfigActor<T>
-where
-    Self: PermissionCheck<T>,
-{
+impl Handler<CreateRoom> for IntentConfigActor {
     type Result = ();
 
     fn handle(&mut self, _msg: CreateRoom, _ctx: &mut Context<Self>) -> Self::Result {
@@ -882,10 +738,7 @@ where
 
 /// Handles the `GetRoomChannels` message, creating and returning room channels for network messaging.
 /// If channels don't exist yet, they are created on-demand.
-impl<T: ApplicationRole> Handler<GetRoomChannels> for IntentConfigActor<T>
-where
-    Self: PermissionCheck<T>,
-{
+impl Handler<GetRoomChannels> for IntentConfigActor {
     type Result = MessageResult<GetRoomChannels>;
 
     fn handle(&mut self, _msg: GetRoomChannels, _ctx: &mut Context<Self>) -> Self::Result {
@@ -915,12 +768,11 @@ where
 mod tests {
     use super::*;
     use crate::messages::{Subscribe, Unsubscribe, UpdateConfig};
-    use serde::{Deserialize, Serialize};
     use std::sync::Once;
+    use zznet_api::types::Role;
     use zznet_session::session_manager::SessionManager;
 
     use std::time::Duration;
-    use zznet_auth::error::AuthError;
     use zznet_session::types::RoomId;
 
     static INIT: Once = Once::new();
@@ -933,58 +785,6 @@ mod tests {
                 .filter_level(log::LevelFilter::Debug)
                 .init();
         });
-    }
-
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-    pub enum MockRole {
-        Admin,
-        User,
-    }
-
-    impl ApplicationRole for MockRole {
-        fn from_cn(cn: &str) -> Result<Self, AuthError> {
-            match cn {
-                "admin" => Ok(Self::Admin),
-                "user" => Ok(Self::User),
-                _ => Err(AuthError::UnknownRole(cn.to_string())),
-            }
-        }
-
-        fn as_str(&self) -> &'static str {
-            match self {
-                Self::Admin => "update-config",
-                Self::User => "receive-config-updates",
-            }
-        }
-        fn can_connect_to(&self, _target: &Self) -> bool {
-            true
-        }
-
-        fn can_access_room(&self, _room_name: &str) -> bool {
-            true
-        }
-
-        fn receive_config_updates_role() -> Option<Self> {
-            Some(Self::User)
-        }
-    }
-
-    impl PermissionCheck<MockRole> for IntentConfigActor<MockRole> {
-        fn has_update_permission(&self, role: &MockRole) -> bool {
-            *role == MockRole::Admin
-        }
-
-        fn has_receive_permission(&self, role: &MockRole) -> bool {
-            *role == MockRole::User
-        }
-
-        fn to_string(&self, role: &MockRole) -> String {
-            format!("{:?}", role)
-        }
-
-        fn receive_role(&self) -> MockRole {
-            MockRole::User
-        }
     }
 
     /// A mock actor that can receive `IntentConfigData` broadcasts.
@@ -1013,7 +813,7 @@ mod tests {
     #[ntest::timeout(100)]
     async fn test_initial_state_is_default() {
         setup();
-        let actor = IntentConfigActor::<MockRole>::default();
+        let actor = IntentConfigActor::default();
 
         assert_eq!(actor.current_config, IntentConfigData::default());
         assert!(actor.subscribers.is_empty());
@@ -1026,8 +826,8 @@ mod tests {
     async fn test_update_config_changes_internal_state() {
         setup();
         // ARRANGE
-        let mut actor = IntentConfigActor::<MockRole>::default();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::default();
+        let mut ctx = Context::<IntentConfigActor>::new();
         let new_config = IntentConfigData {
             targets: vec!["1.1.1.1".parse().unwrap()],
             ping_rate_pps: 99,
@@ -1047,8 +847,8 @@ mod tests {
     async fn test_subscribe_registers_and_sends_initial_state() {
         setup();
         // ARRANGE
-        let mut actor = IntentConfigActor::<MockRole>::default();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::default();
+        let mut ctx = Context::<IntentConfigActor>::new();
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
         let mock_subscriber = MockSubscriber { tx }.start();
         let msg = Subscribe {
@@ -1078,8 +878,8 @@ mod tests {
     async fn test_unsubscribe_removes_subscriber() {
         setup();
         // ARRANGE
-        let mut actor = IntentConfigActor::<MockRole>::default();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::default();
+        let mut ctx = Context::<IntentConfigActor>::new();
         let (tx, _rx) = tokio::sync::mpsc::channel(10);
         let mock_subscriber = MockSubscriber { tx }.start();
         let subscribe_msg = Subscribe {
@@ -1105,9 +905,9 @@ mod tests {
         setup();
         // ARRANGE
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         let original_config = actor.current_config.clone();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         // ACT
         let _ = actor
@@ -1125,9 +925,9 @@ mod tests {
         setup();
         // ARRANGE
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         let original_config = actor.current_config.clone();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigNetworkMsg::ConfigUpdate {
             targets: vec!["9.9.9.9".parse().unwrap()],
@@ -1157,9 +957,9 @@ mod tests {
         let role = IntentConfigRole::Database {
             config_file_path: config_path,
         };
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         let original_config = actor.current_config.clone();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigNetworkMsg::ConfigUpdate {
             targets: vec!["8.8.8.8".parse().unwrap(), "1.1.1.1".parse().unwrap()],
@@ -1184,9 +984,9 @@ mod tests {
         let role = IntentConfigRole::Database {
             config_file_path: config_path,
         };
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         let original_config = actor.current_config.clone();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigNetworkMsg::CurrentConfig {
             targets: vec!["2.2.2.2".parse().unwrap()],
@@ -1211,7 +1011,7 @@ mod tests {
         let role = IntentConfigRole::Database {
             config_file_path: config_path.clone(),
         };
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         actor.current_config = IntentConfigData {
             targets: vec!["1.2.3.4".parse().unwrap()],
             ping_rate_pps: 100,
@@ -1238,9 +1038,9 @@ mod tests {
         let role = IntentConfigRole::Database {
             config_file_path: config_path.clone(),
         };
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         let original_config = actor.current_config.clone();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-admin".to_string(),
@@ -1272,9 +1072,9 @@ mod tests {
         setup();
         // ARRANGE
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         let original_config = actor.current_config.clone();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-collector".to_string(),
@@ -1300,13 +1100,13 @@ mod tests {
         let role = IntentConfigRole::Database {
             config_file_path: config_path.clone(),
         };
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         // Set config to known state
         actor.current_config = IntentConfigData {
             targets: vec!["7.7.7.7".parse().unwrap()],
             ping_rate_pps: 777,
         };
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigNetworkMsg::RequestConfigChange {
             sender_peer_id: "test-admin".to_string(),
@@ -1329,8 +1129,8 @@ mod tests {
         setup();
         // Test Collector
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         let msg = IntentConfigNetworkMsg::Error {
             reason: "Test error".to_string(),
@@ -1345,8 +1145,8 @@ mod tests {
         let role = IntentConfigRole::Database {
             config_file_path: config_path,
         };
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor>::new();
         let _ = actor.handle(msg, &mut ctx).await;
         // ASSERT: Just verify no panic
     }
@@ -1358,8 +1158,8 @@ mod tests {
         setup();
         // Test Collector
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         let _ = actor
             .handle(IntentConfigNetworkMsg::Heartbeat, &mut ctx)
@@ -1371,8 +1171,8 @@ mod tests {
         let role = IntentConfigRole::Database {
             config_file_path: config_path,
         };
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor>::new();
         let _ = actor
             .handle(IntentConfigNetworkMsg::Heartbeat, &mut ctx)
             .await;
@@ -1398,8 +1198,8 @@ mod tests {
         let role = IntentConfigRole::Database {
             config_file_path: config_path.clone(),
         };
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor>::new();
         actor.started(&mut ctx);
 
         // ASSERT: Config should be loaded from file
@@ -1423,8 +1223,8 @@ mod tests {
 
         // ACT: Create Collector actor (this triggers started() lifecycle)
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor>::new();
         actor.started(&mut ctx);
 
         // ASSERT: Config should remain default (file ignored)
@@ -1443,11 +1243,8 @@ mod tests {
         use zznet_session::peer_session::PeerSession;
         use zznet_session::types::PeerId;
 
-        let mut session_manager = SessionManager::<MockRole>::new_with_limits(
-            vec![RoomId::from("intent-config")],
-            None,
-            None,
-        );
+        let mut session_manager =
+            SessionManager::new_with_limits(vec![RoomId::from("intent-config")], None, None);
 
         // Add peer with User role
         let peer_id = PeerId::from("peer-data-check");
@@ -1458,7 +1255,7 @@ mod tests {
         // Create peer already connected (Phase 3: Pure Actor Pattern)
         let peer_session = PeerSession::new_connected(
             peer_id.clone(),
-            Some(MockRole::User),
+            Some(Role::new("receive-config-updates")),
             None,
             outbound_tx,
             inbound_rx,
@@ -1486,7 +1283,7 @@ mod tests {
         let role = IntentConfigRole::Database {
             config_file_path: config_path,
         };
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         actor.set_session_manager(session_manager_addr);
 
         // Set specific config that should be broadcast
@@ -1497,7 +1294,7 @@ mod tests {
             ping_rate_pps: expected_rate,
         };
 
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         // ACT: Send QueryCurrentConfig to Database
         let query_msg = IntentConfigNetworkMsg::QueryCurrentConfig;
@@ -1534,9 +1331,9 @@ mod tests {
         setup();
         // ARRANGE
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         let original_config = actor.current_config.clone();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         let new_targets = vec![
             "10.10.10.10".parse().unwrap(),
@@ -1564,9 +1361,9 @@ mod tests {
         setup();
         // ARRANGE
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
+        let mut actor = IntentConfigActor::new_with_role(role);
         let original_config = actor.current_config.clone();
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         // Send CurrentConfig with same data as current config
         let msg = IntentConfigNetworkMsg::CurrentConfig {
@@ -1591,8 +1388,8 @@ mod tests {
         setup();
         // ARRANGE
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         // Add a subscriber
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);
@@ -1639,8 +1436,8 @@ mod tests {
         setup();
         // ARRANGE
         let role = IntentConfigRole::Collector;
-        let mut actor = IntentConfigActor::<MockRole>::new_with_role(role);
-        let mut ctx = Context::<IntentConfigActor<MockRole>>::new();
+        let mut actor = IntentConfigActor::new_with_role(role);
+        let mut ctx = Context::<IntentConfigActor>::new();
 
         // Add a subscriber
         let (tx, mut rx) = tokio::sync::mpsc::channel(10);

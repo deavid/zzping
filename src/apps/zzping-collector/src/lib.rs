@@ -8,8 +8,5 @@
 pub mod cli;
 pub mod config;
 pub mod error;
-/// Network wiring module (collector)
 pub mod network;
-// pub mod room_handlers;  // DELETED - Phase 3 migration: AI-generated RoomHandlerFactory pattern removed
-/// Service module.
 pub mod service;

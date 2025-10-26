@@ -25,6 +25,3 @@ pub enum CollectorError {
     #[error("Pinger error: {0}")]
     Pinger(#[from] zzpinger::error::PingerError),
 }
-
-/// Result type alias for collector operations.
-pub type Result<T> = std::result::Result<T, CollectorError>;

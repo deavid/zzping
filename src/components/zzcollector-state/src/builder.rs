@@ -12,7 +12,7 @@ where
     TRole: ApplicationRole,
 {
     role: CStateRole,
-    session_manager: Option<actix::Addr<SessionManager<TRole>>>,
+    session_manager: Option<actix::Addr<SessionManager>>,
     _phantom: PhantomData<TRole>,
 }
 
@@ -34,10 +34,7 @@ where
     /// When a SessionManager is provided, the component's Room<T> will
     /// automatically register with the SessionManager during actor creation,
     /// eliminating the need for manual channel wiring.
-    pub fn with_session_manager(
-        mut self,
-        session_manager: actix::Addr<SessionManager<TRole>>,
-    ) -> Self {
+    pub fn with_session_manager(mut self, session_manager: actix::Addr<SessionManager>) -> Self {
         self.session_manager = Some(session_manager);
         self
     }

@@ -7,6 +7,7 @@ use zzping_auth::{AuthRole, AuthRoleMapper};
 
 /// Permissions for the zzintent-config component.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[deprecated(note = "components CANNOT define roles - this is a role enum masked as permissions, ")]
 pub enum IntentConfigPermission {
     /// Allows updating the configuration.
     UpdateConfig,

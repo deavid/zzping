@@ -166,13 +166,16 @@ mod tests {
 /// Internal message: Process authorization result for config change request (Phase 3)
 ///
 /// This message is sent internally after querying SessionManager for peer role.
-/// It's not part of the public API.
+/// It's not part of the public API. It intentionally carries no role or
+/// permission information — the network boundary is responsible for
+/// authorization decisions. The component simply receives the processed
+/// request and acts on it.
 #[derive(Message)]
 #[rtype(result = "()")]
-pub(crate) struct ProcessRequestConfigChangeAuth<T: zznet_auth::role::ApplicationRole> {
+pub(crate) struct ProcessRequestConfigChangeAuth {
     pub sender_peer_id: String,
-    pub sender_role: Option<T>,
     pub targets: Vec<IpAddr>,
     pub ping_rate_pps: u64,
-    pub session_manager: actix::Addr<zznet_session::SessionManager<T>>,
+    /// Non-generic SessionManager address
+    pub session_manager: actix::Addr<zznet_session::session_manager::SessionManager>,
 }

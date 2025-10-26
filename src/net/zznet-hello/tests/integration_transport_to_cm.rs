@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 use zznet_api::transport::{TransportClient as _, TransportServer as _};
-use zznet_auth::mock::MockRole;
+use zznet_api::types::Role;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::server::TcpTransportServer;
@@ -45,16 +45,14 @@ async fn transport_accept_and_send_to_connection_manager() {
             // Start ConnectionManager actor
             use actix::prelude::*;
             let offered_rooms = vec![];
-            // Simple authorizer that accepts all peers as Admin
+            // Simple authorizer that accepts all peers as Admin (maps to Role)
             let authorizer =
-                Box::new(|_auth_ctx: &zznet_api::types::AuthContext| Some(MockRole::Admin))
-                    as Box<
-                        dyn Fn(&zznet_api::types::AuthContext) -> Option<MockRole> + Send + Sync,
-                    >;
+                Box::new(|_auth_ctx: &zznet_api::types::AuthContext| Some(Role::new("admin")))
+                    as Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<Role> + Send + Sync>;
             // Create a SessionManager actor and pass its Addr into ConnectionManager
             use zznet_session::session_manager::SessionManager;
-            let session_mgr_addr = SessionManager::<MockRole>::new(offered_rooms).start();
-            let mgr = ConnectionManager::<MockRole>::new(session_mgr_addr, authorizer).start();
+            let session_mgr_addr = SessionManager::new(offered_rooms).start();
+            let mgr = ConnectionManager::new(session_mgr_addr, authorizer).start();
 
             // Send transport using HandleTransport, ensure try_send succeeds
             let config = HelloConfig::default();

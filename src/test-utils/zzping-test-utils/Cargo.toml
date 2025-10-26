@@ -15,6 +15,7 @@ path = "src/lib.rs"
 zznet-session.workspace = true
 tokio.workspace = true
 zznet-auth.workspace = true
+zznet-api.workspace = true
 
 [dev-dependencies]
 # none

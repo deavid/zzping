@@ -8,13 +8,13 @@ use crate::peer_session::PeerSession;
 use crate::session_manager::SessionManager;
 use crate::types::{ConnectionState, PeerId, RoomId};
 use actix::prelude::*;
-use zznet_auth::mock::MockRole;
+use zznet_api::types::Role;
 
 #[actix::test]
 async fn test_session_manager_actor_start() {
     // Start SessionManager as an actor
     let offered_rooms = vec![RoomId::from("test-room")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms).start();
+    let addr = SessionManager::new(offered_rooms).start();
 
     // Actor should be running
     assert!(addr.connected());
@@ -24,16 +24,15 @@ async fn test_session_manager_actor_start() {
 async fn test_add_peer_via_message() {
     // Start SessionManager as an actor
     let offered_rooms = vec![RoomId::from("test-room")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms).start();
+    let addr = SessionManager::new(offered_rooms).start();
 
     // Create a peer session
     let peer_id = PeerId::from("test-peer");
     let (tx, _rx) = tokio::sync::mpsc::channel(10);
     let (_tx2, rx2) = tokio::sync::mpsc::channel(10);
-    let mut peer_session =
-        PeerSession::<MockRole>::new_connected(peer_id.clone(), None, None, tx, rx2)
-            .await
-            .unwrap();
+    let mut peer_session = PeerSession::new_connected(peer_id.clone(), None, None, tx, rx2)
+        .await
+        .unwrap();
     // Start disconnected state to mimic old `PeerSession::new()`
     peer_session.disconnect();
 
@@ -57,15 +56,14 @@ async fn test_add_peer_via_message() {
 #[actix::test]
 async fn test_get_peer_state_via_message() {
     let offered_rooms = vec![RoomId::from("test-room")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms).start();
+    let addr = SessionManager::new(offered_rooms).start();
 
     let peer_id = PeerId::from("test-peer");
     let (tx, _rx) = tokio::sync::mpsc::channel(10);
     let (_tx2, rx2) = tokio::sync::mpsc::channel(10);
-    let mut peer_session =
-        PeerSession::<MockRole>::new_connected(peer_id.clone(), None, None, tx, rx2)
-            .await
-            .unwrap();
+    let mut peer_session = PeerSession::new_connected(peer_id.clone(), None, None, tx, rx2)
+        .await
+        .unwrap();
     peer_session.disconnect();
 
     // Add peer
@@ -91,15 +89,14 @@ async fn test_get_peer_state_via_message() {
 #[actix::test]
 async fn test_is_peer_connected_via_message() {
     let offered_rooms = vec![RoomId::from("test-room")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms).start();
+    let addr = SessionManager::new(offered_rooms).start();
 
     let peer_id = PeerId::from("test-peer");
     let (tx, _rx) = tokio::sync::mpsc::channel(10);
     let (_tx2, rx2) = tokio::sync::mpsc::channel(10);
-    let mut peer_session =
-        PeerSession::<MockRole>::new_connected(peer_id.clone(), None, None, tx, rx2)
-            .await
-            .unwrap();
+    let mut peer_session = PeerSession::new_connected(peer_id.clone(), None, None, tx, rx2)
+        .await
+        .unwrap();
     peer_session.disconnect();
 
     // Add peer
@@ -125,20 +122,15 @@ async fn test_is_peer_connected_via_message() {
 #[actix::test]
 async fn test_get_peers_with_role_via_message() {
     let offered_rooms = vec![RoomId::from("test-room")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms).start();
+    let addr = SessionManager::new(offered_rooms).start();
 
     let peer_id = PeerId::from("test-peer");
     let (tx, _rx) = tokio::sync::mpsc::channel(10);
     let (_tx2, rx2) = tokio::sync::mpsc::channel(10);
-    let mut peer_session = PeerSession::<MockRole>::new_connected(
-        peer_id.clone(),
-        Some(MockRole::Admin),
-        None,
-        tx,
-        rx2,
-    )
-    .await
-    .unwrap();
+    let mut peer_session =
+        PeerSession::new_connected(peer_id.clone(), Some(Role::new("admin")), None, tx, rx2)
+            .await
+            .unwrap();
     peer_session.disconnect();
 
     // Add peer
@@ -153,7 +145,7 @@ async fn test_get_peers_with_role_via_message() {
     // Query peers with Admin role
     let peers = addr
         .send(GetPeersWithRole {
-            role: MockRole::Admin,
+            role: Role::new("admin"),
         })
         .await
         .unwrap();
@@ -165,7 +157,7 @@ async fn test_get_peers_with_role_via_message() {
 #[actix::test]
 async fn test_get_offered_rooms_via_message() {
     let offered_rooms = vec![RoomId::from("room1"), RoomId::from("room2")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms.clone()).start();
+    let addr = SessionManager::new(offered_rooms.clone()).start();
 
     let rooms = addr.send(GetOfferedRooms).await.unwrap();
 
@@ -177,7 +169,7 @@ async fn test_get_offered_rooms_via_message() {
 #[actix::test]
 async fn test_set_offered_rooms_via_message() {
     let initial_rooms = vec![RoomId::from("room1")];
-    let addr = SessionManager::<MockRole>::new(initial_rooms).start();
+    let addr = SessionManager::new(initial_rooms).start();
 
     // Set new rooms
     let new_rooms = vec![RoomId::from("room2"), RoomId::from("room3")];
@@ -198,15 +190,14 @@ async fn test_set_offered_rooms_via_message() {
 #[actix::test]
 async fn test_disconnect_peer_via_message() {
     let offered_rooms = vec![RoomId::from("test-room")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms).start();
+    let addr = SessionManager::new(offered_rooms).start();
 
     let peer_id = PeerId::from("test-peer");
     let (tx, _rx) = tokio::sync::mpsc::channel(10);
     let (_tx2, rx2) = tokio::sync::mpsc::channel(10);
-    let mut peer_session =
-        PeerSession::<MockRole>::new_connected(peer_id.clone(), None, None, tx, rx2)
-            .await
-            .unwrap();
+    let mut peer_session = PeerSession::new_connected(peer_id.clone(), None, None, tx, rx2)
+        .await
+        .unwrap();
     peer_session.disconnect();
 
     // Add peer
@@ -232,15 +223,14 @@ async fn test_disconnect_peer_via_message() {
 #[actix::test]
 async fn test_remove_peer_via_message() {
     let offered_rooms = vec![RoomId::from("test-room")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms).start();
+    let addr = SessionManager::new(offered_rooms).start();
 
     let peer_id = PeerId::from("test-peer");
     let (tx, _rx) = tokio::sync::mpsc::channel(10);
     let (_tx2, rx2) = tokio::sync::mpsc::channel(10);
-    let mut peer_session =
-        PeerSession::<MockRole>::new_connected(peer_id.clone(), None, None, tx, rx2)
-            .await
-            .unwrap();
+    let mut peer_session = PeerSession::new_connected(peer_id.clone(), None, None, tx, rx2)
+        .await
+        .unwrap();
     peer_session.disconnect();
 
     // Add peer
@@ -270,7 +260,7 @@ async fn test_remove_peer_via_message() {
 #[actix::test]
 async fn test_get_connected_peer_count_via_message() {
     let offered_rooms = vec![RoomId::from("test-room")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms).start();
+    let addr = SessionManager::new(offered_rooms).start();
 
     // Initial count should be 0
     let count = addr.send(GetConnectedPeerCount).await.unwrap();
@@ -280,10 +270,9 @@ async fn test_get_connected_peer_count_via_message() {
     let peer_id = PeerId::from("test-peer");
     let (tx, _rx) = tokio::sync::mpsc::channel(10);
     let (_tx2, rx2) = tokio::sync::mpsc::channel(10);
-    let mut peer_session =
-        PeerSession::<MockRole>::new_connected(peer_id.clone(), None, None, tx, rx2)
-            .await
-            .unwrap();
+    let mut peer_session = PeerSession::new_connected(peer_id.clone(), None, None, tx, rx2)
+        .await
+        .unwrap();
     peer_session.disconnect();
     addr.send(AddPeer {
         peer_id,
@@ -302,7 +291,7 @@ async fn test_get_connected_peer_count_via_message() {
 async fn test_concurrent_message_handling() {
     // Test that multiple messages can be sent concurrently
     let offered_rooms = vec![RoomId::from("test-room")];
-    let addr = SessionManager::<MockRole>::new(offered_rooms).start();
+    let addr = SessionManager::new(offered_rooms).start();
 
     // Send multiple AddPeer messages concurrently
     let mut futures = vec![];
@@ -310,10 +299,9 @@ async fn test_concurrent_message_handling() {
         let peer_id = PeerId::from(format!("peer-{}", i).as_str());
         let (tx, _rx) = tokio::sync::mpsc::channel(10);
         let (_tx2, rx2) = tokio::sync::mpsc::channel(10);
-        let mut peer_session =
-            PeerSession::<MockRole>::new_connected(peer_id.clone(), None, None, tx, rx2)
-                .await
-                .unwrap();
+        let mut peer_session = PeerSession::new_connected(peer_id.clone(), None, None, tx, rx2)
+            .await
+            .unwrap();
         peer_session.disconnect();
 
         let fut = addr.send(AddPeer {

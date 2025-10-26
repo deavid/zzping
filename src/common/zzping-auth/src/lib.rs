@@ -118,6 +118,9 @@ pub type AclManagerDefault = AclManager<AuthRole>;
 ///     }
 /// }
 /// ```
+#[deprecated(
+    note = "This would require components to know about roles, does not serve the purpose for the mapping"
+)]
 pub trait AuthRoleMapper: Sized {
     /// Maps a connection-level `AuthRole` to this component's permission type.
     ///

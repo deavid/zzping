@@ -6,7 +6,6 @@ use zzcollector_state::builder::CStateBuilder;
 use zzcollector_state::role::CStateRole;
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
-use zzintent_config::permissions::IntentConfigPermission;
 use zzintent_config::role::IntentConfigRole;
 use zzmem_db::actor::MemDBActor;
 use zzmem_db::permissions::MemDBPermission;
@@ -35,13 +34,13 @@ use zzping_auth::AuthRole;
 /// Phase 3: Now includes SessionManager for proper Room<T> integration.
 pub struct ComponentBuilders {
     /// Builder for IntentConfig component
-    pub intent_config: IntentConfigBuilder<IntentConfigPermission>,
+    pub intent_config: IntentConfigBuilder,
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
     /// Address of the running CState actor (database role)
     pub cstate_addr: CStateActorAddr,
     /// SessionManager actor address for network communication (pure actor approach)
-    pub session_manager: Addr<SessionManager<AuthRole>>,
+    pub session_manager: Addr<SessionManager>,
 }
 
 type CStateActorAddr = Addr<CStateActor<AuthRole>>;
@@ -53,14 +52,14 @@ type CStateActorAddr = Addr<CStateActor<AuthRole>>;
 #[derive(Clone)]
 pub struct StartedComponents {
     /// Address of the running IntentConfig actor
-    pub intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
+    pub intent_config: Addr<IntentConfigActor>,
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor<MemDBPermission>>,
     /// Address of the running CState actor (database role)
     pub cstate: CStateActorAddr,
     /// SessionManager actor address for network communication (pure actor approach)
     /// Phase 3: Components use this for Room<T> auto-registration
-    pub session_manager: Addr<SessionManager<AuthRole>>,
+    pub session_manager: Addr<SessionManager>,
 }
 
 // Per-connection handler for collector connections
@@ -137,7 +136,7 @@ impl DatabaseService {
 
     fn create_connection_manager(
         &self,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
+    ) -> Result<zznet_hello::connection_manager::ConnectionManager> {
         use zznet_session::SessionManager;
         use zznet_session::types::RoomId;
 
@@ -172,11 +171,8 @@ impl DatabaseService {
     /// with all components, ensuring messages flow properly.
     fn create_connection_manager_with_session_manager(
         &self,
-        session_manager: Addr<SessionManager<AuthRole>>,
-    ) -> std::result::Result<
-        Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>>,
-        String,
-    > {
+        session_manager: Addr<SessionManager>,
+    ) -> std::result::Result<Addr<zznet_hello::connection_manager::ConnectionManager>, String> {
         let authorizer = self.make_authorizer();
 
         Ok(
@@ -190,8 +186,11 @@ impl DatabaseService {
     }
 
     /// Create the authorizer closure used by the Database service.
-    fn make_authorizer(&self) -> zzping_auth::Authorizer {
-        Box::new(|auth_ctx| {
+    fn make_authorizer(
+        &self,
+    ) -> Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<zznet_api::types::Role> + Send + Sync>
+    {
+        Box::new(|auth_ctx: &zznet_api::types::AuthContext| {
             tracing::debug!(
                 "Database authorizer checking HELLO role: {}",
                 auth_ctx.hello_role_str
@@ -219,7 +218,7 @@ impl DatabaseService {
             }
 
             match AuthRole::from_cn(&auth_ctx.hello_role_str) {
-                Ok(role) => Some(role),
+                Ok(role) => Some(zznet_api::types::Role::new(role.as_str())),
                 Err(e) => {
                     tracing::warn!(
                         "Authorizer rejected HELLO role '{}' - unknown role: {}",
@@ -238,7 +237,7 @@ impl DatabaseService {
     /// transport connections or customize the connection handling.
     pub fn start_connection_manager(
         &self,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager> {
         use actix::prelude::*;
 
         // Reuse create_connection_manager() so it's used and kept in sync
@@ -255,8 +254,8 @@ impl DatabaseService {
     /// with all components, ensuring messages flow properly.
     pub fn start_connection_manager_with_session_manager(
         &self,
-        session_manager: Addr<SessionManager<AuthRole>>,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
+        session_manager: Addr<SessionManager>,
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager> {
         match self.create_connection_manager_with_session_manager(session_manager) {
             Ok(addr) => addr,
             Err(e) => panic!(
@@ -288,7 +287,7 @@ impl DatabaseService {
         ];
 
         // Create SessionManager as an actor (pure actor approach)
-        let session_manager = SessionManager::<AuthRole>::new(offered_rooms).start();
+        let session_manager = SessionManager::new(offered_rooms).start();
 
         tracing::info!("Created shared SessionManager actor for components");
 
@@ -296,10 +295,9 @@ impl DatabaseService {
         let data_dir = std::path::PathBuf::from(&self.config.data_dir);
         let config_path = data_dir.join("intent.ron");
 
-        let intent_config =
-            IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Database {
-                config_file_path: config_path,
-            });
+        let intent_config = IntentConfigBuilder::new().role(IntentConfigRole::Database {
+            config_file_path: config_path,
+        });
 
         // Create MemDB actor - DATABASE ROLE
         let memdb_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {

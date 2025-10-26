@@ -124,8 +124,9 @@ impl DatabaseNetwork {
 /// Create the authorizer function for database connections
 ///
 /// This validates HELLO role against TLS certificate and maps to AuthRole.
-fn create_database_authorizer() -> zznet_auth::acl::GenericAuthorizer<AuthRole> {
-    Box::new(|auth_ctx| {
+fn create_database_authorizer()
+-> Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<zznet_api::types::Role> + Send + Sync> {
+    Box::new(|auth_ctx: &zznet_api::types::AuthContext| {
         tracing::debug!(
             "Database authorizer checking HELLO role: {}",
             auth_ctx.hello_role_str
@@ -153,11 +154,11 @@ fn create_database_authorizer() -> zznet_auth::acl::GenericAuthorizer<AuthRole> 
             );
         }
 
-        // Map HELLO role string to AuthRole
+        // Map HELLO role string to AuthRole, then to canonical Role
         match AuthRole::from_cn(&auth_ctx.hello_role_str) {
             Ok(role) => {
                 tracing::info!("Authorized connection with role: {:?}", role);
-                Some(role)
+                Some(zznet_api::types::Role::new(role.as_str()))
             }
             Err(e) => {
                 tracing::warn!(

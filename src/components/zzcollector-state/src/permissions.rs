@@ -9,6 +9,7 @@ use zzping_auth::{AuthRole, AuthRoleMapper};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 /// Concrete permission role used for examples and tests.
+#[deprecated(note = "components CANNOT define roles")]
 pub enum CStatePermission {
     /// Administrative role with full access.
     Admin,

@@ -58,7 +58,7 @@ where
     /// added separately via with_room().
     pub fn new(
         role: CStateRole,
-        _session_manager: Option<actix::Addr<zznet_session::SessionManager<TRole>>>,
+        _session_manager: Option<actix::Addr<zznet_session::SessionManager>>,
     ) -> Self {
         let mut actor = Self {
             role,

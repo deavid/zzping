@@ -16,12 +16,12 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use zznet_api::transport::TransportConnection;
 use zznet_api::types::AuthContext;
-use zznet_auth::ApplicationRole;
+use zznet_api::types::Role;
 use zznet_session::peer_session::PeerSession;
 use zznet_session::session_manager::SessionManager;
 use zznet_session::types::{PeerId, RoomId};
 
-type Authorizer<TRole> = Box<dyn Fn(&AuthContext) -> Option<TRole> + Send + Sync>;
+type Authorizer = Box<dyn Fn(&AuthContext) -> Option<Role> + Send + Sync>;
 
 /// ConnectionManager coordinates HelloActors and SessionManager
 ///
@@ -30,10 +30,7 @@ type Authorizer<TRole> = Box<dyn Fn(&AuthContext) -> Option<TRole> + Send + Sync
 /// Every peer must be explicitly authorized before gaining access.
 ///
 /// Generic over TRole: the application's role type
-pub struct ConnectionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+pub struct ConnectionManager {
     /// SessionManager actor address for message-passing communication
     ///
     /// DESIGN: Uses Actix Addr<> for pure actor-based communication.
@@ -42,7 +39,7 @@ where
     /// - Components receive their own Addr<SessionManager> for direct access
     /// - This enables concurrent access without blocking
     /// - Message passing provides natural backpressure and error handling
-    session_manager: Addr<SessionManager<TRole>>,
+    session_manager: Addr<SessionManager>,
 
     /// Maps PeerId to HelloActor address
     /// Used to send InboundRoomMessage to the correct HelloActor
@@ -50,7 +47,7 @@ where
     /// REQUIRED: Authorizer function to resolve peer identity to role.
     /// This is NOT optional - every connection must be authorized.
     /// Takes PeerIdentity (from TLS certificate) and returns role if allowed.
-    authorizer: Authorizer<TRole>,
+    authorizer: Authorizer,
     /// Optional callback for wiring room handlers to newly-connected peers.
     /// Called from HandshakeComplete handler with the SessionManager address and new peer ID.
     /// IMPORTANT: This is now ASYNC and TRANSACTIONAL. If wiring fails, the connection
@@ -59,7 +56,7 @@ where
     room_handler_wirer: Option<
         Arc<
             dyn Fn(
-                    Addr<SessionManager<TRole>>,
+                    Addr<SessionManager>,
                     &PeerId,
                 ) -> std::pin::Pin<
                     Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
@@ -69,10 +66,7 @@ where
     >,
 }
 
-impl<TRole> ConnectionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl ConnectionManager {
     /// Create a new ConnectionManager with a REQUIRED authorizer function.
     ///
     /// **DEPRECATED**: Use `new_with_session_manager()` instead. This constructor
@@ -96,10 +90,7 @@ where
     /// - Pass the Addr to ALL components via clone()
     /// - Pass the Addr to ConnectionManager via this constructor
     /// - This ensures messages reach SessionManager from all sources
-    pub fn new(
-        session_manager: Addr<SessionManager<TRole>>,
-        authorizer: Authorizer<TRole>,
-    ) -> Self {
+    pub fn new(session_manager: Addr<SessionManager>, authorizer: Authorizer) -> Self {
         Self {
             session_manager,
             hello_actors: HashMap::new(),
@@ -113,8 +104,8 @@ where
     /// Alias for `new()` - both names work the same way now.
     /// Use whichever name is clearer in your context.
     pub fn new_with_session_manager(
-        session_manager: Addr<SessionManager<TRole>>,
-        authorizer: Authorizer<TRole>,
+        session_manager: Addr<SessionManager>,
+        authorizer: Authorizer,
     ) -> Self {
         Self::new(session_manager, authorizer)
     }
@@ -134,7 +125,7 @@ where
         mut self,
         wirer: Arc<
             dyn Fn(
-                    Addr<SessionManager<TRole>>,
+                    Addr<SessionManager>,
                     &PeerId,
                 ) -> std::pin::Pin<
                     Box<dyn std::future::Future<Output = Result<(), String>> + Send>,
@@ -170,10 +161,7 @@ where
     }
 }
 
-impl<TRole> Actor for ConnectionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Actor for ConnectionManager {
     type Context = Context<Self>;
 }
 
@@ -188,10 +176,7 @@ struct HandshakePostProcessed {
     hello_actor: Addr<HelloActor>,
 }
 
-impl<TRole> Handler<HandshakePostProcessed> for ConnectionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<HandshakePostProcessed> for ConnectionManager {
     type Result = ();
 
     fn handle(&mut self, msg: HandshakePostProcessed, _ctx: &mut Context<Self>) {
@@ -210,10 +195,7 @@ struct HandshakePostProcessedInner {
     hello_to_conn_rx: Option<tokio::sync::mpsc::Receiver<(String, Vec<u8>)>>,
 }
 
-impl<TRole> Handler<HandshakePostProcessedInner> for ConnectionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<HandshakePostProcessedInner> for ConnectionManager {
     type Result = ();
 
     fn handle(&mut self, msg: HandshakePostProcessedInner, _ctx: &mut Context<Self>) {
@@ -251,10 +233,7 @@ pub struct HandleTransport {
     pub config: crate::actor::HelloConfig,
 }
 
-impl<TRole> Handler<HandleTransport> for ConnectionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<HandleTransport> for ConnectionManager {
     type Result = Result<(), String>;
 
     fn handle(&mut self, msg: HandleTransport, ctx: &mut Context<Self>) -> Self::Result {
@@ -277,10 +256,7 @@ where
 pub struct GetPeers;
 
 /// Handler for GetPeers - Forward to SessionManager via message passing
-impl<TRole> Handler<GetPeers> for ConnectionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetPeers> for ConnectionManager {
     type Result = ResponseFuture<Vec<PeerId>>;
 
     fn handle(&mut self, _msg: GetPeers, _ctx: &mut Context<Self>) -> Self::Result {
@@ -310,10 +286,7 @@ impl GetPeerSender {
 }
 
 /// Handler for GetPeerSender - Forward to SessionManager via message passing
-impl<TRole> Handler<GetPeerSender> for ConnectionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetPeerSender> for ConnectionManager {
     type Result = ResponseFuture<Option<mpsc::Sender<(RoomId, Vec<u8>)>>>;
 
     fn handle(&mut self, msg: GetPeerSender, _ctx: &mut Context<Self>) -> Self::Result {
@@ -346,10 +319,7 @@ impl SubscribePeerInbound {
 }
 
 /// Handler for SubscribePeerInbound - Forward to SessionManager via message passing
-impl<TRole> Handler<SubscribePeerInbound> for ConnectionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<SubscribePeerInbound> for ConnectionManager {
     type Result = ResponseFuture<Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>>>;
 
     fn handle(&mut self, msg: SubscribePeerInbound, _ctx: &mut Context<Self>) -> Self::Result {
@@ -385,10 +355,7 @@ pub struct SendToRoom {
 /// instead of routing sends through the actor system.
 ///
 /// See `get_peer_sender()` method below for the proper approach.
-impl<TRole> Handler<SendToRoom> for ConnectionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<SendToRoom> for ConnectionManager {
     type Result = ResponseFuture<Result<(), String>>;
 
     fn handle(&mut self, _msg: SendToRoom, _ctx: &mut Context<Self>) -> Self::Result {
@@ -404,10 +371,7 @@ where
 ///
 /// SECURITY: Every connection goes through the mandatory authorizer.
 /// No code path allows unauthenticated connections.
-impl<TRole> Handler<HandshakeComplete> for ConnectionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<HandshakeComplete> for ConnectionManager {
     type Result = ();
 
     fn handle(&mut self, msg: HandshakeComplete, _ctx: &mut Context<Self>) {
@@ -650,15 +614,14 @@ mod tests {
         let _b = TestMessages::MemDB;
         let _c = TestMessages::Health;
 
-        // Create a mock authorizer that accepts all peers as MockRole::Admin
-        let authorizer: Authorizer<zznet_auth::mock::MockRole> =
-            Box::new(|_peer_identity| Some(zznet_auth::mock::MockRole::Admin));
+        // Create a mock authorizer that accepts all peers as Role::"admin"
+        let authorizer = Box::new(|_peer_identity: &AuthContext| Some(Role::new("admin")))
+            as Box<dyn Fn(&AuthContext) -> Option<Role> + Send + Sync>;
 
         // Create SessionManager and start it as an actor
-        let session_manager = SessionManager::<zznet_auth::mock::MockRole>::new(rooms).start();
+        let session_manager = SessionManager::new(rooms).start();
 
-        let _manager =
-            ConnectionManager::<zznet_auth::mock::MockRole>::new(session_manager, authorizer);
+        let _manager = ConnectionManager::new(session_manager, authorizer);
         // Just test it compiles and constructs
     }
 }

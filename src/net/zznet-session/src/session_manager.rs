@@ -6,7 +6,7 @@ use tracing;
 
 // NEW: Auth imports
 use zznet_api::types::PeerIdentity;
-use zznet_auth::ApplicationRole;
+use zznet_api::types::Role;
 
 // NEW: Room registration imports
 use zznet_room::RoomRegistry;
@@ -17,12 +17,9 @@ use zznet_room::RoomRegistry;
 /// Room<T> handles serialization internally, so SessionManager works purely with bytes.
 ///
 /// 100% byte-based messages. Messages are serialized at the Room level, not here.
-pub struct SessionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+pub struct SessionManager {
     /// All peer sessions
-    peers: HashMap<PeerId, PeerSession<TRole>>,
+    peers: HashMap<PeerId, PeerSession>,
 
     /// Rooms this SessionManager offers
     /// Used during PublishRooms negotiation to compute intersection with peers
@@ -40,10 +37,7 @@ where
     room_handlers: HashMap<RoomId, (mpsc::Sender<Vec<u8>>, mpsc::Receiver<Vec<u8>>)>,
 }
 
-impl<TRole> SessionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl SessionManager {
     /// Create a new SessionManager
     ///
     /// `offered_rooms`: List of room IDs this manager offers
@@ -95,7 +89,7 @@ where
     pub fn add_peer(
         &mut self,
         peer_id: PeerId,
-        peer_session: PeerSession<TRole>,
+        peer_session: PeerSession,
     ) -> Result<(), SessionError> {
         if self.peers.contains_key(&peer_id) {
             return Err(SessionError::PeerAlreadyExists(peer_id));
@@ -211,7 +205,7 @@ where
     ///
     /// # Arguments
     /// * `peer_id` - The peer to query
-    pub fn get_peer_role(&self, peer_id: &PeerId) -> Option<&TRole> {
+    pub fn get_peer_role(&self, peer_id: &PeerId) -> Option<&Role> {
         self.peers.get(peer_id)?.role()
     }
 
@@ -219,10 +213,7 @@ where
     ///
     /// This returns an owned TRole if present. It is primarily intended as a
     /// simple ownership-semantics helper for call sites that need an owned role.
-    pub fn get_peer_role_cloned(&self, peer_id: &PeerId) -> Option<TRole>
-    where
-        TRole: Clone,
-    {
+    pub fn get_peer_role_cloned(&self, peer_id: &PeerId) -> Option<Role> {
         self.get_peer_role(peer_id).cloned()
     }
 
@@ -247,7 +238,7 @@ where
     ///
     /// # Returns
     /// Vector of peer IDs that have the specified role
-    pub fn peers_with_role(&self, role: &TRole) -> Vec<PeerId> {
+    pub fn peers_with_role(&self, role: &Role) -> Vec<PeerId> {
         self.peers
             .iter()
             .filter_map(|(id, session)| {
@@ -365,10 +356,7 @@ where
 
 /// RoomRegistry implementation for SessionManager
 /// Allows Room<T> instances to auto-register their channels with SessionManager
-impl<TRole> RoomRegistry for SessionManager<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl RoomRegistry for SessionManager {
     fn register_room_handler(
         &mut self,
         room_id: String,
@@ -404,10 +392,7 @@ use crate::messages::{
 };
 use actix::prelude::*;
 
-impl<TRole> Actor for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Actor for SessionManager {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Self::Context) {
@@ -433,23 +418,17 @@ where
 // temporarily alongside Addr<SessionManager> for operations that work via
 // messages. This hybrid approach allows Phase 2 migration to proceed.
 
-impl<TRole> Handler<AddPeer<TRole>> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<AddPeer> for SessionManager {
     type Result = Result<(), SessionError>;
 
-    fn handle(&mut self, msg: AddPeer<TRole>, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: AddPeer, _ctx: &mut Context<Self>) -> Self::Result {
         self.add_peer(msg.peer_id, msg.peer_session)
     }
 }
 
 // ConnectPeer handler - NOT implemented (see note above)
 
-impl<TRole> Handler<DisconnectPeer> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<DisconnectPeer> for SessionManager {
     type Result = Result<(), SessionError>;
 
     fn handle(&mut self, msg: DisconnectPeer, _ctx: &mut Context<Self>) -> Self::Result {
@@ -465,10 +444,7 @@ where
     }
 }
 
-impl<TRole> Handler<RemovePeer> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<RemovePeer> for SessionManager {
     type Result = Result<(), SessionError>;
 
     fn handle(&mut self, msg: RemovePeer, _ctx: &mut Context<Self>) -> Self::Result {
@@ -482,10 +458,7 @@ where
 // Message Handlers - Room Management
 // ============================================================================
 
-impl<TRole> Handler<SetOfferedRooms> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<SetOfferedRooms> for SessionManager {
     type Result = ();
 
     fn handle(&mut self, msg: SetOfferedRooms, _ctx: &mut Context<Self>) -> Self::Result {
@@ -493,10 +466,7 @@ where
     }
 }
 
-impl<TRole> Handler<HandlePublishRooms> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<HandlePublishRooms> for SessionManager {
     type Result = Result<Vec<RoomId>, SessionError>;
 
     fn handle(&mut self, msg: HandlePublishRooms, _ctx: &mut Context<Self>) -> Self::Result {
@@ -508,10 +478,7 @@ where
 // Message Handlers - Query Operations
 // ============================================================================
 
-impl<TRole> Handler<GetPeerState> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetPeerState> for SessionManager {
     type Result = Option<ConnectionState>;
 
     fn handle(&mut self, msg: GetPeerState, _ctx: &mut Context<Self>) -> Self::Result {
@@ -519,10 +486,7 @@ where
     }
 }
 
-impl<TRole> Handler<IsPeerConnected> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<IsPeerConnected> for SessionManager {
     type Result = bool;
 
     fn handle(&mut self, msg: IsPeerConnected, _ctx: &mut Context<Self>) -> Self::Result {
@@ -530,10 +494,7 @@ where
     }
 }
 
-impl<TRole> Handler<GetPeerIds> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetPeerIds> for SessionManager {
     type Result = Vec<PeerId>;
 
     fn handle(&mut self, _msg: GetPeerIds, _ctx: &mut Context<Self>) -> Self::Result {
@@ -541,21 +502,15 @@ where
     }
 }
 
-impl<TRole> Handler<GetPeerRole<TRole>> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
-    type Result = Option<TRole>;
+impl Handler<GetPeerRole> for SessionManager {
+    type Result = Option<Role>;
 
-    fn handle(&mut self, msg: GetPeerRole<TRole>, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: GetPeerRole, _ctx: &mut Context<Self>) -> Self::Result {
         self.get_peer_role_cloned(&msg.peer_id)
     }
 }
 
-impl<TRole> Handler<GetPeerIdentity> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetPeerIdentity> for SessionManager {
     type Result = Option<PeerIdentity>;
 
     fn handle(&mut self, msg: GetPeerIdentity, _ctx: &mut Context<Self>) -> Self::Result {
@@ -563,21 +518,15 @@ where
     }
 }
 
-impl<TRole> Handler<GetPeersWithRole<TRole>> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetPeersWithRole> for SessionManager {
     type Result = Vec<PeerId>;
 
-    fn handle(&mut self, msg: GetPeersWithRole<TRole>, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: GetPeersWithRole, _ctx: &mut Context<Self>) -> Self::Result {
         self.peers_with_role(&msg.role)
     }
 }
 
-impl<TRole> Handler<GetConnectedPeerCount> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetConnectedPeerCount> for SessionManager {
     type Result = usize;
 
     fn handle(&mut self, _msg: GetConnectedPeerCount, _ctx: &mut Context<Self>) -> Self::Result {
@@ -585,10 +534,7 @@ where
     }
 }
 
-impl<TRole> Handler<GetOfferedRooms> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetOfferedRooms> for SessionManager {
     type Result = Vec<RoomId>;
 
     fn handle(&mut self, _msg: GetOfferedRooms, _ctx: &mut Context<Self>) -> Self::Result {
@@ -596,10 +542,7 @@ where
     }
 }
 
-impl<TRole> Handler<GetPeerSender> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetPeerSender> for SessionManager {
     type Result = Option<mpsc::Sender<(RoomId, Vec<u8>)>>;
 
     fn handle(&mut self, msg: GetPeerSender, _ctx: &mut Context<Self>) -> Self::Result {
@@ -607,10 +550,7 @@ where
     }
 }
 
-impl<TRole> Handler<SubscribePeerInbound> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<SubscribePeerInbound> for SessionManager {
     type Result = Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>>;
 
     fn handle(&mut self, msg: SubscribePeerInbound, _ctx: &mut Context<Self>) -> Self::Result {
@@ -618,10 +558,7 @@ where
     }
 }
 
-impl<TRole> Handler<GetPeerJoinedRooms> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<GetPeerJoinedRooms> for SessionManager {
     type Result = Result<Vec<RoomId>, SessionError>;
 
     fn handle(&mut self, msg: GetPeerJoinedRooms, _ctx: &mut Context<Self>) -> Self::Result {
@@ -630,10 +567,7 @@ where
     }
 }
 
-impl<TRole> Handler<IsRoomJoinedWithPeer> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<IsRoomJoinedWithPeer> for SessionManager {
     type Result = Result<bool, SessionError>;
 
     fn handle(&mut self, msg: IsRoomJoinedWithPeer, _ctx: &mut Context<Self>) -> Self::Result {
@@ -648,10 +582,7 @@ where
 // SendToRoom handler - Currently implemented with workaround for lifetime issues
 // BroadcastToRole - Optimized batch operation
 
-impl<TRole> Handler<SendToRoom> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<SendToRoom> for SessionManager {
     type Result = ResponseActFuture<Self, Result<(), SessionError>>;
 
     fn handle(&mut self, msg: SendToRoom, _ctx: &mut Context<Self>) -> Self::Result {
@@ -693,13 +624,10 @@ where
 // Message Handlers - Optimized Batch Operations
 // ============================================================================
 
-impl<TRole> Handler<BroadcastToRole<TRole>> for SessionManager<TRole>
-where
-    TRole: ApplicationRole + 'static,
-{
+impl Handler<BroadcastToRole> for SessionManager {
     type Result = ResponseFuture<Result<(), SessionError>>;
 
-    fn handle(&mut self, msg: BroadcastToRole<TRole>, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: BroadcastToRole, _ctx: &mut Context<Self>) -> Self::Result {
         let peers = self.peers_with_role(&msg.role);
         let room_id = msg.room_id;
         let bytes = msg.bytes;
@@ -733,7 +661,6 @@ where
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
-    use zznet_auth::mock::MockRole;
 
     // NOTE: tests below create PeerSession instances via
     // `PeerSession::new_connected(...).await.unwrap()` and call
@@ -744,7 +671,7 @@ mod tests {
     #[actix::test]
     async fn test_session_manager_new() {
         let offered_rooms = vec![RoomId::from("intentconfig"), RoomId::from("memdb")];
-        let manager = SessionManager::<MockRole>::new(offered_rooms.clone());
+        let manager = SessionManager::new(offered_rooms.clone());
 
         assert_eq!(manager.offered_rooms(), offered_rooms.as_slice());
         assert_eq!(manager.peer_ids().len(), 0);
@@ -753,7 +680,7 @@ mod tests {
 
     #[actix::test]
     async fn test_add_peer() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
         let peer_id = PeerId::from("test_peer");
 
         // Create empty peer session (create connected then disconnect)
@@ -775,7 +702,7 @@ mod tests {
 
     #[actix::test]
     async fn test_add_peer_already_exists() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
         let peer_id = PeerId::from("test_peer");
 
         // Add first time (create, then disconnect)
@@ -800,7 +727,7 @@ mod tests {
 
     #[actix::test]
     async fn test_remove_peer() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
         let peer_id = PeerId::from("test_peer");
 
         let (tx, _rx) = tokio::sync::mpsc::channel(100);
@@ -817,7 +744,7 @@ mod tests {
 
     #[actix::test]
     async fn test_remove_peer_not_found() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
         let peer_id = PeerId::from("nonexistent_peer");
 
         let result = manager.remove_peer(&peer_id);
@@ -826,7 +753,7 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_ids() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
         let peer_id1 = PeerId::from("peer1");
         let peer_id2 = PeerId::from("peer2");
 
@@ -853,7 +780,7 @@ mod tests {
     #[actix::test]
     async fn test_offered_rooms() {
         let offered_rooms = vec![RoomId::from("intentconfig"), RoomId::from("memdb")];
-        let manager = SessionManager::<MockRole>::new(offered_rooms.clone());
+        let manager = SessionManager::new(offered_rooms.clone());
 
         assert_eq!(manager.offered_rooms(), offered_rooms.as_slice());
     }
@@ -863,7 +790,7 @@ mod tests {
 
     #[actix::test]
     async fn test_disconnect_peer_not_found() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
         let peer_id = PeerId::from("nonexistent_peer");
 
         // `disconnect_peer` was removed; removing a non-existent peer should
@@ -874,7 +801,7 @@ mod tests {
 
     #[actix::test]
     async fn test_send_to_room_peer_not_found() {
-        let manager = SessionManager::<MockRole>::new(vec![]);
+        let manager = SessionManager::new(vec![]);
         let peer_id = PeerId::from("nonexistent_peer");
         let room_id = RoomId::from("intentconfig");
         let msg = [0u8].to_vec();
@@ -894,7 +821,7 @@ mod tests {
     #[actix::test]
     async fn test_peer_limit_exceeded() {
         // Create manager with max_peers = 2
-        let mut manager = SessionManager::<MockRole>::new_with_limits(vec![], Some(2), None);
+        let mut manager = SessionManager::new_with_limits(vec![], Some(2), None);
 
         // Add two peers - should succeed
         for id in ["peer1", "peer2"] {
@@ -919,7 +846,7 @@ mod tests {
     #[actix::test]
     async fn test_room_limit_exceeded_on_add_peer() {
         // Create manager with max_rooms_per_peer = 1
-        let mut manager = SessionManager::<MockRole>::new_with_limits(vec![], None, Some(1));
+        let mut manager = SessionManager::new_with_limits(vec![], None, Some(1));
 
         // Create peer session and add two simple mock rooms before registering
         let (tx_tmp, _rx_tmp) = tokio::sync::mpsc::channel(100);
@@ -973,7 +900,7 @@ mod tests {
 
     #[actix::test]
     async fn test_handle_publish_rooms() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
 
         // Manager offers 3 rooms
         manager.set_offered_rooms(vec![
@@ -1007,7 +934,7 @@ mod tests {
 
     #[actix::test]
     async fn test_handle_publish_rooms_peer_not_found() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
 
         let result = manager
             .handle_publish_rooms(&PeerId::from("unknown"), vec![RoomId::from("intentconfig")]);
@@ -1017,7 +944,7 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_joined_rooms() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
 
         // Create peer
         let (tx, _rx) = tokio::sync::mpsc::channel(100);
@@ -1037,7 +964,7 @@ mod tests {
 
     #[actix::test]
     async fn test_peer_joined_rooms_peer_not_found() {
-        let manager = SessionManager::<MockRole>::new(vec![]);
+        let manager = SessionManager::new(vec![]);
 
         let result = manager.peer_joined_rooms(&PeerId::from("unknown"));
 
@@ -1046,7 +973,7 @@ mod tests {
 
     #[actix::test]
     async fn test_is_room_joined_with_peer() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
 
         // Create peer
         let (tx, _rx) = tokio::sync::mpsc::channel(100);
@@ -1073,7 +1000,7 @@ mod tests {
 
     #[actix::test]
     async fn test_is_room_joined_with_peer_peer_not_found() {
-        let manager = SessionManager::<MockRole>::new(vec![]);
+        let manager = SessionManager::new(vec![]);
 
         let result = manager
             .is_room_joined_with_peer(&PeerId::from("unknown"), &RoomId::from("intentconfig"));
@@ -1085,7 +1012,7 @@ mod tests {
 
     #[test]
     fn test_register_room_handler_success() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
         let (tx, rx) = mpsc::channel(100);
 
         let result = manager.register_room_handler("test-room".to_string(), tx, rx);
@@ -1096,7 +1023,7 @@ mod tests {
 
     #[test]
     fn test_register_room_handler_duplicate_fails() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
         let (tx1, rx1) = mpsc::channel(100);
         let (tx2, rx2) = mpsc::channel(100);
 
@@ -1117,7 +1044,7 @@ mod tests {
 
     #[test]
     fn test_register_multiple_rooms() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
 
         for i in 0..5 {
             let (tx, rx) = mpsc::channel(100);
@@ -1131,7 +1058,7 @@ mod tests {
 
     #[test]
     fn test_register_room_handler_stores_channels() {
-        let mut manager = SessionManager::<MockRole>::new(vec![]);
+        let mut manager = SessionManager::new(vec![]);
         let (tx, rx) = mpsc::channel(100);
 
         manager

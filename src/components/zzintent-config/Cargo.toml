@@ -31,6 +31,7 @@ zznet-auth = { workspace = true }
 zznet-hello = { workspace = true }
 zznet-room = { workspace = true }
 zzping-auth = { workspace = true }
+zznet-api = { workspace = true }
 
 [features]
 default = ["permissions"]

@@ -3,25 +3,22 @@
 use crate::actor::IntentConfigActor;
 use crate::role::IntentConfigRole;
 use actix::prelude::*;
-use zznet_session::session_manager::SessionManager;
-
-use crate::permissions::IntentConfigPermission;
 use std::time::Duration;
-use zznet_auth::role::ApplicationRole;
+use zznet_session::session_manager::SessionManager;
 
 /// A builder for the IntentConfig component.
 ///
 /// This is the primary public entry point for creating the actor.
 /// It follows the 'Builder -> Start' pattern, ensuring that the actor
 /// is constructed and started in a controlled manner.
-pub struct IntentConfigBuilder<T: ApplicationRole = IntentConfigPermission> {
+pub struct IntentConfigBuilder {
     role: IntentConfigRole,
-    session_manager: Option<Addr<SessionManager<T>>>,
+    session_manager: Option<Addr<SessionManager>>,
     /// Per-peer broadcast timeout used when sending messages via SessionManager
     broadcast_timeout: Duration,
 }
 
-impl IntentConfigBuilder<IntentConfigPermission> {
+impl IntentConfigBuilder {
     /// Create a new builder with default configuration for the common
     /// `IntentConfigPermission` role type.
     ///
@@ -35,13 +32,13 @@ impl IntentConfigBuilder<IntentConfigPermission> {
     }
 }
 
-impl Default for IntentConfigBuilder<IntentConfigPermission> {
+impl Default for IntentConfigBuilder {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: ApplicationRole> IntentConfigBuilder<T> {
+impl IntentConfigBuilder {
     /// Set the role for this IntentConfig actor
     pub fn role(mut self, role: IntentConfigRole) -> Self {
         self.role = role;
@@ -49,7 +46,7 @@ impl<T: ApplicationRole> IntentConfigBuilder<T> {
     }
 
     /// Set the SessionManager actor for network communication (Phase 3: Pure Actor Pattern)
-    pub fn session_manager(mut self, session_manager: Addr<SessionManager<T>>) -> Self {
+    pub fn session_manager(mut self, session_manager: Addr<SessionManager>) -> Self {
         self.session_manager = Some(session_manager);
         self
     }
@@ -89,7 +86,7 @@ impl<T: ApplicationRole> IntentConfigBuilder<T> {
     /// # Returns
     ///
     /// The returned `Addr` is the handle to the running actor, used for sending messages.
-    pub fn start(mut self) -> anyhow::Result<Addr<IntentConfigActor<T>>> {
+    pub fn start(mut self) -> anyhow::Result<Addr<IntentConfigActor>> {
         // Validate role configuration
         self.role
             .validate()

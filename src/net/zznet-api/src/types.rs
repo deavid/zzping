@@ -22,6 +22,38 @@ pub struct PeerIdentity {
     pub peer_addr: String,
 }
 
+/// Canonical Role representation used at the zznet boundary.
+///
+/// The network core should remain auth-agnostic and only carry a compact
+/// identifier for a peer's role. Application code (auth layer / components)
+/// perform mapping from `Role` -> component-specific permission enums.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+pub struct Role(pub String);
+
+impl Role {
+    /// Create a Role from &str
+    pub fn new(s: &str) -> Self {
+        Self(s.to_string())
+    }
+
+    /// Borrow the role as &str
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for Role {
+    fn from(s: &str) -> Self {
+        Role::new(s)
+    }
+}
+
+impl From<String> for Role {
+    fn from(s: String) -> Self {
+        Role(s)
+    }
+}
+
 impl PeerIdentity {
     /// Returns true if this identity represents a service (not a user).
     ///

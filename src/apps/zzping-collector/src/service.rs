@@ -1,33 +1,42 @@
-#[allow(unused_imports)]
-use crate::config::{CollectorConfig, CollectorTlsConfig, ComponentConfig};
-use crate::error::{CollectorError, Result};
+//! Collector service and component orchestration for the zzping collector application.
+//!
+//! This module defines `CollectorService`, the top-level application service that
+//! configures, starts, and coordinates all collector components. Responsibilities
+//! include:
+//! - creating shared infrastructure (the `SessionManager`) and component builders
+//! - starting component actors (IntentConfig, MemDB, Pinger) and returning
+//!   `StartedComponents` for integration testing or wiring
+//! - loading and converting TLS configuration for transport-layer mTLS
+//! - creating and starting `ConnectionManager` instances and producing the
+//!   authorizer closure used by the HELLO protocol
+//! - running the main lifecycle: connect, observe local state, and handle
+//!   graceful shutdown via signals (SIGINT/SIGTERM)
+//!
+//! The module also exposes helper methods used by tests to create builders,
+//! start managers, and validate TLS/transport configuration.
 
+use crate::config::{CollectorConfig, CollectorTlsConfig};
+use crate::error::CollectorError;
 use actix::{Actor, Addr};
-use zznet_auth::ApplicationRole;
-use zznet_session::session_manager::SessionManager;
-use zzping_auth::AuthRole;
-
-// Component imports
-use zzintent_config::actor::IntentConfigActor;
-use zzintent_config::builder::IntentConfigBuilder;
-use zzintent_config::permissions::IntentConfigPermission;
-use zzintent_config::role::IntentConfigRole;
-
-use zzpinger::api::PingerHandle;
-use zzpinger::builder::PingerBuilder;
-
-use zzmem_db::actor::MemDBActor;
-use zzmem_db::permissions::MemDBPermission;
-use zzmem_db::role::MemDBRole;
-
-use tokio::signal::unix::{SignalKind, signal};
-
+use anyhow::Result;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ClientConfig, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
+use tokio::signal::unix::{SignalKind, signal};
+use zzintent_config::actor::IntentConfigActor;
+use zzintent_config::builder::IntentConfigBuilder;
+use zzintent_config::role::IntentConfigRole;
+use zzmem_db::actor::MemDBActor;
+use zzmem_db::permissions::MemDBPermission;
+use zzmem_db::role::MemDBRole;
+use zznet_auth::ApplicationRole;
+use zznet_session::session_manager::SessionManager;
+use zzping_auth::AuthRole;
+use zzpinger::api::PingerHandle;
+use zzpinger::builder::PingerBuilder;
 
 // Room Handler Architecture
 //
@@ -48,9 +57,9 @@ use std::sync::Arc;
 /// Contains the builders for each component, used internally during service initialization.
 pub struct ComponentBuilders {
     /// Shared SessionManager actor for network integration
-    pub session_manager: actix::Addr<SessionManager<AuthRole>>,
+    pub session_manager: actix::Addr<SessionManager>,
     /// Builder for IntentConfig component
-    pub intent_config: IntentConfigBuilder<IntentConfigPermission>,
+    pub intent_config: IntentConfigBuilder,
     /// Builder for Pinger component
     pub pinger: PingerBuilder,
     /// Address of the running MemDB actor
@@ -63,9 +72,9 @@ pub struct ComponentBuilders {
 /// Useful for testing, embedding, and custom service composition.
 pub struct StartedComponents {
     /// Shared SessionManager actor for network integration
-    pub session_manager: actix::Addr<SessionManager<AuthRole>>,
+    pub session_manager: actix::Addr<SessionManager>,
     /// Address of the running IntentConfig actor
-    pub intent_config: Addr<IntentConfigActor<IntentConfigPermission>>,
+    pub intent_config: Addr<IntentConfigActor>,
     /// Handle to the running Pinger actor
     pub pinger: PingerHandle,
     /// Address of the running MemDB actor
@@ -185,7 +194,7 @@ impl CollectorService {
             // Collector-specific rooms as needed
         ];
 
-        let session_manager = SessionManager::<AuthRole>::new(offered_rooms).start();
+        let session_manager = SessionManager::new(offered_rooms).start();
 
         tracing::info!("Created shared SessionManager actor for components");
 
@@ -200,8 +209,7 @@ impl CollectorService {
         //        `zznet-builder`, `zzping-collector`, and `zzping-database`.
 
         // Create IntentConfig builder with role only
-        let intent_config =
-            IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Collector);
+        let intent_config = IntentConfigBuilder::new().role(IntentConfigRole::Collector);
         // Phase 3 TODO: Add .session_manager(session_manager.clone()) when IntentConfig supports it
 
         // Create Pinger builder
@@ -280,7 +288,7 @@ impl CollectorService {
             .collect::<std::result::Result<_, _>>()?;
 
         if ca_certs.is_empty() {
-            return Err(CollectorError::Config("No CA certificates found".into()));
+            Err(CollectorError::Config("No CA certificates found".into()))?;
         }
 
         let mut root_store = RootCertStore::empty();
@@ -302,7 +310,7 @@ impl CollectorService {
             .collect::<std::result::Result<_, _>>()?;
 
         if cert_chain.is_empty() {
-            return Err(CollectorError::Config("No client certificate found".into()));
+            Err(CollectorError::Config("No client certificate found".into()))?;
         }
 
         // 3. Load client private key
@@ -316,7 +324,7 @@ impl CollectorService {
             .collect::<std::result::Result<_, _>>()?;
 
         if keys.is_empty() {
-            return Err(CollectorError::Config("No private key found".into()));
+            Err(CollectorError::Config("No private key found".into()))?;
         }
         // Convert to PrivateKeyDer directly from the owned key
         let private_key = PrivateKeyDer::Pkcs8(keys.into_iter().next().unwrap());
@@ -361,15 +369,15 @@ impl CollectorService {
     /// Create ConnectionManager configured with offered rooms for collector
     fn create_connection_manager(
         &self,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
+    ) -> Result<zznet_hello::connection_manager::ConnectionManager> {
         use zznet_session::SessionManager;
         use zznet_session::types::RoomId;
 
         // Collector offers intent-config related rooms
         let offered_rooms = vec![RoomId::from("intent-config")];
 
-        // Create an authorizer using the service helper
-        let authorizer: zzping_auth::Authorizer = self.make_authorizer();
+        // Create an authorizer using the service helper (maps to canonical Role)
+        let authorizer = self.make_authorizer();
 
         // Create SessionManager as an actor
         let session_manager = SessionManager::new(offered_rooms.clone()).start();
@@ -388,9 +396,9 @@ impl CollectorService {
     /// with all components, ensuring messages flow properly.
     fn create_connection_manager_with_session_manager(
         &self,
-        session_manager: actix::Addr<zznet_session::session_manager::SessionManager<AuthRole>>,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
-        let authorizer: zzping_auth::Authorizer = self.make_authorizer();
+        session_manager: actix::Addr<zznet_session::session_manager::SessionManager>,
+    ) -> Result<zznet_hello::connection_manager::ConnectionManager> {
+        let authorizer = self.make_authorizer();
 
         Ok(
             zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
@@ -401,8 +409,11 @@ impl CollectorService {
     }
 
     /// Create the authorizer closure used by the Collector service.
-    fn make_authorizer(&self) -> zzping_auth::Authorizer {
-        Box::new(|auth_ctx| {
+    fn make_authorizer(
+        &self,
+    ) -> Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<zznet_api::types::Role> + Send + Sync>
+    {
+        Box::new(|auth_ctx: &zznet_api::types::AuthContext| {
             tracing::debug!(
                 "Collector authorizer checking HELLO role: {}",
                 auth_ctx.hello_role_str
@@ -436,7 +447,7 @@ impl CollectorService {
                         auth_ctx.hello_role_str,
                         role
                     );
-                    Some(role)
+                    Some(zznet_api::types::Role::new(role.as_str()))
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -456,7 +467,7 @@ impl CollectorService {
     /// transport connections or customize the connection handling.
     pub fn start_connection_manager(
         &self,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager> {
         use actix::prelude::*;
 
         let mgr = match self.create_connection_manager() {
@@ -472,8 +483,8 @@ impl CollectorService {
     /// with all components, ensuring messages flow properly.
     pub fn start_connection_manager_with_session_manager(
         &self,
-        session_manager: actix::Addr<zznet_session::session_manager::SessionManager<AuthRole>>,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager<AuthRole>> {
+        session_manager: actix::Addr<zznet_session::session_manager::SessionManager>,
+    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager> {
         use actix::prelude::*;
 
         let mgr = match self.create_connection_manager_with_session_manager(session_manager) {
@@ -488,6 +499,8 @@ impl CollectorService {
 }
 #[cfg(test)]
 mod tests {
+    use crate::config::ComponentConfig;
+
     use super::*;
     use std::path::Path;
 

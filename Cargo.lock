@@ -2510,6 +2510,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-stream",
+ "zznet-api",
  "zznet-auth",
  "zznet-hello",
  "zznet-room",
@@ -2716,6 +2717,7 @@ name = "zzping-test-utils"
 version = "0.3.0-dev"
 dependencies = [
  "tokio",
+ "zznet-api",
  "zznet-auth",
  "zznet-session",
 ]

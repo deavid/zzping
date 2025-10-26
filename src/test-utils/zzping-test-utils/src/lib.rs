@@ -10,6 +10,7 @@
 
 use std::time::Duration;
 use tokio::sync::mpsc;
+use zznet_api::types::Role;
 use zznet_session::types::{RoomId, SessionError};
 
 /// A minimal RoomHandle implementation used in tests to provide a room id
@@ -44,15 +45,12 @@ impl DummyRoomHandle {
 ///
 /// This function now panics to force test updates.
 #[deprecated(note = "Tests must create peers with PeerSession::new_connected() directly")]
-pub async fn connect_managers_in_memory<TRole>(
-    _manager_a: &mut zznet_session::session_manager::SessionManager<TRole>,
+pub async fn connect_managers_in_memory(
+    _manager_a: &mut zznet_session::session_manager::SessionManager,
     _peer_id_a: &zznet_session::types::PeerId,
-    _manager_b: &mut zznet_session::session_manager::SessionManager<TRole>,
+    _manager_b: &mut zznet_session::session_manager::SessionManager,
     _peer_id_b: &zznet_session::types::PeerId,
-) -> Result<(), zznet_session::types::SessionError>
-where
-    TRole: zznet_auth::ApplicationRole,
-{
+) -> Result<(), zznet_session::types::SessionError> {
     panic!(
         "connect_managers_in_memory() is deprecated. Create peers with PeerSession::new_connected() instead."
     );
@@ -65,15 +63,12 @@ where
 /// 3. Setting role/permissions
 /// 4. Adding to manager
 /// 5. Publishing rooms
-pub async fn create_and_add_peer<TRole>(
-    manager: &mut zznet_session::session_manager::SessionManager<TRole>,
+pub async fn create_and_add_peer(
+    manager: &mut zznet_session::session_manager::SessionManager,
     peer_id: &zznet_session::types::PeerId,
     rooms: Vec<RoomId>,
-    role: Option<TRole>,
-) -> Result<(), zznet_session::types::SessionError>
-where
-    TRole: zznet_auth::ApplicationRole,
-{
+    role: Option<Role>,
+) -> Result<(), zznet_session::types::SessionError> {
     use tokio::sync::mpsc;
 
     // Create dummy channels (16 buffer size)
@@ -81,7 +76,7 @@ where
     let (_tx_unused, rx) = mpsc::channel::<(RoomId, Vec<u8>)>(16);
 
     // Create peer already connected with dummy channels
-    let mut peer = zznet_session::peer_session::PeerSession::<TRole>::new_connected(
+    let mut peer = zznet_session::peer_session::PeerSession::new_connected(
         peer_id.clone(),
         role,
         None, // No identity for test peers
@@ -203,20 +198,17 @@ impl Default for MessageCaptureChannels {
 ///
 /// Note: With Phase 4, peers must be created already connected. This function creates
 /// a peer with capture channels from the start, rather than connecting them after creation.
-pub async fn create_peer_with_message_capture<TRole>(
-    manager: &mut zznet_session::session_manager::SessionManager<TRole>,
+pub async fn create_peer_with_message_capture(
+    manager: &mut zznet_session::session_manager::SessionManager,
     peer_id: &zznet_session::types::PeerId,
     rooms: Vec<RoomId>,
-    role: Option<TRole>,
-) -> Result<MessageCapture, zznet_session::types::SessionError>
-where
-    TRole: zznet_auth::ApplicationRole,
-{
+    role: Option<Role>,
+) -> Result<MessageCapture, zznet_session::types::SessionError> {
     // Set up message capture channels
     let channels = MessageCaptureChannels::new();
 
     // Create peer already connected with capture channels
-    let mut peer = zznet_session::peer_session::PeerSession::<TRole>::new_connected(
+    let mut peer = zznet_session::peer_session::PeerSession::new_connected(
         peer_id.clone(),
         role,
         None, // No identity for test peers

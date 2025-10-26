@@ -6,8 +6,8 @@ use tokio::task::JoinHandle;
 
 use tracing::debug;
 // NEW: Auth imports
-use zznet_api::types::PeerIdentity;
-use zznet_auth::ApplicationRole;
+use zznet_api::types::{PeerIdentity, Role};
+// TRole removed: core uses canonical Role internally; components map Role -> permissions.
 
 /// Trait for type-erased room operations
 ///
@@ -37,10 +37,7 @@ type SessionRooms = Arc<TokioMutex<HashMap<RoomId, Box<dyn RoomHandle>>>>;
 ///
 /// Each peer session contains Room<T> instances with different T types (type-erased via
 /// RoomHandle trait). Messages flow as serialized bytes.
-pub struct PeerSession<TRole>
-where
-    TRole: ApplicationRole,
-{
+pub struct PeerSession {
     peer_id: PeerId,
     state: ConnectionState,
 
@@ -49,9 +46,9 @@ where
     rooms: SessionRooms,
 
     // NEW: Authentication context for this peer
-    /// The authenticated role of this peer (resolved from certificate)
+    /// The authenticated canonical role of this peer (resolved from certificate)
     /// None if ACL is not configured or role resolution failed
-    peer_role: Option<TRole>,
+    peer_role: Option<Role>,
 
     /// Full identity from certificate (for audit logging)
     /// None if not using certificate-based auth (e.g., plain TCP in dev mode)
@@ -75,10 +72,7 @@ where
     inbound_broadcast: Option<broadcast::Sender<(RoomId, Vec<u8>)>>,
 }
 
-impl<TRole> PeerSession<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl PeerSession {
     /// Create a new peer session that is already connected
     ///
     /// This is the **PREFERRED** way to create peer sessions. The peer will be in
@@ -110,7 +104,7 @@ where
     /// ```
     pub async fn new_connected(
         peer_id: PeerId,
-        role: Option<TRole>,
+        role: Option<Role>,
         identity: Option<PeerIdentity>,
         outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
         inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
@@ -152,7 +146,7 @@ where
     /// - ACL is not configured
     /// - Role resolution failed
     /// - set_role() was not called
-    pub fn role(&self) -> Option<&TRole> {
+    pub fn role(&self) -> Option<&Role> {
         self.peer_role.as_ref()
     }
 
@@ -500,10 +494,7 @@ where
     }
 }
 
-impl<TRole> Drop for PeerSession<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Drop for PeerSession {
     fn drop(&mut self) {
         self.disconnect();
     }
@@ -520,7 +511,6 @@ mod tests {
     use actix::prelude::*;
     use serde::{Deserialize, Serialize};
     use tokio::sync::mpsc;
-    use zznet_auth::mock::MockRole;
     use zznet_room::room::Room;
 
     // Test actors for different message types
@@ -582,7 +572,7 @@ mod tests {
     // Test helper: create a disconnected peer session for testing
     // Some tests expect to call `connect()` themselves, so return a
     // PeerSession in the Disconnected state here.
-    async fn create_test_peer(peer_id: PeerId) -> PeerSession<MockRole> {
+    async fn create_test_peer(peer_id: PeerId) -> PeerSession {
         PeerSession {
             peer_id: peer_id.clone(),
             state: ConnectionState::Disconnected,
@@ -1347,13 +1337,8 @@ mod tests {
 
         // Run the loop
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<MockRole>::inbound_task_loop(
-            Arc::new(TokioMutex::new(rooms)),
-            peer_id,
-            inbound_rx,
-            None,
-        )
-        .await;
+        PeerSession::inbound_task_loop(Arc::new(TokioMutex::new(rooms)), peer_id, inbound_rx, None)
+            .await;
 
         // Verify message was delivered
         let sent = messages_ref.lock().unwrap();
@@ -1404,13 +1389,8 @@ mod tests {
 
         // Run the loop
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<MockRole>::inbound_task_loop(
-            Arc::new(TokioMutex::new(rooms)),
-            peer_id,
-            inbound_rx,
-            None,
-        )
-        .await;
+        PeerSession::inbound_task_loop(Arc::new(TokioMutex::new(rooms)), peer_id, inbound_rx, None)
+            .await;
 
         // Verify all messages were delivered in order
         let sent = messages_ref.lock().unwrap();
@@ -1457,13 +1437,8 @@ mod tests {
 
         // Run the loop
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<MockRole>::inbound_task_loop(
-            Arc::new(TokioMutex::new(rooms)),
-            peer_id,
-            inbound_rx,
-            None,
-        )
-        .await;
+        PeerSession::inbound_task_loop(Arc::new(TokioMutex::new(rooms)), peer_id, inbound_rx, None)
+            .await;
 
         // Verify messages routed to correct rooms
         let sent1 = messages_ref1.lock().unwrap();
@@ -1491,7 +1466,7 @@ mod tests {
             bincode::serde::encode_to_vec(&msg, bincode::config::standard()).unwrap();
 
         // Route to unknown room - should not panic, just log warning
-        PeerSession::<MockRole>::route_inbound_message(
+        PeerSession::route_inbound_message(
             &rooms_arc,
             &peer_id,
             RoomId::from("unknown"),
@@ -1517,7 +1492,7 @@ mod tests {
             .expect("Failed to serialize message");
 
         // Route message - should handle error gracefully
-        PeerSession::<MockRole>::route_inbound_message(
+        PeerSession::route_inbound_message(
             &rooms_arc,
             &peer_id,
             RoomId::from("test"),
@@ -1553,13 +1528,8 @@ mod tests {
 
         // Run the loop - should process message and then exit gracefully
         let peer_id = PeerId::from("test_peer");
-        PeerSession::<MockRole>::inbound_task_loop(
-            Arc::new(TokioMutex::new(rooms)),
-            peer_id,
-            inbound_rx,
-            None,
-        )
-        .await;
+        PeerSession::inbound_task_loop(Arc::new(TokioMutex::new(rooms)), peer_id, inbound_rx, None)
+            .await;
 
         // Verify message was processed before shutdown
         let sent = messages_ref.lock().unwrap();

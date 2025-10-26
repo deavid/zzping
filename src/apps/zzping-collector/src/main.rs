@@ -10,6 +10,7 @@ use tracing_subscriber::EnvFilter;
 use zzping_collector::{cli::CliArgs, config::CollectorConfig, service::CollectorService};
 
 fn main() -> Result<()> {
+    // FIXME: Use Actix decorator macro for this.
     // Use actix System to ensure the Tokio reactor is installed the way Actix expects.
     System::new().block_on(async_main())
 }

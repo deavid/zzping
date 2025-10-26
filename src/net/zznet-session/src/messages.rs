@@ -23,7 +23,7 @@ use crate::types::{ConnectionState, PeerId, RoomId, SessionError};
 use actix::prelude::*;
 use tokio::sync::mpsc;
 use zznet_api::types::PeerIdentity;
-use zznet_auth::ApplicationRole;
+use zznet_api::types::Role;
 
 // ============================================================================
 // Peer Management Messages
@@ -32,9 +32,9 @@ use zznet_auth::ApplicationRole;
 /// Add a new peer to the session manager
 #[derive(Message)]
 #[rtype(result = "Result<(), SessionError>")]
-pub struct AddPeer<TRole: ApplicationRole> {
+pub struct AddPeer {
     pub peer_id: PeerId,
-    pub peer_session: PeerSession<TRole>,
+    pub peer_session: PeerSession,
 }
 
 /// Connects a peer to enable message routing.
@@ -116,20 +116,16 @@ pub struct IsPeerConnected {
 #[rtype(result = "Vec<PeerId>")]
 pub struct GetPeerIds;
 
-/// Get the role of a specific peer
+/// Get the role of a specific peer (returns canonical `Role`)
 #[derive(Message)]
-#[rtype(result = "Option<TRole>")]
-pub struct GetPeerRole<TRole: ApplicationRole> {
+#[rtype(result = "Option<Role>")]
+pub struct GetPeerRole {
     pub peer_id: PeerId,
-    pub _phantom: std::marker::PhantomData<TRole>,
 }
 
-impl<TRole: ApplicationRole> GetPeerRole<TRole> {
+impl GetPeerRole {
     pub fn new(peer_id: PeerId) -> Self {
-        Self {
-            peer_id,
-            _phantom: std::marker::PhantomData,
-        }
+        Self { peer_id }
     }
 }
 
@@ -140,11 +136,11 @@ pub struct GetPeerIdentity {
     pub peer_id: PeerId,
 }
 
-/// Get all peers with a specific role
+/// Get all peers with a specific canonical `Role`
 #[derive(Message)]
 #[rtype(result = "Vec<PeerId>")]
-pub struct GetPeersWithRole<TRole: ApplicationRole> {
-    pub role: TRole,
+pub struct GetPeersWithRole {
+    pub role: Role,
 }
 
 /// Get count of connected peers
@@ -203,12 +199,12 @@ pub struct SendToRoom {
 // Optimized Batch Messages (Future Extension)
 // ============================================================================
 
-/// Broadcast a message to all peers with a specific role
+/// Broadcast a message to all peers with a specific canonical `Role`
 /// This is an optimization that avoids multiple round-trips
 #[derive(Message)]
 #[rtype(result = "Result<(), SessionError>")]
-pub struct BroadcastToRole<TRole: ApplicationRole> {
-    pub role: TRole,
+pub struct BroadcastToRole {
+    pub role: Role,
     pub room_id: RoomId,
     pub bytes: Vec<u8>,
 }

@@ -12,7 +12,6 @@ use crate::types::{PeerId, RoomId, SessionError};
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use zznet_auth::mock::MockRole;
 use zznet_room::room::Room;
 
 // ============================================================================
@@ -471,7 +470,7 @@ mod peer_session_integration_tests {
         let (_inbound_tx, inbound_rx) = mpsc::channel(10);
 
         // Create a connected PeerSession using the real peer channels
-        let mut peer_session = PeerSession::<MockRole>::new_connected(
+        let mut peer_session = PeerSession::new_connected(
             PeerId::from("test_peer"),
             None,
             None,
@@ -537,7 +536,7 @@ mod peer_session_integration_tests {
         // Create peer channels
         let (peer_tx, mut peer_rx) = mpsc::channel(10);
         let (_inbound_tx, inbound_rx) = mpsc::channel(10);
-        let mut peer_session = PeerSession::<MockRole>::new_connected(
+        let mut peer_session = PeerSession::new_connected(
             PeerId::from("test_peer"),
             None,
             None,

@@ -11,6 +11,7 @@ use crate::network_messages::{MemDBMessage, PingResult};
 use crate::role::MemDBRole;
 use crate::storage::StorageBackend;
 use actix::prelude::*;
+use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use zznet_auth::role::ApplicationRole;
@@ -23,7 +24,9 @@ use zznet_session::types::RoomId;
 #[rtype(result = "()")]
 pub struct SetSessionManager<T: ApplicationRole> {
     /// The session manager to set
-    pub session_manager: Addr<SessionManager<T>>,
+    pub session_manager: Addr<SessionManager>,
+    /// Marker to keep the generic T in the type so handlers can remain generic
+    _marker: PhantomData<T>,
 }
 
 /// Room handle that forwards MemDB messages to the MemDBActor
@@ -94,7 +97,7 @@ pub struct MemDBActor<T: ApplicationRole> {
     // Temporarily commented out Handler<MemDBMessage>
 
     // Network message handler for MemDBMessage
-    session_manager: Option<Addr<SessionManager<T>>>,
+    session_manager: Option<Addr<SessionManager>>,
     /// Health counters for operational visibility
     successful_batches: Arc<AtomicU64>,
     failed_batches: Arc<AtomicU64>,
@@ -108,6 +111,8 @@ pub struct MemDBActor<T: ApplicationRole> {
 
     /// Room channels for SessionManager wiring
     room_channels: Option<std::sync::Arc<zznet_room::room::RoomChannels>>,
+    /// Marker to keep the generic T in the type so impl<T: ApplicationRole> remains meaningful
+    _marker: PhantomData<T>,
 }
 
 impl<T: ApplicationRole> Default for MemDBActor<T> {
@@ -125,7 +130,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
     /// Create a new MemDBActor with role and optional SessionManager
     pub fn new_with_role_and_session_manager(
         role: MemDBRole,
-        session_manager: Option<Addr<SessionManager<T>>>,
+        session_manager: Option<Addr<SessionManager>>,
     ) -> Self {
         // Validate the role configuration
         if let Err(e) = role.validate() {
@@ -151,6 +156,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
             outstanding_batch: None,
             room: None,
             room_channels: None,
+            _marker: PhantomData,
         }
     }
 
@@ -160,7 +166,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
     }
 
     /// Set the SessionManager for network communication
-    pub fn set_session_manager(&mut self, session_manager: Addr<SessionManager<T>>) {
+    pub fn set_session_manager(&mut self, session_manager: Addr<SessionManager>) {
         self.session_manager = Some(session_manager);
     }
 

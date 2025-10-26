@@ -39,6 +39,7 @@ pub trait ApplicationRole:
 
     /// Return the role variant that allows receiving configuration updates.
     /// Returns `None` if no such role exists for this `ApplicationRole` type.
+    #[deprecated(note="This does not belong to zznet-* crates, this is a zzintent-config specific")]
     fn receive_config_updates_role() -> Option<Self> {
         None // Default implementation returns None
     }
