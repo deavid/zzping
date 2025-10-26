@@ -41,9 +41,6 @@ enum TcpTransportStream {
 
 impl TcpTransport {
     /// Create a plain TCP transport (no encryption).
-    ///
-    /// This is primarily for testing. Production should use TLS.
-    /// Note: peer_identity() will return None for plain TCP connections.
     pub fn plain(stream: TcpStream, peer_addr: SocketAddr) -> Self {
         debug!("Created plain TCP transport for {}", peer_addr);
         // For plain TCP, create a dummy identity (will not be used since peer_identity() returns None)
@@ -88,9 +85,6 @@ impl TcpTransport {
     }
 
     /// Extracts peer identity from a TLS connection's certificate.
-    ///
-    /// This is called during transport creation to cache the identity.
-    /// Errors are returned as `TransportError::IoError` with a descriptive message.
     fn extract_identity_from_tls(
         stream: &tokio_rustls::client::TlsStream<TcpStream>,
         peer_addr: SocketAddr,

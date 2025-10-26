@@ -45,29 +45,10 @@ pub struct TlsCertAndKey {
 }
 
 impl TlsCertAndKey {
-    // NOTE: from_role(Role) was removed to keep this crate auth-agnostic.
-
     /// Derives certificate paths from a role name string.
     ///
     /// This is the generic, reusable API that doesn't depend on the concrete `Role` enum.
     /// Applications can use any role name they want, as long as matching certificates exist.
-    ///
-    /// # Arguments
-    /// * `role_name` - The role identifier as a string (e.g., "collector", "database", "my-custom-role")
-    /// * `certs_dir` - Optional directory path, defaults to "certs"
-    ///
-    /// # Example
-    /// ```
-    /// use zznet_transport_tcp::TlsCertAndKey;
-    ///
-    /// // Works with any role name - no dependency on zzping's Role enum
-    /// let cert = TlsCertAndKey::from_role_name("collector", None);
-    /// assert_eq!(cert.pem_path.to_str().unwrap(), "certs/collector.pem");
-    ///
-    /// // New applications can use their own role names
-    /// let cert = TlsCertAndKey::from_role_name("my-custom-service", Some("/etc/certs"));
-    /// assert_eq!(cert.pem_path.to_str().unwrap(), "/etc/certs/my-custom-service.pem");
-    /// ```
     pub fn from_role_name(role_name: &str, certs_dir: Option<&str>) -> Self {
         let dir = certs_dir.unwrap_or("certs");
         TlsCertAndKey {
@@ -98,22 +79,6 @@ impl TlsConfig {
     ///
     /// This is the preferred way to create TLS configuration. It doesn't depend on
     /// the concrete `Role` enum, allowing the transport layer to be used by any application.
-    ///
-    /// # Arguments
-    /// * `role_name` - The role identifier as a string (e.g., "collector", "database")
-    /// * `certs_dir` - Optional directory path, defaults to "certs"
-    ///
-    /// # Returns
-    /// A TlsConfig ready to build client or server configurations
-    ///
-    /// # Example
-    /// ```no_run
-    /// use zznet_transport_tcp::TlsConfig;
-    ///
-    /// // Generic API - works with any application
-    /// let config = TlsConfig::from_role_name("collector", None)?;
-    /// # Ok::<(), Box<dyn std::error::Error>>(())
-    /// ```
     pub fn from_role_name(role_name: &str, certs_dir: Option<&str>) -> Result<Self, TlsError> {
         let dir = certs_dir.unwrap_or("certs");
         // Ensure a rustls CryptoProvider is installed for the process.

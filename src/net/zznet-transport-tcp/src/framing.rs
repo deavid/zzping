@@ -18,11 +18,6 @@ pub const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 /// This function first reads a `u32` (4 bytes) to determine the length of the
 /// incoming frame, then reads that many bytes. This mechanism is crucial for
 /// delimiting messages in a continuous byte stream.
-///
-/// # Errors
-/// - `UnexpectedEof` if connection closes mid-frame
-/// - `InvalidData` if frame size exceeds MAX_FRAME_SIZE
-/// - IO errors from underlying stream
 pub async fn read_frame<R>(stream: &mut R) -> io::Result<Bytes>
 where
     R: AsyncRead + Unpin,
@@ -64,10 +59,6 @@ where
 /// This function first writes the length of the provided `data` as a `u32` (4 bytes),
 /// followed by the actual data bytes. This ensures that the receiving end can
 /// correctly interpret the boundaries of each message in the stream.
-///
-/// # Errors
-/// - `InvalidInput` if data exceeds MAX_FRAME_SIZE
-/// - IO errors from underlying stream
 pub async fn write_frame<W>(stream: &mut W, data: &[u8]) -> io::Result<()>
 where
     W: AsyncWrite + Unpin,
