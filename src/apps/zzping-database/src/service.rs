@@ -42,7 +42,7 @@ pub struct ComponentBuilders {
     pub session_manager: Addr<SessionManager>,
 }
 
-type CStateActorAddr = Addr<CStateActor<AuthRole>>;
+type CStateActorAddr = Addr<CStateActor>;
 /// Started components (running actors).
 ///
 /// These addresses are cloned for each connection handler and will be used
@@ -307,7 +307,7 @@ impl DatabaseService {
         // Phase 3 TODO: Pass session_manager to MemDB when it has a builder
 
         // Create CState actor - DATABASE ROLE
-        let cstate_addr = CStateBuilder::<AuthRole>::new(CStateRole::Database {
+        let cstate_addr = CStateBuilder::new(CStateRole::Database {
             stale_timeout_secs: self.config.components.stale_timeout_secs,
             max_collectors: Some(self.config.components.max_collectors),
         })

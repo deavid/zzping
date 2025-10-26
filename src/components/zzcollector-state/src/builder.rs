@@ -2,30 +2,20 @@
 
 use crate::{actor::CStateActor, role::CStateRole};
 use actix::prelude::*;
-use std::marker::PhantomData;
-use zznet_auth::ApplicationRole;
 use zznet_session::SessionManager;
 
 /// A builder for constructing `CStateActor` instances.
-pub struct CStateBuilder<TRole>
-where
-    TRole: ApplicationRole,
-{
+pub struct CStateBuilder {
     role: CStateRole,
     session_manager: Option<actix::Addr<SessionManager>>,
-    _phantom: PhantomData<TRole>,
 }
 
-impl<TRole> CStateBuilder<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl CStateBuilder {
     /// Creates a new `CStateBuilder`.
     pub fn new(role: CStateRole) -> Self {
         Self {
             role,
             session_manager: None,
-            _phantom: PhantomData,
         }
     }
 
@@ -40,7 +30,7 @@ where
     }
 
     /// Builds and starts the `CStateActor`.
-    pub fn build(self) -> Addr<CStateActor<TRole>> {
+    pub fn build(self) -> Addr<CStateActor> {
         CStateActor::create(|_ctx| CStateActor::new(self.role, self.session_manager))
     }
 }

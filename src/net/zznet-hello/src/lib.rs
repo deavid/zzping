@@ -34,7 +34,6 @@
 //! 4. Deserialize inbound bytes → typed messages
 
 pub mod actor;
-pub mod auth;
 pub mod connection_manager;
 pub mod error;
 pub mod handshake;

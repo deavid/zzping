@@ -12,7 +12,6 @@ use crate::{
 use actix::prelude::*;
 use log::{debug, info, warn};
 use std::{
-    marker::PhantomData,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -20,19 +19,19 @@ use std::{
     time::Duration,
 };
 use tokio_stream::wrappers::IntervalStream;
-use zznet_auth::ApplicationRole;
 use zznet_room::room::Room;
+use zznet_session::SessionManager;
 
 /// The main actor for the `zzcollector-state` component.
 ///
 /// This actor manages the state of a collector instance, including its identity,
 /// health, and registration with a database. It can be configured to run in
 /// one of three roles: `Collector`, `Database`, or `Admin`.
-pub struct CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+pub struct CStateActor {
+    /// The configured operational role for this actor instance.
     role: CStateRole,
+    /// Optional SessionManager address used for auto-registration.
+    session_manager: Option<actix::Addr<SessionManager>>,
     collector_state: Option<CollectorStateData>,
     database_state: Option<DatabaseStateData>,
     // health counters
@@ -43,34 +42,27 @@ where
     /// Room instance for component-to-component messaging
     /// Auto-registered with SessionManager if created via builder.with_session_manager()
     room: Option<Room<CStateMessage>>,
-
-    _phantom: PhantomData<TRole>,
 }
 
-impl<TRole> CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl CStateActor {
     /// Creates a new `CStateActor`.
     ///
-    /// The session_manager parameter is for future use when the component
-    /// is started with auto-registration. For now, the room should be
-    /// added separately via with_room().
-    pub fn new(
-        role: CStateRole,
-        _session_manager: Option<actix::Addr<zznet_session::SessionManager>>,
-    ) -> Self {
+    /// The session_manager parameter is used when the component
+    /// is started with auto-registration. The role determines which
+    /// internal state is populated (collector or database).
+    pub fn new(role: CStateRole, session_manager: Option<actix::Addr<SessionManager>>) -> Self {
         let mut actor = Self {
             role,
+            session_manager,
             collector_state: None,
             database_state: None,
             heartbeats_sent: Arc::new(AtomicU64::new(0)),
             heartbeats_acked: Arc::new(AtomicU64::new(0)),
             heartbeats_failed: Arc::new(AtomicU64::new(0)),
             room: None,
-            _phantom: PhantomData,
         };
 
+        // Initialize role-specific state
         match &actor.role {
             CStateRole::Collector { collector_id, .. } => {
                 actor.collector_state = Some(CollectorStateData::new(collector_id.clone()));
@@ -78,16 +70,15 @@ where
             CStateRole::Database {
                 stale_timeout_secs,
                 max_collectors,
-                ..
             } => {
-                let state = DatabaseStateData {
-                    stale_timeout_secs: *stale_timeout_secs,
-                    max_collectors: *max_collectors,
-                    ..Default::default()
-                };
-                actor.database_state = Some(state);
+                let mut db = DatabaseStateData::default();
+                db.stale_timeout_secs = *stale_timeout_secs;
+                db.max_collectors = *max_collectors;
+                actor.database_state = Some(db);
             }
-            CStateRole::Admin => {}
+            CStateRole::Admin => {
+                // nothing special to initialize
+            }
         }
 
         actor
@@ -101,62 +92,53 @@ where
 
     /// Sends a heartbeat message using the room.
     fn send_heartbeat(&mut self, _ctx: &mut Context<Self>) -> Result<(), CStateError> {
-        if let CStateRole::Collector { collector_id, .. } = &self.role {
-            if let Some(room) = &self.room {
-                if let Some(state) = &mut self.collector_state {
-                    let msg = CStateMessage::Heartbeat {
-                        collector_id: collector_id.clone(),
-                        uptime_secs: state.start_time.elapsed().as_secs(),
-                        pings_sent: state.pings_sent,
-                        pings_received: state.pings_received,
-                        batches_sent: state.batches_sent,
-                        last_config_update_ms: state.last_config_update_ms,
-                        connection_nonce: state.connection_nonce,
-                    };
+        if let Some(room) = &self.room {
+            if let Some(state) = &mut self.collector_state {
+                let msg = CStateMessage::Heartbeat {
+                    collector_id: state.collector_id.clone(),
+                    uptime_secs: state.start_time.elapsed().as_secs(),
+                    pings_sent: state.pings_sent,
+                    pings_received: state.pings_received,
+                    batches_sent: state.batches_sent,
+                    last_config_update_ms: state.last_config_update_ms,
+                    connection_nonce: state.connection_nonce,
+                };
 
-                    let sender = room.typed_sender();
-                    actix::spawn(async move {
-                        if let Err(e) = sender.send(msg).await {
-                            warn!("Failed to send heartbeat: {}", e);
-                        }
-                    });
+                let sender = room.typed_sender();
+                actix::spawn(async move {
+                    if let Err(e) = sender.send(msg).await {
+                        warn!("Failed to send heartbeat: {}", e);
+                    }
+                });
 
-                    self.heartbeats_sent.fetch_add(1, Ordering::Relaxed);
-                    state.last_heartbeat_sent_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                }
-            } else {
-                return Err(CStateError::NotConnected);
+                self.heartbeats_sent.fetch_add(1, Ordering::Relaxed);
+                state.last_heartbeat_sent_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
             }
-        } else {
-            return Err(CStateError::InvalidRole("Collector".to_string()));
         }
         Ok(())
     }
 }
 
-impl<TRole> Actor for CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Actor for CStateActor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        info!("CStateActor started in role: {:?}", self.role);
+        info!("CStateActor started");
 
-        // Start heartbeat timer for collectors
+        // If configured as a Collector, start heartbeat interval.
         if let CStateRole::Collector {
             heartbeat_interval_ms,
             ..
-        } = self.role
+        } = &self.role
         {
-            let interval = Duration::from_millis(heartbeat_interval_ms);
+            let interval = Duration::from_millis(*heartbeat_interval_ms);
             ctx.add_stream(IntervalStream::new(tokio::time::interval(interval)));
         }
 
-        // If running as Database, schedule stale cleanup
+        // If configured as a Database, periodically run stale-checks (half the stale timeout)
         if let CStateRole::Database {
             stale_timeout_secs, ..
         } = &self.role
@@ -172,14 +154,11 @@ where
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
-        info!("CStateActor stopped in role: {:?}", self.role);
+        info!("CStateActor stopped");
     }
 }
 
-impl<TRole> StreamHandler<tokio::time::Instant> for CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl StreamHandler<tokio::time::Instant> for CStateActor {
     fn handle(&mut self, _item: tokio::time::Instant, ctx: &mut Context<Self>) {
         if let Err(e) = self.send_heartbeat(ctx) {
             warn!("Failed to send heartbeat: {}", e);
@@ -188,10 +167,7 @@ where
     }
 }
 
-impl<TRole> Handler<ForceHeartbeat> for CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<ForceHeartbeat> for CStateActor {
     type Result = Result<(), CStateError>;
 
     fn handle(&mut self, _msg: ForceHeartbeat, ctx: &mut Context<Self>) -> Self::Result {
@@ -199,10 +175,7 @@ where
     }
 }
 
-impl<TRole> Handler<WrappedCStateMessage> for CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<WrappedCStateMessage> for CStateActor {
     type Result = ();
 
     fn handle(&mut self, msg: WrappedCStateMessage, _ctx: &mut Context<Self>) {
@@ -344,10 +317,7 @@ where
     }
 }
 
-impl<TRole> Handler<crate::messages::CleanupStaleCollectors> for CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<crate::messages::CleanupStaleCollectors> for CStateActor {
     type Result = ();
 
     fn handle(&mut self, _msg: crate::messages::CleanupStaleCollectors, _ctx: &mut Context<Self>) {
@@ -374,10 +344,7 @@ where
     }
 }
 
-impl<TRole> Handler<UpdateHealthMetrics> for CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<UpdateHealthMetrics> for CStateActor {
     type Result = ();
 
     fn handle(&mut self, msg: UpdateHealthMetrics, _ctx: &mut Context<Self>) {
@@ -398,10 +365,7 @@ where
     }
 }
 
-impl<TRole> Handler<GetHealth> for CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<GetHealth> for CStateActor {
     type Result = Result<CStateHealth, CStateError>;
 
     fn handle(&mut self, _msg: GetHealth, _ctx: &mut Context<Self>) -> Self::Result {
@@ -413,10 +377,7 @@ where
     }
 }
 
-impl<TRole> Handler<GetCollectorState> for CStateActor<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl Handler<GetCollectorState> for CStateActor {
     type Result = Result<CollectorStateData, CStateError>;
 
     fn handle(&mut self, _msg: GetCollectorState, _ctx: &mut Context<Self>) -> Self::Result {

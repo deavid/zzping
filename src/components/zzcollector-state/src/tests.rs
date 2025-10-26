@@ -4,60 +4,8 @@ use crate::{
     network_messages::CStateMessage,
     role::CStateRole,
 };
-use serde::{Deserialize, Serialize};
 use std::time::Duration;
-
-// Local MockRole for tests (avoids requiring zznet_auth test-utils feature)
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum MockRole {
-    Admin,
-    Database,
-    Collector,
-}
-
-impl zznet_auth::role::ApplicationRole for MockRole {
-    fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
-        match cn {
-            "admin" => Ok(MockRole::Admin),
-            "database" => Ok(MockRole::Database),
-            "collector" => Ok(MockRole::Collector),
-            _ => Err(zznet_auth::error::AuthError::UnknownRole(cn.to_string())),
-        }
-    }
-
-    fn as_str(&self) -> &'static str {
-        match self {
-            MockRole::Admin => "admin",
-            MockRole::Database => "database",
-            MockRole::Collector => "collector",
-        }
-    }
-
-    fn can_connect_to(&self, _target: &Self) -> bool {
-        true
-    }
-
-    fn can_access_room(&self, _room_name: &str) -> bool {
-        true
-    }
-}
 use zznet_session::types::PeerId;
-#[actix::test]
-async fn test_collector_role_heartbeat() {
-    let role = CStateRole::Collector {
-        collector_id: "test-collector".to_string(),
-        heartbeat_interval_ms: 1000,
-    };
-
-    let _actor = CStateBuilder::<MockRole>::new(role).build();
-
-    // Wait for a heartbeat to be sent
-    tokio::time::sleep(Duration::from_millis(2)).await;
-    actix::System::current().stop();
-
-    // Note: CStateActor now uses Room<T> internally, so heartbeat messages
-    // are sent via the room channel rather than SessionManager
-}
 
 #[actix::test]
 async fn test_database_role_sends_ack_and_query_response() {
@@ -66,7 +14,7 @@ async fn test_database_role_sends_ack_and_query_response() {
         max_collectors: None,
     };
 
-    let builder = CStateBuilder::<MockRole>::new(role);
+    let builder = CStateBuilder::new(role);
     let actor = builder.build();
 
     let msg = WrappedCStateMessage {
@@ -100,7 +48,7 @@ async fn test_unauthorized_query_collectors_is_denied() {
         max_collectors: None,
     };
 
-    let builder = CStateBuilder::<MockRole>::new(role);
+    let builder = CStateBuilder::new(role);
     let actor = builder.build();
 
     // Query from a non-admin peer (peer id without 'admin' in it per MockSessionManager)
@@ -119,7 +67,7 @@ async fn test_max_collectors_rejection() {
         max_collectors: Some(1),
     };
 
-    let builder = CStateBuilder::<MockRole>::new(role);
+    let builder = CStateBuilder::new(role);
     let actor = builder.build();
 
     // First heartbeat - should be accepted
@@ -165,7 +113,7 @@ async fn test_stale_collector_cleanup() {
         max_collectors: None,
     };
 
-    let builder = CStateBuilder::<MockRole>::new(role);
+    let builder = CStateBuilder::new(role);
     let actor = builder.build();
 
     // Simulate heartbeat
@@ -205,7 +153,7 @@ async fn test_database_role_receives_heartbeat() {
         max_collectors: None,
     };
 
-    let actor = CStateBuilder::<MockRole>::new(role).build();
+    let actor = CStateBuilder::new(role).build();
 
     let msg = WrappedCStateMessage {
         peer_id: PeerId::from("test-peer"),
@@ -230,7 +178,7 @@ async fn test_update_health_metrics() {
         heartbeat_interval_ms: 999000,
     };
 
-    let actor = CStateBuilder::<MockRole>::new(role).build();
+    let actor = CStateBuilder::new(role).build();
 
     let metrics = UpdateHealthMetrics {
         pings_sent: Some(123),
@@ -255,7 +203,7 @@ async fn test_unauthorized_response_sent() {
         max_collectors: None,
     };
 
-    let builder = CStateBuilder::<MockRole>::new(role);
+    let builder = CStateBuilder::new(role);
     let actor = builder.build();
 
     let query = WrappedCStateMessage {
@@ -273,7 +221,7 @@ async fn test_collector_receives_ack_increments_counter() {
         heartbeat_interval_ms: 1000,
     };
 
-    let builder = CStateBuilder::<MockRole>::new(role);
+    let builder = CStateBuilder::new(role);
     let actor = builder.build();
 
     // Simulate database ack being sent to collector
@@ -305,7 +253,7 @@ async fn test_stale_collector_cleanup_deterministic() {
         max_collectors: None,
     };
 
-    let builder = CStateBuilder::<MockRole>::new(role);
+    let builder = CStateBuilder::new(role);
     let actor = builder.build();
 
     // Simulate heartbeat
@@ -345,7 +293,7 @@ async fn test_multiple_collectors_tracked() {
         max_collectors: None,
     };
 
-    let builder = CStateBuilder::<MockRole>::new(role);
+    let builder = CStateBuilder::new(role);
     let actor = builder.build();
 
     let mk_msg = |peer: &str, id: &str| WrappedCStateMessage {

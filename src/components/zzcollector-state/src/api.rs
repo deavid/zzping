@@ -6,26 +6,19 @@ use crate::messages::{
 };
 use crate::state::CollectorStateData;
 use actix::Addr;
-use zznet_auth::ApplicationRole;
 
 /// A handle for interacting with the `CStateActor`.
 ///
 /// This provides a clean, async-friendly API for other components
 /// to communicate with the collector state component.
 #[derive(Clone)]
-pub struct CStateHandle<TRole>
-where
-    TRole: ApplicationRole,
-{
-    addr: Addr<CStateActor<TRole>>,
+pub struct CStateHandle {
+    addr: Addr<CStateActor>,
 }
 
-impl<TRole> CStateHandle<TRole>
-where
-    TRole: ApplicationRole,
-{
+impl CStateHandle {
     /// Creates a new `CStateHandle`.
-    pub fn new(addr: Addr<CStateActor<TRole>>) -> Self {
+    pub fn new(addr: Addr<CStateActor>) -> Self {
         Self { addr }
     }
 
