@@ -7,7 +7,6 @@ use crate::messages::{
     UpdateConfig,
 };
 use crate::network_messages::IntentConfigNetworkMsg;
-use crate::permission_wrapper::PermissionWrapper;
 use crate::permissions::{IntentConfigPermission, PermissionCheck};
 use crate::role::IntentConfigRole;
 use actix::ResponseFuture;
@@ -28,7 +27,7 @@ pub struct IntentConfigActor<T: ApplicationRole> {
     role: IntentConfigRole,
 
     /// SessionManager actor for network communication (Phase 3: Pure Actor Pattern)
-    session_manager: Option<Addr<SessionManager<PermissionWrapper<T>>>>,
+    session_manager: Option<Addr<SessionManager<T>>>,
 
     /// Room for typed network messaging (Room<T> architecture)
     room: Option<zznet_room::room::Room<IntentConfigNetworkMsg>>,
@@ -58,10 +57,8 @@ impl PermissionCheck<IntentConfigPermission> for IntentConfigActor<IntentConfigP
         format!("{:?}", role)
     }
 
-    fn receive_role(&self) -> PermissionWrapper<IntentConfigPermission> {
-        PermissionWrapper {
-            permission: IntentConfigPermission::ReceiveConfigUpdates,
-        }
+    fn receive_role(&self) -> IntentConfigPermission {
+        IntentConfigPermission::ReceiveConfigUpdates
     }
 }
 
@@ -76,8 +73,7 @@ impl<T: ApplicationRole + 'static> IntentConfigActor<T> {
         }
 
         // If the ApplicationRole defines a role for receiving config updates, send them.
-        if let Some(permission) = T::receive_config_updates_role() {
-            let receive_role = PermissionWrapper { permission };
+        if let Some(receive_role) = T::receive_config_updates_role() {
             self.send_config_update_to_peers_impl(ctx, receive_role);
         }
     }
@@ -103,10 +99,7 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
     }
 
     /// Set the SessionManager actor for network communication (Phase 3: Pure Actor Pattern)
-    pub fn set_session_manager(
-        &mut self,
-        session_manager: Addr<SessionManager<PermissionWrapper<T>>>,
-    ) {
+    pub fn set_session_manager(&mut self, session_manager: Addr<SessionManager<T>>) {
         self.session_manager = Some(session_manager);
     }
 
@@ -141,11 +134,7 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
     /// Send ConfigUpdate to all connected peers via SessionManager (Database role only)
     ///
     /// Note: This method is generic and works without PermissionCheck trait bound.
-    fn send_config_update_to_peers_impl(
-        &self,
-        ctx: &mut Context<Self>,
-        receive_role: PermissionWrapper<T>,
-    ) {
+    fn send_config_update_to_peers_impl(&self, ctx: &mut Context<Self>, receive_role: T) {
         // Only Database role should send ConfigUpdate
         if !matches!(self.role, IntentConfigRole::Database { .. }) {
             return;
@@ -369,16 +358,16 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
     fn handle_process_request_config_change_auth(
         &mut self,
         sender_peer_id: String,
-        sender_role: Option<PermissionWrapper<T>>,
+        sender_role: Option<T>,
         targets: Vec<std::net::IpAddr>,
         ping_rate_pps: u64,
-        session_manager: Addr<SessionManager<PermissionWrapper<T>>>,
+        session_manager: Addr<SessionManager<T>>,
         ctx: &mut Context<Self>,
     ) where
         Self: PermissionCheck<T>,
     {
         if let Some(sender_role) = sender_role {
-            if !self.has_update_permission(&sender_role.permission) {
+            if !self.has_update_permission(&sender_role) {
                 log::warn!(
                     "✗ Config change REJECTED from peer '{}' - role {:?} is not authorized",
                     sender_peer_id,
@@ -442,7 +431,7 @@ impl<T: ApplicationRole> IntentConfigActor<T> {
     ///
     /// Uses SessionManager actor for point-to-point messaging (Phase 3: Pure Actor Pattern).
     fn spawn_send_error(
-        session_manager: Addr<SessionManager<PermissionWrapper<T>>>,
+        session_manager: Addr<SessionManager<T>>,
         peer: String,
         reason: impl Into<String>,
     ) {
@@ -928,6 +917,7 @@ mod tests {
     use crate::messages::{Subscribe, Unsubscribe, UpdateConfig};
     use serde::{Deserialize, Serialize};
     use std::sync::Once;
+    use zznet_session::session_manager::SessionManager;
 
     use std::time::Duration;
     use zznet_auth::error::AuthError;
@@ -992,10 +982,8 @@ mod tests {
             format!("{:?}", role)
         }
 
-        fn receive_role(&self) -> PermissionWrapper<MockRole> {
-            PermissionWrapper {
-                permission: MockRole::User,
-            }
+        fn receive_role(&self) -> MockRole {
+            MockRole::User
         }
     }
 
@@ -1455,10 +1443,10 @@ mod tests {
         use zznet_session::peer_session::PeerSession;
         use zznet_session::types::PeerId;
 
-        let mut session_manager = zznet_session::session_manager::SessionManager::<
-            PermissionWrapper<MockRole>,
-        >::new_with_limits(
-            vec![RoomId::from("intent-config")], None, None
+        let mut session_manager = SessionManager::<MockRole>::new_with_limits(
+            vec![RoomId::from("intent-config")],
+            None,
+            None,
         );
 
         // Add peer with User role
@@ -1470,9 +1458,7 @@ mod tests {
         // Create peer already connected (Phase 3: Pure Actor Pattern)
         let peer_session = PeerSession::new_connected(
             peer_id.clone(),
-            Some(PermissionWrapper {
-                permission: MockRole::User,
-            }),
+            Some(MockRole::User),
             None,
             outbound_tx,
             inbound_rx,

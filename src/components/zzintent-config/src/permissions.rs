@@ -23,7 +23,7 @@ pub trait PermissionCheck<T: ApplicationRole> {
     /// Returns a string representation of the permission.
     fn to_string(&self, role: &T) -> String;
     /// Returns the role wrapper for peers that should receive config updates.
-    fn receive_role(&self) -> crate::permission_wrapper::PermissionWrapper<T>;
+    fn receive_role(&self) -> T;
 }
 
 // Implement ApplicationRole for the concrete permission enum.

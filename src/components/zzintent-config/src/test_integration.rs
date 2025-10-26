@@ -24,9 +24,7 @@ mod test_helpers {
     #[allow(dead_code)]
     pub(super) async fn create_test_peer(
         peer_id: PeerId,
-    ) -> zznet_session::peer_session::PeerSession<
-        crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
-    > {
+    ) -> zznet_session::peer_session::PeerSession<IntentConfigPermission> {
         let (tx, _rx) = tokio::sync::mpsc::channel(100);
         let (_tx2, rx2) = tokio::sync::mpsc::channel(100);
         zznet_session::peer_session::PeerSession::new_connected(peer_id, None, None, tx, rx2)
@@ -38,14 +36,12 @@ mod test_helpers {
     pub(super) async fn create_test_peer_with_role(
         peer_id: PeerId,
         permission: IntentConfigPermission,
-    ) -> zznet_session::peer_session::PeerSession<
-        crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
-    > {
+    ) -> zznet_session::peer_session::PeerSession<IntentConfigPermission> {
         let (tx, _rx) = tokio::sync::mpsc::channel(100);
         let (_tx2, rx2) = tokio::sync::mpsc::channel(100);
         zznet_session::peer_session::PeerSession::new_connected(
             peer_id,
-            Some(crate::permission_wrapper::PermissionWrapper { permission }),
+            Some(permission),
             None,
             tx,
             rx2,
@@ -337,9 +333,7 @@ mod session_manager_integration_tests {
         // db_manager holds a peer entry for the collector (remote peer id)
         let mut db_peer_for_collector = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("collector-instance"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx_db_to_collector,
             rx_coll_to_db,
@@ -362,9 +356,7 @@ mod session_manager_integration_tests {
         // Collector manager holds a peer entry for the database instance (remote peer id)
         let mut coll_peer_for_db = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("db-instance"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::UpdateConfig,
-            }),
+            Some(IntentConfigPermission::UpdateConfig),
             None,
             tx_coll_to_db,
             rx_db_to_collector,
@@ -554,9 +546,7 @@ mod session_manager_integration_tests {
 
         let mut peer1 = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("collector1"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx1_out,
             rx1_in,
@@ -590,9 +580,7 @@ mod session_manager_integration_tests {
 
         let mut peer2 = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("collector2"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx2_out,
             rx2_in,
@@ -621,9 +609,7 @@ mod session_manager_integration_tests {
 
         // Verify peers_with_role works
         let collectors =
-            session_manager.peers_with_role(&crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            });
+            session_manager.peers_with_role(&IntentConfigPermission::ReceiveConfigUpdates);
         assert_eq!(collectors.len(), 2);
 
         // ===== Create Database Actor with SessionManager =====
@@ -802,9 +788,7 @@ mod session_manager_integration_tests {
             &mut session_manager,
             &PeerId::from("collector-startup"),
             vec![RoomId::from("intent-config")],
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
         )
         .await
         .unwrap();
@@ -892,19 +876,16 @@ mod session_manager_integration_tests {
         let (coll_out_tx, coll_out_rx) = tokio::sync::mpsc::channel(16);
 
         // db_manager holds a peer entry for the collector (remote peer id)
-        let mut db_peer_for_collector = zznet_session::peer_session::PeerSession::<
-            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
-        >::new_connected(
-            PeerId::from("collector-instance"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
-            None,
-            db_out_tx,
-            coll_out_rx,
-        )
-        .await
-        .unwrap();
+        let mut db_peer_for_collector =
+            zznet_session::peer_session::PeerSession::<IntentConfigPermission>::new_connected(
+                PeerId::from("collector-instance"),
+                Some(IntentConfigPermission::ReceiveConfigUpdates),
+                None,
+                db_out_tx,
+                coll_out_rx,
+            )
+            .await
+            .unwrap();
         db_peer_for_collector
             .add_room(
                 RoomId::from("intent-config"),
@@ -919,19 +900,16 @@ mod session_manager_integration_tests {
             .unwrap();
 
         // Collector manager holds a peer entry for the database instance (remote peer id)
-        let mut coll_peer_for_db = zznet_session::peer_session::PeerSession::<
-            crate::permission_wrapper::PermissionWrapper<IntentConfigPermission>,
-        >::new_connected(
-            PeerId::from("db-instance"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::UpdateConfig,
-            }),
-            None,
-            coll_out_tx,
-            db_out_rx,
-        )
-        .await
-        .unwrap();
+        let mut coll_peer_for_db =
+            zznet_session::peer_session::PeerSession::<IntentConfigPermission>::new_connected(
+                PeerId::from("db-instance"),
+                Some(IntentConfigPermission::ReceiveConfigUpdates),
+                None,
+                coll_out_tx,
+                db_out_rx,
+            )
+            .await
+            .unwrap();
         coll_peer_for_db
             .add_room(
                 RoomId::from("intent-config"),
@@ -1034,9 +1012,7 @@ mod session_manager_integration_tests {
         // Add a Collector peer (create with real channels so we capture outbound)
         let mut collector_peer = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("test-collector"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx_db_to_collector,
             rx_db_inbound,
@@ -1146,9 +1122,7 @@ mod session_manager_integration_tests {
         // Add a DB peer entry so the manager knows about the DB remote (create with real channels)
         let mut db_peer = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("db-instance"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::UpdateConfig,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx_out,
             rx_in,
@@ -1222,9 +1196,7 @@ mod session_manager_integration_tests {
         // Create peers already connected with roles
         let mut db_peer_for_collector = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("db-instance"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::UpdateConfig,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx_coll_to_db,
             rx_db_to_coll,
@@ -1246,9 +1218,7 @@ mod session_manager_integration_tests {
 
         let mut coll_peer_for_db = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("collector-instance"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx_db_to_coll,
             rx_db_in,
@@ -1450,9 +1420,7 @@ mod auth_tests {
         // Create peer with actual channels instead of dummy channels
         let mut peer = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("bad-actor"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx_out,
             rx_in,
@@ -1599,17 +1567,12 @@ mod auth_tests {
         assert_eq!(all_peers.len(), 4, "Should have 4 total peers");
 
         let collectors =
-            session_manager.peers_with_role(&crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            });
+            session_manager.peers_with_role(&IntentConfigPermission::ReceiveConfigUpdates);
         assert_eq!(collectors.len(), 2, "Should have exactly 2 Collector peers");
         assert!(collectors.contains(&PeerId::from("collector1")));
         assert!(collectors.contains(&PeerId::from("collector2")));
 
-        let admins =
-            session_manager.peers_with_role(&crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::UpdateConfig,
-            });
+        let admins = session_manager.peers_with_role(&IntentConfigPermission::UpdateConfig);
         assert_eq!(admins.len(), 1, "Should have exactly 1 ClientAdmin peer");
         assert!(admins.contains(&PeerId::from("admin-user")));
 
@@ -1923,9 +1886,7 @@ mod additional_integration_tests {
         let (_tx_in, rx_in) = mpsc::channel::<(RoomId, Vec<u8>)>(10);
         let mut collector_peer = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("late-collector"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx_out,
             rx_in,
@@ -2281,9 +2242,7 @@ mod additional_integration_tests {
         let (_tx1_in, rx1_in) = mpsc::channel::<(RoomId, Vec<u8>)>(10);
         let peer1 = zznet_session::peer_session::PeerSession::new_connected(
             PeerId::from("static-peer"),
-            Some(crate::permission_wrapper::PermissionWrapper {
-                permission: IntentConfigPermission::ReceiveConfigUpdates,
-            }),
+            Some(IntentConfigPermission::ReceiveConfigUpdates),
             None,
             tx1_out,
             rx1_in,

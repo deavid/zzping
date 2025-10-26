@@ -22,8 +22,6 @@ pub mod actor;
 pub mod messages;
 /// Network protocol messages
 pub mod network_messages;
-/// Permission wrapper for authentication
-pub mod permission_wrapper;
 /// Permission definitions for MemDB
 pub mod permissions;
 /// Role-based configuration

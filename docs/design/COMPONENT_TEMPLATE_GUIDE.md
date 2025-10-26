@@ -35,11 +35,10 @@ Required patterns
   - For persisted configuration, prefer RON for readability and stable diffs.
 
 - Permission model
-  - Use a small `PermissionWrapper<T>` if you need to adapt a project-wide `ApplicationRole` into component-specific permission checks.
-  - Implement `PermissionCheck<T>` on the actor when tests or the component need to perform role-based checks.
+  - TBD - this has been refactored. Refer to other guides.
 
 - Network integration (SessionManager)
-  - If the component sends/receives messages to peers, accept a `SessionManager<TMsg, PermissionWrapper<Role>>` in the builder.
+  - If the component sends/receives messages to peers, accept a `SessionManager` in the builder.
   - Use `SessionManager::broadcast_to_room` with a per-send timeout when broadcasting.
   - Keep the `SessionManager` optional for unit tests (test ergonomics): document that production requires it and tests may allow behavior in debug mode only.
 

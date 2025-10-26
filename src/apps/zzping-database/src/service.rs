@@ -300,8 +300,6 @@ impl DatabaseService {
             IntentConfigBuilder::<IntentConfigPermission>::new().role(IntentConfigRole::Database {
                 config_file_path: config_path,
             });
-        // Phase 3 NOTE: IntentConfig SessionManager wiring needs type alignment (AuthRole vs PermissionWrapper<IntentConfigPermission>)
-        // This is optional - IntentConfig works without SessionManager for local operations
 
         // Create MemDB actor - DATABASE ROLE
         let memdb_actor = MemDBActor::<MemDBPermission>::new_with_role(MemDBRole::Database {

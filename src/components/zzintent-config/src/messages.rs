@@ -171,9 +171,8 @@ mod tests {
 #[rtype(result = "()")]
 pub(crate) struct ProcessRequestConfigChangeAuth<T: zznet_auth::role::ApplicationRole> {
     pub sender_peer_id: String,
-    pub sender_role: Option<crate::permission_wrapper::PermissionWrapper<T>>,
+    pub sender_role: Option<T>,
     pub targets: Vec<IpAddr>,
     pub ping_rate_pps: u64,
-    pub session_manager:
-        actix::Addr<zznet_session::SessionManager<crate::permission_wrapper::PermissionWrapper<T>>>,
+    pub session_manager: actix::Addr<zznet_session::SessionManager<T>>,
 }

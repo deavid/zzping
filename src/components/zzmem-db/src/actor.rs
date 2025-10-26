@@ -8,7 +8,6 @@ use crate::messages::{
     MemDBError, MemDBHealth, StorePingResult, TargetStats,
 };
 use crate::network_messages::{MemDBMessage, PingResult};
-use crate::permission_wrapper::PermissionWrapper;
 use crate::role::MemDBRole;
 use crate::storage::StorageBackend;
 use actix::prelude::*;
@@ -24,7 +23,7 @@ use zznet_session::types::RoomId;
 #[rtype(result = "()")]
 pub struct SetSessionManager<T: ApplicationRole> {
     /// The session manager to set
-    pub session_manager: Addr<SessionManager<PermissionWrapper<T>>>,
+    pub session_manager: Addr<SessionManager<T>>,
 }
 
 /// Room handle that forwards MemDB messages to the MemDBActor
@@ -95,7 +94,7 @@ pub struct MemDBActor<T: ApplicationRole> {
     // Temporarily commented out Handler<MemDBMessage>
 
     // Network message handler for MemDBMessage
-    session_manager: Option<Addr<SessionManager<PermissionWrapper<T>>>>,
+    session_manager: Option<Addr<SessionManager<T>>>,
     /// Health counters for operational visibility
     successful_batches: Arc<AtomicU64>,
     failed_batches: Arc<AtomicU64>,
@@ -126,7 +125,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
     /// Create a new MemDBActor with role and optional SessionManager
     pub fn new_with_role_and_session_manager(
         role: MemDBRole,
-        session_manager: Option<Addr<SessionManager<PermissionWrapper<T>>>>,
+        session_manager: Option<Addr<SessionManager<T>>>,
     ) -> Self {
         // Validate the role configuration
         if let Err(e) = role.validate() {
@@ -161,10 +160,7 @@ impl<T: ApplicationRole> MemDBActor<T> {
     }
 
     /// Set the SessionManager for network communication
-    pub fn set_session_manager(
-        &mut self,
-        session_manager: Addr<SessionManager<PermissionWrapper<T>>>,
-    ) {
+    pub fn set_session_manager(&mut self, session_manager: Addr<SessionManager<T>>) {
         self.session_manager = Some(session_manager);
     }
 
