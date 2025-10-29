@@ -1,41 +1,35 @@
 use crate::{
     builder::CStateBuilder,
-    messages::{GetCollectorState, UpdateHealthMetrics, WrappedCStateMessage},
-    network_messages::CStateMessage,
-    role::CStateRole,
+    config::CStateConfig,
+    internal_messages::{InboundHeartbeat, InboundHeartbeatAck, InboundQueryCollectors},
+    messages::{GetCollectorState, UpdateHealthMetrics},
 };
-use std::time::Duration;
-use zznet_session::types::PeerId;
+use zznet_api::types::PeerId;
 
 #[actix::test]
 async fn test_database_role_sends_ack_and_query_response() {
-    let role = CStateRole::Database {
-        stale_timeout_secs: 10,
-        max_collectors: None,
-    };
+    let config = CStateConfig::for_database(10, None);
 
-    let builder = CStateBuilder::new(role);
+    let builder = CStateBuilder::new(config);
     let actor = builder.build();
 
-    let msg = WrappedCStateMessage {
+    // Send heartbeat via internal message (simulates NetworkActor forwarding)
+    let msg = InboundHeartbeat {
         peer_id: PeerId::from("test-peer"),
-        message: CStateMessage::Heartbeat {
-            collector_id: "test-collector".to_string(),
-            uptime_secs: 10,
-            pings_sent: 1,
-            pings_received: 1,
-            batches_sent: 1,
-            last_config_update_ms: 1,
-            connection_nonce: 1,
-        },
+        collector_id: "test-collector".to_string(),
+        uptime_secs: 10,
+        pings_sent: 1,
+        pings_received: 1,
+        batches_sent: 1,
+        last_config_update_ms: 1,
+        connection_nonce: 1,
     };
 
     actor.send(msg).await.unwrap();
 
-    // Now send QueryCollectors from admin peer and ensure CollectorList response
-    let query = WrappedCStateMessage {
+    // Now send QueryCollectors from admin peer
+    let query = InboundQueryCollectors {
         peer_id: PeerId::from("admin-peer"),
-        message: CStateMessage::QueryCollectors,
     };
 
     actor.send(query).await.unwrap();
@@ -43,18 +37,14 @@ async fn test_database_role_sends_ack_and_query_response() {
 
 #[actix::test]
 async fn test_unauthorized_query_collectors_is_denied() {
-    let role = CStateRole::Database {
-        stale_timeout_secs: 10,
-        max_collectors: None,
-    };
+    let config = CStateConfig::for_database(10, None);
 
-    let builder = CStateBuilder::new(role);
+    let builder = CStateBuilder::new(config);
     let actor = builder.build();
 
-    // Query from a non-admin peer (peer id without 'admin' in it per MockSessionManager)
-    let query = WrappedCStateMessage {
+    // Query from a non-admin peer
+    let query = InboundQueryCollectors {
         peer_id: PeerId::from("some-peer"),
-        message: CStateMessage::QueryCollectors,
     };
 
     actor.send(query).await.unwrap();
@@ -62,42 +52,35 @@ async fn test_unauthorized_query_collectors_is_denied() {
 
 #[actix::test]
 async fn test_max_collectors_rejection() {
-    let role = CStateRole::Database {
-        stale_timeout_secs: 10,
-        max_collectors: Some(1),
-    };
+    let config = CStateConfig::for_database(10, Some(1));
 
-    let builder = CStateBuilder::new(role);
+    let builder = CStateBuilder::new(config);
     let actor = builder.build();
 
     // First heartbeat - should be accepted
-    let msg1 = WrappedCStateMessage {
+    let msg1 = InboundHeartbeat {
         peer_id: PeerId::from("peer-1"),
-        message: CStateMessage::Heartbeat {
-            collector_id: "collector-1".to_string(),
-            uptime_secs: 10,
-            pings_sent: 1,
-            pings_received: 1,
-            batches_sent: 1,
-            last_config_update_ms: 1,
-            connection_nonce: 1,
-        },
+        collector_id: "collector-1".to_string(),
+        uptime_secs: 10,
+        pings_sent: 1,
+        pings_received: 1,
+        batches_sent: 1,
+        last_config_update_ms: 1,
+        connection_nonce: 1,
     };
 
     actor.send(msg1).await.unwrap();
 
     // Second heartbeat from a different collector should be rejected due to max_collectors=1
-    let msg2 = WrappedCStateMessage {
+    let msg2 = InboundHeartbeat {
         peer_id: PeerId::from("peer-2"),
-        message: CStateMessage::Heartbeat {
-            collector_id: "collector-2".to_string(),
-            uptime_secs: 5,
-            pings_sent: 0,
-            pings_received: 0,
-            batches_sent: 0,
-            last_config_update_ms: 1,
-            connection_nonce: 2,
-        },
+        collector_id: "collector-2".to_string(),
+        uptime_secs: 5,
+        pings_sent: 0,
+        pings_received: 0,
+        batches_sent: 0,
+        last_config_update_ms: 1,
+        connection_nonce: 2,
     };
 
     actor.send(msg2).await.unwrap();
@@ -108,26 +91,21 @@ async fn test_max_collectors_rejection() {
 #[actix::test]
 async fn test_stale_collector_cleanup() {
     // Use 0s stale timeout to force immediate cleanup
-    let role = CStateRole::Database {
-        stale_timeout_secs: 0,
-        max_collectors: None,
-    };
+    let config = CStateConfig::for_database(0, None);
 
-    let builder = CStateBuilder::new(role);
+    let builder = CStateBuilder::new(config);
     let actor = builder.build();
 
     // Simulate heartbeat
-    let msg = WrappedCStateMessage {
+    let msg = InboundHeartbeat {
         peer_id: PeerId::from("test-peer"),
-        message: CStateMessage::Heartbeat {
-            collector_id: "stale-collector".to_string(),
-            uptime_secs: 10,
-            pings_sent: 1,
-            pings_received: 1,
-            batches_sent: 1,
-            last_config_update_ms: 1,
-            connection_nonce: 1,
-        },
+        collector_id: "stale-collector".to_string(),
+        uptime_secs: 10,
+        pings_sent: 1,
+        pings_received: 1,
+        batches_sent: 1,
+        last_config_update_ms: 1,
+        connection_nonce: 1,
     };
 
     actor.send(msg).await.unwrap();
@@ -139,33 +117,27 @@ async fn test_stale_collector_cleanup() {
         .unwrap();
 
     // Query collectors and check CollectorList response
-    let query = WrappedCStateMessage {
+    let query = InboundQueryCollectors {
         peer_id: PeerId::from("admin-peer"),
-        message: CStateMessage::QueryCollectors,
     };
     actor.send(query).await.unwrap();
 }
 
 #[actix::test]
 async fn test_database_role_receives_heartbeat() {
-    let role = CStateRole::Database {
-        stale_timeout_secs: 10,
-        max_collectors: None,
-    };
+    let config = CStateConfig::for_database(10, None);
 
-    let actor = CStateBuilder::new(role).build();
+    let actor = CStateBuilder::new(config).build();
 
-    let msg = WrappedCStateMessage {
+    let msg = InboundHeartbeat {
         peer_id: PeerId::from("test-peer"),
-        message: CStateMessage::Heartbeat {
-            collector_id: "test-collector".to_string(),
-            uptime_secs: 10,
-            pings_sent: 1,
-            pings_received: 1,
-            batches_sent: 1,
-            last_config_update_ms: 1,
-            connection_nonce: 1,
-        },
+        collector_id: "test-collector".to_string(),
+        uptime_secs: 10,
+        pings_sent: 1,
+        pings_received: 1,
+        batches_sent: 1,
+        last_config_update_ms: 1,
+        connection_nonce: 1,
     };
 
     actor.send(msg).await.unwrap();
@@ -173,12 +145,9 @@ async fn test_database_role_receives_heartbeat() {
 
 #[actix::test]
 async fn test_update_health_metrics() {
-    let role = CStateRole::Collector {
-        collector_id: "test-collector".to_string(),
-        heartbeat_interval_ms: 999000,
-    };
+    let config = CStateConfig::for_collector("test-collector".to_string(), 999000);
 
-    let actor = CStateBuilder::new(role).build();
+    let actor = CStateBuilder::new(config).build();
 
     let metrics = UpdateHealthMetrics {
         pings_sent: Some(123),
@@ -198,17 +167,13 @@ async fn test_update_health_metrics() {
 
 #[actix::test]
 async fn test_unauthorized_response_sent() {
-    let role = CStateRole::Database {
-        stale_timeout_secs: 10,
-        max_collectors: None,
-    };
+    let config = CStateConfig::for_database(10, None);
 
-    let builder = CStateBuilder::new(role);
+    let builder = CStateBuilder::new(config);
     let actor = builder.build();
 
-    let query = WrappedCStateMessage {
+    let query = InboundQueryCollectors {
         peer_id: PeerId::from("some-peer"),
-        message: CStateMessage::QueryCollectors,
     };
 
     actor.send(query).await.unwrap();
@@ -216,21 +181,16 @@ async fn test_unauthorized_response_sent() {
 
 #[actix::test]
 async fn test_collector_receives_ack_increments_counter() {
-    let role = CStateRole::Collector {
-        collector_id: "test-collector".to_string(),
-        heartbeat_interval_ms: 1000,
-    };
+    let config = CStateConfig::for_collector("test-collector".to_string(), 1000);
 
-    let builder = CStateBuilder::new(role);
+    let builder = CStateBuilder::new(config);
     let actor = builder.build();
 
     // Simulate database ack being sent to collector
-    let ack = WrappedCStateMessage {
+    let ack = InboundHeartbeatAck {
         peer_id: PeerId::from("db-peer"),
-        message: CStateMessage::HeartbeatAck {
-            timestamp_ms: 1,
-            server_time_ms: 42,
-        },
+        timestamp_ms: 1,
+        server_time_ms: 42,
     };
 
     actor.send(ack).await.unwrap();
@@ -248,26 +208,21 @@ async fn test_collector_receives_ack_increments_counter() {
 async fn test_stale_collector_cleanup_deterministic() {
     // Force immediate cleanup by using 0s stale timeout
 
-    let role = CStateRole::Database {
-        stale_timeout_secs: 0,
-        max_collectors: None,
-    };
+    let config = CStateConfig::for_database(0, None);
 
-    let builder = CStateBuilder::new(role);
+    let builder = CStateBuilder::new(config);
     let actor = builder.build();
 
     // Simulate heartbeat
-    let now_msg = WrappedCStateMessage {
+    let now_msg = InboundHeartbeat {
         peer_id: PeerId::from("test-peer"),
-        message: CStateMessage::Heartbeat {
-            collector_id: "stale-collector".to_string(),
-            uptime_secs: 10,
-            pings_sent: 1,
-            pings_received: 1,
-            batches_sent: 1,
-            last_config_update_ms: 1,
-            connection_nonce: 1,
-        },
+        collector_id: "stale-collector".to_string(),
+        uptime_secs: 10,
+        pings_sent: 1,
+        pings_received: 1,
+        batches_sent: 1,
+        last_config_update_ms: 1,
+        connection_nonce: 1,
     };
 
     actor.send(now_msg).await.unwrap();
@@ -279,43 +234,36 @@ async fn test_stale_collector_cleanup_deterministic() {
         .unwrap();
 
     // Query collectors as admin and expect empty list
-    let query = WrappedCStateMessage {
+    let query = InboundQueryCollectors {
         peer_id: PeerId::from("admin-peer"),
-        message: CStateMessage::QueryCollectors,
     };
     actor.send(query).await.unwrap();
 }
 
 #[actix::test]
 async fn test_multiple_collectors_tracked() {
-    let role = CStateRole::Database {
-        stale_timeout_secs: 60,
-        max_collectors: None,
-    };
+    let config = CStateConfig::for_database(60, None);
 
-    let builder = CStateBuilder::new(role);
+    let builder = CStateBuilder::new(config);
     let actor = builder.build();
 
-    let mk_msg = |peer: &str, id: &str| WrappedCStateMessage {
+    let mk_msg = |peer: &str, id: &str| InboundHeartbeat {
         peer_id: PeerId::from(peer),
-        message: CStateMessage::Heartbeat {
-            collector_id: id.to_string(),
-            uptime_secs: 10,
-            pings_sent: 1,
-            pings_received: 1,
-            batches_sent: 1,
-            last_config_update_ms: 1,
-            connection_nonce: 1,
-        },
+        collector_id: id.to_string(),
+        uptime_secs: 10,
+        pings_sent: 1,
+        pings_received: 1,
+        batches_sent: 1,
+        last_config_update_ms: 1,
+        connection_nonce: 1,
     };
 
     actor.send(mk_msg("peer-a", "collector-a")).await.unwrap();
     actor.send(mk_msg("peer-b", "collector-b")).await.unwrap();
 
     // Query collectors as admin
-    let query = WrappedCStateMessage {
+    let query = InboundQueryCollectors {
         peer_id: PeerId::from("admin-peer"),
-        message: CStateMessage::QueryCollectors,
     };
     actor.send(query).await.unwrap();
 }

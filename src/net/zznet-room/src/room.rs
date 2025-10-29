@@ -51,14 +51,11 @@ where
     // Send serialized messages to peer (outbound - now Vec<u8>)
     outbound_tx: mpsc::Sender<Vec<u8>>,
 
-    // Receive serialized messages from peer (inbound - now Vec<u8>)
-    inbound_rx: Option<mpsc::Receiver<Vec<u8>>>,
-
     // Local component that handles received messages
     local_handler: Recipient<T>,
 
-    // Background task that forwards inbound → handler
-    receiver_task: Option<JoinHandle<()>>,
+    // Background task that forwards inbound → handler. Always present.
+    receiver_task: JoinHandle<()>,
 }
 
 /// Channels returned when creating a Room, used for connecting to SessionManager
@@ -160,14 +157,24 @@ where
     /// This method is kept for backward compatibility and testing scenarios.
     pub fn new(room_id: String, local_handler: Recipient<T>) -> (Self, RoomChannels) {
         let (outbound_tx, outbound_rx) = mpsc::channel(100);
-        let (inbound_tx, inbound_rx) = mpsc::channel(100);
+        let (inbound_tx, mut inbound_rx) = mpsc::channel(100);
+
+        // Spawn receiver task immediately and keep the JoinHandle on the struct.
+        let handler_clone = local_handler.clone();
+        let task = tokio::spawn(async move {
+            while let Some(msg) = inbound_rx.recv().await {
+                if let Err(e) = Self::handle_message(&handler_clone, msg).await {
+                    tracing::error!("Error receiving message for room: {e:?}");
+                }
+            }
+            tracing::debug!("Room receiver task stopped");
+        });
 
         let room = Room {
             room_id,
             outbound_tx,
-            inbound_rx: Some(inbound_rx),
             local_handler,
-            receiver_task: None,
+            receiver_task: task,
         };
 
         let channels = RoomChannels {
@@ -234,17 +241,25 @@ where
         drop(sm);
 
         // Create room
-        let mut room = Room {
+        let handler_clone = local_handler.clone();
+
+        // Spawn receiver task immediately and keep the handle on the struct.
+        let task = tokio::spawn(async move {
+            let mut rx = inbound_rx;
+            while let Some(msg) = rx.recv().await {
+                if let Err(e) = Self::handle_message(&handler_clone, msg).await {
+                    tracing::error!("Error receiving message for room: {e:?}");
+                }
+            }
+            tracing::debug!("Room receiver task stopped");
+        });
+
+        let room = Room {
             room_id: room_id.clone(),
             outbound_tx,
-            inbound_rx: Some(inbound_rx),
             local_handler: local_handler.clone(),
-            receiver_task: None,
+            receiver_task: task,
         };
-
-        // Spawn receiver task immediately
-        room.spawn_receiver()
-            .map_err(|e| RoomError::ReceiverSpawnFailed(e.to_string()))?;
 
         tracing::info!(
             "Room '{}' created and registered with SessionManager",
@@ -297,42 +312,17 @@ where
     /// Returns Err if channel is closed
     #[deprecated(note = "This function has either to be removed or be called in spawn_receiver")]
     pub async fn process_one(&mut self) -> Result<bool, ProcessError> {
-        let rx = self
-            .inbound_rx
-            .as_mut()
-            .ok_or(ProcessError::ReceiverAlreadySpawned)?;
-
-        match rx.try_recv() {
-            Ok(msg) => {
-                Self::handle_message(&self.local_handler, msg).await?;
-                Ok(true)
-            }
-            Err(mpsc::error::TryRecvError::Empty) => Ok(false),
-            Err(mpsc::error::TryRecvError::Disconnected) => Err(ProcessError::ChannelClosed),
-        }
+        // With the receiver spawned automatically, manual processing is not
+        // supported. Keep the API but always indicate the receiver is spawned.
+        Err(ProcessError::ReceiverAlreadySpawned)
     }
 
     /// Spawn a background task that automatically forwards inbound messages
     /// to the local handler. Can only be called once.
     pub fn spawn_receiver(&mut self) -> Result<(), SpawnError> {
-        if self.receiver_task.is_some() {
-            return Err(SpawnError::AlreadySpawned);
-        }
-
-        let mut rx = self.inbound_rx.take().ok_or(SpawnError::AlreadySpawned)?;
-        let handler = self.local_handler.clone();
-
-        let task = tokio::spawn(async move {
-            while let Some(msg) = rx.recv().await {
-                if let Err(e) = Self::handle_message(&handler, msg).await {
-                    tracing::error!("Error receiving message for room: {e:?}");
-                }
-            }
-            tracing::debug!("Room receiver task stopped");
-        });
-
-        self.receiver_task = Some(task);
-        Ok(())
+        // Receiver is spawned during construction; external callers should not
+        // attempt to spawn it again.
+        Err(SpawnError::AlreadySpawned)
     }
 
     /// Get the room ID
@@ -492,8 +482,8 @@ mod tests {
         )
         .unwrap();
 
-        // Verify receiver task was spawned (it should be None after spawning since we take it)
-        assert!(room.receiver_task.is_some());
+        // Verify receiver task was spawned (it should be running)
+        assert!(!room.receiver_task.is_finished());
     }
 
     // --- Serialization/Deserialization Roundtrip Tests ---
@@ -547,11 +537,7 @@ mod tests {
         let actor = TestActor { received: vec![] }.start();
         let actor_addr = actor.clone();
 
-        let (mut room, channels) =
-            Room::<TestMsg>::new("inbound".to_string(), actor_addr.recipient());
-
-        // Manually spawn receiver since we're not using auto-registration
-        room.spawn_receiver().expect("spawn failed");
+        let (_room, channels) = Room::<TestMsg>::new("inbound".to_string(), actor_addr.recipient());
 
         // Create a message, serialize it, and send it through the inbound channel
         let test_msg = TestMsg { value: 999 };
@@ -579,9 +565,7 @@ mod tests {
         let actor = TestActor { received: vec![] }.start();
         let actor_addr = actor.clone();
 
-        let (mut room, channels) =
-            Room::<TestMsg>::new("multi".to_string(), actor_addr.recipient());
-        room.spawn_receiver().expect("spawn failed");
+        let (_room, channels) = Room::<TestMsg>::new("multi".to_string(), actor_addr.recipient());
 
         // Send multiple messages
         let messages = [

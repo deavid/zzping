@@ -100,7 +100,7 @@ fn create_e2e_mock_pair(
 #[tokio::test(flavor = "current_thread")]
 async fn test_full_e2e_database_collector_lifecycle() {
     // TODO: Update this test to use the new builder APIs
-    // The test previously manually created ConnectionManagers and wired SessionManagers.
+    // The test previously manually created ConnectionManagers and wired PeerManagerActors.
     // Now that we use ClientBuilder and ServerBuilder with declarative room handler
     // registration, this test needs to be refactored to:
     // 1. Use ClientBuilder/ServerBuilder APIs
@@ -125,7 +125,7 @@ async fn test_full_e2e_database_collector_lifecycle() {
             let collector_service = CollectorService::new(CollectorConfig::for_testing("e2e-01"))
                 .expect("Failed to create CollectorService");
 
-            // Create builders to get access to shared SessionManagers
+            // Create builders to get access to PeerManagerActors
             let db_builders = db_service
                 .create_builders()
                 .expect("Failed to create database builders");
@@ -146,8 +146,8 @@ async fn test_full_e2e_database_collector_lifecycle() {
             let collector_intent_addr = collector_components.intent_config;
             let collector_pinger_handle = collector_components.pinger;
 
-            // Start ConnectionManagers WITH THEIR SHARED SESSION MANAGERS
-            // This is critical - ConnectionManager must use the same SessionManager
+            // Start ConnectionManagers WITH THEIR PEER MANAGER ACTORS
+            // This is critical - ConnectionManager must use the same PeerManagerActor
             // that IntentConfig's adapter uses, otherwise broadcasts fail!
             let db_cm_addr = db_service.start_connection_manager_with_session_manager(
                 std::sync::Arc::clone(&db_components.session_manager),
@@ -183,7 +183,7 @@ async fn test_full_e2e_database_collector_lifecycle() {
             tokio::time::advance(Duration::from_millis(100)).await;
             tokio::task::yield_now().await;
 
-            // CRITICAL: Give spawned tokio::spawn tasks time to add peers to SessionManager
+            // CRITICAL: Give spawned tokio::spawn tasks time to add peers to PeerManagerActor
             // The handshake completion spawns a background task to add peers - we need
             // multiple yields to ensure that task completes before we broadcast
             for _ in 0..10 {
@@ -195,7 +195,7 @@ async fn test_full_e2e_database_collector_lifecycle() {
 
             // Create a room handler that forwards CollectorMessage::Intent to the collector's IntentConfigActor
 
-            use zznet_session::types::{PeerId, RoomId};
+            use zznet_api::types::{PeerId, RoomId};
 
             // Register room handler for the collector to receive messages
             {
@@ -204,7 +204,7 @@ async fn test_full_e2e_database_collector_lifecycle() {
                 // DEBUG: Check what peers the collector actually has
                 let collector_peers = sm.peer_ids();
                 eprintln!(
-                    "⚙️ [Test] Collector SessionManager has {} peers: {:?}",
+                    "⚙️ [Test] Collector PeerManager has {} peers: {:?}",
                     collector_peers.len(),
                     collector_peers
                 );
@@ -222,7 +222,7 @@ async fn test_full_e2e_database_collector_lifecycle() {
                 }
 
                 impl
-                    zznet_session::peer_session::RoomHandle<
+                    zznet_room::room_handle::RoomHandle<
                         zzping_collector::service::CollectorMessage,
                     > for TestRoomHandler
                 {
@@ -233,7 +233,7 @@ async fn test_full_e2e_database_collector_lifecycle() {
                     fn send_message(
                         &mut self,
                         msg: zzping_collector::service::CollectorMessage,
-                    ) -> Result<(), zznet_session::types::SessionError> {
+                    ) -> Result<(), zznet_api::types::SessionError> {
                         eprintln!("⚙️ [TestRoomHandler] Received CollectorMessage: {:?}", msg);
                         // Unwrap the Intent variant
                         let zzping_collector::service::CollectorMessage::Intent(intent_msg) = msg;
@@ -255,7 +255,7 @@ async fn test_full_e2e_database_collector_lifecycle() {
                             RoomId,
                             zzping_collector::service::CollectorMessage,
                         )>,
-                    ) -> Result<(), zznet_session::types::SessionError> {
+                    ) -> Result<(), zznet_api::types::SessionError> {
                         // No outbound forwarding needed for receiver-only handler
                         Ok(())
                     }
@@ -314,7 +314,10 @@ async fn test_full_e2e_database_collector_lifecycle() {
 
             info!("  → Sending UpdateConfig to Database IntentConfigActor...");
             db_intent_addr
-                .send(UpdateConfig(new_config.clone()))
+                .send(UpdateConfig {
+                    data: new_config.clone(),
+                    peer_id: None,
+                })
                 .await
                 .expect("Failed to send config update to database");
             info!("  ✓ Database received UpdateConfig");

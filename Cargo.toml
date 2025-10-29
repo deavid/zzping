@@ -13,8 +13,9 @@ members = [
     "src/net/zznet-api",
     "src/net/zznet-auth",
     "src/net/zznet-hello",
+    "src/net/zznet-peer-manager",
     "src/net/zznet-room",
-    "src/net/zznet-session",
+    "src/net/zznet-router",
     "src/net/zznet-transport-tcp",
 
     "src/components/zzintent-config",
@@ -49,11 +50,12 @@ zzping-test-utils = { path = "src/test-utils/zzping-test-utils" }
 zzping-auth = { path = "src/common/zzping-auth" }
 
 zznet-auth = { path = "src/net/zznet-auth" }
-zznet-session = { path = "src/net/zznet-session" }
 zznet-transport-tcp = { path = "src/net/zznet-transport-tcp" }
 zznet-api = { path = "src/net/zznet-api" }
 zznet-hello = { path = "src/net/zznet-hello" }
+zznet-peer-manager = { path = "src/net/zznet-peer-manager" }
 zznet-room = { path = "src/net/zznet-room" }
+zznet-router = { path = "src/net/zznet-router" }
 
 zzintent-config = { path = "src/components/zzintent-config" }
 zzpinger = { path = "src/components/zzpinger" }

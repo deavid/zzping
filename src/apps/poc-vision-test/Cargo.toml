@@ -12,7 +12,6 @@ bincode = "2"
 serde = { version = "1", features = ["derive"] }
 
 # Internal dependencies - using workspace versions
-zznet-session = { path = "../../net/zznet-session" }
 zznet-room = { path = "../../net/zznet-room" }
 zznet-auth = { path = "../../net/zznet-auth" }
 zzintent-config = { path = "../../components/zzintent-config" }

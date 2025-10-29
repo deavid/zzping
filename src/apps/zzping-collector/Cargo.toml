@@ -17,7 +17,8 @@ zzcollector-state.workspace = true
 zzping-auth.workspace = true
 
 # Network layer dependencies
-zznet-session.workspace = true
+zznet-peer-manager.workspace = true # Peer state management
+zznet-router.workspace = true       # Message routing
 # zznet-builder.workspace = true  # DEPRECATED - Phase 3 migration to zznet-room
 zznet-room.workspace = true          # Vision-aligned Room<T> pattern
 zznet-transport-tcp.workspace = true
@@ -46,6 +47,7 @@ tracing-subscriber.workspace = true
 # Error handling
 anyhow.workspace = true
 thiserror.workspace = true
+async-trait = "0.1"
 
 # TLS/crypto
 rustls.workspace = true

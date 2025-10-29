@@ -26,12 +26,15 @@ ntest = { workspace = true }
 tokio-stream = { workspace = true }
 ron = { workspace = true }
 bincode = { workspace = true }
-zznet-session = { workspace = true }
+
+# Network infrastructure
 zznet-auth = { workspace = true }
 zznet-hello = { workspace = true }
 zznet-room = { workspace = true }
-zzping-auth = { workspace = true }
 zznet-api = { workspace = true }
+
+# Application auth
+zzping-auth = { workspace = true }
 
 [features]
 default = ["permissions"]

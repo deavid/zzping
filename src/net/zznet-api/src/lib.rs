@@ -8,5 +8,10 @@
 
 pub mod error;
 pub mod mock;
+/// Network layer traits for interface segregation (control-plane vs data-plane).
+pub mod traits;
 pub mod transport;
 pub mod types;
+
+// Re-export key traits for convenience
+pub use traits::{MessageRouter, PeerRegistry};

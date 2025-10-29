@@ -49,13 +49,12 @@ async fn test_room_to_room_communication() {
     // Setup Component B with its room
     let (component_b, received_b) = TestComponent::new();
     let actor_b = component_b.start();
-    let (mut room_b, channels_b) = Room::new("room_b".to_string(), actor_b.recipient());
+    let (room_b, channels_b) = Room::new("room_b".to_string(), actor_b.recipient());
 
     // Connect the rooms
     let _connection = connect_rooms(channels_a, channels_b);
 
-    // Spawn receiver for B (we'll use manual processing for A as an example)
-    room_b.spawn_receiver().unwrap();
+    // Receivers are spawned during Room construction
 
     // A sends message to B
     room_a.send(TestMessage { value: 42 }).await.unwrap();
@@ -89,18 +88,16 @@ async fn test_bidirectional_communication() {
     // Setup both components
     let (component_a, received_a) = TestComponent::new();
     let actor_a = component_a.start();
-    let (mut room_a, channels_a) = Room::new("room_a".to_string(), actor_a.recipient());
+    let (room_a, channels_a) = Room::new("room_a".to_string(), actor_a.recipient());
 
     let (component_b, received_b) = TestComponent::new();
     let actor_b = component_b.start();
-    let (mut room_b, channels_b) = Room::new("room_b".to_string(), actor_b.recipient());
+    let (room_b, channels_b) = Room::new("room_b".to_string(), actor_b.recipient());
 
     // Connect rooms
     let _connection = connect_rooms(channels_a, channels_b);
 
-    // Spawn receivers on both sides
-    room_a.spawn_receiver().unwrap();
-    room_b.spawn_receiver().unwrap();
+    // Receivers are spawned during Room construction
 
     // A sends to B
     room_a.send(TestMessage { value: 1 }).await.unwrap();

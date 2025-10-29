@@ -42,10 +42,8 @@ use actix::prelude::*;
 use log;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use zznet_session::room_message_trait::{
-    DeserializationError, RoomMessageTrait, SerializationError,
-};
-use zznet_session::types::RoomId;
+use zznet_api::types::RoomId;
+use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
 
 /// Network protocol messages for IntentConfig component
 ///

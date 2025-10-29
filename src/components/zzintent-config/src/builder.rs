@@ -1,10 +1,11 @@
 //! Provides the public builder for creating and starting the IntentConfigActor.
 
 use crate::actor::IntentConfigActor;
-use crate::role::IntentConfigRole;
+use crate::config::IntentConfigConfig;
 use actix::prelude::*;
+use std::sync::Arc;
 use std::time::Duration;
-use zznet_session::session_manager::SessionManager;
+use zznet_api::{MessageRouter, PeerRegistry};
 
 /// A builder for the IntentConfig component.
 ///
@@ -12,21 +13,20 @@ use zznet_session::session_manager::SessionManager;
 /// It follows the 'Builder -> Start' pattern, ensuring that the actor
 /// is constructed and started in a controlled manner.
 pub struct IntentConfigBuilder {
-    role: IntentConfigRole,
-    session_manager: Option<Addr<SessionManager>>,
-    /// Per-peer broadcast timeout used when sending messages via SessionManager
+    config: IntentConfigConfig,
+    peer_registry: Option<Arc<dyn PeerRegistry>>,
+    message_router: Option<Arc<dyn MessageRouter>>,
+    /// Per-peer broadcast timeout used when sending messages via PeerManager
     broadcast_timeout: Duration,
 }
 
 impl IntentConfigBuilder {
-    /// Create a new builder with default configuration for the common
-    /// `IntentConfigPermission` role type.
-    ///
-    /// Default role is Database (passive receiver).
+    /// Create a new builder with default configuration (collector role).
     pub fn new() -> Self {
         Self {
-            role: IntentConfigRole::default(),
-            session_manager: None,
+            config: IntentConfigConfig::default(),
+            peer_registry: None,
+            message_router: None,
             broadcast_timeout: Duration::from_millis(500),
         }
     }
@@ -39,15 +39,36 @@ impl Default for IntentConfigBuilder {
 }
 
 impl IntentConfigBuilder {
-    /// Set the role for this IntentConfig actor
-    pub fn role(mut self, role: IntentConfigRole) -> Self {
-        self.role = role;
+    /// Set the configuration for this IntentConfig actor.
+    ///
+    /// Use `IntentConfigConfig::for_database()` or `IntentConfigConfig::for_collector()`
+    /// for common configurations.
+    pub fn config(mut self, config: IntentConfigConfig) -> Self {
+        self.config = config;
         self
     }
 
-    /// Set the SessionManager actor for network communication (Phase 3: Pure Actor Pattern)
-    pub fn session_manager(mut self, session_manager: Addr<SessionManager>) -> Self {
-        self.session_manager = Some(session_manager);
+    /// Convenience: configure for database role.
+    pub fn config_for_database(mut self, config_file_path: std::path::PathBuf) -> Self {
+        self.config = IntentConfigConfig::for_database(config_file_path);
+        self
+    }
+
+    /// Convenience: configure for collector role.
+    pub fn config_for_collector(mut self) -> Self {
+        self.config = IntentConfigConfig::for_collector();
+        self
+    }
+
+    /// Set the PeerRegistry for network operations (Phase 7.2)
+    pub fn peer_manager(mut self, peer_registry: Arc<dyn PeerRegistry>) -> Self {
+        self.peer_registry = Some(peer_registry);
+        self
+    }
+
+    /// Set the MessageRouter for message routing (Phase 7.2)
+    pub fn router(mut self, message_router: Arc<dyn MessageRouter>) -> Self {
+        self.message_router = Some(message_router);
         self
     }
 
@@ -58,9 +79,9 @@ impl IntentConfigBuilder {
         self
     }
 
-    /// Get the current role configuration
-    pub fn get_role(&self) -> &IntentConfigRole {
-        &self.role
+    /// Get the current configuration
+    pub fn get_config(&self) -> &IntentConfigConfig {
+        &self.config
     }
 
     /// Starts the IntentConfigActor and returns its address (`Addr`).
@@ -69,15 +90,12 @@ impl IntentConfigBuilder {
     /// It internally creates the `IntentConfigActor` and starts it on the
     /// currently running Actix System.
     ///
-    /// # TODO: Room Auto-Registration
+    /// Phase 7.2: Now creates three-actor system:
+    /// - IntentConfigActor (Main Actor - business logic)
+    /// - IntentConfigNetworkManager (Manager Actor - peer lifecycle)
+    /// - IntentConfigNetworkActor (Network Actor - per-peer, created by Manager)
     ///
-    /// Currently, IntentConfig uses std::sync::Mutex for SessionManager, but Room<T>
-    /// auto-registration requires tokio::sync::Mutex. To enable auto-registration:
-    /// 1. Change SessionManager type to Arc<tokio::sync::Mutex<SessionManager>>
-    /// 2. Update all SessionManager usage to use async .lock().await
-    /// 3. Add Room creation logic similar to CStateBuilder
-    ///
-    /// For now, Room must be created and set manually if needed.
+    /// NetworkManager uses PeerManagerActor directly for authorization and channel access.
     ///
     /// # Errors
     ///
@@ -87,24 +105,51 @@ impl IntentConfigBuilder {
     ///
     /// The returned `Addr` is the handle to the running actor, used for sending messages.
     pub fn start(mut self) -> anyhow::Result<Addr<IntentConfigActor>> {
-        // Validate role configuration
-        self.role
+        // Validate configuration
+        self.config
             .validate()
-            .map_err(|e| anyhow::anyhow!("Invalid role configuration: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Invalid config: {}", e))?;
 
-        // Create and start actor with role
-        let mut actor = IntentConfigActor::new_with_role(self.role);
-        // Log actor initial state for debugging (role only)
+        // Create and start actor with config
+        let actor = IntentConfigActor::new(self.config.clone());
         log::info!(
-            "Starting IntentConfigActor via builder. role={:?}",
-            actor.role()
+            "Starting IntentConfigActor via builder. persist_config={}",
+            actor.get_config().persist_config
         );
 
-        // Set session manager if provided
-        if let Some(session_manager) = self.session_manager.take() {
-            actor.set_session_manager(session_manager);
+        // Start the main actor first (needed for NetworkManager creation)
+        let actor_addr = actor.start();
+
+        // Phase 7.2: Create NetworkManager if we have PeerRegistry and MessageRouter
+        if let (Some(peer_registry), Some(message_router)) =
+            (self.peer_registry.take(), self.message_router.take())
+        {
+            log::info!("Creating IntentConfigNetworkManager for three-actor pattern");
+
+            // Create a dummy broadcast receiver for PeerLifecycleEvents
+            // This will be replaced when PeerManager provides subscribe_events()
+            let (_tx, rx) = tokio::sync::broadcast::channel(100);
+
+            let network_manager = crate::network_manager::IntentConfigNetworkManager::new(
+                actor_addr.clone(),
+                rx,
+                peer_registry,
+                message_router,
+            )
+            .start();
+
+            // Wire NetworkManager back to MainActor
+            actor_addr.do_send(crate::internal_messages::SetNetworkManager {
+                network_manager: network_manager.clone(),
+            });
+
+            log::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
+        } else {
+            log::debug!(
+                "No PeerRegistry/MessageRouter - NetworkManager not created (standalone mode)"
+            );
         }
 
-        Ok(actor.start())
+        Ok(actor_addr)
     }
 }

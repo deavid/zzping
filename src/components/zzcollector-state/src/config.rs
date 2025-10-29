@@ -1,0 +1,168 @@
+//! Configuration for CState component.
+//!
+//! Replaces the deprecated `CStateRole` enum with fine-grained configuration
+//! properties that express *what* the component does rather than *who* it is.
+
+/// Fine-grained configuration for CState actor.
+///
+/// Instead of thinking in terms of roles (Collector, Database, Admin), we configure
+/// the component with specific capabilities:
+/// - Should it send heartbeats?
+/// - Should it track collector states?
+/// - Should it provide query interface?
+///
+/// This follows SOLID principles: components know about their own capabilities,
+/// not about application-level roles.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CStateConfig {
+    /// If set, send heartbeats with this collector ID.
+    ///
+    /// The actor will periodically send heartbeat messages with this identifier
+    /// so the database can track its health.
+    pub collector_id: Option<String>,
+
+    /// Heartbeat interval in milliseconds.
+    ///
+    /// Only used when `collector_id` is Some. Determines how often to send heartbeats.
+    pub heartbeat_interval_ms: u64,
+
+    /// Whether to track collector states.
+    ///
+    /// When true, the actor receives heartbeat messages from collectors
+    /// and maintains state about their health.
+    pub track_collectors: bool,
+
+    /// Timeout in seconds for marking collectors as stale.
+    ///
+    /// Only used when `track_collectors` is true.
+    pub stale_timeout_secs: u64,
+
+    /// Maximum number of collectors to track (None = unlimited).
+    ///
+    /// Only used when `track_collectors` is true.
+    pub max_collectors: Option<usize>,
+
+    /// Whether to provide query interface for collector state.
+    ///
+    /// When true, the actor processes `Query` messages about collector states.
+    pub allow_queries: bool,
+}
+
+impl CStateConfig {
+    /// Create a configuration for the collector role:
+    /// - Sends heartbeats with given ID
+    /// - Does not track other collectors
+    /// - Does not provide queries
+    pub fn for_collector(collector_id: String, heartbeat_interval_ms: u64) -> Self {
+        Self {
+            collector_id: Some(collector_id),
+            heartbeat_interval_ms,
+            track_collectors: false,
+            stale_timeout_secs: 0,
+            max_collectors: None,
+            allow_queries: false,
+        }
+    }
+
+    /// Create a configuration for the database role:
+    /// - Does not send heartbeats
+    /// - Tracks collector states
+    /// - Provides query interface
+    pub fn for_database(stale_timeout_secs: u64, max_collectors: Option<usize>) -> Self {
+        Self {
+            collector_id: None,
+            heartbeat_interval_ms: 0,
+            track_collectors: true,
+            stale_timeout_secs,
+            max_collectors,
+            allow_queries: true,
+        }
+    }
+
+    /// Create a configuration for an admin/query-only role:
+    /// - Does not send heartbeats
+    /// - Does not track
+    /// - Provides query interface
+    pub fn for_admin() -> Self {
+        Self {
+            collector_id: None,
+            heartbeat_interval_ms: 0,
+            track_collectors: false,
+            stale_timeout_secs: 0,
+            max_collectors: None,
+            allow_queries: true,
+        }
+    }
+
+    /// Validate the configuration.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.collector_id.is_some() && self.heartbeat_interval_ms == 0 {
+            return Err("collector_id is set but heartbeat_interval_ms is 0".to_string());
+        }
+        if self.track_collectors && self.stale_timeout_secs == 0 {
+            return Err("track_collectors is true but stale_timeout_secs is 0".to_string());
+        }
+        Ok(())
+    }
+}
+
+impl Default for CStateConfig {
+    /// Default to admin configuration (safe, query-only).
+    fn default() -> Self {
+        Self::for_admin()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_collector_config() {
+        let config = CStateConfig::for_collector("collector-01".into(), 5000);
+        assert_eq!(config.collector_id, Some("collector-01".into()));
+        assert_eq!(config.heartbeat_interval_ms, 5000);
+        assert!(!config.track_collectors);
+        assert!(!config.allow_queries);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_database_config() {
+        let config = CStateConfig::for_database(30, Some(100));
+        assert!(config.collector_id.is_none());
+        assert!(config.track_collectors);
+        assert!(config.allow_queries);
+        assert_eq!(config.stale_timeout_secs, 30);
+        assert_eq!(config.max_collectors, Some(100));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_admin_config() {
+        let config = CStateConfig::for_admin();
+        assert!(config.collector_id.is_none());
+        assert!(!config.track_collectors);
+        assert!(config.allow_queries);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_invalid_collector_config() {
+        let config = CStateConfig {
+            collector_id: Some("test".into()),
+            heartbeat_interval_ms: 0,
+            track_collectors: false,
+            stale_timeout_secs: 0,
+            max_collectors: None,
+            allow_queries: false,
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_default_is_admin() {
+        let config = CStateConfig::default();
+        assert_eq!(config, CStateConfig::for_admin());
+    }
+}

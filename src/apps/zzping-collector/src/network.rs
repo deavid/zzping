@@ -5,7 +5,7 @@
 //! - creating a TCP transport client (optionally with TLS)
 //! - handing the transport to the `ConnectionManager` which spawns a `HelloActor` and
 //!   performs the HELLO handshake
-//! - integrating with the shared `SessionManager` so components can auto-register via
+//! - integrating with PeerManagerActor so components can auto-register via
 //!   `Room<T>` channels
 //! - performing a simple automatic reconnection loop on failure
 //!
@@ -20,6 +20,7 @@ use std::time::Duration;
 use zznet_api::transport::TransportClient;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
+use zznet_peer_manager::PeerManagerActor;
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
 
@@ -27,7 +28,7 @@ use zznet_transport_tcp::config::TlsConfig;
 ///
 /// This implementation:
 /// - Uses TcpTransportClient directly (no ClientBuilder)
-/// - Creates ConnectionManager with shared SessionManager
+/// - Creates ConnectionManager with PeerManagerActor
 /// - Components auto-register via Room<T> pattern
 /// - NO room_handler_wirer callbacks needed!
 pub struct CollectorNetwork {
@@ -63,7 +64,7 @@ impl CollectorNetwork {
     ///
     /// This is the vision-aligned implementation:
     /// 1. Create TcpTransportClient
-    /// 2. Create ConnectionManager with SessionManager
+    /// 2. Create ConnectionManager with PeerManagerActor
     /// 3. Connect to server
     /// 4. Hand transport to ConnectionManager via HandleTransport message
     /// 5. ConnectionManager spawns HelloActor for HELLO handshake
@@ -72,19 +73,41 @@ impl CollectorNetwork {
     /// Automatically reconnects on failure.
     ///
     /// # Arguments
-    /// * `components` - Started component actors (contains SessionManager)
+    /// * `components` - Started component actors (contains PeerManagerActor)
     pub async fn connect(&self, components: &StartedComponents) -> Result<(), String> {
         tracing::info!("Connecting to {}", self.remote_addr);
 
-        // Step 1: Create authorizer for HELLO authentication
-        let authorizer = create_collector_authorizer();
+        // Step 1: Build allowed roles set for HELLO authentication
+        let mut allowed_roles = std::collections::HashSet::new();
+        allowed_roles.insert(zznet_api::types::Role::new("database"));
+        allowed_roles.insert(zznet_api::types::Role::new("collector"));
 
-        // Step 2: Get SessionManager from components
-        let session_manager = components.session_manager.clone();
+        // Step 2: Spawn a PeerManagerActor that wraps the shared PeerManager.
+        // Components and ConnectionManager now share the same lifecycle state.
+        let peer_manager_actor =
+            PeerManagerActor::with_shared_manager(components.peer_manager.clone()).start();
 
-        // Step 3: Create ConnectionManager (manages HelloActors)
-        let connection_manager =
-            ConnectionManager::new_with_session_manager(session_manager.clone(), authorizer);
+        // FIXME(audit-blocker-2): Router.register_peer() not wired after HELLO handshake
+        // - ConnectionManager.room_handler_wirer signature was changed to accept PeerChannels
+        // - This allows registration of peer channels with Router after handshake completes
+        // - However, no Router instance is available here (components.router doesn't exist)
+        // - Required: Add router field to StartedComponents, wire registration here, handle disconnect
+        // - Implementation would look like:
+        //   ```
+        //   let app_router = components.router.clone();
+        //   let wirer = Arc::new(move |_pm, channels| {
+        //       Box::pin(async move {
+        //           app_router.register_peer(channels).await
+        //               .map_err(|e| format!("register_peer failed: {:?}", e))
+        //       })
+        //   });
+        //   connection_manager.with_room_handler_wirer(wirer);
+        //   ```
+        // - Note: Current code uses Room<T> pattern which bypasses Router, so this may not be
+        //   critical for functionality, but audit identifies it as a blocker for consistency
+        // - See audit doc section 4.2 for details
+
+        let connection_manager = ConnectionManager::new(peer_manager_actor, allowed_roles);
 
         let connection_manager_addr = connection_manager.start();
 
@@ -140,7 +163,7 @@ impl CollectorNetwork {
         // ConnectionManager will:
         // 1. Spawn HelloActor for this transport
         // 2. Run HELLO handshake
-        // 3. Register peer with SessionManager
+        // 3. Register peer with PeerManagerActor
         // 4. Route messages to components via Room<T>
         let handle_msg = HandleTransport {
             transport,
@@ -159,47 +182,4 @@ impl CollectorNetwork {
         // For now, return immediately and let reconnection loop handle it
         Ok(())
     }
-}
-
-/// Create the authorizer function for collector connections
-///
-/// This validates HELLO role against TLS certificate and maps to canonical network `Role`.
-fn create_collector_authorizer()
--> Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<zznet_api::types::Role> + Send + Sync> {
-    Box::new(|auth_ctx: &zznet_api::types::AuthContext| {
-        tracing::debug!(
-            "Collector authorizer checking HELLO role: {}",
-            auth_ctx.hello_role_str
-        );
-
-        // Validate HELLO role against TLS if TLS is present
-        if let Some(ref peer_identity) = auth_ctx.peer_identity {
-            tracing::debug!(
-                "TLS identity present: {}, validating against HELLO role",
-                peer_identity.full_identity()
-            );
-
-            // Basic validation: ensure CN matches hello_role_str
-            if peer_identity.common_name != auth_ctx.hello_role_str {
-                tracing::error!(
-                    "TLS CN mismatch: HELLO claimed '{}' but cert CN is '{}'",
-                    auth_ctx.hello_role_str,
-                    peer_identity.common_name
-                );
-                return None;
-            }
-        } else {
-            tracing::debug!("No TLS - allowing plain connection");
-        }
-
-        // Map HELLO role string to AuthRole enum then to canonical Role
-        match auth_ctx.hello_role_str.as_str() {
-            "database" => Some(zznet_api::types::Role::new("database")),
-            "collector" => Some(zznet_api::types::Role::new("collector")),
-            _ => {
-                tracing::error!("Unknown HELLO role: {}", auth_ctx.hello_role_str);
-                None
-            }
-        }
-    })
 }

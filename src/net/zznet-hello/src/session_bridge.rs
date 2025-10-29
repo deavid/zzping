@@ -30,7 +30,7 @@ use actix::prelude::*;
 use tokio::sync::mpsc;
 use tracing::{debug, error};
 
-use zznet_session::types::RoomId;
+use zznet_api::types::RoomId;
 
 use crate::actor::HelloActor;
 

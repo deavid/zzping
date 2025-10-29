@@ -40,14 +40,7 @@ impl Actor for SimpleActor {
     fn started(&mut self, _ctx: &mut Self::Context) {
         tracing::info!("{}: Actor started", self.name);
 
-        // Spawn receiver task for the room if present
-        if let Some(room) = &mut self.room {
-            if let Err(e) = room.spawn_receiver() {
-                tracing::error!("{}: Failed to spawn receiver: {:?}", self.name, e);
-            } else {
-                tracing::info!("{}: Room receiver spawned", self.name);
-            }
-        }
+        // Room receiver is spawned during Room construction; nothing to do here.
     }
 }
 
@@ -133,12 +126,7 @@ impl Handler<SetRoom> for SimpleActor {
     fn handle(&mut self, msg: SetRoom, _ctx: &mut Self::Context) -> Self::Result {
         self.room = Some(msg.0);
 
-        // Spawn receiver after setting room
-        if let Some(room) = &mut self.room {
-            if let Err(e) = room.spawn_receiver() {
-                tracing::error!("{}: Failed to spawn receiver: {:?}", self.name, e);
-            }
-        }
+        // Receiver task is started during Room construction; nothing to do here.
     }
 }
 

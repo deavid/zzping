@@ -1,17 +1,18 @@
 use crate::config::{DatabaseConfig, DatabaseTlsConfig};
-use crate::error::{DatabaseError, Result};
-use actix::{Actor, Addr};
+use crate::error::DatabaseError;
+use actix::Addr;
+use std::sync::{Arc, Mutex};
 use zzcollector_state::actor::CStateActor;
 use zzcollector_state::builder::CStateBuilder;
-use zzcollector_state::role::CStateRole;
+use zzcollector_state::config::CStateConfig;
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
-use zzintent_config::role::IntentConfigRole;
 use zzmem_db::actor::MemDBActor;
-use zzmem_db::role::MemDBRole;
-use zznet_auth::role::ApplicationRole;
-use zznet_session::session_manager::SessionManager;
-use zzping_auth::AuthRole;
+use zzmem_db::builder::MemDBBuilder;
+use zzmem_db::config::MemDBConfig;
+use zznet_api::{MessageRouter, PeerRegistry};
+use zznet_peer_manager::{PeerManager, SharedPeerRegistry};
+use zznet_router::Router;
 
 // Room Handler Architecture
 //
@@ -24,25 +25,24 @@ use zzping_auth::AuthRole;
 //   2. Register factories with ClientBuilder/ServerBuilder (see `network.rs`)
 //   3. Builders automatically wire handlers on connection/reconnection
 //
-// This approach eliminates manual SessionManager locking and provides reusable,
-// testable room handler configuration. See `ROOM_REGISTRY_GUIDE.md` for details.
+// This approach provides reusable, testable room handler configuration.
+// See `ROOM_REGISTRY_GUIDE.md` for details.
 
-/// Builders for all components (before wiring)
+/// Component builders for all database components.
 ///
-/// Contains the builders for each component, used internally during service initialization.
-/// Phase 3: Now includes SessionManager for proper Room<T> integration.
+/// These builders are configured but not yet started. They can be customized
+/// before calling `start_components()` to start all actors.
+/// Useful for testing, embedding, and custom service composition.
 pub struct ComponentBuilders {
     /// Builder for IntentConfig component
     pub intent_config: IntentConfigBuilder,
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor>,
-    /// Address of the running CState actor (database role)
-    pub cstate_addr: CStateActorAddr,
-    /// SessionManager actor address for network communication (pure actor approach)
-    pub session_manager: Addr<SessionManager>,
+    /// Builder for CState component
+    pub cstate_builder: CStateBuilder,
+    /// PeerManager for network communication shared across actors
+    pub peer_manager: Arc<Mutex<PeerManager>>,
 }
-
-type CStateActorAddr = Addr<CStateActor>;
 /// Started components (running actors).
 ///
 /// These addresses are cloned for each connection handler and will be used
@@ -55,10 +55,9 @@ pub struct StartedComponents {
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor>,
     /// Address of the running CState actor (database role)
-    pub cstate: CStateActorAddr,
-    /// SessionManager actor address for network communication (pure actor approach)
-    /// Phase 3: Components use this for Room<T> auto-registration
-    pub session_manager: Addr<SessionManager>,
+    pub cstate: Addr<CStateActor>,
+    /// PeerManager for network communication shared across actors
+    pub peer_manager: Arc<Mutex<PeerManager>>,
 }
 
 // Per-connection handler for collector connections
@@ -69,15 +68,15 @@ pub struct DatabaseService {
 }
 
 impl DatabaseService {
-    pub fn new(config: DatabaseConfig) -> Result<Self> {
+    pub fn new(config: DatabaseConfig) -> Result<Self, DatabaseError> {
         config.validate()?;
         Ok(Self { config })
     }
 
-    pub async fn run(self) -> Result<()> {
+    pub async fn run(self) -> Result<(), DatabaseError> {
         tracing::info!("Database service starting");
 
-        // Step 1: Create builders (including the shared SessionManager)
+        // Step 1: Create builders (including PeerManagerActor)
         let builders = self.create_builders()?;
 
         // Step 2: Start components
@@ -85,8 +84,8 @@ impl DatabaseService {
 
         tracing::info!("All components started successfully");
 
-        // Step 3: Network wiring - pass session_manager and authorizer to builder-backed network
-        tracing::info!("Starting network wiring with shared SessionManager");
+        // Step 3: Network wiring - pass peer_manager and authorizer to builder-backed network
+        tracing::info!("Starting network wiring with PeerManagerActor");
 
         // Build TLS configuration for the transport server (if enabled)
         let tls_cfg = if let Some(tls) = &self.config.tls {
@@ -113,7 +112,7 @@ impl DatabaseService {
     /// Build TLS configuration for the transport layer (TcpTransportServer)
     pub fn build_transport_tls_config(
         tls: &DatabaseTlsConfig,
-    ) -> Result<Option<zznet_transport_tcp::config::TlsConfig>> {
+    ) -> Result<Option<zznet_transport_tcp::config::TlsConfig>, DatabaseError> {
         use std::path::PathBuf;
         use zznet_transport_tcp::config::{TlsCertAndKey, TlsConfig};
 
@@ -133,136 +132,10 @@ impl DatabaseService {
         Ok(Some(tcfg))
     }
 
-    fn create_connection_manager(
-        &self,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager> {
-        use zznet_session::SessionManager;
-        use zznet_session::types::RoomId;
-
-        // FIXME(deavid): This file needs cleanup, it needs to properly use zznet-builder for everything and stop re-implementing stuff.
-        // .. -   Both `CollectorService` and `DatabaseService` contain their own logic for creating a `ConnectionManager`,
-        //        creating an `Authorizer`, and loading TLS certificates from disk (`load_tls_config`, `build_transport_tls_config`).
-        // .. -   The `zznet-builder` crate already has methods like `.with_tls()` and `.with_connection_manager()`.
-        //        The *intent* of the builder is to abstract this setup away. The apps should be telling the builder *what* to do
-        //        (e.g., "use these cert paths"), not *how* to do it (e.g., manually loading PEM files and building `rustls::ClientConfig`).
-        // .. -   This leads to a huge amount of boilerplate code being duplicated across both application crates.
-        //        Any change to the authorization or TLS setup will now require edits in at least three places:
-        //        `zznet-builder`, `zzping-collector`, and `zzping-database`.
-
-        let offered_rooms = vec![RoomId::from("memdb"), RoomId::from("query")];
-
-        let authorizer = self.make_authorizer();
-
-        // Create SessionManager as an actor
-        let session_manager = SessionManager::new(offered_rooms.clone()).start();
-
-        Ok(
-            zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
-                session_manager,
-                authorizer,
-            ),
-        )
-    }
-
-    /// Create ConnectionManager with a provided shared SessionManager.
-    ///
-    /// This is the correct way to create ConnectionManager - it shares the SessionManager
-    /// with all components, ensuring messages flow properly.
-    fn create_connection_manager_with_session_manager(
-        &self,
-        session_manager: Addr<SessionManager>,
-    ) -> std::result::Result<Addr<zznet_hello::connection_manager::ConnectionManager>, String> {
-        let authorizer = self.make_authorizer();
-
-        Ok(
-            zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
-                session_manager,
-                authorizer,
-            )
-            // TODO: Add room handler wirer when Database-specific room handlers are implemented
-            .start(),
-        )
-    }
-
-    /// Create the authorizer closure used by the Database service.
-    fn make_authorizer(
-        &self,
-    ) -> Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<zznet_api::types::Role> + Send + Sync>
-    {
-        Box::new(|auth_ctx: &zznet_api::types::AuthContext| {
-            tracing::debug!(
-                "Database authorizer checking HELLO role: {}",
-                auth_ctx.hello_role_str
-            );
-
-            // Validate HELLO role against TLS if TLS is present
-            if let Some(ref peer_identity) = auth_ctx.peer_identity {
-                tracing::debug!(
-                    "TLS identity present: {}, validating against HELLO role",
-                    peer_identity.full_identity()
-                );
-                // Basic validation: ensure CN matches hello_role_str
-                if peer_identity.common_name != auth_ctx.hello_role_str {
-                    tracing::error!(
-                        "TLS CN mismatch: HELLO claimed '{}' but cert CN is '{}'",
-                        auth_ctx.hello_role_str,
-                        peer_identity.common_name
-                    );
-                    return None;
-                }
-            } else {
-                tracing::warn!(
-                    "Plain TCP connection - no TLS authentication, relying on HELLO role only"
-                );
-            }
-
-            match AuthRole::from_cn(&auth_ctx.hello_role_str) {
-                Ok(role) => Some(zznet_api::types::Role::new(role.as_str())),
-                Err(e) => {
-                    tracing::warn!(
-                        "Authorizer rejected HELLO role '{}' - unknown role: {}",
-                        auth_ctx.hello_role_str,
-                        e
-                    );
-                    None
-                }
-            }
-        })
-    }
-
-    /// Start ConnectionManager as an actix actor and return its address.
-    ///
-    /// This is useful for testing scenarios where you want to manually inject
-    /// transport connections or customize the connection handling.
-    pub fn start_connection_manager(
-        &self,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager> {
-        use actix::prelude::*;
-
-        // Reuse create_connection_manager() so it's used and kept in sync
-        let mgr = match self.create_connection_manager() {
-            Ok(m) => m,
-            Err(e) => panic!("Failed to create ConnectionManager: {:?}", e),
-        };
-        mgr.start()
-    }
-
-    /// Start ConnectionManager with a provided SessionManager actor
-    ///
-    /// This is the correct way to start ConnectionManager - it shares the SessionManager
-    /// with all components, ensuring messages flow properly.
-    pub fn start_connection_manager_with_session_manager(
-        &self,
-        session_manager: Addr<SessionManager>,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager> {
-        match self.create_connection_manager_with_session_manager(session_manager) {
-            Ok(addr) => addr,
-            Err(e) => panic!(
-                "Failed to create ConnectionManager with session_manager: {:?}",
-                e
-            ),
-        }
-    }
+    // ConnectionManager creation is now handled by the network module which
+    // constructs and passes a HashSet<Role> to `ConnectionManager::new()`.
+    // The previous helper and authorizer closure were removed during the
+    // authorization centralization refactor.
 
     /// Creates component builders for all database components.
     ///
@@ -276,50 +149,60 @@ impl DatabaseService {
     /// let builders = service.create_builders()?;
     /// let components = DatabaseService::start_components(builders).await?;
     /// ```
-    pub fn create_builders(&self) -> Result<ComponentBuilders> {
-        // Phase 3: Create SessionManager FIRST (before components)
-        // This is the shared message router that all components will use
-        let offered_rooms = vec![
-            zznet_session::types::RoomId::from("intent-config"),
-            zznet_session::types::RoomId::from("memdb"),
-            zznet_session::types::RoomId::from("query"),
-        ];
+    pub fn create_builders(&self) -> Result<ComponentBuilders, DatabaseError> {
+        // FIXME(audit-blocker-1): Multiple PeerManager instances violate single-source-of-truth
+        // - Currently creating separate PeerManager instances for each component
+        // - network.rs creates ANOTHER PeerManagerActor for ConnectionManager
+        // - This means components and ConnectionManager have divergent peer lifecycle state
+        // - Required fix:
+        //   1. Create ONE Arc<Mutex<PeerManager>> here
+        //   2. Wrap trait-safe interfaces (Arc<dyn PeerRegistry>) for components
+        //   3. Pass the Arc<Mutex<PeerManager>> to network.rs to wrap in PeerManagerActor
+        //   4. ConnectionManager and components will then share the same lifecycle state
+        // - See audit doc section 4.1 for details
 
-        // Create SessionManager as an actor (pure actor approach)
-        let session_manager = SessionManager::new(offered_rooms).start();
+        // Create the shared PeerManager once for the entire application
+        let peer_manager = Arc::new(Mutex::new(PeerManager::new(None)));
 
-        tracing::info!("Created shared SessionManager actor for components");
+        // Wrap shared manager behind PeerRegistry trait object for components
+        let shared_peer_registry: Arc<dyn PeerRegistry> =
+            Arc::new(SharedPeerRegistry(peer_manager.clone()));
 
-        // Create IntentConfig builder - DATABASE ROLE
+        let intent_config_router = Arc::new(Router::new(vec![], None)) as Arc<dyn MessageRouter>;
+
+        tracing::info!("Created PeerManager and Router for component communication");
+
+        // Create IntentConfig builder - database configuration
         let data_dir = std::path::PathBuf::from(&self.config.data_dir);
         let config_path = data_dir.join("intent.ron");
 
-        let intent_config = IntentConfigBuilder::new().role(IntentConfigRole::Database {
-            config_file_path: config_path,
-        });
+        let intent_config = IntentConfigBuilder::new()
+            .config_for_database(config_path)
+            .peer_manager(shared_peer_registry.clone())
+            .router(intent_config_router);
 
-        // Create MemDB actor - DATABASE ROLE
-        let memdb_actor = MemDBActor::new_with_role(MemDBRole::Database {
-            max_results_per_target: 10000,
-            persistence_path: None,
-        });
-        let memdb_addr = memdb_actor.start();
-        // Phase 3 TODO: Pass session_manager to MemDB when it has a builder
+        let memdb_router = Arc::new(Router::new(vec![], None)) as Arc<dyn MessageRouter>;
 
-        // Create CState actor - DATABASE ROLE
-        let cstate_addr = CStateBuilder::new(CStateRole::Database {
-            stale_timeout_secs: self.config.components.stale_timeout_secs,
-            max_collectors: Some(self.config.components.max_collectors),
-        })
-        // Phase 3: wire SessionManager actor Addr for auto-registration
-        .with_session_manager(session_manager.clone())
-        .build();
+        let memdb_addr = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
+            .peer_manager(shared_peer_registry.clone())
+            .router(memdb_router)
+            .build();
+
+        // Create separate instances for CState (it takes Arc<dyn Trait>)
+        let cstate_router = Arc::new(Router::new(vec![], None));
+
+        let cstate_builder = CStateBuilder::new(CStateConfig::for_database(
+            self.config.components.stale_timeout_secs,
+            Some(self.config.components.max_collectors),
+        ))
+        .peer_manager(shared_peer_registry)
+        .router(cstate_router);
 
         Ok(ComponentBuilders {
             intent_config,
             memdb_addr,
-            cstate_addr,
-            session_manager, // Phase 3: Pass SessionManager through
+            cstate_builder,
+            peer_manager,
         })
     }
 
@@ -335,18 +218,23 @@ impl DatabaseService {
     /// let builders = service.create_builders()?;
     /// let components = DatabaseService::start_components(builders).await?;
     /// ```
-    pub async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
+    pub async fn start_components(
+        builders: ComponentBuilders,
+    ) -> Result<StartedComponents, DatabaseError> {
         // Start IntentConfig
         let intent_addr = builders
             .intent_config
             .start()
             .map_err(|e| DatabaseError::Component(format!("IntentConfig start failed: {}", e)))?;
 
+        // Start CState
+        let cstate_addr = builders.cstate_builder.build();
+
         Ok(StartedComponents {
             intent_config: intent_addr,
             memdb_addr: builders.memdb_addr,
-            cstate: builders.cstate_addr,
-            session_manager: builders.session_manager, // Phase 3: Pass SessionManager through
+            cstate: cstate_addr,
+            peer_manager: builders.peer_manager,
         })
     }
 
@@ -354,7 +242,7 @@ impl DatabaseService {
     ///
     /// This is a convenience method that combines `create_builders()` and `start_components()`.
     /// Useful for simple scenarios where you don't need to customize builder configuration.
-    pub async fn start_all_components(&self) -> Result<StartedComponents> {
+    pub async fn start_all_components(&self) -> Result<StartedComponents, DatabaseError> {
         let builders = self.create_builders()?;
         Self::start_components(builders).await
     }

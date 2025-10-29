@@ -23,8 +23,8 @@ tracing.workspace = true
 bincode.workspace = true
 thiserror.workspace = true
 log.workspace = true
-zznet-session.workspace = true
 zznet-auth.workspace = true
+zznet-api.workspace = true
 zznet-room.workspace = true
 zzping-auth.workspace = true
 

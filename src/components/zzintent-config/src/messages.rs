@@ -40,9 +40,13 @@ impl IntentConfigData {
 }
 
 /// A command message sent to the actor to update the configuration.
+/// Includes the peer ID that requested the config change.
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct UpdateConfig(pub IntentConfigData);
+pub struct UpdateConfig {
+    pub data: IntentConfigData,
+    pub peer_id: Option<u64>,
+}
 
 /// A command message for another actor to subscribe to config updates.
 /// The recipient's address for receiving broadcasts is included.
@@ -109,7 +113,7 @@ pub struct GetRoomHandlerForSessionManager;
 /// Response containing a RoomHandle trait object for SessionManager.
 pub struct GetRoomHandlerResponse {
     /// A RoomHandle that SessionManager can use to route messages to this actor
-    pub handler: Box<dyn zznet_session::peer_session::RoomHandle>,
+    pub handler: Box<dyn zznet_room::room_handle::RoomHandle>,
 }
 
 #[cfg(test)]
@@ -163,19 +167,6 @@ mod tests {
     }
 }
 
-/// Internal message: Process authorization result for config change request (Phase 3)
-///
-/// This message is sent internally after querying SessionManager for peer role.
-/// It's not part of the public API. It intentionally carries no role or
-/// permission information — the network boundary is responsible for
-/// authorization decisions. The component simply receives the processed
-/// request and acts on it.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub(crate) struct ProcessRequestConfigChangeAuth {
-    pub sender_peer_id: String,
-    pub targets: Vec<IpAddr>,
-    pub ping_rate_pps: u64,
-    /// Non-generic SessionManager address
-    pub session_manager: actix::Addr<zznet_session::session_manager::SessionManager>,
-}
+// Deprecated message removed in Phase 8 (used SessionManager which no longer exists)
+// ProcessRequestConfigChangeAuth was never actually used in the migration
+// Use NetworkConfigChangeRequest with PeerManagerActor instead

@@ -74,7 +74,8 @@ impl MockConnection {
     /// # use zznet_api::error::TransportError;
     /// # use zznet_api::transport::TransportConnection;
     /// # use bytes::Bytes;
-    /// # tokio_test::block_on(async {
+    /// # let rt = tokio::runtime::Runtime::new().unwrap();
+    /// # rt.block_on(async {
     /// let (mut conn_a, mut conn_b) = create_mock_pair("test");
     /// conn_a.inject_error(TransportError::Timeout).await;
     /// let result = conn_a.recv().await;
@@ -151,7 +152,8 @@ impl TransportConnection for MockConnection {
 /// # use zznet_api::mock::create_mock_pair;
 /// # use zznet_api::transport::TransportConnection;
 /// # use bytes::Bytes;
-/// # tokio_test::block_on(async {
+/// # let rt = tokio::runtime::Runtime::new().unwrap();
+/// # rt.block_on(async {
 /// let (mut conn_a, mut conn_b) = create_mock_pair("test");
 ///
 /// // Send from A to B

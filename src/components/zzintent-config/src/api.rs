@@ -32,7 +32,10 @@ impl IntentConfigApi for Addr<IntentConfigActor> {
     /// Translates the `update_config` method call into a `do_send` of an `UpdateConfig` message.
     fn update_config(&self, config: IntentConfigData) {
         // `do_send` is used for "tell" patterns where no response is needed.
-        self.do_send(UpdateConfig(config));
+        self.do_send(UpdateConfig {
+            data: config,
+            peer_id: None,
+        });
     }
 
     /// Translates the `get_current_config` method call into a `send` of a `GetCurrentConfig` message.

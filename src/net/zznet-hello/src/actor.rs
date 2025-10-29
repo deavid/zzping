@@ -122,15 +122,17 @@ pub struct HelloActor {
     state: ActorState,
     /// Active rooms negotiated during handshake.
     active_rooms: Vec<String>,
+    // FIXME: peer_role MUST NOT be an Option<T>, it is mandatory.
     /// Peer's role string received during handshake (CN from certificate).
     peer_role: Option<String>,
+    // TODO: why do we need to store peer_identity? This seems breaking an abstraction.
     /// Peer's cryptographic identity from transport (None for plain TCP).
     peer_identity: zznet_api::types::PeerIdentity,
     /// Sender to I/O task for outbound frames.
     io_tx: mpsc::UnboundedSender<Bytes>,
-    /// Optional SessionManager recipient (for integration with higher layer).
+    /// Optional SessionManager recipient (for integration with higher layer). - FIXME: Why is this optional? it doesn't make sense
     session_manager: Option<Recipient<HandshakeComplete>>,
-    /// Channel to forward inbound messages to ConnectionManager.
+    /// Channel to forward inbound messages to ConnectionManager. - TODO: Investigate if the Option is really needed, if it makes real sense.
     inbound_tx: Option<tokio::sync::mpsc::Sender<(String, Vec<u8>)>>,
 }
 

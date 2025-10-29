@@ -1,0 +1,25 @@
+[package]
+name = "zznet-router"
+version = { workspace = true }
+edition = { workspace = true }
+
+[dependencies]
+# Async runtime
+tokio = { workspace = true, features = ["sync", "macros"] }
+
+# Logging
+tracing = { workspace = true }
+
+# Internal dependencies
+zznet-api = { workspace = true }
+zznet-room = { workspace = true }
+# Async trait helper macro for channel abstraction
+async-trait.workspace = true
+# Phase 2 will add: actix, bytes, zznet-api
+
+[dev-dependencies]
+# Phase 2 will add: tokio-test
+
+[lints]
+# This makes the crate inherit all lints defined in [workspace.lints]
+workspace = true

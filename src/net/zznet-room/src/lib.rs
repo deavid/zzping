@@ -27,8 +27,20 @@ pub mod connector;
 /// Typed in-memory room abstraction for local component messaging.
 pub mod room;
 
+/// Room message trait shared with components.
+pub mod room_message_trait;
+
+/// Type-erased handle used by the router to manage rooms.
+pub mod room_handle;
+
+/// Adapter that bridges `Room<T>` channels with the router.
+pub mod room_adapter;
+
 // Export public types
 pub use room::{Room, RoomChannels, RoomError, RoomRegistry, SendError};
+pub use room_adapter::RoomAdapter;
+pub use room_handle::RoomHandle;
+pub use room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
 
 #[cfg(test)]
 mod tests;

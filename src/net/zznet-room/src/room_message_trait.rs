@@ -1,11 +1,11 @@
 //! Room message trait and related types
 //!
 //! This module defines the trait that application-defined message enums must implement
-//! to work with PeerSession and SessionManager.
+//! to work with the network framework.
 
-use crate::types::RoomId;
 use std::error::Error as StdError;
 use std::fmt;
+use zznet_api::types::RoomId;
 
 /// Error during message serialization
 #[derive(Debug)]
@@ -63,7 +63,7 @@ impl StdError for DeserializationError {}
 
 /// Trait that application-defined message enums must implement
 ///
-/// This trait enables PeerSession and SessionManager to work with any application's
+/// This trait enables the network framework to work with any application's
 /// message enum while maintaining type safety and allowing different applications to
 /// have different enum definitions.
 pub trait RoomMessageTrait: Clone + Send + Sync + Unpin + std::fmt::Debug + 'static {

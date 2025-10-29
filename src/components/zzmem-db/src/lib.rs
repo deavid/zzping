@@ -9,20 +9,30 @@
 //!
 //! ## Architecture
 //!
-//! The component follows the ZZNet architecture where the same code handles
-//! both sides of network communication, configured with different roles.
+//! The component follows the three-actor pattern:
+//! - **MainActor** (MemDBActor): Pure business logic, zero network dependencies
+//! - **NetworkManager**: Peer lifecycle orchestration and message routing
+//! - **NetworkActor**: Per-peer protocol translation
 //!
 //! ## Rooms
 //!
 //! This component communicates over the "memdb" room using `MemDBMessage` types.
 
-/// Actor implementation for the MemDB component
+/// Actor implementation for the MemDB component (MainActor)
 pub mod actor;
-/// Internal actor messages
+/// Builder for creating MemDBActor with three-actor pattern
+pub mod builder;
+/// Fine-grained configuration (replaces role enum)
+pub mod config;
+/// Internal messages for three-actor communication
+pub mod internal_messages;
+/// Internal actor messages (legacy, API messages)
 pub mod messages;
+/// NetworkActor - per-peer protocol translation
+pub mod network_actor;
+/// NetworkManager - peer lifecycle and routing
+pub mod network_manager;
 /// Network protocol messages
 pub mod network_messages;
-/// Role-based configuration
-pub mod role;
 /// Storage backend for Database role
 pub mod storage;

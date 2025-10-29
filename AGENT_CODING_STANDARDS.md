@@ -205,8 +205,8 @@ This is the most important section. The goal of documentation is to explain the 
 *   **Rule:** Public APIs should be imported from their defining module, not from `lib.rs` re-exports.
 *   **Example:**
     *   ✅ `use zznet_session::types::{PeerId, RoomId};`
-    *   ✅ `use zznet_session::session_manager::SessionManager;`
-    *   ❌ `use zznet_session::{PeerId, RoomId, SessionManager};`
+    *   ✅ `use zznet_peer_manager::actor::PeerManagerActor;`
+    *   ❌ `use zznet_session::{PeerId, RoomId};`
 
 ## 8. Common Anti-Patterns to Avoid
 

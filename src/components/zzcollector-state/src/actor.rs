@@ -1,12 +1,26 @@
 //! The core actor implementation for the `zzcollector-state` component.
+//!
+//! This is the MainActor in the three-actor pattern. It contains ONLY business logic:
+//! - Collector state tracking
+//! - Database collector registry
+//! - Health metrics and counters
+//! - Timer-based operations
+//!
+//! Network concerns are handled by:
+//! - CStateNetworkManager (peer lifecycle orchestration)
+//! - CStateNetworkActor (per-peer protocol translation)
 
 use crate::{
+    config::CStateConfig,
+    internal_messages::{
+        BroadcastHeartbeat, InboundCollectorList, InboundHeartbeat, InboundHeartbeatAck,
+        InboundQueryCollectors, InboundRegistrationRejected, InboundUnauthorized,
+        SendCollectorList, SendHeartbeatAck, SendRegistrationRejected, SetNetworkManager,
+    },
     messages::{
         CStateError, CStateHealth, ForceHeartbeat, GetCollectorState, GetHealth,
-        UpdateHealthMetrics, WrappedCStateMessage,
+        UpdateHealthMetrics,
     },
-    network_messages::CStateMessage,
-    role::CStateRole,
     state::{CollectorStateData, DatabaseStateData, TrackedCollector},
 };
 use actix::prelude::*;
@@ -19,82 +33,78 @@ use std::{
     time::Duration,
 };
 use tokio_stream::wrappers::IntervalStream;
-use zznet_room::room::Room;
-use zznet_session::SessionManager;
 
 /// The main actor for the `zzcollector-state` component.
 ///
-/// This actor manages the state of a collector instance, including its identity,
-/// health, and registration with a database. It can be configured to run in
-/// one of three roles: `Collector`, `Database`, or `Admin`.
+/// This is the MainActor in the three-actor pattern. It contains ONLY business logic:
+/// - Collector state management (CollectorStateData)
+/// - Database collector registry (DatabaseStateData)
+/// - Health counters (heartbeats_sent, heartbeats_acked, heartbeats_failed)
+/// - Timer-based operations (heartbeat interval, stale cleanup)
+///
+/// Network communication is delegated to CStateNetworkManager.
 pub struct CStateActor {
-    /// The configured operational role for this actor instance.
-    role: CStateRole,
-    /// Optional SessionManager address used for auto-registration.
-    session_manager: Option<actix::Addr<SessionManager>>,
+    /// The configured operational configuration for this actor instance.
+    config: CStateConfig,
+
+    /// Collector state (populated when role is Collector).
     collector_state: Option<CollectorStateData>,
+
+    /// Database state (populated when role is Database).
     database_state: Option<DatabaseStateData>,
-    // health counters
+
+    /// Health counter: total heartbeats sent.
     heartbeats_sent: Arc<AtomicU64>,
+
+    /// Health counter: total heartbeats acknowledged.
     heartbeats_acked: Arc<AtomicU64>,
+
+    /// Health counter: total heartbeats that failed to send.
     heartbeats_failed: Arc<AtomicU64>,
 
-    /// Room instance for component-to-component messaging
-    /// Auto-registered with SessionManager if created via builder.with_session_manager()
-    room: Option<Room<CStateMessage>>,
+    /// Link to NetworkManager for sending outbound messages.
+    /// Set via SetNetworkManager message after actor creation.
+    network_manager: Option<Addr<crate::network_manager::CStateNetworkManager>>,
 }
 
 impl CStateActor {
     /// Creates a new `CStateActor`.
     ///
-    /// The session_manager parameter is used when the component
-    /// is started with auto-registration. The role determines which
-    /// internal state is populated (collector or database).
-    pub fn new(role: CStateRole, session_manager: Option<actix::Addr<SessionManager>>) -> Self {
+    /// The role determines which internal state is populated (collector or database).
+    /// The network_manager will be set later via SetNetworkManager message.
+    pub fn new(config: CStateConfig) -> Self {
         let mut actor = Self {
-            role,
-            session_manager,
+            config,
             collector_state: None,
             database_state: None,
             heartbeats_sent: Arc::new(AtomicU64::new(0)),
             heartbeats_acked: Arc::new(AtomicU64::new(0)),
             heartbeats_failed: Arc::new(AtomicU64::new(0)),
-            room: None,
+            network_manager: None,
         };
+        // Initialize config-specific state
+        if let Some(collector_id) = &actor.config.collector_id {
+            actor.collector_state = Some(CollectorStateData::new(collector_id.clone()));
+        }
 
-        // Initialize role-specific state
-        match &actor.role {
-            CStateRole::Collector { collector_id, .. } => {
-                actor.collector_state = Some(CollectorStateData::new(collector_id.clone()));
-            }
-            CStateRole::Database {
-                stale_timeout_secs,
-                max_collectors,
-            } => {
-                let mut db = DatabaseStateData::default();
-                db.stale_timeout_secs = *stale_timeout_secs;
-                db.max_collectors = *max_collectors;
-                actor.database_state = Some(db);
-            }
-            CStateRole::Admin => {
-                // nothing special to initialize
-            }
+        if actor.config.track_collectors {
+            actor.database_state = Some(DatabaseStateData {
+                stale_timeout_secs: actor.config.stale_timeout_secs,
+                max_collectors: actor.config.max_collectors,
+                ..Default::default()
+            });
         }
 
         actor
     }
 
-    /// Sets the room for this actor.
-    pub fn with_room(mut self, room: Room<CStateMessage>) -> Self {
-        self.room = Some(room);
-        self
-    }
-
-    /// Sends a heartbeat message using the room.
+    /// Sends a heartbeat by notifying the NetworkManager to broadcast.
+    ///
+    /// This triggers the NetworkManager to send the heartbeat to all connected peers.
     fn send_heartbeat(&mut self, _ctx: &mut Context<Self>) -> Result<(), CStateError> {
-        if let Some(room) = &self.room {
+        if let Some(network_manager) = &self.network_manager {
             if let Some(state) = &mut self.collector_state {
-                let msg = CStateMessage::Heartbeat {
+                let msg = BroadcastHeartbeat {
                     collector_id: state.collector_id.clone(),
                     uptime_secs: state.start_time.elapsed().as_secs(),
                     pings_sent: state.pings_sent,
@@ -104,12 +114,7 @@ impl CStateActor {
                     connection_nonce: state.connection_nonce,
                 };
 
-                let sender = room.typed_sender();
-                actix::spawn(async move {
-                    if let Err(e) = sender.send(msg).await {
-                        warn!("Failed to send heartbeat: {}", e);
-                    }
-                });
+                network_manager.do_send(msg);
 
                 self.heartbeats_sent.fetch_add(1, Ordering::Relaxed);
                 state.last_heartbeat_sent_ms = std::time::SystemTime::now()
@@ -117,6 +122,9 @@ impl CStateActor {
                     .unwrap_or_default()
                     .as_millis() as u64;
             }
+        } else {
+            warn!("send_heartbeat called but NetworkManager not set");
+            return Err(CStateError::NotConnected);
         }
         Ok(())
     }
@@ -129,22 +137,21 @@ impl Actor for CStateActor {
         info!("CStateActor started");
 
         // If configured as a Collector, start heartbeat interval.
-        if let CStateRole::Collector {
-            heartbeat_interval_ms,
-            ..
-        } = &self.role
+        if let Some(heartbeat_interval_ms) = self
+            .config
+            .collector_id
+            .as_ref()
+            .map(|_| self.config.heartbeat_interval_ms)
+            && heartbeat_interval_ms > 0
         {
-            let interval = Duration::from_millis(*heartbeat_interval_ms);
+            let interval = Duration::from_millis(heartbeat_interval_ms);
             ctx.add_stream(IntervalStream::new(tokio::time::interval(interval)));
         }
 
-        // If configured as a Database, periodically run stale-checks (half the stale timeout)
-        if let CStateRole::Database {
-            stale_timeout_secs, ..
-        } = &self.role
-        {
+        // If configured to track collectors (database-like), periodically run stale-checks
+        if self.config.track_collectors {
             // check interval = half of stale timeout, minimum 1s
-            let check = std::cmp::max(1, stale_timeout_secs / 2);
+            let check = std::cmp::max(1, self.config.stale_timeout_secs / 2);
             let interval = Duration::from_secs(check);
             ctx.run_interval(interval, |_act, ctx| {
                 ctx.address()
@@ -175,145 +182,185 @@ impl Handler<ForceHeartbeat> for CStateActor {
     }
 }
 
-impl Handler<WrappedCStateMessage> for CStateActor {
+// ============================================================================
+// Inbound Message Handlers (NetworkActor → MainActor)
+// ============================================================================
+
+impl Handler<InboundHeartbeat> for CStateActor {
     type Result = ();
 
-    fn handle(&mut self, msg: WrappedCStateMessage, _ctx: &mut Context<Self>) {
-        match &self.role {
-            CStateRole::Database { .. } => {
-                if let Some(state) = &mut self.database_state {
-                    match msg.message {
-                        CStateMessage::Heartbeat {
-                            collector_id,
-                            uptime_secs,
-                            pings_sent,
-                            pings_received,
-                            batches_sent,
-                            connection_nonce,
-                            last_config_update_ms,
-                        } => {
-                            debug!("Received heartbeat from collector: {}", collector_id);
-                            // Enforce max_collectors policy if configured: reject new registrations
-                            let mut reject = false;
-                            if let Some(max) = state.max_collectors
-                                && state.collectors.len() >= max
-                            {
-                                reject = true;
-                            }
+    fn handle(&mut self, msg: InboundHeartbeat, _ctx: &mut Context<Self>) {
+        // Only database-like configurations process heartbeats
+        if !self.config.track_collectors {
+            warn!("Received heartbeat but not configured to track collectors");
+            return;
+        }
 
-                            if reject {
-                                // Send rejection message back to collector
-                                if let Some(room) = &self.room {
-                                    let sender = room.typed_sender();
-                                    let rejection = CStateMessage::RegistrationRejected {
-                                        reason: format!(
-                                            "Database at capacity (max {})",
-                                            state.max_collectors.unwrap()
-                                        ),
-                                    };
-                                    actix::spawn(async move {
-                                        let _ = sender.send(rejection).await;
-                                    });
-                                }
-                            } else {
-                                // Register or update collector
-                                let collector = state
-                                    .collectors
-                                    .entry(collector_id.clone())
-                                    .or_insert_with(|| {
-                                        info!("Registered new collector: {}", collector_id);
-                                        TrackedCollector::new(
-                                            collector_id.clone(),
-                                            connection_nonce,
-                                        )
-                                    });
+        if let Some(state) = &mut self.database_state {
+            debug!("Received heartbeat from collector: {}", msg.collector_id);
 
-                                collector.update_heartbeat(
-                                    uptime_secs,
-                                    pings_sent,
-                                    pings_received,
-                                    batches_sent,
-                                    last_config_update_ms,
-                                );
-
-                                // Send acknowledgment
-                                if let Some(room) = &self.room {
-                                    let sender = room.typed_sender();
-                                    let ack = CStateMessage::HeartbeatAck {
-                                        timestamp_ms: std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_millis()
-                                            as u64,
-                                        server_time_ms: std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap_or_default()
-                                            .as_millis()
-                                            as u64,
-                                    };
-                                    actix::spawn(async move {
-                                        let _ = sender.send(ack).await;
-                                    });
-                                }
-                            }
-                        }
-                        CStateMessage::QueryCollectors => {
-                            debug!("Received collector list query");
-                            if let Some(room) = &self.room {
-                                let sender = room.typed_sender();
-                                let collectors: Vec<crate::network_messages::CollectorInfo> = state
-                                    .collectors
-                                    .values()
-                                    .map(|c| crate::network_messages::CollectorInfo {
-                                        id: c.id.clone(),
-                                        last_seen_ms: c.last_seen_ms,
-                                        uptime_secs: c.uptime_secs,
-                                        pings_sent: c.pings_sent,
-                                        pings_received: c.pings_received,
-                                        connection_nonce: c.connection_nonce,
-                                    })
-                                    .collect();
-
-                                let response = CStateMessage::CollectorList { collectors };
-                                actix::spawn(async move {
-                                    let _ = sender.send(response).await;
-                                });
-                            }
-                        }
-                        _ => {
-                            warn!("Database received unexpected message type");
-                        }
-                    }
-                }
+            // Enforce max_collectors policy: reject new registrations if at capacity
+            let mut reject = false;
+            if let Some(max) = state.max_collectors
+                && !state.collectors.contains_key(&msg.collector_id)
+                && state.collectors.len() >= max
+            {
+                reject = true;
             }
-            CStateRole::Collector { .. } => {
-                if let Some(state) = &mut self.collector_state {
-                    match msg.message {
-                        CStateMessage::HeartbeatAck {
-                            timestamp_ms,
-                            server_time_ms,
-                        } => {
-                            debug!(
-                                "Received heartbeat ack: timestamp={}, server_time={}",
-                                timestamp_ms, server_time_ms
-                            );
-                            self.heartbeats_acked.fetch_add(1, Ordering::Relaxed);
-                            state.last_heartbeat_ack_ms = timestamp_ms;
-                        }
-                        CStateMessage::RegistrationRejected { reason } => {
-                            warn!("Registration rejected: {}", reason);
-                        }
-                        _ => {
-                            warn!("Collector received unexpected message type");
-                        }
-                    }
+
+            if reject {
+                // Send rejection via NetworkManager
+                if let Some(network_manager) = &self.network_manager {
+                    network_manager.do_send(SendRegistrationRejected {
+                        peer_id: msg.peer_id,
+                        reason: format!(
+                            "Database at capacity (max {})",
+                            state.max_collectors.unwrap()
+                        ),
+                    });
                 }
-            }
-            CStateRole::Admin => {
-                // Admin can receive any messages for monitoring
-                debug!("Admin received message: {:?}", msg.message);
+            } else {
+                // Register or update collector
+                let collector = state
+                    .collectors
+                    .entry(msg.collector_id.clone())
+                    .or_insert_with(|| {
+                        info!("Registered new collector: {}", msg.collector_id);
+                        TrackedCollector::new(msg.collector_id.clone(), msg.connection_nonce)
+                    });
+
+                collector.update_heartbeat(
+                    msg.uptime_secs,
+                    msg.pings_sent,
+                    msg.pings_received,
+                    msg.batches_sent,
+                    msg.last_config_update_ms,
+                );
+
+                // Send acknowledgment via NetworkManager
+                if let Some(network_manager) = &self.network_manager {
+                    network_manager.do_send(SendHeartbeatAck {
+                        peer_id: msg.peer_id,
+                        timestamp_ms: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
+                        server_time_ms: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis() as u64,
+                    });
+                }
             }
         }
+    }
+}
+
+impl Handler<InboundHeartbeatAck> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: InboundHeartbeatAck, _ctx: &mut Context<Self>) {
+        // Only collector-configured instances process acks
+        if self.config.collector_id.is_none() {
+            return;
+        }
+
+        if let Some(state) = &mut self.collector_state {
+            debug!(
+                "Received heartbeat ack: timestamp={}, server_time={}",
+                msg.timestamp_ms, msg.server_time_ms
+            );
+            self.heartbeats_acked.fetch_add(1, Ordering::Relaxed);
+            state.last_heartbeat_ack_ms = msg.timestamp_ms;
+        }
+    }
+}
+
+impl Handler<InboundQueryCollectors> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: InboundQueryCollectors, _ctx: &mut Context<Self>) {
+        // Only database-like configurations can respond to queries
+        if !self.config.track_collectors {
+            warn!("Received QueryCollectors but not configured to track collectors");
+            return;
+        }
+
+        if let Some(state) = &self.database_state {
+            debug!("Received collector list query from peer: {:?}", msg.peer_id);
+
+            let collectors: Vec<crate::network_messages::CollectorInfo> = state
+                .collectors
+                .values()
+                .map(|c| crate::network_messages::CollectorInfo {
+                    id: c.id.clone(),
+                    last_seen_ms: c.last_seen_ms,
+                    uptime_secs: c.uptime_secs,
+                    pings_sent: c.pings_sent,
+                    pings_received: c.pings_received,
+                    connection_nonce: c.connection_nonce,
+                })
+                .collect();
+
+            // Send response via NetworkManager
+            if let Some(network_manager) = &self.network_manager {
+                network_manager.do_send(SendCollectorList {
+                    peer_id: msg.peer_id,
+                    collectors,
+                });
+            }
+        }
+    }
+}
+
+impl Handler<InboundCollectorList> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: InboundCollectorList, _ctx: &mut Context<Self>) {
+        // Collector or Admin roles can receive collector lists
+        debug!(
+            "Received collector list from peer {:?}: {} collectors",
+            msg.peer_id,
+            msg.collectors.len()
+        );
+        // For now, just log. Future: update local cache or display in UI
+    }
+}
+
+impl Handler<InboundRegistrationRejected> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: InboundRegistrationRejected, _ctx: &mut Context<Self>) {
+        warn!(
+            "Registration rejected by peer {:?}: {}",
+            msg.peer_id, msg.reason
+        );
+        // TODO: Implement retry logic or notify application layer
+    }
+}
+
+impl Handler<InboundUnauthorized> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: InboundUnauthorized, _ctx: &mut Context<Self>) {
+        warn!(
+            "Unauthorized response from peer {:?}: {}",
+            msg.peer_id, msg.reason
+        );
+        // TODO: Implement error handling or notify application layer
+    }
+}
+
+// ============================================================================
+// Setup Message Handler
+// ============================================================================
+
+impl Handler<SetNetworkManager> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: SetNetworkManager, _ctx: &mut Context<Self>) {
+        debug!("NetworkManager link established");
+        self.network_manager = Some(msg.network_manager);
     }
 }
 

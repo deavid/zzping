@@ -5,10 +5,8 @@
 
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
-use zznet_session::room_message_trait::{
-    DeserializationError, RoomMessageTrait, SerializationError,
-};
-use zznet_session::types::RoomId;
+use zznet_api::types::RoomId;
+use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
 
 /// Messages exchanged between MemDB components over the network.
 #[derive(Serialize, Deserialize, Debug, Clone, bincode::Encode, bincode::Decode, Message)]

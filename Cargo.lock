@@ -1225,7 +1225,6 @@ dependencies = [
  "zzintent-config",
  "zznet-auth",
  "zznet-room",
- "zznet-session",
  "zzping-auth",
 ]
 
@@ -2489,7 +2488,6 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-room",
- "zznet-session",
  "zzping-auth",
  "zzping-test-utils",
 ]
@@ -2514,7 +2512,6 @@ dependencies = [
  "zznet-auth",
  "zznet-hello",
  "zznet-room",
- "zznet-session",
  "zzping-auth",
  "zzping-test-utils",
 ]
@@ -2532,9 +2529,9 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "zznet-api",
  "zznet-auth",
  "zznet-room",
- "zznet-session",
  "zzping-auth",
  "zzping-test-utils",
 ]
@@ -2577,8 +2574,20 @@ dependencies = [
  "tracing",
  "zznet-api",
  "zznet-auth",
- "zznet-session",
+ "zznet-peer-manager",
+ "zznet-room",
+ "zznet-router",
  "zznet-transport-tcp",
+]
+
+[[package]]
+name = "zznet-peer-manager"
+version = "0.3.0-dev"
+dependencies = [
+ "actix",
+ "tokio",
+ "tracing",
+ "zznet-api",
 ]
 
 [[package]]
@@ -2591,22 +2600,18 @@ dependencies = [
  "thiserror 2.0.17",
  "tokio",
  "tracing",
+ "zznet-api",
  "zznet-auth",
 ]
 
 [[package]]
-name = "zznet-session"
+name = "zznet-router"
 version = "0.3.0-dev"
 dependencies = [
- "actix",
  "async-trait",
- "bincode",
- "serde",
- "thiserror 2.0.17",
  "tokio",
  "tracing",
  "zznet-api",
- "zznet-auth",
  "zznet-room",
 ]
 
@@ -2648,6 +2653,7 @@ dependencies = [
  "actix",
  "actix-rt",
  "anyhow",
+ "async-trait",
  "bincode",
  "chrono",
  "clap",
@@ -2669,8 +2675,9 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-hello",
+ "zznet-peer-manager",
  "zznet-room",
- "zznet-session",
+ "zznet-router",
  "zznet-transport-tcp",
  "zzping-auth",
  "zzpinger",
@@ -2683,6 +2690,7 @@ dependencies = [
  "actix",
  "actix-rt",
  "anyhow",
+ "async-trait",
  "bincode",
  "chrono",
  "clap",
@@ -2704,8 +2712,9 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-hello",
+ "zznet-peer-manager",
  "zznet-room",
- "zznet-session",
+ "zznet-router",
  "zznet-transport-tcp",
  "zzping-auth",
  "zzping-collector",
@@ -2719,7 +2728,7 @@ dependencies = [
  "tokio",
  "zznet-api",
  "zznet-auth",
- "zznet-session",
+ "zznet-room",
 ]
 
 [[package]]

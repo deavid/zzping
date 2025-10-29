@@ -12,10 +12,10 @@ name = "zzping_test_utils"
 path = "src/lib.rs"
 
 [dependencies]
-zznet-session.workspace = true
 tokio.workspace = true
 zznet-auth.workspace = true
 zznet-api.workspace = true
+zznet-room.workspace = true
 
 [dev-dependencies]
 # none

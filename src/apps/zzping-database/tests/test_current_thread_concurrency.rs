@@ -3,7 +3,7 @@
 //!
 //! This validates that we CAN use current_thread runtime for Phase 7 E2E tests
 //! because:
-//! - spawn_local() works (needed by SessionManager)
+//! - spawn_local() works (needed by Actix actors)
 //! - time mocking works (needed for deterministic tests)
 //! - async concurrency works (services run concurrently)
 //! - No OS threads needed (single thread is fine)

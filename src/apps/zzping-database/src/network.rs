@@ -1,10 +1,12 @@
 use crate::service::StartedComponents;
-use actix::Actor; // For .start() method
+use actix::Actor;
+use std::collections::HashSet;
 use std::time::Duration;
 use zznet_api::transport::TransportServer;
-use zznet_auth::ApplicationRole; // For from_cn() method
+use zznet_auth::ApplicationRole;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
+use zznet_peer_manager::PeerManagerActor;
 use zznet_transport_tcp::config::TlsConfig;
 use zznet_transport_tcp::server::TcpTransportServer;
 use zzping_auth::AuthRole;
@@ -13,7 +15,7 @@ use zzping_auth::AuthRole;
 ///
 /// This implementation:
 /// - Uses TcpTransportServer directly (no ServerBuilder)
-/// - Creates ConnectionManager with shared SessionManager
+/// - Creates ConnectionManager with PeerManagerActor
 /// - Components auto-register via Room<T> pattern
 /// - NO room_handler_wirer callbacks needed!
 pub struct DatabaseNetwork {
@@ -41,13 +43,13 @@ impl DatabaseNetwork {
     ///
     /// This is the vision-aligned implementation:
     /// 1. Create TcpTransportServer
-    /// 2. Create ConnectionManager with SessionManager
+    /// 2. Create ConnectionManager with PeerManagerActor
     /// 3. Accept loop: spawn HelloActor for each connection
     /// 4. HelloActor handles HELLO handshake
     /// 5. Messages flow via Room<T> channels (auto-registered by components)
     ///
     /// # Arguments
-    /// * `components` - Started component actors (contains SessionManager)
+    /// * `components` - Started component actors (contains PeerManagerActor)
     pub async fn run(&self, components: &StartedComponents) -> Result<(), String> {
         tracing::info!("Starting database network on {}", self.bind_addr);
 
@@ -58,15 +60,44 @@ impl DatabaseNetwork {
 
         tracing::info!("TCP server listening on {}", self.bind_addr);
 
-        // Step 2: Create authorizer for HELLO authentication
-        let authorizer = create_database_authorizer();
+        // Step 2: Create allowed-roles set for HELLO authentication
+        // The ConnectionManager provides a convenience constructor that
+        // accepts a HashSet<zznet_api::types::Role> and builds an internal
+        // authorizer which validates TLS CN (if present) and checks the
+        // allowed roles. Database accepts connections from collectors and
+        // clients (read-only/admin) per AuthRole::can_connect_to policy.
+        let mut allowed_roles = HashSet::new();
+        allowed_roles.insert(zznet_api::types::Role::new(AuthRole::Collector.as_str()));
+        allowed_roles.insert(zznet_api::types::Role::new(AuthRole::ClientRo.as_str()));
+        allowed_roles.insert(zznet_api::types::Role::new(AuthRole::ClientAdmin.as_str()));
 
-        // Step 3: Get SessionManager from components
-        let session_manager = components.session_manager.clone();
+        // Step 3: Spawn a PeerManagerActor that wraps the shared PeerManager
+        // so ConnectionManager and components observe the same lifecycle state.
+        let peer_manager_actor =
+            PeerManagerActor::with_shared_manager(components.peer_manager.clone()).start();
+
+        // FIXME(audit-blocker-2): Router.register_peer() not wired after HELLO handshake
+        // - ConnectionManager.room_handler_wirer signature was changed to accept PeerChannels
+        // - This allows registration of peer channels with Router after handshake completes
+        // - However, no Router instance is available here to register with
+        // - Required: Create a shared Router in service.rs, pass it here, wire registration
+        // - Implementation would look like:
+        //   ```
+        //   let app_router = router.clone();
+        //   let wirer = Arc::new(move |_pm, channels| {
+        //       Box::pin(async move {
+        //           app_router.register_peer(channels).await
+        //               .map_err(|e| format!("register_peer failed: {:?}", e))
+        //       })
+        //   });
+        //   connection_manager.with_room_handler_wirer(wirer);
+        //   ```
+        // - Note: Current code uses Room<T> pattern which bypasses Router, so this may not be
+        //   critical for functionality, but audit identifies it as a blocker for consistency
+        // - See audit doc section 4.2 for details
 
         // Step 4: Create ConnectionManager (manages HelloActors)
-        let connection_manager =
-            ConnectionManager::new_with_session_manager(session_manager.clone(), authorizer);
+        let connection_manager = ConnectionManager::new(peer_manager_actor, allowed_roles);
 
         let connection_manager_addr = connection_manager.start();
 
@@ -94,7 +125,7 @@ impl DatabaseNetwork {
                     // ConnectionManager will:
                     // 1. Spawn HelloActor for this transport
                     // 2. Run HELLO handshake
-                    // 3. Register peer with SessionManager
+                    // 3. Register peer with PeerManagerActor
                     // 4. Route messages to components via Room<T>
                     let handle_msg = HandleTransport {
                         transport,
@@ -121,53 +152,6 @@ impl DatabaseNetwork {
     }
 }
 
-/// Create the authorizer function for database connections
-///
-/// This validates HELLO role against TLS certificate and maps to AuthRole.
-fn create_database_authorizer()
--> Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<zznet_api::types::Role> + Send + Sync> {
-    Box::new(|auth_ctx: &zznet_api::types::AuthContext| {
-        tracing::debug!(
-            "Database authorizer checking HELLO role: {}",
-            auth_ctx.hello_role_str
-        );
-
-        // Validate HELLO role against TLS if TLS is present
-        if let Some(ref peer_identity) = auth_ctx.peer_identity {
-            tracing::debug!(
-                "TLS identity present: {}, validating against HELLO role",
-                peer_identity.full_identity()
-            );
-
-            // Basic validation: ensure CN matches hello_role_str
-            if peer_identity.common_name != auth_ctx.hello_role_str {
-                tracing::error!(
-                    "TLS CN mismatch: HELLO claimed '{}' but cert CN is '{}'",
-                    auth_ctx.hello_role_str,
-                    peer_identity.common_name
-                );
-                return None;
-            }
-        } else {
-            tracing::warn!(
-                "Plain TCP connection - no TLS authentication, relying on HELLO role only"
-            );
-        }
-
-        // Map HELLO role string to AuthRole, then to canonical Role
-        match AuthRole::from_cn(&auth_ctx.hello_role_str) {
-            Ok(role) => {
-                tracing::info!("Authorized connection with role: {:?}", role);
-                Some(zznet_api::types::Role::new(role.as_str()))
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Authorizer rejected HELLO role '{}' - unknown role: {}",
-                    auth_ctx.hello_role_str,
-                    e
-                );
-                None
-            }
-        }
-    })
-}
+// Previously there was a create_database_authorizer helper here; authorization
+// is now configured by passing a HashSet<zznet_api::types::Role> into
+// ConnectionManager::new_with_allowed_roles above.

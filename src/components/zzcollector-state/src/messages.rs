@@ -4,7 +4,7 @@ use crate::network_messages::CStateMessage;
 use crate::state::CollectorStateData;
 use actix::Message;
 use thiserror::Error;
-use zznet_session::types::PeerId;
+use zznet_api::types::PeerId;
 
 /// A comprehensive error type for the `zzcollector-state` component.
 #[derive(Error, Debug)]

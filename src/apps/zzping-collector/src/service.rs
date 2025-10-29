@@ -3,7 +3,7 @@
 //! This module defines `CollectorService`, the top-level application service that
 //! configures, starts, and coordinates all collector components. Responsibilities
 //! include:
-//! - creating shared infrastructure (the `SessionManager`) and component builders
+//! - creating shared infrastructure (PeerManagerActor) and component builders
 //! - starting component actors (IntentConfig, MemDB, Pinger) and returning
 //!   `StartedComponents` for integration testing or wiring
 //! - loading and converting TLS configuration for transport-layer mTLS
@@ -24,16 +24,16 @@ use rustls::{ClientConfig, RootCertStore};
 use rustls_pemfile::{certs, pkcs8_private_keys};
 use std::fs::File;
 use std::io::BufReader;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::signal::unix::{SignalKind, signal};
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
-use zzintent_config::role::IntentConfigRole;
 use zzmem_db::actor::MemDBActor;
-use zzmem_db::role::MemDBRole;
-use zznet_auth::ApplicationRole;
-use zznet_session::session_manager::SessionManager;
-use zzping_auth::AuthRole;
+use zzmem_db::builder::MemDBBuilder;
+use zzmem_db::config::MemDBConfig;
+use zznet_api::{MessageRouter, PeerRegistry};
+use zznet_peer_manager::{PeerManager, SharedPeerRegistry};
+use zznet_router::Router;
 use zzpinger::api::PingerHandle;
 use zzpinger::builder::PingerBuilder;
 
@@ -48,21 +48,21 @@ use zzpinger::builder::PingerBuilder;
 //   2. Register factories with ClientBuilder/ServerBuilder (see `network.rs`)
 //   3. Builders automatically wire handlers on connection/reconnection
 //
-// This approach eliminates manual SessionManager locking and provides reusable,
-// testable room handler configuration. See `ROOM_REGISTRY_GUIDE.md` for details.
+// This approach provides reusable, testable room handler configuration.
+// See `ROOM_REGISTRY_GUIDE.md` for details.
 
 /// Builders for all components (before wiring)
 ///
 /// Contains the builders for each component, used internally during service initialization.
 pub struct ComponentBuilders {
-    /// Shared SessionManager actor for network integration
-    pub session_manager: actix::Addr<SessionManager>,
     /// Builder for IntentConfig component
     pub intent_config: IntentConfigBuilder,
     /// Builder for Pinger component
     pub pinger: PingerBuilder,
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor>,
+    /// Shared PeerManager for network communication (guarded for sharing)
+    pub peer_manager: Arc<Mutex<PeerManager>>,
 }
 
 /// Started components (running actors)
@@ -70,14 +70,14 @@ pub struct ComponentBuilders {
 /// Contains all the running component actors after they have been started.
 /// Useful for testing, embedding, and custom service composition.
 pub struct StartedComponents {
-    /// Shared SessionManager actor for network integration
-    pub session_manager: actix::Addr<SessionManager>,
     /// Address of the running IntentConfig actor
     pub intent_config: Addr<IntentConfigActor>,
     /// Handle to the running Pinger actor
     pub pinger: PingerHandle,
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor>,
+    /// Shared PeerManager behind a Mutex so ConnectionManager and components share state
+    pub peer_manager: Arc<Mutex<PeerManager>>,
 }
 
 #[derive(Debug)]
@@ -185,17 +185,28 @@ impl CollectorService {
     /// let components = CollectorService::start_components(builders).await?;
     /// ```
     pub fn create_builders(&self) -> Result<ComponentBuilders> {
-        // Phase 3: Create SessionManager FIRST (before components)
-        // This is the shared message router that all components will use
-        let offered_rooms = vec![
-            zznet_session::types::RoomId::from("intent-config"),
-            zznet_session::types::RoomId::from("memdb"),
-            // Collector-specific rooms as needed
-        ];
+        // FIXME(audit-blocker-1): Multiple PeerManager instances violate single-source-of-truth
+        // - Currently creating separate PeerManager instances for each component
+        // - network.rs creates ANOTHER PeerManagerActor for ConnectionManager
+        // - This means components and ConnectionManager have divergent peer lifecycle state
+        // - Required fix:
+        //   1. Create ONE Arc<Mutex<PeerManager>> here
+        //   2. Wrap trait-safe interfaces (Arc<dyn PeerRegistry>) for components
+        //   3. Pass the Arc<Mutex<PeerManager>> to network.rs to wrap in PeerManagerActor
+        //   4. ConnectionManager and components will then share the same lifecycle state
+        // - See audit doc section 4.1 for details
 
-        let session_manager = SessionManager::new(offered_rooms).start();
+        // Create the shared PeerManager once for the entire application
+        let shared_peer_manager = Arc::new(Mutex::new(PeerManager::new(None)));
 
-        tracing::info!("Created shared SessionManager actor for components");
+        // Wrap shared manager behind PeerRegistry trait object for components
+        let shared_peer_registry: Arc<dyn PeerRegistry> =
+            Arc::new(SharedPeerRegistry(shared_peer_manager.clone()));
+
+        let intent_config_router = Arc::new(Router::new(vec![], None)) as Arc<dyn MessageRouter>;
+        let memdb_router = Arc::new(Router::new(vec![], None)) as Arc<dyn MessageRouter>;
+
+        tracing::info!("Created PeerManager and Router instances for components");
 
         // FIXME(deavid): This file needs cleanup, it needs to properly use zznet-builder for everything and stop re-implementing stuff.
         // .. -   Both `CollectorService` and `DatabaseService` contain their own logic for creating a `ConnectionManager`,
@@ -207,27 +218,31 @@ impl CollectorService {
         //        Any change to the authorization or TLS setup will now require edits in at least three places:
         //        `zznet-builder`, `zzping-collector`, and `zzping-database`.
 
-        // Create IntentConfig builder with role only
-        let intent_config = IntentConfigBuilder::new().role(IntentConfigRole::Collector);
-        // Phase 3 TODO: Add .session_manager(session_manager.clone()) when IntentConfig supports it
+        // Create IntentConfig builder configured as collector and with PeerManager
+        let intent_config = IntentConfigBuilder::new()
+            .config_for_collector()
+            .peer_manager(shared_peer_registry.clone())
+            .router(intent_config_router);
 
         // Create Pinger builder
         let pinger = PingerBuilder::new().enabled(true);
 
-        // Create MemDB actor (no builder)
-        let memdb_actor = MemDBActor::new_with_role(MemDBRole::Collector {
-            buffer_size: self.config.components.memdb_batch_size,
-        });
-        let memdb_addr = memdb_actor.start();
+        // Create MemDB actor (collector configuration)
+        let memdb_addr = MemDBBuilder::new(MemDBConfig::for_collector(
+            self.config.components.memdb_batch_size,
+        ))
+        .peer_manager(shared_peer_registry.clone())
+        .router(memdb_router)
+        .build();
 
         // Wire pinger with memdb
         let pinger = pinger.memdb_addr(memdb_addr.clone());
 
         Ok(ComponentBuilders {
-            session_manager,
             intent_config,
             pinger,
             memdb_addr,
+            peer_manager: shared_peer_manager,
         })
     }
 
@@ -253,9 +268,6 @@ impl CollectorService {
     /// let components = CollectorService::start_components(builders).await?;
     /// ```
     pub async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
-        // Keep SessionManager reference before moving builders
-        let session_manager = builders.session_manager.clone();
-
         // Start IntentConfig
         let intent_addr = builders
             .intent_config
@@ -266,10 +278,10 @@ impl CollectorService {
         let pinger_handle = builders.pinger.start()?;
 
         Ok(StartedComponents {
-            session_manager,
             intent_config: intent_addr,
             pinger: pinger_handle,
             memdb_addr: builders.memdb_addr,
+            peer_manager: builders.peer_manager,
         })
     }
 
@@ -365,136 +377,10 @@ impl CollectorService {
 }
 
 impl CollectorService {
-    /// Create ConnectionManager configured with offered rooms for collector
-    fn create_connection_manager(
-        &self,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager> {
-        use zznet_session::SessionManager;
-        use zznet_session::types::RoomId;
-
-        // Collector offers intent-config related rooms
-        let offered_rooms = vec![RoomId::from("intent-config")];
-
-        // Create an authorizer using the service helper (maps to canonical Role)
-        let authorizer = self.make_authorizer();
-
-        // Create SessionManager as an actor
-        let session_manager = SessionManager::new(offered_rooms.clone()).start();
-
-        Ok(
-            zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
-                session_manager,
-                authorizer,
-            ),
-        )
-    }
-
-    /// Create ConnectionManager with a provided shared SessionManager.
-    ///
-    /// This is the correct way to create ConnectionManager - it shares the SessionManager
-    /// with all components, ensuring messages flow properly.
-    fn create_connection_manager_with_session_manager(
-        &self,
-        session_manager: actix::Addr<zznet_session::session_manager::SessionManager>,
-    ) -> Result<zznet_hello::connection_manager::ConnectionManager> {
-        let authorizer = self.make_authorizer();
-
-        Ok(
-            zznet_hello::connection_manager::ConnectionManager::new_with_session_manager(
-                session_manager,
-                authorizer,
-            ),
-        )
-    }
-
-    /// Create the authorizer closure used by the Collector service.
-    fn make_authorizer(
-        &self,
-    ) -> Box<dyn Fn(&zznet_api::types::AuthContext) -> Option<zznet_api::types::Role> + Send + Sync>
-    {
-        Box::new(|auth_ctx: &zznet_api::types::AuthContext| {
-            tracing::debug!(
-                "Collector authorizer checking HELLO role: {}",
-                auth_ctx.hello_role_str
-            );
-
-            // Validate HELLO role against TLS if TLS is present
-            if let Some(ref peer_identity) = auth_ctx.peer_identity {
-                tracing::debug!(
-                    "TLS identity present: {}, validating against HELLO role",
-                    peer_identity.full_identity()
-                );
-                // Basic validation: ensure CN matches hello_role_str
-                if peer_identity.common_name != auth_ctx.hello_role_str {
-                    tracing::error!(
-                        "TLS CN mismatch: HELLO claimed '{}' but cert CN is '{}'",
-                        auth_ctx.hello_role_str,
-                        peer_identity.common_name
-                    );
-                    return None;
-                }
-            } else {
-                tracing::warn!(
-                    "Plain TCP connection - no TLS authentication, relying on HELLO role only"
-                );
-            }
-
-            match AuthRole::from_cn(&auth_ctx.hello_role_str) {
-                Ok(role) => {
-                    tracing::debug!(
-                        "Collector authorizer resolved HELLO '{}' → {:?}",
-                        auth_ctx.hello_role_str,
-                        role
-                    );
-                    Some(zznet_api::types::Role::new(role.as_str()))
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Collector authorizer rejected HELLO role '{}' - unknown role: {}",
-                        auth_ctx.hello_role_str,
-                        e
-                    );
-                    None
-                }
-            }
-        })
-    }
-
-    /// Start ConnectionManager as an actix actor and return its address.
-    ///
-    /// This is useful for testing scenarios where you want to manually inject
-    /// transport connections or customize the connection handling.
-    pub fn start_connection_manager(
-        &self,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager> {
-        use actix::prelude::*;
-
-        let mgr = match self.create_connection_manager() {
-            Ok(m) => m,
-            Err(e) => panic!("Failed to create ConnectionManager: {:?}", e),
-        };
-        mgr.start()
-    }
-
-    /// Start ConnectionManager with a provided shared SessionManager.
-    ///
-    /// This is the correct way to start ConnectionManager - it shares the SessionManager
-    /// with all components, ensuring messages flow properly.
-    pub fn start_connection_manager_with_session_manager(
-        &self,
-        session_manager: actix::Addr<zznet_session::session_manager::SessionManager>,
-    ) -> actix::Addr<zznet_hello::connection_manager::ConnectionManager> {
-        use actix::prelude::*;
-
-        let mgr = match self.create_connection_manager_with_session_manager(session_manager) {
-            Ok(m) => m,
-            Err(e) => panic!(
-                "Failed to create ConnectionManager with session_manager: {:?}",
-                e
-            ),
-        };
-        mgr.start()
-    }
+    // ConnectionManager creation is performed by the network layer. The
+    // network module constructs the allowed-role HashSet and passes it to
+    // `ConnectionManager::new()`; the previous helper was removed as part of
+    // the authorization refactor.
 }
 #[cfg(test)]
 mod tests {
