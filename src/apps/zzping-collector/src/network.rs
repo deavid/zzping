@@ -20,7 +20,6 @@ use std::time::Duration;
 use zznet_api::transport::TransportClient;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
-use zznet_peer_manager::PeerManagerActor;
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
 

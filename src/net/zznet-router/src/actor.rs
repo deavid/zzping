@@ -99,15 +99,14 @@ impl Handler<OnPeerConnected> for RouterActor {
                         if let Ok(Some(room)) = manager
                             .create_for_peer(peer_id.clone(), permission.clone(), &room_id)
                             .await
+                            && let Err(e) = builder.add_room(room_id.clone(), room)
                         {
-                            if let Err(e) = builder.add_room(room_id.clone(), room) {
-                                tracing::warn!(
-                                    "Failed to add room {} for peer {}: {:?}",
-                                    room_id,
-                                    peer_id,
-                                    e
-                                );
-                            }
+                            tracing::warn!(
+                                "Failed to add room {} for peer {}: {:?}",
+                                room_id,
+                                peer_id,
+                                e
+                            );
                         }
                     }
                 }

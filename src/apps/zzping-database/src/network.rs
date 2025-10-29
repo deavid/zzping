@@ -6,7 +6,6 @@ use zznet_api::transport::TransportServer;
 use zznet_auth::ApplicationRole;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
-use zznet_peer_manager::PeerManagerActor;
 use zznet_transport_tcp::config::TlsConfig;
 use zznet_transport_tcp::server::TcpTransportServer;
 use zzping_auth::AuthRole;
