@@ -32,7 +32,7 @@ async fn test_router_actor_peer_lifecycle() {
     let router_actor = RouterActor::new(offered_rooms.clone(), None).start();
 
     // Create PeerManagerActor
-    let peer_manager = PeerManagerActor::new(None).start();
+    let _peer_manager = PeerManagerActor::new(None).start();
 
     // Create channels for peer connection
     let (outbound_tx, _outbound_rx) = mpsc::channel(10);

@@ -33,20 +33,6 @@ impl Default for IntentConfigActor {
 }
 
 impl IntentConfigActor {
-    /// Send initial config if T is IntentConfigPermission
-    /// Only sends if the current config is valid (not default/empty)
-    fn send_initial_if_permission_type(&self, ctx: &mut Context<Self>) {
-        // Don't send initial ConfigUpdate if config is invalid/default
-        if self.current_config.validate().is_err() {
-            log::debug!("Skipping initial ConfigUpdate - current config is invalid/default");
-            return;
-        }
-
-        self.send_config_update_to_peers_impl(ctx);
-    }
-}
-
-impl IntentConfigActor {
     /// Create a new IntentConfigActor from a config
     pub fn new(config: crate::config::IntentConfigConfig) -> Self {
         Self {
@@ -1071,90 +1057,6 @@ mod tests {
         // ASSERT: Config should remain default (file ignored)
         assert_eq!(actor.current_config, IntentConfigData::default());
         assert_ne!(actor.current_config, file_config);
-    }
-
-    // Test: Database QueryCurrentConfig broadcasts correct config data
-    #[cfg(FALSE)] // TODO Phase 7.2: Reimplement with PeerManagerActor after SessionManager removal
-    #[actix::test]
-    #[ntest::timeout(200)]
-    #[ignore] // TODO: Reimplement after Room<T> migration
-    async fn test_database_query_current_config_broadcasts_correct_data() {
-        setup();
-
-        // Create SessionManager actor and add connected peer
-        use zznet_api::types::PeerId;
-        use zznet_peer_manager::PeerState;
-
-        let mut session_manager =
-            SessionManager::new_with_limits(vec![RoomId::from("intent-config")], None, None);
-
-        // Add peer with User role
-        let peer_id = PeerId::from("peer-data-check");
-
-        // Create peer state (simplified for new architecture)
-        let peer_state = PeerState::new_connected(
-            peer_id.clone(),
-            Some(Role::new("receive-config-updates")),
-            None,
-        );
-
-        // Collect messages sent to peer
-        let (msg_tx, mut msg_rx) = tokio::sync::mpsc::channel(10);
-        tokio::spawn(async move {
-            while let Some(msg) = outbound_rx.recv().await {
-                msg_tx.send(msg).await.ok();
-            }
-        });
-
-        session_manager
-            .add_peer(peer_id.clone(), peer_session)
-            .unwrap();
-
-        // Start SessionManager as actor (Phase 3)
-        let session_manager_addr = session_manager.start();
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let config_path = temp_dir.path().join("test.ron");
-        let config = crate::config::IntentConfigConfig::for_database(config_path);
-        let mut actor = IntentConfigActor::new(config);
-        actor.set_session_manager(session_manager_addr);
-
-        // Set specific config that should be broadcast
-        let expected_targets = vec!["192.168.1.1".parse().unwrap(), "10.0.0.1".parse().unwrap()];
-        let expected_rate = 999;
-        actor.current_config = IntentConfigData {
-            targets: expected_targets.clone(),
-            ping_rate_pps: expected_rate,
-        };
-
-        let mut ctx = Context::<IntentConfigActor>::new();
-
-        // ACT: Send QueryCurrentConfig to Database
-        let query_msg = IntentConfigNetworkMsg::QueryCurrentConfig;
-        let _ = actor.handle(query_msg, &mut ctx).await;
-
-        // ASSERT: Peer received the correct CurrentConfig message
-        let received_msg =
-            tokio::time::timeout(std::time::Duration::from_millis(50), msg_rx.recv())
-                .await
-                .expect("Peer should receive CurrentConfig message")
-                .unwrap();
-
-        // Message is sent as (RoomId, Vec<u8>)
-        let (_room_id, msg_bytes) = received_msg;
-        let (actual_msg, _): (IntentConfigNetworkMsg, _) =
-            bincode::serde::decode_from_slice(&msg_bytes, bincode::config::standard())
-                .expect("Failed to decode message");
-        match actual_msg {
-            IntentConfigNetworkMsg::CurrentConfig {
-                targets,
-                ping_rate_pps,
-            } => {
-                assert_eq!(targets, expected_targets);
-                assert_eq!(ping_rate_pps, expected_rate);
-            }
-            _ => panic!("Expected CurrentConfig message, got {:?}", actual_msg),
-        }
     }
 
     // Test: Collector accepts CurrentConfig and updates its config

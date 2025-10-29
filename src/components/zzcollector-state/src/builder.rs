@@ -73,14 +73,11 @@ impl CStateBuilder {
         let actor_addr = CStateActor::create(move |_ctx| CStateActor::new(config));
 
         // Phase 7.3: Create NetworkManager if we have PeerManagerActor and RouterActor
-        if let (Some(peer_manager), Some(router_actor)) = (self.peer_manager, self.router_actor) {
+        if let (Some(peer_manager), Some(_router_actor)) = (self.peer_manager, self.router_actor) {
             log::info!("Creating CStateNetworkManager for three-actor pattern");
 
-            let mut network_manager = crate::network_manager::CStateNetworkManager::new(
-                actor_addr.clone(),
-                peer_manager,
-                router_actor,
-            );
+            let mut network_manager =
+                crate::network_manager::CStateNetworkManager::new(actor_addr.clone(), peer_manager);
 
             // Set TypedSender if provided
             if let Some(typed_sender) = self.typed_sender {

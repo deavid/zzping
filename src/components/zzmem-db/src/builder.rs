@@ -72,14 +72,11 @@ impl MemDBBuilder {
         let actor_addr = MemDBActor::create(move |_ctx| MemDBActor::new(self.config));
 
         // Phase 7.4: Create NetworkManager if we have both PeerManager and RouterActor
-        if let (Some(peer_manager), Some(router_actor)) = (self.peer_manager, self.router_actor) {
+        if let (Some(_peer_manager), Some(_router_actor)) = (self.peer_manager, self.router_actor) {
             tracing::info!("Creating MemDBNetworkManager for three-actor pattern");
 
-            let mut network_manager = crate::network_manager::MemDBNetworkManager::new(
-                actor_addr.clone(),
-                peer_manager,
-                router_actor,
-            );
+            let mut network_manager =
+                crate::network_manager::MemDBNetworkManager::new(actor_addr.clone());
 
             // Set TypedSender if provided
             if let Some(typed_sender) = self.typed_sender {

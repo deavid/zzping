@@ -44,7 +44,9 @@ impl IntentConfigData {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct UpdateConfig {
+    /// The new configuration data
     pub data: IntentConfigData,
+    /// The ID of the peer that requested the change
     pub peer_id: Option<u64>,
 }
 

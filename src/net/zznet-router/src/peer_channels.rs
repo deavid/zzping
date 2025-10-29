@@ -76,7 +76,6 @@ impl PeerChannelsBuilder {
 
         Ok(PeerChannels {
             peer_id: self.peer_id,
-            rooms,
             outbound_tx,
             inbound_broadcast: broadcast_tx,
             joined_rooms: TokioMutex::new(Vec::new()),
@@ -90,7 +89,6 @@ impl PeerChannelsBuilder {
 /// Immutable after construction; owns transport channels and routing task.
 pub struct PeerChannels {
     peer_id: PeerId,
-    rooms: SessionRooms,
     outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
     inbound_broadcast: broadcast::Sender<(RoomId, Vec<u8>)>,
     joined_rooms: TokioMutex<Vec<RoomId>>,

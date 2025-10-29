@@ -118,6 +118,7 @@ impl Actor for PeerManagerActor {
 #[derive(Message)]
 #[rtype(result = "Option<Role>")]
 pub struct GetPeerRole {
+    /// The ID of the peer to get the role for
     pub peer_id: PeerId,
 }
 
@@ -138,6 +139,7 @@ impl Handler<GetPeerRole> for PeerManagerActor {
 #[derive(Message)]
 #[rtype(result = "Option<PeerIdentity>")]
 pub struct GetPeerIdentity {
+    /// The ID of the peer to get identity for
     pub peer_id: PeerId,
 }
 
@@ -156,6 +158,7 @@ impl Handler<GetPeerIdentity> for PeerManagerActor {
 #[derive(Message)]
 #[rtype(result = "Vec<PeerId>")]
 pub struct GetPeersWithRole {
+    /// The role to filter peers by
     pub role: Role,
 }
 
@@ -186,6 +189,7 @@ impl Handler<GetPeerIds> for PeerManagerActor {
 #[derive(Message)]
 #[rtype(result = "bool")]
 pub struct IsPeerConnected {
+    /// The ID of the peer to check
     pub peer_id: PeerId,
 }
 
@@ -226,6 +230,7 @@ impl Handler<GetConnectedPeerCount> for PeerManagerActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct AddPeer {
+    /// The state of the peer to add
     pub peer_state: PeerState,
 }
 
@@ -249,8 +254,11 @@ impl Handler<AddPeer> for PeerManagerActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct ConnectPeerWithChannels {
+    /// The ID of the peer to connect
     pub peer_id: PeerId,
+    /// Sender for outbound messages to the peer
     pub outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
+    /// Receiver for inbound messages from the peer
     pub inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
 }
 
@@ -304,6 +312,7 @@ impl Handler<ConnectPeerWithChannels> for PeerManagerActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct RemovePeer {
+    /// The ID of the peer to remove
     pub peer_id: PeerId,
 }
 
@@ -324,6 +333,7 @@ impl Handler<RemovePeer> for PeerManagerActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct DisconnectPeer {
+    /// The ID of the peer to disconnect
     pub peer_id: PeerId,
 }
 

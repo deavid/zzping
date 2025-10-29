@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use zznet_api::types::PeerId;
 use zznet_peer_manager::PeerManagerActor;
 use zznet_room::room::TypedSender;
-use zznet_router::RouterActor;
 
 // Phase 6.2: Placeholder messages for backward compatibility during migration
 // TODO Phase 7.3: Remove after full PeerLifecycleEvent integration
@@ -52,9 +51,6 @@ pub struct CStateNetworkManager {
     /// Phase 7.3: Direct PeerManagerActor access for authorization and channels
     peer_manager: Addr<PeerManagerActor>,
 
-    /// RouterActor for sending messages to peers
-    router_actor: Addr<RouterActor>,
-
     /// Per-peer NetworkActor instances.
     network_actors: HashMap<PeerId, Addr<crate::network_actor::CStateNetworkActor>>,
 
@@ -69,16 +65,13 @@ impl CStateNetworkManager {
     /// # Arguments
     /// * `main_actor` - Address of the CStateActor (business logic)
     /// * `peer_manager` - PeerManagerActor for peer state queries
-    /// * `router_actor` - RouterActor for sending messages to peers
     pub fn new(
         main_actor: Addr<crate::actor::CStateActor>,
         peer_manager: Addr<PeerManagerActor>,
-        router_actor: Addr<RouterActor>,
     ) -> Self {
         Self {
             main_actor,
             peer_manager,
-            router_actor,
             network_actors: HashMap::new(),
             typed_sender: None,
         }

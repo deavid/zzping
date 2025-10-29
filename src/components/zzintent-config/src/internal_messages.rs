@@ -24,6 +24,7 @@ use zznet_api::types::PeerId;
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct BroadcastConfigUpdate {
+    /// The configuration data to broadcast
     pub config: IntentConfigData,
 }
 
@@ -34,7 +35,9 @@ pub struct BroadcastConfigUpdate {
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct SendErrorToPeer {
+    /// The ID of the peer to send the error to
     pub peer_id: PeerId,
+    /// The error message to send
     pub error_message: String,
 }
 
@@ -52,8 +55,11 @@ pub struct SendErrorToPeer {
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct InboundConfigChangeRequest {
+    /// The ID of the peer making the request
     pub peer_id: PeerId,
+    /// The target IP addresses for ping
     pub targets: Vec<IpAddr>,
+    /// The ping rate in packets per second
     pub ping_rate_pps: u64,
 }
 
@@ -64,6 +70,7 @@ pub struct InboundConfigChangeRequest {
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "IntentConfigData")]
 pub struct InboundGetConfigRequest {
+    /// The ID of the peer making the request
     pub peer_id: PeerId,
 }
 
@@ -82,9 +89,13 @@ pub struct InboundGetConfigRequest {
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "Result<(), String>")]
 pub struct NetworkConfigChangeRequest {
+    /// The ID of the peer making the request
     pub peer_id: PeerId,
+    /// The target IP addresses for ping
     pub targets: Vec<IpAddr>,
+    /// The ping rate in packets per second
     pub ping_rate_pps: u64,
+    /// Whether the peer is authorized to make changes
     pub authorized: bool,
 }
 
@@ -99,6 +110,7 @@ pub struct NetworkConfigChangeRequest {
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct SendConfigUpdateToPeer {
+    /// The configuration data to send
     pub config: IntentConfigData,
 }
 
@@ -109,6 +121,7 @@ pub struct SendConfigUpdateToPeer {
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct SendErrorMessageToPeer {
+    /// The error message to send
     pub error_message: String,
 }
 
@@ -119,6 +132,7 @@ pub struct SendErrorMessageToPeer {
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct SendConfigResponseToPeer {
+    /// The configuration data to send
     pub config: IntentConfigData,
 }
 
@@ -176,5 +190,6 @@ pub struct SendConfigResponseToPeer {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct SetNetworkManager {
+    /// The address of the network manager
     pub network_manager: Addr<crate::network_manager::IntentConfigNetworkManager>,
 }

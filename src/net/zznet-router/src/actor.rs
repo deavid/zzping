@@ -50,6 +50,7 @@ impl Actor for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct RegisterManager {
+    /// The room manager to register
     pub manager: Arc<dyn RoomManager + Send + Sync>,
 }
 
@@ -73,9 +74,13 @@ impl Handler<RegisterManager> for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct OnPeerConnected {
+    /// The ID of the connected peer
     pub peer_id: PeerId,
+    /// The permission level of the peer
     pub permission: Permission,
+    /// Sender for outbound messages to the peer
     pub outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
+    /// Receiver for inbound messages from the peer
     pub inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
 }
 
@@ -135,6 +140,7 @@ impl Handler<OnPeerConnected> for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct OnPeerDisconnected {
+    /// The ID of the disconnected peer
     pub peer_id: PeerId,
 }
 
@@ -158,7 +164,9 @@ impl Handler<OnPeerDisconnected> for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Result<Vec<RoomId>, String>")]
 pub struct HandlePublishRooms {
+    /// The ID of the peer sending the rooms
     pub peer_id: PeerId,
+    /// The list of rooms offered by the peer
     pub peer_rooms: Vec<RoomId>,
 }
 
@@ -184,8 +192,11 @@ impl Handler<HandlePublishRooms> for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct SendToPeer {
+    /// The ID of the target peer
     pub peer_id: PeerId,
+    /// The ID of the room to send to
     pub room_id: RoomId,
+    /// The message bytes to send
     pub bytes: Vec<u8>,
 }
 
@@ -212,8 +223,11 @@ impl Handler<SendToPeer> for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct BroadcastToPeers {
+    /// The IDs of the target peers
     pub peer_ids: Vec<PeerId>,
+    /// The ID of the room to broadcast to
     pub room_id: RoomId,
+    /// The message bytes to broadcast
     pub bytes: Vec<u8>,
 }
 
@@ -240,6 +254,7 @@ impl Handler<BroadcastToPeers> for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Result<Vec<RoomId>, String>")]
 pub struct PeerJoinedRooms {
+    /// The ID of the peer to query
     pub peer_id: PeerId,
 }
 
@@ -264,7 +279,9 @@ impl Handler<PeerJoinedRooms> for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Result<bool, String>")]
 pub struct IsRoomJoined {
+    /// The ID of the peer
     pub peer_id: PeerId,
+    /// The ID of the room to check
     pub room_id: RoomId,
 }
 
@@ -290,6 +307,7 @@ impl Handler<IsRoomJoined> for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Option<mpsc::Sender<(RoomId, Vec<u8>)>>")]
 pub struct PeerSender {
+    /// The ID of the peer
     pub peer_id: PeerId,
 }
 
@@ -311,6 +329,7 @@ impl Handler<PeerSender> for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Option<broadcast::Receiver<(RoomId, Vec<u8>)>>")]
 pub struct SubscribePeerInbound {
+    /// The ID of the peer to subscribe to
     pub peer_id: PeerId,
 }
 

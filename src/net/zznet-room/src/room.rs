@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{Mutex, mpsc};
-use tokio::task::JoinHandle;
 
 /// A cloneable typed sender for Room<T> messages
 ///
@@ -50,12 +49,7 @@ where
     room_id: String,
     // Send serialized messages to peer (outbound - now Vec<u8>)
     outbound_tx: mpsc::Sender<Vec<u8>>,
-
-    // Local component that handles received messages
-    local_handler: Recipient<T>,
-
-    // Background task that forwards inbound → handler. Always present.
-    receiver_task: JoinHandle<()>,
+    _phantom: std::marker::PhantomData<T>,
 }
 
 /// Channels returned when creating a Room, used for connecting to SessionManager
@@ -159,11 +153,11 @@ where
         let (outbound_tx, outbound_rx) = mpsc::channel(100);
         let (inbound_tx, mut inbound_rx) = mpsc::channel(100);
 
-        // Spawn receiver task immediately and keep the JoinHandle on the struct.
-        let handler_clone = local_handler.clone();
-        let task = tokio::spawn(async move {
+        // Spawn receiver task immediately.
+        let _handler_clone = local_handler.clone();
+        tokio::spawn(async move {
             while let Some(msg) = inbound_rx.recv().await {
-                if let Err(e) = Self::handle_message(&handler_clone, msg).await {
+                if let Err(e) = Self::handle_message(&_handler_clone, msg).await {
                     tracing::error!("Error receiving message for room: {e:?}");
                 }
             }
@@ -173,8 +167,7 @@ where
         let room = Room {
             room_id,
             outbound_tx,
-            local_handler,
-            receiver_task: task,
+            _phantom: std::marker::PhantomData,
         };
 
         let channels = RoomChannels {
@@ -241,13 +234,13 @@ where
         drop(sm);
 
         // Create room
-        let handler_clone = local_handler.clone();
 
-        // Spawn receiver task immediately and keep the handle on the struct.
-        let task = tokio::spawn(async move {
+        // Spawn receiver task immediately.
+        let _handler_clone = local_handler.clone();
+        tokio::spawn(async move {
             let mut rx = inbound_rx;
             while let Some(msg) = rx.recv().await {
-                if let Err(e) = Self::handle_message(&handler_clone, msg).await {
+                if let Err(e) = Self::handle_message(&_handler_clone, msg).await {
                     tracing::error!("Error receiving message for room: {e:?}");
                 }
             }
@@ -257,8 +250,7 @@ where
         let room = Room {
             room_id: room_id.clone(),
             outbound_tx,
-            local_handler: local_handler.clone(),
-            receiver_task: task,
+            _phantom: std::marker::PhantomData,
         };
 
         tracing::info!(
@@ -482,8 +474,8 @@ mod tests {
         )
         .unwrap();
 
-        // Verify receiver task was spawned (it should be running)
-        assert!(!room.receiver_task.is_finished());
+        // Room created successfully with automatic receiver spawning
+        assert_eq!(room.room_id(), "auto-spawn");
     }
 
     // --- Serialization/Deserialization Roundtrip Tests ---

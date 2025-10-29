@@ -81,30 +81,6 @@ impl IntentConfigNetworkActor {
     pub fn peer_id(&self) -> &PeerId {
         &self.peer_id
     }
-
-    /// Send a message to the peer via SessionManager channels
-    ///
-    /// Phase 3.5: Now implemented with real SessionManager channels
-    async fn send_to_peer(&self, msg: IntentConfigNetworkMsg) -> Result<(), String> {
-        let peer_sender = self
-            .peer_sender
-            .as_ref()
-            .ok_or("Peer sender channel not available")?;
-
-        // Serialize the message
-        let bytes = bincode::serde::encode_to_vec(&msg, bincode::config::standard())
-            .map_err(|e| format!("Serialization failed: {}", e))?;
-
-        // Send to peer via "intent-config" room
-        let room_id = RoomId::from("intent-config");
-        peer_sender
-            .send((room_id, bytes))
-            .await
-            .map_err(|_| "Failed to send message to peer (channel closed)".to_string())?;
-
-        log::debug!("Sent message to peer {}: {:?}", self.peer_id, msg);
-        Ok(())
-    }
 }
 
 impl Actor for IntentConfigNetworkActor {

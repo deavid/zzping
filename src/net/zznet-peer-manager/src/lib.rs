@@ -1,3 +1,8 @@
+//! Peer manager for ZZNet router.
+//!
+//! This crate provides the peer management functionality for the ZZNet router,
+//! handling peer connections, disconnections, and state management.
+
 use std::collections::HashMap;
 use tokio::sync::broadcast;
 
