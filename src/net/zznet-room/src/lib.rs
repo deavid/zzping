@@ -36,6 +36,9 @@ pub mod room_handle;
 /// Adapter that bridges `Room<T>` channels with the router.
 pub mod room_adapter;
 
+/// Component-provided room factory trait for Router registration.
+pub mod room_manager;
+
 // Export public types
 pub use room::{Room, RoomChannels, RoomError, RoomRegistry, SendError};
 pub use room_adapter::RoomAdapter;

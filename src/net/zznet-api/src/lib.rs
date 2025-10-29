@@ -15,3 +15,6 @@ pub mod types;
 
 // Re-export key traits for convenience
 pub use traits::{MessageRouter, PeerRegistry};
+
+// Re-export key types for convenience
+pub use types::{PeerId, PeerIdentity, Permission, Role, RoomId, SessionError};

@@ -30,7 +30,9 @@ bincode = { workspace = true }
 # Network infrastructure
 zznet-auth = { workspace = true }
 zznet-hello = { workspace = true }
+zznet-peer-manager = { workspace = true }
 zznet-room = { workspace = true }
+zznet-router = { workspace = true }
 zznet-api = { workspace = true }
 
 # Application auth

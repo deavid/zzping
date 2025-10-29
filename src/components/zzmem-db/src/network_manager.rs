@@ -26,8 +26,8 @@ use std::collections::HashMap;
 use zznet_api::types::PeerId;
 use zznet_room::room::TypedSender;
 
-use std::sync::Arc;
-use zznet_api::{MessageRouter, PeerRegistry};
+use zznet_peer_manager::PeerManagerActor;
+use zznet_router::RouterActor;
 
 use crate::actor::MemDBActor;
 use crate::internal_messages::{SendBatchAck, SendQueryResponse, SendSubmitBatch, SendToNetwork};
@@ -62,11 +62,11 @@ pub struct MemDBNetworkManager {
     /// Reference to the MainActor for business logic
     main_actor: Addr<MemDBActor>,
 
-    /// PeerRegistry for peer state queries (Phase 7.4)
-    peer_registry: Arc<dyn PeerRegistry>,
+    /// PeerManagerActor for peer state queries (Phase 7.4)
+    peer_manager: Addr<PeerManagerActor>,
 
-    /// MessageRouter for message routing (Phase 7.4)
-    message_router: Arc<dyn MessageRouter>,
+    /// RouterActor for message routing (Phase 7.4)
+    router_actor: Addr<RouterActor>,
 
     /// Active NetworkActors, one per connected peer
     network_actors: HashMap<PeerId, Addr<MemDBNetworkActor>>,
@@ -82,13 +82,13 @@ impl MemDBNetworkManager {
     /// The typed_sender should be set via `with_typed_sender()` before starting.
     pub fn new(
         main_actor: Addr<MemDBActor>,
-        peer_registry: Arc<dyn PeerRegistry>,
-        message_router: Arc<dyn MessageRouter>,
+        peer_manager: Addr<PeerManagerActor>,
+        router_actor: Addr<RouterActor>,
     ) -> Self {
         Self {
             main_actor,
-            peer_registry,
-            message_router,
+            peer_manager,
+            router_actor,
             network_actors: HashMap::new(),
             typed_sender: None,
         }

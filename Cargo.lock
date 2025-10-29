@@ -2487,7 +2487,9 @@ dependencies = [
  "uuid",
  "zznet-api",
  "zznet-auth",
+ "zznet-peer-manager",
  "zznet-room",
+ "zznet-router",
  "zzping-auth",
  "zzping-test-utils",
 ]
@@ -2511,7 +2513,9 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-hello",
+ "zznet-peer-manager",
  "zznet-room",
+ "zznet-router",
  "zzping-auth",
  "zzping-test-utils",
 ]
@@ -2531,7 +2535,9 @@ dependencies = [
  "tracing",
  "zznet-api",
  "zznet-auth",
+ "zznet-peer-manager",
  "zznet-room",
+ "zznet-router",
  "zzping-auth",
  "zzping-test-utils",
 ]
@@ -2588,6 +2594,7 @@ dependencies = [
  "tokio",
  "tracing",
  "zznet-api",
+ "zznet-router",
 ]
 
 [[package]]
@@ -2595,6 +2602,7 @@ name = "zznet-room"
 version = "0.3.0-dev"
 dependencies = [
  "actix",
+ "async-trait",
  "bincode",
  "serde",
  "thiserror 2.0.17",
@@ -2608,10 +2616,12 @@ dependencies = [
 name = "zznet-router"
 version = "0.3.0-dev"
 dependencies = [
+ "actix",
  "async-trait",
  "tokio",
  "tracing",
  "zznet-api",
+ "zznet-peer-manager",
  "zznet-room",
 ]
 

@@ -11,6 +11,7 @@ tracing = { workspace = true }
 
 # Auth types
 zznet-api = { workspace = true }
+zznet-router = { path = "../zznet-router" }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["sync"] }

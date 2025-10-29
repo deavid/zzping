@@ -5,21 +5,9 @@ mod actor;
 mod peer_state;
 
 pub use actor::{
-    AddPeer, DisconnectPeer, GetConnectedPeerCount, GetPeerIdentity, GetPeerIds, GetPeerRole,
-    GetPeersWithRole, IsPeerConnected, PeerManagerActor, RemovePeer,
+    AddPeer, ConnectPeerWithChannels, DisconnectPeer, GetConnectedPeerCount, GetPeerIdentity,
+    GetPeerIds, GetPeerRole, GetPeersWithRole, IsPeerConnected, PeerManagerActor, RemovePeer,
 };
-
-#[deprecated(
-    since = "0.2.0",
-    note = "Use MessageRouter trait instead. This crosses control/data plane boundary."
-)]
-pub use actor::GetPeerSender;
-
-#[deprecated(
-    since = "0.2.0",
-    note = "Use MessageRouter trait instead. This crosses control/data plane boundary."
-)]
-pub use actor::SubscribePeerInbound;
 pub use peer_state::PeerState;
 // Re-export canonical types from zznet-api for downstream callers
 pub use zznet_api::types::{

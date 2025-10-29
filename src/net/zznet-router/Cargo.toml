@@ -10,6 +10,9 @@ tokio = { workspace = true, features = ["sync", "macros"] }
 # Logging
 tracing = { workspace = true }
 
+# Actor framework for RouterActor
+actix = { workspace = true }
+
 # Internal dependencies
 zznet-api = { workspace = true }
 zznet-room = { workspace = true }
@@ -19,6 +22,7 @@ async-trait.workspace = true
 
 [dev-dependencies]
 # Phase 2 will add: tokio-test
+zznet-peer-manager = { workspace = true }
 
 [lints]
 # This makes the crate inherit all lints defined in [workspace.lints]

@@ -16,12 +16,12 @@ use crate::messages::{GetCurrentConfig, IntentConfigData};
 use crate::network_actor::IntentConfigNetworkActor;
 use actix::prelude::*;
 use std::collections::HashMap;
-use std::sync::Arc;
 use tokio::sync::broadcast;
 
 // Phase 7.2: Use traits for interface segregation (control-plane vs data-plane)
 use zznet_api::types::{PeerId, PeerLifecycleEvent};
-use zznet_api::{MessageRouter, PeerRegistry};
+use zznet_peer_manager::PeerManagerActor;
+use zznet_router::RouterActor;
 
 /// IntentConfigNetworkManager - Orchestrates per-peer network actors
 ///
@@ -32,7 +32,7 @@ use zznet_api::{MessageRouter, PeerRegistry};
 /// # Responsibilities
 /// - Lifecycle: Spawn/destroy NetworkActors as peers connect/disconnect
 /// - Broadcast: Fan-out config updates to all connected peers
-/// - Authorization: Query PeerRegistry for role/permission checks before forwarding requests
+/// - Authorization: Query PeerManager for role/permission checks before forwarding requests
 /// - Coordination: Aggregate responses from multiple peers when needed
 ///
 /// # Message Flow
@@ -47,11 +47,11 @@ pub struct IntentConfigNetworkManager {
     /// Receiver for peer lifecycle events
     _event_rx: broadcast::Receiver<PeerLifecycleEvent>,
 
-    /// Control-plane interface for peer state queries
-    peer_registry: Arc<dyn PeerRegistry>,
+    /// PeerManagerActor for control-plane queries
+    peer_manager: Addr<PeerManagerActor>,
 
-    /// Data-plane interface for message routing
-    message_router: Arc<dyn MessageRouter>,
+    /// RouterActor for data-plane message routing
+    router_actor: Addr<RouterActor>,
 }
 
 impl IntentConfigNetworkManager {
@@ -59,39 +59,50 @@ impl IntentConfigNetworkManager {
     pub fn new(
         main_actor: Addr<crate::actor::IntentConfigActor>,
         event_rx: broadcast::Receiver<PeerLifecycleEvent>,
-        peer_registry: Arc<dyn PeerRegistry>,
-        message_router: Arc<dyn MessageRouter>,
+        peer_manager: Addr<PeerManagerActor>,
+        router_actor: Addr<RouterActor>,
     ) -> Self {
         Self {
             main_actor,
             network_actors: HashMap::new(),
             _event_rx: event_rx,
-            peer_registry,
-            message_router,
+            peer_manager,
+            router_actor,
         }
     }
 
-    /// Spawn a new NetworkActor for a peer (synchronous version)
+    /// Spawn a new NetworkActor for a peer (synchronous version using RouterActor)
     ///
     /// Called when PeerAdded/PeerConnected event indicates the peer
     /// has joined the "intent-config" room.
     fn spawn_network_actor_sync(
-        peer_registry: &dyn PeerRegistry,
-        message_router: &dyn MessageRouter,
+        peer_manager: &Addr<PeerManagerActor>,
+        router_actor: &Addr<RouterActor>,
         peer_id: PeerId,
         manager_addr: Addr<IntentConfigNetworkManager>,
         network_actors: &mut HashMap<PeerId, Addr<IntentConfigNetworkActor>>,
     ) {
         log::info!("Spawning IntentConfigNetworkActor for peer: {}", peer_id);
 
-        if !peer_registry.is_peer_connected(&peer_id) {
+        // Check if peer is connected using PeerManagerActor
+        let rt = tokio::runtime::Handle::current();
+        let is_connected_future = peer_manager.send(zznet_peer_manager::IsPeerConnected {
+            peer_id: peer_id.clone(),
+        });
+        let is_connected = rt.block_on(is_connected_future).unwrap_or(false);
+
+        if !is_connected {
             log::warn!(
-                "Peer {} not yet reported as connected in PeerRegistry when spawning NetworkActor",
+                "Peer {} not yet reported as connected in PeerManager when spawning NetworkActor",
                 peer_id
             );
         }
 
-        if let Some(role) = peer_registry.get_peer_role(&peer_id) {
+        // Get peer role using PeerManagerActor
+        let role_future = peer_manager.send(zznet_peer_manager::GetPeerRole {
+            peer_id: peer_id.clone(),
+        });
+        if let Some(role) = rt.block_on(role_future).unwrap_or(None) {
             log::debug!(
                 "Peer {} authorized with role '{}' before wiring network actor",
                 peer_id,
@@ -99,19 +110,27 @@ impl IntentConfigNetworkManager {
             );
         }
 
-        // Step 1: Get peer sender channel from MessageRouter
-        let peer_sender = match message_router.peer_sender(&peer_id) {
-            Some(sender) => sender,
-            None => {
+        // For migration: block on async RouterActor calls
+        // TODO: Make this fully async
+        let rt = tokio::runtime::Handle::current();
+        let peer_sender_future = router_actor.send(zznet_router::PeerSender {
+            peer_id: peer_id.clone(),
+        });
+        let peer_receiver_future = router_actor.send(zznet_router::SubscribePeerInbound {
+            peer_id: peer_id.clone(),
+        });
+
+        let peer_sender = match rt.block_on(peer_sender_future) {
+            Ok(Some(sender)) => sender,
+            _ => {
                 log::error!("Failed to get peer sender for {}: peer not found", peer_id);
                 return;
             }
         };
 
-        // Step 2: Subscribe to peer inbound messages
-        let peer_receiver = match message_router.subscribe_peer_inbound(&peer_id) {
-            Some(receiver) => receiver,
-            None => {
+        let peer_receiver = match rt.block_on(peer_receiver_future) {
+            Ok(Some(receiver)) => receiver,
+            _ => {
                 log::error!(
                     "Failed to subscribe to peer inbound for {}: peer not found",
                     peer_id
@@ -197,16 +216,14 @@ impl Handler<PeerLifecycleEventWrapper> for IntentConfigNetworkManager {
         match msg.0 {
             PeerLifecycleEvent::PeerAdded { peer_id } => {
                 log::debug!("PeerLifecycleEvent::PeerAdded: {}", peer_id);
-                // Spawn async task to create NetworkActor
+                // Create the actor synchronously using RouterActor
                 let manager_addr = ctx.address();
-                let peer_id_clone = peer_id.clone();
 
-                // For now, create the actor synchronously using the traits
                 Self::spawn_network_actor_sync(
-                    self.peer_registry.as_ref(),
-                    self.message_router.as_ref(),
-                    peer_id_clone,
-                    manager_addr.clone(),
+                    &self.peer_manager,
+                    &self.router_actor,
+                    peer_id,
+                    manager_addr,
                     &mut self.network_actors,
                 );
             }
@@ -302,8 +319,12 @@ impl Handler<InboundConfigChangeRequest> for IntentConfigNetworkManager {
         let ping_rate_pps = msg.ping_rate_pps;
         let manager_addr = ctx.address();
 
-        // Check authorization using PeerRegistry trait
-        let role = self.peer_registry.get_peer_role(&peer_id);
+        // Check authorization using PeerManagerActor
+        let rt = tokio::runtime::Handle::current();
+        let role_future = self.peer_manager.send(zznet_peer_manager::GetPeerRole {
+            peer_id: peer_id.clone(),
+        });
+        let role = rt.block_on(role_future).unwrap_or(None);
         let authorized = match role {
             Some(role) => {
                 let is_admin = role.as_str() == "client-admin";

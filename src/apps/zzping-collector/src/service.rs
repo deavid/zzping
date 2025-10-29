@@ -31,9 +31,9 @@ use zzintent_config::builder::IntentConfigBuilder;
 use zzmem_db::actor::MemDBActor;
 use zzmem_db::builder::MemDBBuilder;
 use zzmem_db::config::MemDBConfig;
-use zznet_api::{MessageRouter, PeerRegistry};
-use zznet_peer_manager::{PeerManager, SharedPeerRegistry};
-use zznet_router::Router;
+use zznet_api::PeerRegistry;
+use zznet_peer_manager::{PeerManager, PeerManagerActor, SharedPeerRegistry};
+use zznet_router::RouterActor;
 use zzpinger::api::PingerHandle;
 use zzpinger::builder::PingerBuilder;
 
@@ -61,8 +61,8 @@ pub struct ComponentBuilders {
     pub pinger: PingerBuilder,
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor>,
-    /// Shared PeerManager for network communication (guarded for sharing)
-    pub peer_manager: Arc<Mutex<PeerManager>>,
+    /// Shared PeerManagerActor for network communication
+    pub peer_manager: Addr<PeerManagerActor>,
 }
 
 /// Started components (running actors)
@@ -76,8 +76,10 @@ pub struct StartedComponents {
     pub pinger: PingerHandle,
     /// Address of the running MemDB actor
     pub memdb_addr: Addr<MemDBActor>,
-    /// Shared PeerManager behind a Mutex so ConnectionManager and components share state
-    pub peer_manager: Arc<Mutex<PeerManager>>,
+    /// Shared PeerManagerActor for network communication
+    pub peer_manager: Addr<PeerManagerActor>,
+    /// RouterActor for data-plane message routing
+    pub router_actor: Addr<RouterActor>,
 }
 
 #[derive(Debug)]
@@ -185,28 +187,10 @@ impl CollectorService {
     /// let components = CollectorService::start_components(builders).await?;
     /// ```
     pub fn create_builders(&self) -> Result<ComponentBuilders> {
-        // FIXME(audit-blocker-1): Multiple PeerManager instances violate single-source-of-truth
-        // - Currently creating separate PeerManager instances for each component
-        // - network.rs creates ANOTHER PeerManagerActor for ConnectionManager
-        // - This means components and ConnectionManager have divergent peer lifecycle state
-        // - Required fix:
-        //   1. Create ONE Arc<Mutex<PeerManager>> here
-        //   2. Wrap trait-safe interfaces (Arc<dyn PeerRegistry>) for components
-        //   3. Pass the Arc<Mutex<PeerManager>> to network.rs to wrap in PeerManagerActor
-        //   4. ConnectionManager and components will then share the same lifecycle state
-        // - See audit doc section 4.1 for details
+        // Create the shared PeerManagerActor once for the entire application
+        let peer_manager_actor = PeerManagerActor::new(None).start();
 
-        // Create the shared PeerManager once for the entire application
-        let shared_peer_manager = Arc::new(Mutex::new(PeerManager::new(None)));
-
-        // Wrap shared manager behind PeerRegistry trait object for components
-        let shared_peer_registry: Arc<dyn PeerRegistry> =
-            Arc::new(SharedPeerRegistry(shared_peer_manager.clone()));
-
-        let intent_config_router = Arc::new(Router::new(vec![], None)) as Arc<dyn MessageRouter>;
-        let memdb_router = Arc::new(Router::new(vec![], None)) as Arc<dyn MessageRouter>;
-
-        tracing::info!("Created PeerManager and Router instances for components");
+        tracing::info!("Created PeerManagerActor for components");
 
         // FIXME(deavid): This file needs cleanup, it needs to properly use zznet-builder for everything and stop re-implementing stuff.
         // .. -   Both `CollectorService` and `DatabaseService` contain their own logic for creating a `ConnectionManager`,
@@ -221,8 +205,8 @@ impl CollectorService {
         // Create IntentConfig builder configured as collector and with PeerManager
         let intent_config = IntentConfigBuilder::new()
             .config_for_collector()
-            .peer_manager(shared_peer_registry.clone())
-            .router(intent_config_router);
+            .peer_manager(peer_manager_actor.clone());
+        // .router(intent_config_router); // Will be set in start_components with RouterActor
 
         // Create Pinger builder
         let pinger = PingerBuilder::new().enabled(true);
@@ -231,8 +215,7 @@ impl CollectorService {
         let memdb_addr = MemDBBuilder::new(MemDBConfig::for_collector(
             self.config.components.memdb_batch_size,
         ))
-        .peer_manager(shared_peer_registry.clone())
-        .router(memdb_router)
+        .peer_manager(peer_manager_actor.clone())
         .build();
 
         // Wire pinger with memdb
@@ -242,7 +225,7 @@ impl CollectorService {
             intent_config,
             pinger,
             memdb_addr,
-            peer_manager: shared_peer_manager,
+            peer_manager: peer_manager_actor,
         })
     }
 
@@ -268,9 +251,13 @@ impl CollectorService {
     /// let components = CollectorService::start_components(builders).await?;
     /// ```
     pub async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
+        // Start RouterActor
+        let router_actor = RouterActor::new(vec![], None).start();
+
         // Start IntentConfig
         let intent_addr = builders
             .intent_config
+            .router(router_actor.clone())
             .start()
             .map_err(|e| CollectorError::Component(format!("IntentConfig start failed: {}", e)))?;
 
@@ -282,6 +269,7 @@ impl CollectorService {
             pinger: pinger_handle,
             memdb_addr: builders.memdb_addr,
             peer_manager: builders.peer_manager,
+            router_actor,
         })
     }
 

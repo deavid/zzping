@@ -19,12 +19,20 @@
 use std::collections::HashMap;
 use tokio::sync::{broadcast, mpsc};
 
+mod actor;
 mod peer_channels;
 
+pub use actor::{
+    BroadcastToPeers, HandlePublishRooms, IsRoomJoined, OnPeerConnected, OnPeerDisconnected,
+    PeerJoinedRooms, PeerSender, RegisterManager, RouterActor, SendToPeer, SubscribePeerInbound,
+};
 pub use peer_channels::PeerChannels;
 
 // Re-export canonical types from zznet-api
 pub use zznet_api::types::{PeerChannels as PeerChannelsTrait, PeerId, RoomId, SessionError};
+
+// Import room manager types
+use zznet_room::room_manager::RoomManager;
 
 /// Router - Data Plane for room management and message routing
 ///
@@ -48,6 +56,9 @@ pub struct Router {
 
     /// Data-plane channels registered for each peer
     peers: HashMap<PeerId, PeerChannels>,
+
+    /// Registered room managers: RoomId -> Manager (strict 1:1 mapping enforced)
+    managers: HashMap<RoomId, std::sync::Arc<dyn RoomManager + Send + Sync>>,
 }
 
 impl Router {
@@ -76,6 +87,7 @@ impl Router {
             offered_rooms,
             max_rooms_per_peer,
             peers: HashMap::new(),
+            managers: HashMap::new(),
         }
     }
 
@@ -93,6 +105,37 @@ impl Router {
     /// Get the configured max_rooms_per_peer limit
     pub fn max_rooms_per_peer(&self) -> Option<usize> {
         self.max_rooms_per_peer
+    }
+
+    /// Register a room manager with the router.
+    ///
+    /// Enforces strict 1:1 room↔component mapping; fails on any collision.
+    /// Managers provide Room<T> instances per peer at connection time.
+    ///
+    /// # Errors
+    /// - `SessionError::RoomAlreadyExists` if any managed room is already registered
+    pub fn register_manager(
+        &mut self,
+        manager: std::sync::Arc<dyn RoomManager + Send + Sync>,
+    ) -> Result<(), SessionError> {
+        let managed_rooms = manager.managed_rooms();
+        for room_id in &managed_rooms {
+            if self.managers.contains_key(room_id) {
+                return Err(SessionError::RoomAlreadyExists {
+                    peer_id: PeerId::from("router"), // dummy, since it's global
+                    room_id: room_id.clone(),
+                });
+            }
+        }
+        for room_id in managed_rooms {
+            self.managers.insert(room_id, manager.clone());
+        }
+        Ok(())
+    }
+
+    /// Get the list of registered rooms (union of all managers' rooms)
+    pub fn registered_rooms(&self) -> Vec<RoomId> {
+        self.managers.keys().cloned().collect()
     }
 
     /// Validate room count against max_rooms_per_peer
@@ -159,16 +202,15 @@ impl Router {
     ///
     /// # Errors
     /// - `RoomLimitExceeded` if peer tries to join too many rooms
-    pub fn handle_publish_rooms(
+    pub async fn handle_publish_rooms(
         &mut self,
         peer_id: &PeerId,
         peer_rooms: Vec<RoomId>,
     ) -> Result<Vec<RoomId>, SessionError> {
-        let joined_rooms = {
-            let peer = self.peer_mut(peer_id)?;
-            peer.handle_peer_offered_rooms(peer_rooms)?;
-            peer.joined_rooms().to_vec()
-        };
+        let offered = self.offered_rooms.clone();
+        let peer = self.peer_mut(peer_id)?;
+        peer.handle_publish_rooms(&offered, peer_rooms).await?;
+        let joined_rooms = peer.joined_rooms().await;
 
         // Validate room limit after negotiation
         self.validate_room_count(peer_id, joined_rooms.len())?;
@@ -196,7 +238,7 @@ impl Router {
     ) -> Result<(), SessionError> {
         let peer = self.peer(peer_id)?;
 
-        if !peer.is_room_joined(room_id) {
+        if !peer.is_room_joined(room_id).await {
             return Err(SessionError::RoomNotJoined(room_id.clone()));
         }
 
@@ -212,7 +254,7 @@ impl Router {
     ) -> Result<(), SessionError> {
         for peer_id in peers {
             if let Ok(peer) = self.peer(peer_id)
-                && peer.is_room_joined(room_id)
+                && peer.is_room_joined(room_id).await
             {
                 peer.send_raw_to_room(room_id, bytes.clone()).await?;
             }
@@ -222,13 +264,17 @@ impl Router {
     }
 
     /// Get the rooms joined with a specific peer
-    pub fn peer_joined_rooms(&self, peer_id: &PeerId) -> Result<&[RoomId], SessionError> {
-        Ok(self.peer(peer_id)?.joined_rooms())
+    pub async fn peer_joined_rooms(&self, peer_id: &PeerId) -> Result<Vec<RoomId>, SessionError> {
+        Ok(self.peer(peer_id)?.joined_rooms().await)
     }
 
     /// Check if a specific room is joined with a peer
-    pub fn is_room_joined(&self, peer_id: &PeerId, room_id: &RoomId) -> Result<bool, SessionError> {
-        Ok(self.peer(peer_id)?.is_room_joined(room_id))
+    pub async fn is_room_joined(
+        &self,
+        peer_id: &PeerId,
+        room_id: &RoomId,
+    ) -> Result<bool, SessionError> {
+        Ok(self.peer(peer_id)?.is_room_joined(room_id).await)
     }
 
     /// Clone the outbound sender if the peer is connected.
@@ -266,17 +312,6 @@ impl zznet_api::traits::MessageRouter for Router {
         bytes: Vec<u8>,
     ) -> Result<(), SessionError> {
         self.broadcast_to_peers(peer_ids, room_id, bytes).await
-    }
-
-    fn peer_sender(&self, peer_id: &PeerId) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>> {
-        self.peer_sender(peer_id).ok().flatten()
-    }
-
-    fn subscribe_peer_inbound(
-        &self,
-        peer_id: &PeerId,
-    ) -> Option<broadcast::Receiver<(RoomId, Vec<u8>)>> {
-        self.subscribe_peer_inbound(peer_id).ok().flatten()
     }
 }
 
@@ -328,6 +363,90 @@ mod tests {
 
         let router_limited = Router::new(vec![], Some(5));
         assert_eq!(router_limited.max_rooms_per_peer(), Some(5));
+    }
+
+    #[tokio::test]
+    async fn test_register_manager_collision() {
+        use std::collections::HashSet;
+        use zznet_api::types::{PeerId, Permission, RoomId};
+        use zznet_room::room_manager::{CreateError, RoomManager};
+
+        struct MockManager {
+            rooms: HashSet<RoomId>,
+        }
+
+        #[async_trait::async_trait]
+        impl RoomManager for MockManager {
+            fn managed_rooms(&self) -> HashSet<RoomId> {
+                self.rooms.clone()
+            }
+
+            async fn create_for_peer(
+                &self,
+                _peer_id: PeerId,
+                _permission: Permission,
+                _room_id: &RoomId,
+            ) -> Result<Option<Box<dyn zznet_room::room_handle::RoomHandle>>, CreateError>
+            {
+                Ok(None)
+            }
+        }
+
+        let mut router = Router::new(vec![], None);
+
+        let manager1 = std::sync::Arc::new(MockManager {
+            rooms: HashSet::from([RoomId::from("room1")]),
+        });
+        assert!(router.register_manager(manager1).is_ok());
+
+        let manager2 = std::sync::Arc::new(MockManager {
+            rooms: HashSet::from([RoomId::from("room1")]), // collision
+        });
+        let result = router.register_manager(manager2);
+        assert!(matches!(
+            result,
+            Err(SessionError::RoomAlreadyExists { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_registered_rooms() {
+        use std::collections::HashSet;
+        use zznet_api::types::{PeerId, Permission, RoomId};
+        use zznet_room::room_manager::{CreateError, RoomManager};
+
+        struct MockManager {
+            rooms: HashSet<RoomId>,
+        }
+
+        #[async_trait::async_trait]
+        impl RoomManager for MockManager {
+            fn managed_rooms(&self) -> HashSet<RoomId> {
+                self.rooms.clone()
+            }
+
+            async fn create_for_peer(
+                &self,
+                _peer_id: PeerId,
+                _permission: Permission,
+                _room_id: &RoomId,
+            ) -> Result<Option<Box<dyn zznet_room::room_handle::RoomHandle>>, CreateError>
+            {
+                Ok(None)
+            }
+        }
+
+        let mut router = Router::new(vec![], None);
+
+        let manager1 = std::sync::Arc::new(MockManager {
+            rooms: HashSet::from([RoomId::from("room1"), RoomId::from("room2")]),
+        });
+        router.register_manager(manager1).unwrap();
+
+        let registered = router.registered_rooms();
+        assert_eq!(registered.len(), 2);
+        assert!(registered.contains(&RoomId::from("room1")));
+        assert!(registered.contains(&RoomId::from("room2")));
     }
 
     // Note: Full integration tests for handle_publish_rooms, send_to_room, and

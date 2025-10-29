@@ -3,9 +3,9 @@
 use crate::actor::IntentConfigActor;
 use crate::config::IntentConfigConfig;
 use actix::prelude::*;
-use std::sync::Arc;
 use std::time::Duration;
-use zznet_api::{MessageRouter, PeerRegistry};
+use zznet_peer_manager::PeerManagerActor;
+use zznet_router::RouterActor;
 
 /// A builder for the IntentConfig component.
 ///
@@ -14,8 +14,8 @@ use zznet_api::{MessageRouter, PeerRegistry};
 /// is constructed and started in a controlled manner.
 pub struct IntentConfigBuilder {
     config: IntentConfigConfig,
-    peer_registry: Option<Arc<dyn PeerRegistry>>,
-    message_router: Option<Arc<dyn MessageRouter>>,
+    peer_manager: Option<Addr<PeerManagerActor>>,
+    router_actor: Option<Addr<RouterActor>>,
     /// Per-peer broadcast timeout used when sending messages via PeerManager
     broadcast_timeout: Duration,
 }
@@ -25,8 +25,8 @@ impl IntentConfigBuilder {
     pub fn new() -> Self {
         Self {
             config: IntentConfigConfig::default(),
-            peer_registry: None,
-            message_router: None,
+            peer_manager: None,
+            router_actor: None,
             broadcast_timeout: Duration::from_millis(500),
         }
     }
@@ -60,15 +60,18 @@ impl IntentConfigBuilder {
         self
     }
 
-    /// Set the PeerRegistry for network operations (Phase 7.2)
-    pub fn peer_manager(mut self, peer_registry: Arc<dyn PeerRegistry>) -> Self {
-        self.peer_registry = Some(peer_registry);
+    /// Set the PeerManagerActor for network operations (Phase 7.2)
+    pub fn peer_manager(mut self, peer_manager: Addr<PeerManagerActor>) -> Self {
+        self.peer_manager = Some(peer_manager);
         self
     }
 
-    /// Set the MessageRouter for message routing (Phase 7.2)
-    pub fn router(mut self, message_router: Arc<dyn MessageRouter>) -> Self {
-        self.message_router = Some(message_router);
+    /// Set the RouterActor for data-plane operations.
+    ///
+    /// This is required for the IntentConfigNetworkManager to communicate
+    /// with peers for configuration updates.
+    pub fn router(mut self, router_actor: Addr<RouterActor>) -> Self {
+        self.router_actor = Some(router_actor);
         self
     }
 
@@ -120,9 +123,9 @@ impl IntentConfigBuilder {
         // Start the main actor first (needed for NetworkManager creation)
         let actor_addr = actor.start();
 
-        // Phase 7.2: Create NetworkManager if we have PeerRegistry and MessageRouter
-        if let (Some(peer_registry), Some(message_router)) =
-            (self.peer_registry.take(), self.message_router.take())
+        // Phase 7.2: Create NetworkManager if we have PeerManagerActor and RouterActor
+        if let (Some(peer_manager), Some(router_actor)) =
+            (self.peer_manager.take(), self.router_actor.take())
         {
             log::info!("Creating IntentConfigNetworkManager for three-actor pattern");
 
@@ -133,8 +136,8 @@ impl IntentConfigBuilder {
             let network_manager = crate::network_manager::IntentConfigNetworkManager::new(
                 actor_addr.clone(),
                 rx,
-                peer_registry,
-                message_router,
+                peer_manager,
+                router_actor,
             )
             .start();
 

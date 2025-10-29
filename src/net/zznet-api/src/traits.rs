@@ -1,6 +1,6 @@
 use crate::types::{PeerId, PeerIdentity, PeerLifecycleEvent, Role, RoomId, SessionError};
 use async_trait::async_trait;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
 
 /// Control-plane interface for peer state queries and lifecycle events.
 ///
@@ -56,17 +56,4 @@ pub trait MessageRouter: Send + Sync {
         room_id: &RoomId,
         bytes: Vec<u8>,
     ) -> Result<(), SessionError>;
-
-    /// Get a clone of the outbound sender for a peer (if connected).
-    ///
-    /// Returns None if peer is not connected. Caller can use this for direct sends.
-    fn peer_sender(&self, peer_id: &PeerId) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>>;
-
-    /// Subscribe to inbound messages from a peer (if connected).
-    ///
-    /// Returns None if peer is not connected.
-    fn subscribe_peer_inbound(
-        &self,
-        peer_id: &PeerId,
-    ) -> Option<broadcast::Receiver<(RoomId, Vec<u8>)>>;
 }

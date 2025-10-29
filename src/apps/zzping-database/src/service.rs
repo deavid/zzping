@@ -1,7 +1,6 @@
 use crate::config::{DatabaseConfig, DatabaseTlsConfig};
 use crate::error::DatabaseError;
-use actix::Addr;
-use std::sync::{Arc, Mutex};
+use actix::{Actor, Addr};
 use zzcollector_state::actor::CStateActor;
 use zzcollector_state::builder::CStateBuilder;
 use zzcollector_state::config::CStateConfig;
@@ -10,9 +9,8 @@ use zzintent_config::builder::IntentConfigBuilder;
 use zzmem_db::actor::MemDBActor;
 use zzmem_db::builder::MemDBBuilder;
 use zzmem_db::config::MemDBConfig;
-use zznet_api::{MessageRouter, PeerRegistry};
-use zznet_peer_manager::{PeerManager, SharedPeerRegistry};
-use zznet_router::Router;
+use zznet_peer_manager::PeerManagerActor;
+use zznet_router::RouterActor;
 
 // Room Handler Architecture
 //
@@ -40,8 +38,8 @@ pub struct ComponentBuilders {
     pub memdb_addr: Addr<MemDBActor>,
     /// Builder for CState component
     pub cstate_builder: CStateBuilder,
-    /// PeerManager for network communication shared across actors
-    pub peer_manager: Arc<Mutex<PeerManager>>,
+    /// PeerManagerActor for network communication shared across actors
+    pub peer_manager: Addr<PeerManagerActor>,
 }
 /// Started components (running actors).
 ///
@@ -56,8 +54,10 @@ pub struct StartedComponents {
     pub memdb_addr: Addr<MemDBActor>,
     /// Address of the running CState actor (database role)
     pub cstate: Addr<CStateActor>,
-    /// PeerManager for network communication shared across actors
-    pub peer_manager: Arc<Mutex<PeerManager>>,
+    /// PeerManagerActor for network communication shared across actors
+    pub peer_manager: Addr<PeerManagerActor>,
+    /// RouterActor for data-plane message routing
+    pub router_actor: Addr<RouterActor>,
 }
 
 // Per-connection handler for collector connections
@@ -150,27 +150,10 @@ impl DatabaseService {
     /// let components = DatabaseService::start_components(builders).await?;
     /// ```
     pub fn create_builders(&self) -> Result<ComponentBuilders, DatabaseError> {
-        // FIXME(audit-blocker-1): Multiple PeerManager instances violate single-source-of-truth
-        // - Currently creating separate PeerManager instances for each component
-        // - network.rs creates ANOTHER PeerManagerActor for ConnectionManager
-        // - This means components and ConnectionManager have divergent peer lifecycle state
-        // - Required fix:
-        //   1. Create ONE Arc<Mutex<PeerManager>> here
-        //   2. Wrap trait-safe interfaces (Arc<dyn PeerRegistry>) for components
-        //   3. Pass the Arc<Mutex<PeerManager>> to network.rs to wrap in PeerManagerActor
-        //   4. ConnectionManager and components will then share the same lifecycle state
-        // - See audit doc section 4.1 for details
+        // Create the shared PeerManagerActor once for the entire application
+        let peer_manager_actor = PeerManagerActor::new(None).start();
 
-        // Create the shared PeerManager once for the entire application
-        let peer_manager = Arc::new(Mutex::new(PeerManager::new(None)));
-
-        // Wrap shared manager behind PeerRegistry trait object for components
-        let shared_peer_registry: Arc<dyn PeerRegistry> =
-            Arc::new(SharedPeerRegistry(peer_manager.clone()));
-
-        let intent_config_router = Arc::new(Router::new(vec![], None)) as Arc<dyn MessageRouter>;
-
-        tracing::info!("Created PeerManager and Router for component communication");
+        tracing::info!("Created PeerManagerActor for component communication");
 
         // Create IntentConfig builder - database configuration
         let data_dir = std::path::PathBuf::from(&self.config.data_dir);
@@ -178,31 +161,23 @@ impl DatabaseService {
 
         let intent_config = IntentConfigBuilder::new()
             .config_for_database(config_path)
-            .peer_manager(shared_peer_registry.clone())
-            .router(intent_config_router);
-
-        let memdb_router = Arc::new(Router::new(vec![], None)) as Arc<dyn MessageRouter>;
+            .peer_manager(peer_manager_actor.clone());
 
         let memdb_addr = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
-            .peer_manager(shared_peer_registry.clone())
-            .router(memdb_router)
+            .peer_manager(peer_manager_actor.clone())
             .build();
-
-        // Create separate instances for CState (it takes Arc<dyn Trait>)
-        let cstate_router = Arc::new(Router::new(vec![], None));
 
         let cstate_builder = CStateBuilder::new(CStateConfig::for_database(
             self.config.components.stale_timeout_secs,
             Some(self.config.components.max_collectors),
         ))
-        .peer_manager(shared_peer_registry)
-        .router(cstate_router);
+        .peer_manager(peer_manager_actor.clone());
 
         Ok(ComponentBuilders {
             intent_config,
             memdb_addr,
             cstate_builder,
-            peer_manager,
+            peer_manager: peer_manager_actor,
         })
     }
 
@@ -221,20 +196,35 @@ impl DatabaseService {
     pub async fn start_components(
         builders: ComponentBuilders,
     ) -> Result<StartedComponents, DatabaseError> {
+        // Start RouterActor
+        let router_actor = RouterActor::new(vec![], None).start();
+
+        // Destructure builders
+        let ComponentBuilders {
+            intent_config,
+            memdb_addr,
+            cstate_builder,
+            peer_manager,
+            ..
+        } = builders;
+
+        // Configure IntentConfig with RouterActor
+        let intent_config = intent_config.router(router_actor.clone());
+
         // Start IntentConfig
-        let intent_addr = builders
-            .intent_config
+        let intent_addr = intent_config
             .start()
             .map_err(|e| DatabaseError::Component(format!("IntentConfig start failed: {}", e)))?;
 
         // Start CState
-        let cstate_addr = builders.cstate_builder.build();
+        let cstate_addr = cstate_builder.build();
 
         Ok(StartedComponents {
             intent_config: intent_addr,
-            memdb_addr: builders.memdb_addr,
+            memdb_addr,
             cstate: cstate_addr,
-            peer_manager: builders.peer_manager,
+            peer_manager,
+            router_actor,
         })
     }
 

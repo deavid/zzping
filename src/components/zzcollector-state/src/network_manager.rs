@@ -14,10 +14,10 @@ use crate::{
 use actix::prelude::*;
 use log::{debug, info, warn};
 use std::collections::HashMap;
-use std::sync::Arc;
 use zznet_api::types::PeerId;
-use zznet_api::{MessageRouter, PeerRegistry};
+use zznet_peer_manager::PeerManagerActor;
 use zznet_room::room::TypedSender;
+use zznet_router::RouterActor;
 
 // Phase 6.2: Placeholder messages for backward compatibility during migration
 // TODO Phase 7.3: Remove after full PeerLifecycleEvent integration
@@ -49,11 +49,11 @@ pub struct CStateNetworkManager {
     /// Link to the MainActor for business logic.
     main_actor: Addr<crate::actor::CStateActor>,
 
-    /// Phase 7.3: Direct PeerRegistry access for authorization and channels
-    peer_registry: Arc<dyn PeerRegistry>,
+    /// Phase 7.3: Direct PeerManagerActor access for authorization and channels
+    peer_manager: Addr<PeerManagerActor>,
 
-    /// MessageRouter for sending messages to peers
-    message_router: Arc<dyn MessageRouter>,
+    /// RouterActor for sending messages to peers
+    router_actor: Addr<RouterActor>,
 
     /// Per-peer NetworkActor instances.
     network_actors: HashMap<PeerId, Addr<crate::network_actor::CStateNetworkActor>>,
@@ -68,17 +68,17 @@ impl CStateNetworkManager {
     ///
     /// # Arguments
     /// * `main_actor` - Address of the CStateActor (business logic)
-    /// * `peer_registry` - PeerRegistry for peer state queries
-    /// * `message_router` - MessageRouter for sending messages to peers
+    /// * `peer_manager` - PeerManagerActor for peer state queries
+    /// * `router_actor` - RouterActor for sending messages to peers
     pub fn new(
         main_actor: Addr<crate::actor::CStateActor>,
-        peer_registry: Arc<dyn PeerRegistry>,
-        message_router: Arc<dyn MessageRouter>,
+        peer_manager: Addr<PeerManagerActor>,
+        router_actor: Addr<RouterActor>,
     ) -> Self {
         Self {
             main_actor,
-            peer_registry,
-            message_router,
+            peer_manager,
+            router_actor,
             network_actors: HashMap::new(),
             typed_sender: None,
         }
@@ -123,7 +123,12 @@ impl Handler<PeerAdded> for CStateNetworkManager {
     fn handle(&mut self, msg: PeerAdded, ctx: &mut Context<Self>) -> Self::Result {
         debug!("Peer added: {:?}", msg.peer_id);
 
-        if let Some(role) = self.peer_registry.get_peer_role(&msg.peer_id) {
+        // Check peer role using PeerManagerActor
+        let rt = tokio::runtime::Handle::current();
+        let role_future = self.peer_manager.send(zznet_peer_manager::GetPeerRole {
+            peer_id: msg.peer_id.clone(),
+        });
+        if let Some(role) = rt.block_on(role_future).unwrap_or(None) {
             debug!(
                 "Peer {:?} registered with role '{}'",
                 msg.peer_id,
@@ -136,12 +141,13 @@ impl Handler<PeerAdded> for CStateNetworkManager {
             );
         }
 
-        if self.message_router.peer_sender(&msg.peer_id).is_none() {
-            warn!(
-                "Router has no sender for peer {:?} yet; registration wiring still pending",
-                msg.peer_id
-            );
-        }
+        // TODO: Update to use RouterActor API
+        // if self.router_actor.peer_sender(&msg.peer_id).is_none() {
+        //     warn!(
+        //         "Router has no sender for peer {:?} yet; registration wiring still pending",
+        //         msg.peer_id
+        //     );
+        // }
 
         // Note: Room membership checks will be added when Room<T> is fully integrated.
         // For now, we spawn a NetworkActor for every peer connection.

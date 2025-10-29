@@ -12,17 +12,14 @@ use crate::session_bridge::SessionBridge;
 use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
-use tokio::sync::mpsc;
+use tokio::sync::{broadcast, mpsc};
 use zznet_api::transport::TransportConnection;
 use zznet_api::types::AuthContext;
 use zznet_api::types::Role;
 use zznet_api::types::{PeerId, RoomId};
 use zznet_peer_manager::PeerState;
-use zznet_peer_manager::{
-    AddPeer, GetPeerIds, GetPeerSender as PeerActorGetPeerSender, PeerManagerActor,
-    SubscribePeerInbound as PeerActorSubscribePeerInbound,
-};
-use zznet_router::PeerChannels;
+use zznet_peer_manager::{AddPeer, ConnectPeerWithChannels, GetPeerIds, PeerManagerActor};
+use zznet_router::{PeerSender, RouterActor, SubscribePeerInbound as RouterSubscribePeerInbound};
 
 // Authorizer type removed - authorization is represented by a set of allowed Roles
 
@@ -43,6 +40,13 @@ pub struct ConnectionManager {
     /// - This enables concurrent access without blocking
     peer_manager: Addr<PeerManagerActor>,
 
+    /// RouterActor address for data-plane operations
+    ///
+    /// DESIGN: RouterActor handles peer channels and message routing
+    /// - ConnectionManager forwards GetPeerSender/SubscribePeerInbound to RouterActor
+    /// - This replaces deprecated PeerManagerActor data-plane methods
+    router_actor: Addr<RouterActor>,
+
     /// Maps PeerId to HelloActor address
     /// Used to send InboundRoomMessage to the correct HelloActor
     hello_actors: HashMap<PeerId, Addr<HelloActor>>,
@@ -53,17 +57,23 @@ pub struct ConnectionManager {
 }
 
 impl ConnectionManager {
-    /// Create a new ConnectionManager with PeerManagerActor.
+    /// Create a new ConnectionManager with PeerManagerActor and RouterActor.
     ///
     /// SECURITY: A set of allowed roles is REQUIRED. There is no code path that
     /// allows connections without explicit allowed roles.
     ///
     /// # Arguments
     /// - `peer_manager`: PeerManagerActor address for peer lifecycle management
+    /// - `router_actor`: RouterActor address for data-plane operations
     /// - `allowed_roles`: set of canonical `zznet_api::types::Role` strings that are permitted
-    pub fn new(peer_manager: Addr<PeerManagerActor>, allowed_roles: HashSet<Role>) -> Self {
+    pub fn new(
+        peer_manager: Addr<PeerManagerActor>,
+        router_actor: Addr<RouterActor>,
+        allowed_roles: HashSet<Role>,
+    ) -> Self {
         Self {
             peer_manager,
+            router_actor,
             hello_actors: HashMap::new(),
             allowed_roles,
         }
@@ -217,10 +227,10 @@ impl Handler<GetPeerSender> for ConnectionManager {
     type Result = ResponseFuture<Option<mpsc::Sender<(RoomId, Vec<u8>)>>>;
 
     fn handle(&mut self, msg: GetPeerSender, _ctx: &mut Context<Self>) -> Self::Result {
-        let pm_addr = self.peer_manager.clone();
+        let router_addr = self.router_actor.clone();
         Box::pin(async move {
-            pm_addr
-                .send(PeerActorGetPeerSender {
+            router_addr
+                .send(PeerSender {
                     peer_id: msg.peer_id,
                 })
                 .await
@@ -247,13 +257,13 @@ impl SubscribePeerInbound {
 
 /// Handler for SubscribePeerInbound - Forward to PeerManagerActor via message passing
 impl Handler<SubscribePeerInbound> for ConnectionManager {
-    type Result = ResponseFuture<Option<tokio::sync::broadcast::Receiver<(RoomId, Vec<u8>)>>>;
+    type Result = ResponseFuture<Option<broadcast::Receiver<(RoomId, Vec<u8>)>>>;
 
     fn handle(&mut self, msg: SubscribePeerInbound, _ctx: &mut Context<Self>) -> Self::Result {
-        let pm_addr = self.peer_manager.clone();
+        let router_addr = self.router_actor.clone();
         Box::pin(async move {
-            pm_addr
-                .send(PeerActorSubscribePeerInbound {
+            router_addr
+                .send(RouterSubscribePeerInbound {
                     peer_id: msg.peer_id,
                 })
                 .await
@@ -379,11 +389,15 @@ impl Handler<HandshakeComplete> for ConnectionManager {
                         Some(msg.peer_identity.clone()),
                     );
 
-                    let mut peer_channels = PeerChannels::new(peer_id_api.clone());
-                    if let Err(e) = peer_channels
-                        .connect(outbound_tx.clone(), conn_to_session_rx)
-                        .await
-                    {
+                    let connect_result = pm_addr
+                        .send(ConnectPeerWithChannels {
+                            peer_id: peer_id_api.clone(),
+                            outbound_tx: outbound_tx.clone(),
+                            inbound_rx: conn_to_session_rx,
+                        })
+                        .await;
+
+                    if let Err(e) = connect_result {
                         tracing::error!("Failed to connect peer channels for {}: {:?}", peer_id, e);
                         return;
                     }
@@ -514,11 +528,14 @@ mod tests {
         // Create PeerManagerActor
         let peer_manager = zznet_peer_manager::PeerManagerActor::new(None).start();
 
+        // Create RouterActor
+        let router_actor = zznet_router::RouterActor::new(vec![], None).start();
+
         // Build allowed roles set for test (accept any admin role)
         let mut allowed = HashSet::new();
         allowed.insert(Role::new("admin"));
 
-        let _manager = ConnectionManager::new(peer_manager, allowed);
+        let _manager = ConnectionManager::new(peer_manager, router_actor, allowed);
         // Just test it compiles and constructs
     }
 }

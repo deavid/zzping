@@ -7,18 +7,17 @@
 
 use crate::{actor::CStateActor, config::CStateConfig, network_messages::CStateMessage};
 use actix::prelude::*;
-use std::sync::Arc;
-use zznet_api::MessageRouter;
-use zznet_api::PeerRegistry;
+use zznet_peer_manager::PeerManagerActor;
 use zznet_room::room::TypedSender;
+use zznet_router::RouterActor;
 
 /// A builder for constructing `CStateActor` instances.
 ///
 /// Phase 7.3: Creates and wires all three actors together with PeerManagerActor.
 pub struct CStateBuilder {
     config: CStateConfig,
-    peer_registry: Option<Arc<dyn PeerRegistry>>,
-    message_router: Option<Arc<dyn MessageRouter>>,
+    peer_manager: Option<Addr<PeerManagerActor>>,
+    router_actor: Option<Addr<RouterActor>>,
     typed_sender: Option<TypedSender<CStateMessage>>,
 }
 
@@ -27,27 +26,27 @@ impl CStateBuilder {
     pub fn new(config: CStateConfig) -> Self {
         Self {
             config,
-            peer_registry: None,
-            message_router: None,
+            peer_manager: None,
+            router_actor: None,
             typed_sender: None,
         }
     }
 
-    /// Set the PeerRegistry and MessageRouter for network communication.
+    /// Set the PeerManagerActor for network communication.
     ///
     /// This is required for the three-actor pattern. If not set, the actor
     /// will run in standalone mode without network capabilities.
-    pub fn peer_manager(mut self, peer_registry: Arc<dyn PeerRegistry>) -> Self {
-        self.peer_registry = Some(peer_registry);
+    pub fn peer_manager(mut self, peer_manager: Addr<PeerManagerActor>) -> Self {
+        self.peer_manager = Some(peer_manager);
         self
     }
 
-    /// Set the MessageRouter for network communication.
+    /// Set the RouterActor for network communication.
     ///
     /// This is required for the three-actor pattern. If not set, the actor
     /// will run in standalone mode without network capabilities.
-    pub fn router(mut self, message_router: Arc<dyn MessageRouter>) -> Self {
-        self.message_router = Some(message_router);
+    pub fn router(mut self, router_actor: Addr<RouterActor>) -> Self {
+        self.router_actor = Some(router_actor);
         self
     }
 
@@ -73,16 +72,14 @@ impl CStateBuilder {
         let config = self.config.clone();
         let actor_addr = CStateActor::create(move |_ctx| CStateActor::new(config));
 
-        // Phase 7.3: Create NetworkManager if we have PeerRegistry and MessageRouter
-        if let (Some(peer_registry), Some(message_router)) =
-            (self.peer_registry, self.message_router)
-        {
+        // Phase 7.3: Create NetworkManager if we have PeerManagerActor and RouterActor
+        if let (Some(peer_manager), Some(router_actor)) = (self.peer_manager, self.router_actor) {
             log::info!("Creating CStateNetworkManager for three-actor pattern");
 
             let mut network_manager = crate::network_manager::CStateNetworkManager::new(
                 actor_addr.clone(),
-                peer_registry,
-                message_router,
+                peer_manager,
+                router_actor,
             );
 
             // Set TypedSender if provided

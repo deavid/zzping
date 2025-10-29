@@ -44,6 +44,7 @@ use tokio::sync::{broadcast, mpsc};
 use crate::{PeerId, PeerLifecycleEvent, PeerManager, PeerState};
 use zznet_api::types::RoomId;
 use zznet_api::types::{PeerIdentity, Role};
+use zznet_router::{OnPeerConnected, RouterActor};
 
 // ============================================================================
 // Actor
@@ -55,6 +56,8 @@ use zznet_api::types::{PeerIdentity, Role};
 pub struct PeerManagerActor {
     /// Shared underlying PeerManager (owns peer state)
     manager: Arc<Mutex<PeerManager>>,
+    /// RouterActor for forwarding lifecycle events
+    router_actor: Option<Addr<RouterActor>>,
 }
 
 impl PeerManagerActor {
@@ -65,12 +68,21 @@ impl PeerManagerActor {
     pub fn new(max_peers: Option<usize>) -> Self {
         Self {
             manager: Arc::new(Mutex::new(PeerManager::new(max_peers))),
+            router_actor: None,
         }
     }
 
     /// Create an actor that wraps an existing shared PeerManager instance.
     pub fn with_shared_manager(manager: Arc<Mutex<PeerManager>>) -> Self {
-        Self { manager }
+        Self {
+            manager,
+            router_actor: None,
+        }
+    }
+
+    /// Set the RouterActor for forwarding lifecycle events
+    pub fn set_router_actor(&mut self, router_actor: Addr<RouterActor>) {
+        self.router_actor = Some(router_actor);
     }
 
     /// Subscribe to peer lifecycle events
@@ -115,62 +127,6 @@ impl Handler<GetPeerRole> for PeerManagerActor {
     fn handle(&mut self, msg: GetPeerRole, _ctx: &mut Context<Self>) -> Self::Result {
         let m = self.manager.lock().unwrap();
         m.get_peer_role(&msg.peer_id).cloned()
-    }
-}
-
-/// Get the sender channel for a peer
-///
-/// This allows components to send messages to a peer's outbound queue.
-/// Returns `None` if peer doesn't exist or is not connected.
-///
-/// **Critical**: Used by NetworkManager to create NetworkActors
-#[deprecated(
-    since = "0.2.0",
-    note = "Use MessageRouter trait instead. This crosses control/data plane boundary."
-)]
-#[derive(Message)]
-#[rtype(result = "Option<mpsc::Sender<(RoomId, Vec<u8>)>>")]
-pub struct GetPeerSender {
-    pub peer_id: PeerId,
-}
-
-impl Handler<GetPeerSender> for PeerManagerActor {
-    type Result = Option<mpsc::Sender<(RoomId, Vec<u8>)>>;
-
-    fn handle(&mut self, _msg: GetPeerSender, _ctx: &mut Context<Self>) -> Self::Result {
-        // TODO: Data-plane operations moved to Router/MessageRouter
-        // This method should be removed once components use Router directly
-        tracing::warn!("GetPeerSender called on PeerManagerActor - use MessageRouter instead");
-        None
-    }
-}
-
-/// Subscribe to inbound messages from a peer
-///
-/// Returns a broadcast receiver that will receive all messages from the peer.
-/// Returns `None` if peer doesn't exist or is not connected.
-///
-/// **Critical**: Used by NetworkManager to create NetworkActors
-#[deprecated(
-    since = "0.2.0",
-    note = "Use MessageRouter trait instead. This crosses control/data plane boundary."
-)]
-#[derive(Message)]
-#[rtype(result = "Option<broadcast::Receiver<(RoomId, Vec<u8>)>>")]
-pub struct SubscribePeerInbound {
-    pub peer_id: PeerId,
-}
-
-impl Handler<SubscribePeerInbound> for PeerManagerActor {
-    type Result = Option<broadcast::Receiver<(RoomId, Vec<u8>)>>;
-
-    fn handle(&mut self, _msg: SubscribePeerInbound, _ctx: &mut Context<Self>) -> Self::Result {
-        // TODO: Data-plane operations moved to Router/MessageRouter
-        // This method should be removed once components use Router directly
-        tracing::warn!(
-            "SubscribePeerInbound called on PeerManagerActor - use MessageRouter instead"
-        );
-        None
     }
 }
 
@@ -286,6 +242,62 @@ impl Handler<AddPeer> for PeerManagerActor {
     }
 }
 
+/// Connect peer with channels and forward to RouterActor
+///
+/// This message is sent when a peer connects with transport channels.
+/// Derives permission from peer's role and forwards OnPeerConnected to RouterActor.
+#[derive(Message)]
+#[rtype(result = "Result<(), String>")]
+pub struct ConnectPeerWithChannels {
+    pub peer_id: PeerId,
+    pub outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
+    pub inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
+}
+
+impl Handler<ConnectPeerWithChannels> for PeerManagerActor {
+    type Result = Result<(), String>;
+
+    fn handle(&mut self, msg: ConnectPeerWithChannels, _ctx: &mut Context<Self>) -> Self::Result {
+        let peer_id = msg.peer_id.clone();
+        tracing::info!("Connecting peer {} with channels", peer_id);
+
+        // Get permission from peer's role
+        let permission = {
+            let m = self.manager.lock().unwrap();
+            let identity = m.get_peer_identity(&peer_id);
+            zznet_api::types::Permission {
+                peer_id: peer_id.clone(),
+                identity: identity
+                    .cloned()
+                    .unwrap_or_else(|| zznet_api::types::PeerIdentity {
+                        common_name: "unknown".to_string(),
+                        san_username: "unknown".to_string(),
+                        peer_addr: "unknown".to_string(),
+                    }),
+                capabilities: 0, // TODO: derive from role
+            }
+        };
+
+        // Forward to RouterActor
+        if let Some(router_actor) = &self.router_actor {
+            let msg = OnPeerConnected {
+                peer_id,
+                permission,
+                outbound_tx: msg.outbound_tx,
+                inbound_rx: msg.inbound_rx,
+            };
+            router_actor.do_send(msg);
+        } else {
+            tracing::warn!(
+                "No RouterActor set, cannot forward OnPeerConnected for {}",
+                peer_id
+            );
+        }
+
+        Ok(())
+    }
+}
+
 /// Remove a peer and clean up resources
 ///
 /// This terminates the peer connection and removes all state.
@@ -343,36 +355,6 @@ mod tests {
         // Query non-existent peer
         let result = peer_manager
             .send(GetPeerRole {
-                peer_id: PeerId::from("nonexistent"),
-            })
-            .await
-            .unwrap();
-
-        assert!(result.is_none());
-    }
-
-    #[actix::test]
-    async fn test_peer_manager_actor_get_peer_sender() {
-        let peer_manager = PeerManagerActor::new(None).start();
-
-        // Query non-existent peer
-        let result = peer_manager
-            .send(GetPeerSender {
-                peer_id: PeerId::from("nonexistent"),
-            })
-            .await
-            .unwrap();
-
-        assert!(result.is_none());
-    }
-
-    #[actix::test]
-    async fn test_peer_manager_actor_subscribe_peer_inbound() {
-        let peer_manager = PeerManagerActor::new(None).start();
-
-        // Query non-existent peer
-        let result = peer_manager
-            .send(SubscribePeerInbound {
                 peer_id: PeerId::from("nonexistent"),
             })
             .await

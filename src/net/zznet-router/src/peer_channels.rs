@@ -8,113 +8,115 @@ use zznet_room::room_handle::RoomHandle;
 /// Shared room storage for a peer.
 type SessionRooms = Arc<TokioMutex<HashMap<RoomId, Box<dyn RoomHandle>>>>;
 
-/// Data-plane channel set for a peer.
+/// Builder for PeerChannels with immutable construction.
 ///
-/// Owns the transport-facing channels and room routing infrastructure without
-/// any knowledge of authentication or control-plane state.
-pub struct PeerChannels {
+/// Collects rooms before connecting transport channels.
+pub struct PeerChannelsBuilder {
     peer_id: PeerId,
-    rooms: SessionRooms,
-    outbound_tx: Option<mpsc::Sender<(RoomId, Vec<u8>)>>,
-    inbound_task: Option<JoinHandle<()>>,
-    inbound_broadcast: Option<broadcast::Sender<(RoomId, Vec<u8>)>>,
-    peer_offered_rooms: Option<Vec<RoomId>>,
-    joined_rooms: Vec<RoomId>,
+    rooms: HashMap<RoomId, Box<dyn RoomHandle>>,
 }
 
-impl PeerChannels {
-    /// Create a new peer channel set in disconnected state with no rooms.
+impl PeerChannelsBuilder {
+    /// Create a new builder for a peer.
     pub fn new(peer_id: PeerId) -> Self {
         Self {
             peer_id,
-            rooms: Arc::new(TokioMutex::new(HashMap::new())),
-            outbound_tx: None,
-            inbound_task: None,
-            inbound_broadcast: None,
-            peer_offered_rooms: None,
-            joined_rooms: Vec::new(),
+            rooms: HashMap::new(),
         }
     }
 
     /// Add a room to this peer.
-    pub async fn add_room(
+    pub fn add_room(
         &mut self,
         room_id: RoomId,
         room: Box<dyn RoomHandle>,
     ) -> Result<(), SessionError> {
-        let mut rooms = self.rooms.lock().await;
-        if rooms.contains_key(&room_id) {
+        if self.rooms.contains_key(&room_id) {
             return Err(SessionError::RoomAlreadyExists {
                 peer_id: self.peer_id.clone(),
                 room_id,
             });
         }
-        rooms.insert(room_id, room);
+        self.rooms.insert(room_id, room);
         Ok(())
     }
 
-    /// Connect the peer channels to transport wiring.
-    pub async fn connect(
-        &mut self,
+    /// Build the PeerChannels by connecting transport channels.
+    ///
+    /// Spawns the inbound routing task and sets up channels.
+    pub async fn build(
+        self,
         outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
         inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
-    ) -> Result<(), SessionError> {
-        if self.outbound_tx.is_some() {
-            return Err(SessionError::PeerAlreadyConnected(self.peer_id.clone()));
-        }
+    ) -> Result<PeerChannels, SessionError> {
+        let (broadcast_tx, _) = broadcast::channel(100);
 
-        let outbound_clone = outbound_tx.clone();
-        self.outbound_tx = Some(outbound_tx);
-
-        if self.inbound_broadcast.is_none() {
-            let (tx, _rx) = broadcast::channel(100);
-            self.inbound_broadcast = Some(tx);
-        }
+        let mut rooms_map = self.rooms;
 
         // Spawn forwarder for each room (Component → Peer)
-        {
-            let mut rooms = self.rooms.lock().await;
-            for (room_id, room) in rooms.iter_mut() {
-                room.spawn_forwarder(outbound_clone.clone()).map_err(|_| {
-                    SessionError::RoomReceiverAlreadySpawned {
-                        peer_id: self.peer_id.clone(),
-                        room_id: room_id.clone(),
-                    }
-                })?;
-            }
+        for (room_id, room) in &mut rooms_map {
+            room.spawn_forwarder(outbound_tx.clone()).map_err(|_| {
+                SessionError::RoomReceiverAlreadySpawned {
+                    peer_id: self.peer_id.clone(),
+                    room_id: room_id.clone(),
+                }
+            })?;
         }
 
-        // Spawn inbound routing task
-        let rooms = Arc::clone(&self.rooms);
+        // Wrap in Arc<Mutex<>> for sharing
+        let rooms = Arc::new(TokioMutex::new(rooms_map));
         let peer_id = self.peer_id.clone();
-        let broadcast_tx = self.inbound_broadcast.clone();
-        let task = tokio::spawn(Self::inbound_task_loop(
-            rooms,
+        let broadcast_tx_clone = broadcast_tx.clone();
+        let task = tokio::spawn(PeerChannels::inbound_task_loop(
+            Arc::clone(&rooms),
             peer_id,
             inbound_rx,
-            broadcast_tx,
+            broadcast_tx_clone,
         ));
-        self.inbound_task = Some(task);
-        Ok(())
-    }
 
-    /// Disconnect transport wiring and stop routing tasks.
-    pub fn disconnect(&mut self) {
-        self.outbound_tx = None;
-        if let Some(task) = self.inbound_task.take() {
-            task.abort();
-        }
+        Ok(PeerChannels {
+            peer_id: self.peer_id,
+            rooms,
+            outbound_tx,
+            inbound_broadcast: broadcast_tx,
+            joined_rooms: TokioMutex::new(Vec::new()),
+            inbound_task: task,
+        })
     }
+}
 
+/// Data-plane channel set for a peer.
+///
+/// Immutable after construction; owns transport channels and routing task.
+pub struct PeerChannels {
+    peer_id: PeerId,
+    rooms: SessionRooms,
+    outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
+    inbound_broadcast: broadcast::Sender<(RoomId, Vec<u8>)>,
+    joined_rooms: TokioMutex<Vec<RoomId>>,
+    inbound_task: JoinHandle<()>,
+}
+
+impl PeerChannels {
     /// Handle PublishRooms negotiation and compute joined rooms.
-    pub fn handle_peer_offered_rooms(
-        &mut self,
+    ///
+    /// Takes both local offered rooms and peer offered rooms, computes intersection.
+    /// Returns error if intersection is empty.
+    pub async fn handle_publish_rooms(
+        &self,
+        local_rooms: &[RoomId],
         peer_rooms: Vec<RoomId>,
     ) -> Result<(), SessionError> {
-        self.peer_offered_rooms = Some(peer_rooms);
-        self.joined_rooms = self.compute_intersection();
+        use std::collections::HashSet;
 
-        if self.joined_rooms.is_empty() {
+        let local_set: HashSet<_> = local_rooms.iter().cloned().collect();
+        let peer_set: HashSet<_> = peer_rooms.into_iter().collect();
+        let intersection: Vec<RoomId> = local_set.intersection(&peer_set).cloned().collect();
+
+        let mut joined = self.joined_rooms.lock().await;
+        *joined = intersection;
+
+        if joined.is_empty() {
             tracing::warn!(
                 "Peer {} offered rooms have no intersection with local rooms",
                 self.peer_id
@@ -123,23 +125,6 @@ impl PeerChannels {
         }
 
         Ok(())
-    }
-
-    fn compute_intersection(&self) -> Vec<RoomId> {
-        use std::collections::HashSet;
-
-        let local_rooms: HashSet<_> = self
-            .rooms
-            .try_lock()
-            .map(|rooms| rooms.keys().cloned().collect())
-            .unwrap_or_default();
-
-        if let Some(peer_rooms) = &self.peer_offered_rooms {
-            let peer_set: HashSet<_> = peer_rooms.iter().cloned().collect();
-            local_rooms.intersection(&peer_set).cloned().collect()
-        } else {
-            Vec::new()
-        }
     }
 
     /// Helper for routing inbound bytes to rooms.
@@ -172,33 +157,23 @@ impl PeerChannels {
         rooms: SessionRooms,
         peer_id: PeerId,
         mut inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
-        broadcast_tx: Option<broadcast::Sender<(RoomId, Vec<u8>)>>,
+        broadcast_tx: broadcast::Sender<(RoomId, Vec<u8>)>,
     ) {
         while let Some((room_id, bytes)) = inbound_rx.recv().await {
-            if let Some(ref tx) = broadcast_tx {
-                let _ = tx.send((room_id.clone(), bytes.clone()));
-            }
+            let _ = broadcast_tx.send((room_id.clone(), bytes.clone()));
             Self::route_inbound_message(&rooms, &peer_id, room_id, bytes).await;
         }
         tracing::debug!("Peer {} inbound task stopped", peer_id);
     }
 
-    /// Returns the rooms offered locally for negotiation (debug/testing helper).
-    pub fn local_offered_rooms(&self) -> Vec<RoomId> {
-        self.rooms
-            .try_lock()
-            .map(|rooms| rooms.keys().cloned().collect())
-            .unwrap_or_default()
-    }
-
-    /// Clone of the outbound sender when connected.
+    /// Clone of the outbound sender (always available since connected).
     pub fn outbound_sender(&self) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>> {
-        self.outbound_tx.clone()
+        Some(self.outbound_tx.clone())
     }
 
-    /// Subscribe to inbound broadcast channel when connected.
+    /// Subscribe to inbound broadcast channel (always available since connected).
     pub fn subscribe_inbound(&self) -> Option<broadcast::Receiver<(RoomId, Vec<u8>)>> {
-        self.inbound_broadcast.as_ref().map(|tx| tx.subscribe())
+        Some(self.inbound_broadcast.subscribe())
     }
 
     /// Send raw bytes to the specified room.
@@ -207,25 +182,25 @@ impl PeerChannels {
         room_id: &RoomId,
         bytes: Vec<u8>,
     ) -> Result<(), SessionError> {
-        let sender = self
-            .outbound_tx
-            .clone()
-            .ok_or_else(|| SessionError::PeerNotConnected(self.peer_id.clone()))?;
-
-        sender
+        self.outbound_tx
             .send((room_id.clone(), bytes))
             .await
             .map_err(|_| SessionError::SendFailed)
     }
 
+    /// Disconnect transport wiring and stop routing tasks.
+    pub fn disconnect(&self) {
+        self.inbound_task.abort();
+    }
+
     /// Inspect joined rooms.
-    pub fn joined_rooms(&self) -> &[RoomId] {
-        &self.joined_rooms
+    pub async fn joined_rooms(&self) -> Vec<RoomId> {
+        self.joined_rooms.lock().await.clone()
     }
 
     /// Check whether a room was negotiated with the peer.
-    pub fn is_room_joined(&self, room_id: &RoomId) -> bool {
-        self.joined_rooms.contains(room_id)
+    pub async fn is_room_joined(&self, room_id: &RoomId) -> bool {
+        self.joined_rooms.lock().await.contains(room_id)
     }
 }
 
@@ -235,20 +210,20 @@ impl PeerChannelsTrait for PeerChannels {
         &self.peer_id
     }
 
-    fn joined_rooms(&self) -> &[RoomId] {
-        &self.joined_rooms
+    async fn joined_rooms(&self) -> Vec<RoomId> {
+        self.joined_rooms.lock().await.clone()
     }
 
-    fn is_room_joined(&self, room_id: &RoomId) -> bool {
-        self.joined_rooms.contains(room_id)
+    async fn is_room_joined(&self, room_id: &RoomId) -> bool {
+        self.joined_rooms.lock().await.contains(room_id)
     }
 
     fn outbound_sender(&self) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>> {
-        self.outbound_tx.clone()
+        Some(self.outbound_tx.clone())
     }
 
     fn subscribe_inbound(&self) -> Option<broadcast::Receiver<(RoomId, Vec<u8>)>> {
-        self.inbound_broadcast.as_ref().map(|tx| tx.subscribe())
+        Some(self.inbound_broadcast.subscribe())
     }
 
     async fn send_to_room(&self, room_id: &RoomId, bytes: Vec<u8>) -> Result<(), SessionError> {

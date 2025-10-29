@@ -26,7 +26,7 @@ The user's answer established the primary routing mechanism:
 **Agreement:**
 - The network core (`zznet`) will be the central point of orchestration.
 - Components will be registered *with* the network core.
-- The primary key for routing messages to a component is a unique `RoomId`, which has a strict 1:1 mapping to a component.
+- The primary key for routing messages to a component is a unique `RoomId`, which has a strict 1:1 mapping to a component. Name collisions between components are a hard error at registration time.
 
 ## 3. Clarifying the Router Architecture
 
@@ -40,6 +40,10 @@ The discussion then moved to the concrete roles of the `Router` and `PeerChannel
 - **`Router`:** This is the **multi-peer manager**. It is the central switchboard for the entire application. We will refer to this as the "Router (manager)".
 - **`PeerChannels`:** This is the **1:1 handler**. It manages the connection and rooms for a single, specific peer. We will refer to this as the "PeerChannels (1:1 handler)".
 
+Additional clarifications agreed during review:
+- Router orchestrates creation and registration only; it should not retain per-peer mutable state beyond its directory/registry and creation step.
+- PeerChannels owns the lifecycle for its peer’s rooms (create on connect, teardown on disconnect).
+
 ## 4. The Factory Pattern: Decoupling Components from the Core
 
 The next major challenge was how to create component-specific actors (like `Room<TMsg>`) inside the generic `zznet` core, without `zznet` knowing about component-specific types (`TMsg`).
@@ -51,6 +55,8 @@ The initial idea of a generic "factory" was refined by the user:
 - At startup, each component will create a dedicated **`RoomManager<TMsg>`** actor. This actor acts as a specialized factory for that component's rooms.
 - The application will register each `RoomManager<TMsg>` with the central **`Router` (manager)**, creating a map of `RoomId -> Addr<RoomManager>`.
 - When a peer connects, the `Router` (manager) will use this map to ask the correct `RoomManager<TMsg>` to create a `Room<T>` instance for that specific peer.
+
+Constraint: `zznet` must remain type-agnostic with respect to `TMsg`. Room creation is mediated via `RoomManager<TMsg>` and `RoomHandle` so the core never depends on component types.
 
 ## 5. Lifecycle Management: Defining Ownership
 
@@ -82,6 +88,10 @@ The final agreed-upon flow for a new peer connection is as follows:
 
 This event-driven, layered model ensures that information flows strictly downwards, fulfilling the user's vision of a "club sandwich" architecture.
 
+Important constraints clarified:
+- No broadcast in `zznet`: network-layer broadcast/fan-out to multiple peers is disallowed. Any “broadcast” mentioned here refers only to in-process fan-out of lifecycle events (e.g., via `tokio::sync::broadcast`), not message broadcasting to peers.
+- Components do not deal with roles at runtime requests; the role is passed once at connection setup and converted to a permission struct owned by the per-peer NetworkActor.
+
 ## 7. Immutability and Transactional Creation
 
 The final refinement concerned the state of the `PeerChannels` object.
@@ -95,9 +105,21 @@ This led to a discussion about failure modes.
 
 **Agreement:**
 - The creation of a `PeerChannels` (1:1 handler) instance is an **atomic, transactional operation**.
-- The `Router` (manager) must first successfully create all necessary `Room<T>` actors for a peer *before* it constructs the `PeerChannels` object.
+- The `Router` (manager) must first successfully create all necessary `Room<T>` actors for a peer via their `RoomManager<T>` factories *before* it constructs the `PeerChannels` object.
 - The `PeerChannels` object will be immutable after creation and will not contain `Option` fields for its core wiring. Its existence guarantees a live, valid connection.
 - The failure to create a `Room<T>` is considered a fatal application setup error, and the process should panic.
+
+## 8. Actor-first Interfaces (no Arc<dyn …> in components)
+
+Consensus from the discussion:
+- Components should not receive `Arc<dyn MessageRouter>` / `Arc<dyn PeerRegistry>` handles. In an actor-based framework, actor addresses and messages are preferred over trait objects for runtime wiring.
+- Router-to-component wiring should use actor message passing (`Addr`/`Recipient`) and one-way signals for setup/teardown.
+
+## 9. Single-pass Role → Permission Handoff
+
+- During connection setup, the Router supplies the peer’s role (string) to the component’s NetworkManager.
+- The NetworkManager maps role → permission struct and embeds it into the per-peer NetworkActor for the lifetime of the connection.
+- No subsequent role lookups/queries occur at runtime; authorization is performed against the embedded permission struct.
 
 
 -------

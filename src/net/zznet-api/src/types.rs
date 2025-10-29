@@ -22,6 +22,21 @@ pub struct PeerIdentity {
     pub peer_addr: String,
 }
 
+/// Precomputed permission snapshot for a peer, derived from role at connection time.
+///
+/// Components receive this at room creation and never query roles at runtime.
+/// Contains peer_id, identity summary, and precomputed capability flags.
+#[derive(Debug, Clone)]
+pub struct Permission {
+    /// Unique identifier for the peer.
+    pub peer_id: PeerId,
+    /// Summary of peer identity (role and username).
+    pub identity: PeerIdentity,
+    /// Precomputed capability flags (e.g., can_read, can_write, is_admin).
+    /// Components define their own flag meanings.
+    pub capabilities: u32,
+}
+
 /// Canonical Role representation used at the zznet boundary.
 ///
 /// The network core should remain auth-agnostic and only carry a compact
@@ -331,10 +346,10 @@ pub trait PeerChannels: Send + Sync {
     fn peer_id(&self) -> &PeerId;
 
     /// Rooms successfully negotiated with this peer.
-    fn joined_rooms(&self) -> &[RoomId];
+    async fn joined_rooms(&self) -> Vec<RoomId>;
 
     /// Returns true when the given room is joined with the peer.
-    fn is_room_joined(&self, room_id: &RoomId) -> bool;
+    async fn is_room_joined(&self, room_id: &RoomId) -> bool;
 
     /// Clone of the outbound sender for direct byte transmission.
     fn outbound_sender(&self) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>>;
