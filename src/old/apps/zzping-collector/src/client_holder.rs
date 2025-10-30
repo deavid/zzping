@@ -1,8 +1,6 @@
-use crate::database_client::DatabaseClientTrait;
-use std::sync::Arc;
-use tokio::sync::RwLock;
+//! Holder for optional database clients.
 
-/// Synchronized holder for an optional database client used by collector tasks.
+use crate::database_client::DatabaseClientTrait;
 pub struct ClientHolder {
     client: Arc<RwLock<Option<Arc<dyn DatabaseClientTrait>>>>,
 }

@@ -1,3 +1,5 @@
+//! Batch submission and background batching logic.
+
 use crate::database_client::DatabaseClientTrait;
 use crate::pinger::FinalizedPing;
 use anyhow::Result;

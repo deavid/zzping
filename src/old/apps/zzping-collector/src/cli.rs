@@ -1,3 +1,5 @@
+//! Command-line parsing and binary glue for the collector.
+
 use clap::Parser;
 
 /// A high-frequency ICMP pinger that sends results to a zzping-database server.

@@ -3,7 +3,7 @@ use actix::Actor;
 use std::collections::HashSet;
 use std::time::Duration;
 use zznet_api::transport::TransportServer;
-use zznet_auth::ApplicationRole;
+use zznet_auth::role::ApplicationRole;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::config::TlsConfig;

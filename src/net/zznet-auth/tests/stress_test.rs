@@ -7,6 +7,7 @@ use std::thread;
 use std::time::Instant;
 use zznet_api::types::PeerIdentity;
 use zznet_auth::acl::AclManager;
+use zznet_auth::role::ApplicationRole;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum MockRole {
@@ -14,7 +15,7 @@ enum MockRole {
     Y,
 }
 
-impl zznet_auth::ApplicationRole for MockRole {
+impl ApplicationRole for MockRole {
     fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
         match cn {
             "x" => Ok(MockRole::X),

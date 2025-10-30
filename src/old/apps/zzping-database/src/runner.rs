@@ -1,3 +1,5 @@
+//! Runner that orchestrates the binary's runtime.
+
 use crate::{
     DATA_DIR, INGESTION_ADDR,
     grpc_server::{IngestionServiceImpl, check_auth},

@@ -4,7 +4,7 @@
 //! defined in zzping_auth::AuthRole, without re-testing the generic
 //! AclManager framework.
 
-use zznet_auth::ApplicationRole;
+use zznet_auth::role::ApplicationRole;
 use zzping_auth::AuthRole;
 
 #[test]

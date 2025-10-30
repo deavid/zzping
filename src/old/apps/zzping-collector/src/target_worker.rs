@@ -1,3 +1,5 @@
+//! Worker that manages per-target pinging and batching.
+
 use crate::{
     batch_submitter::{BatchSubmitter, BatchSubmitterCommand},
     database_client::DatabaseClientTrait,

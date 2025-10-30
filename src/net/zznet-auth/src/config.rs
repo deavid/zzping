@@ -1,7 +1,7 @@
-// ACL configuration loading and validation.
-//
-// This module provides TOML-based configuration for access control lists,
-// allowing administrators to define which peers are allowed to access the system.
+//! ACL configuration loading and validation.
+//!
+//! This module provides TOML-based configuration for access control lists,
+//! allowing administrators to define which peers are allowed to access the system.
 
 use crate::error::AuthError;
 use serde::{Deserialize, Serialize};

@@ -1,3 +1,5 @@
+//! gRPC server for ingestion endpoints.
+
 use crate::{
     auth::UserIdentity,
     config::{IntentConfig, load_intent_config},

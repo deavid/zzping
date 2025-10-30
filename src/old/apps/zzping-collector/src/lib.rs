@@ -8,46 +8,19 @@
 //! - Components react to orchestrator decisions, ensuring a clear separation of concerns.
 //! - Focused optimizations are preferred over global complexity.
 //!
-/// Batch submission and background batching logic.
 pub mod batch_submitter;
-
-/// Command-line parsing and binary glue for the collector.
 pub mod cli;
-
-/// High-level collector service orchestration.
 pub mod collector_service;
-
-/// Collector configuration and runtime settings.
 pub mod config;
-
-/// Connection manager for upstream/downstream components.
 pub mod connection_manager;
-
-/// Database client trait and concrete client implementations.
 pub mod database_client;
-
-/// Trait and implementations for pinging targets.
 pub mod ping_client;
-
-/// Mock ping client used for tests and simulations.
 pub mod ping_mock_client;
-
-/// Surge-capable ping client for high-throughput scenarios.
 pub mod ping_surge_client;
-
-/// Pinger logic coordinating ping scheduling and results.
 pub mod pinger;
-
-/// Session handler for per-collector sessions.
 pub mod session_handler;
-
-/// Holder for optional database clients.
 pub mod client_holder;
-
-/// Worker that manages per-target pinging and batching.
 pub mod target_worker;
-
-/// Supervisor task that manages workers and lifecycle.
 pub mod task_supervisor;
 
 /// Test modules (integration and unit tests) for the collector crate.

@@ -1,3 +1,5 @@
+//! Database client trait and concrete client implementations.
+
 use anyhow::Result;
 use std::future::Future;
 use std::pin::Pin;

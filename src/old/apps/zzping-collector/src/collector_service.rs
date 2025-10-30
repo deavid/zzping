@@ -1,3 +1,5 @@
+//! High-level collector service orchestration.
+
 use crate::{
     client_holder::ClientHolder,
     config::Config,

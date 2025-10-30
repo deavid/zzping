@@ -18,21 +18,12 @@
 //!
 //! This component communicates over the "memdb" room using `MemDBMessage` types.
 
-/// Actor implementation for the MemDB component (MainActor)
 pub mod actor;
-/// Builder for creating MemDBActor with three-actor pattern
 pub mod builder;
-/// Fine-grained configuration (replaces role enum)
 pub mod config;
-/// Internal messages for three-actor communication
 pub mod internal_messages;
-/// Internal actor messages (legacy, API messages)
 pub mod messages;
-/// NetworkManager - peer lifecycle and routing
 pub mod network_manager;
-/// Network protocol messages
 pub mod network_messages;
-/// Storage backend for Database role
 pub mod storage;
-/// TranslatorActor - per-peer protocol translation
 pub mod translator_actor;

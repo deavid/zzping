@@ -1,3 +1,5 @@
+//! Pinger logic coordinating ping scheduling and results.
+
 use crate::database_client::DatabaseClientTrait;
 use crate::ping_client::PingClient;
 use anyhow::Result;

@@ -41,9 +41,9 @@ use actix::prelude::*;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 
-use crate::{PeerId, PeerLifecycleEvent, PeerManager, PeerState};
-use zznet_api::types::RoomId;
-use zznet_api::types::{PeerIdentity, Role};
+use crate::peer_manager::PeerManager;
+use crate::peer_state::PeerState;
+use zznet_api::types::{PeerId, PeerIdentity, PeerLifecycleEvent, Role, RoomId};
 use zznet_router::{OnPeerConnected, RouterActor};
 
 // ============================================================================

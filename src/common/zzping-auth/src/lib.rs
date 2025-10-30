@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use zznet_auth::ApplicationRole;
+use zznet_auth::role::ApplicationRole;
 
 /// Authentication role for a peer in the ZZPing network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -76,7 +76,7 @@ impl AuthRole {
 }
 
 // Re-export common types for convenience
-pub use zznet_auth::{AclManager, GenericAuthorizer};
+pub use zznet_auth::acl::{AclManager, GenericAuthorizer};
 
 // Re-export zznet-auth modules for convenience in application tests and examples
 pub use zznet_auth::config;

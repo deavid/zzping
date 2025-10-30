@@ -1,102 +1,115 @@
 # zznet-room
 
-**High-level room abstraction for ZZNet components**
+**Room abstraction for ZZNet components using the actor-based architecture**
 
 ## Vision
 
-This crate provides `Room<T>` - the **component developer's primary API** for network communication. It makes building network-aware components trivial by hiding all serialization, registration, and routing complexity.
+This crate provides `RoomActor<T>` and `RoomManager` - the **component developer's primary APIs** for network communication in the actor-based architecture. It makes building network-aware components simple by providing typed message passing through actors.
 
 ## Purpose
 
-Be the **component-facing API** that makes networking feel like local function calls:
+Be the **component-facing API** that integrates components with the network stack:
 
 ```
-Component uses Room<T> ← YOU ARE HERE
+Component implements RoomManager ← YOU ARE HERE
     ↓
-SessionManager (routes messages)
+RouterActor creates RoomActor<T> instances
     ↓
 Network stack
 ```
 
 It provides:
-- **Type-safe message passing**: `Room<MyMessageType>` enforces types at compile time
+- **Type-safe message passing**: `RoomActor<MyMessageType>` enforces types at compile time
 - **Automatic serialization**: Components never touch serde
-- **Auto-registration**: Rooms register themselves with SessionManager
-- **Fire-and-forget semantics**: No ACKs, no retries at framework level
-- **Simple send/recv API**: Like channels, but over network
+- **Actor-based communication**: Messages flow through Actix actors
+- **Room management**: Components register room factories with the Router
+- **Clean separation**: Business logic separate from network concerns
 
 ## Why This Matters
 
-Without Room<T>:
-- ❌ Components manually register with SessionManager
-- ❌ Components handle serialization
-- ❌ Type safety not enforced
-- ❌ Boilerplate everywhere
+The actor-based architecture provides:
+- ✅ Clear separation between business logic and network concerns
+- ✅ Type safety through RoomMessageTrait
+- ✅ Automatic serialization/deserialization via RoomActor
+- ✅ Component lifecycle management through RoomManager
+- ✅ Integration with Actix actor system
 
-With Room<T>:
-- ✅ Zero boilerplate - just `Room::<MyType>::new()`
-- ✅ Type safety automatic
-- ✅ Serialization transparent
-- ✅ Clean, simple API
+## Key Concepts
 
-## Key Requirements
+### RoomActor<T>
+A typed actor that handles serialization/deserialization for a specific room:
 
-### Zero-Boilerplate Rooms
-Creating a typed room should be one line:
-```
-let room = Room::<MyMessage>::new(room_id, session_mgr, session_id);
-```
-
-Then just `room.send(msg)` and `room.recv()`. That's it.
-
-### Fire-and-Forget Semantics
-**From design docs**: Component network messages are fire-and-forget. No ACKs at framework level.
-
-**NOTE**: If the app needs acks, redesign the whole app. We shouldn't need ACKs. ZZNet is explicitly designed this way.
-
-`send()` returns when message is queued for sending. Does NOT wait for:
-- Network transmission
-- Peer reception
-- Peer acknowledgment
-
-**If application needs reliability**, implement at application level, not framework level.
-
-### Rooms Are 1:1 Per Connection
-**Critical insight from vision docs**: Rooms are NOT broadcast channels.
-
-```
-Process A                          Process B
-┌─────────────┐                   ┌─────────────┐
-│ Component   │ ←─ Room "data" ─→ │ Component   │
-└─────────────┘                   └─────────────┘
-      ONE CONNECTION, ONE BIDIRECTIONAL TYPED CHANNEL
+```rust
+// Router creates this automatically via RoomManager
+let room_actor = RoomActor::new(
+    room_id,
+    outbound_channel,
+    component_recipient,
+);
 ```
 
-If Process B has 3 connections, it has 3 separate "data" rooms (one per connection).
+### RoomManager
+Component-provided factory for creating room actors per peer:
 
-### Type Safety
-`Room<T>` enforces message type at compile time. Cannot send wrong type to a room.
+```rust
+impl RoomManager for MyComponentNetworkManager {
+    fn managed_rooms(&self) -> HashSet<RoomId> {
+        // Return rooms this component handles
+    }
+
+    async fn create_for_peer(&self, peer_id, permission, room_id, outbound) -> ... {
+        // Create RoomActor for this peer/room combination
+    }
+}
+```
+
+### RoomMessageTrait
+Messages must implement this trait for serialization:
+
+```rust
+#[derive(Serialize, Deserialize)]
+struct MyMessage { /* fields */ }
+
+impl RoomMessageTrait for MyMessage {
+    fn room_id(&self) -> RoomId { /* return room */ }
+    fn serialize_inner(&self) -> Result<Vec<u8>> { /* bincode */ }
+    fn deserialize_for_room(room_id, bytes) -> Result<Self> { /* bincode */ }
+}
+```
+
+## Architecture Flow
+
+1. Component implements `RoomManager` in its NetworkManager actor
+2. NetworkManager registers with `RouterActor` at startup
+3. When peer connects, Router calls `create_for_peer()` for each managed room
+4. RoomActor instances are created to handle serialization
+5. Messages flow: Component → RoomActor → Router → Network → Peer
+6. Inbound: Network → Router → RoomActor → Component
 
 ## What This Crate Must NOT Do
 
 - ❌ Implement transport (that's zznet-transport-tcp)
-- ❌ Manage sessions (that's zznet-session)
+- ❌ Manage peer connections (that's zznet-peer-manager)
+- ❌ Route messages (that's zznet-router)
 - ❌ Provide high-level builders (that's zznet-builder)
 - ❌ Implement authorization (that's zznet-auth)
-- ❌ Provide ACKs/retries (application responsibility)
-- ❌ Implement reliable delivery (that's TCP's job)
 
 ## Design Principles
 
 ### Type Safety
-- `Room<T>` enforces message types at compile time
-- Impossible to send wrong message type
-- Serialization errors caught early
+- `RoomActor<T>` enforces message types at compile time
+- Impossible to send wrong message type to a room
+- Serialization errors caught at runtime (logged)
 
-### Zero Boilerplate
-- No manual handler implementation
-- No explicit serialization/deserialization
-- Just send and receive typed messages
+### Actor-Based
+- All communication through Actix actors
+- Clear message flow and lifecycle management
+- Integration with Actix supervision and error handling
+
+### Separation of Concerns
+- Business logic in MainActor
+- Network concerns in NetworkManager
+- Serialization in RoomActor
 
 ### Fire-and-Forget
 - Framework provides no ACKs
@@ -116,9 +129,9 @@ If Process B has 3 connections, it has 3 separate "data" rooms (one per connecti
 
 ## Rooms vs Channels
 
-Think of Room<T> as:
-- **Like** a Rust channel (mpsc, oneshot)
-- **But** over the network
+Think of RoomActor<T> as:
+- **Like** a typed actor that serializes messages
+- **But** integrated with Router for network communication
 - **And** strongly typed
 - **And** fire-and-forget
 
@@ -129,13 +142,13 @@ NOT like:
 
 ## Multiple Message Types
 
-One component can use multiple rooms for different message types:
+One component can manage multiple rooms for different message types:
 
 ```
-struct MyComponent {
-    requests: Room<RequestMessage>,
-    responses: Room<ResponseMessage>,
-    events: Room<EventMessage>,
+impl RoomManager for MyNetworkManager {
+    fn managed_rooms(&self) -> HashSet<RoomId> {
+        ["requests", "responses", "events"].into_iter().map(RoomId::from).collect()
+    }
 }
 ```
 
@@ -144,7 +157,8 @@ Different rooms = different message types. Same connection.
 ## Testing Requirements
 
 ### Must Pass
-- Create rooms easily
+- Implement RoomManager easily
+- Create RoomActor instances per peer
 - Send/receive typed messages
 - Work with mock transport
 - Work with TCP transport
@@ -158,9 +172,9 @@ Different rooms = different message types. Same connection.
 
 ## Relationship to Other Crates
 
-- **zznet-session**: SessionManager that rooms register with
-- **zznet-hello**: Provides serialization for rooms
-- **zznet-api**: Transport abstraction rooms build on
+- **zznet-router**: RouterActor that creates RoomActor instances
+- **zznet-peer-manager**: PeerManagerActor for peer lifecycle
+- **zznet-api**: Types and traits for network communication
 - **zznet-builder**: High-level API that creates rooms
 
 ## Success Criteria

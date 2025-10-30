@@ -59,23 +59,9 @@
 //! let acl = AclManager::<MockRole>::new();
 //! ```
 
-/// Access-control list utilities for allow-lists.
 pub mod acl;
-
-/// Configuration helpers for authorization components.
 pub mod config;
-
-/// Error types used by the authorization subsystem.
 pub mod error;
-
-/// Mock roles for testing.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mock;
-
-/// Application-level role definitions and conversions.
 pub mod role;
-
-// Re-export key types for convenience
-pub use acl::{AclManager, GenericAuthorizer};
-pub use error::AuthError;
-pub use role::ApplicationRole;

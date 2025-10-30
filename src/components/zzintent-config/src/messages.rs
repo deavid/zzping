@@ -87,25 +87,6 @@ pub struct IntentConfigHealth {
     pub last_broadcast_ms: u128,
 }
 
-/// A request to get the room channels for component-to-component messaging.
-/// This allows external services to wire up room-based communication with the actor.
-#[derive(Message)]
-#[rtype(result = "GetRoomChannelsResponse")]
-pub struct GetRoomChannels;
-
-/// Response containing the room channels if available.
-#[derive(Clone)]
-pub struct GetRoomChannelsResponse {
-    /// The room channels for component-to-component messaging, wrapped in Arc for sharing.
-    pub channels: Option<std::sync::Arc<zznet_room::room::RoomChannels>>,
-}
-
-/// A command message to create the room for component-to-component messaging.
-/// This should be called after the actor is started so we can get the proper Recipient.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct CreateRoom;
-
 #[cfg(test)]
 mod tests {
     use super::*;

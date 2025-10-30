@@ -6,6 +6,7 @@ use zznet_auth::acl::AclManager;
 use zznet_auth::config::AclConfig;
 
 use serde::{Deserialize, Serialize};
+use zznet_auth::role::ApplicationRole;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 enum MockRole {
@@ -13,7 +14,7 @@ enum MockRole {
     B,
 }
 
-impl zznet_auth::ApplicationRole for MockRole {
+impl ApplicationRole for MockRole {
     fn from_cn(cn: &str) -> Result<Self, zznet_auth::error::AuthError> {
         match cn {
             "a" => Ok(MockRole::A),

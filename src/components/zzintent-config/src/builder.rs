@@ -144,9 +144,7 @@ impl IntentConfigBuilder {
 
             log::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
         } else {
-            log::debug!(
-                "No PeerRegistry/MessageRouter - NetworkManager not created (standalone mode)"
-            );
+            log::debug!("No Router/PeerManager - NetworkManager not created (standalone mode)");
         }
 
         Ok(actor_addr)

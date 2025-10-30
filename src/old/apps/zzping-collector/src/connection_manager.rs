@@ -1,3 +1,5 @@
+//! Connection manager for upstream/downstream components.
+
 use crate::client_holder::ClientHolder;
 use crate::database_client::{DatabaseClient, DatabaseClientTrait};
 use log::{info, warn};

@@ -1,3 +1,5 @@
+//! Generic room actor for centralized (de-)serialization.
+
 // src/net/zznet-room/src/actor.rs
 use actix::prelude::*;
 use tokio::sync::mpsc;

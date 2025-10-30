@@ -1,3 +1,5 @@
+//! Session handler for per-collector sessions.
+
 use crate::{
     collector_service::CachedIntent,
     database_client::DatabaseClientTrait,

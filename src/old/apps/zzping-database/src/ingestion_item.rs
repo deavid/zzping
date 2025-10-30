@@ -1,3 +1,5 @@
+//! Types representing an ingestion item to store.
+
 use std::net::IpAddr;
 use zzping_lib::protocol::RawDataRecord;
 

@@ -9,7 +9,7 @@ use tokio::sync::{broadcast, mpsc};
 use zznet_api::types::{PeerId, Permission, RoomId};
 use zznet_room::room_manager::RoomManager;
 
-use crate::Router;
+use crate::router::Router;
 
 /// RouterActor - Actix wrapper for Router
 ///

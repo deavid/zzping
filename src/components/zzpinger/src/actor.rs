@@ -1,3 +1,5 @@
+//! Actix actors that manage pinger lifecycle and messages.
+
 use actix::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;

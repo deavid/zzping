@@ -34,8 +34,3 @@ pub mod config;
 pub mod connection;
 pub mod framing;
 pub mod server;
-
-pub use client::TcpTransportClient;
-pub use config::{TlsCertAndKey, TlsConfig};
-pub use connection::TcpTransport;
-pub use server::TcpTransportServer;

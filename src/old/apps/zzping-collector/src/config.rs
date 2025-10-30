@@ -1,3 +1,5 @@
+//! Collector configuration and runtime settings.
+
 use anyhow::Result;
 use serde::Deserialize;
 use std::fs;

@@ -9,10 +9,9 @@ use crate::internal_messages::{
     SendQueryResponse, SendSubmitBatch, SetNetworkManager,
 };
 use crate::messages::{
-    ClearBuffer, CreateRoom, GetHealth, GetRoomChannels, GetRoomChannelsResponse, GetStats,
-    MemDBError, MemDBHealth, StorePingResult, TargetStats,
+    ClearBuffer, GetHealth, GetStats, MemDBError, MemDBHealth, StorePingResult, TargetStats,
 };
-use crate::network_messages::{MemDBMessage, PingResult};
+use crate::network_messages::PingResult;
 use crate::storage::StorageBackend;
 use actix::prelude::*;
 use std::sync::Arc;
@@ -44,12 +43,6 @@ pub struct MemDBActor {
 
     /// For Collector role: track the timestamp of the currently outstanding batch
     outstanding_batch: Option<u64>,
-
-    /// Room instance for component-to-component messaging
-    room: Option<zznet_room::room::Room<MemDBMessage>>,
-
-    /// Room channels for SessionManager wiring
-    room_channels: Option<std::sync::Arc<zznet_room::room::RoomChannels>>,
 }
 
 impl Default for MemDBActor {
@@ -81,8 +74,6 @@ impl MemDBActor {
             failed_batches: Arc::new(AtomicU64::new(0)),
             total_results: Arc::new(AtomicU64::new(0)),
             outstanding_batch: None,
-            room: None,
-            room_channels: None,
         }
     }
 
@@ -349,23 +340,6 @@ impl Handler<InboundQueryResponse> for MemDBActor {
     }
 }
 
-// ============================================================================
-// BRIDGE HANDLER (Temporary - for MemDBRoomHandle compatibility)
-// ============================================================================
-// This handler is kept temporarily for MemDBRoomHandle which is used during
-// CreateRoom. This will be removed when Room integration is complete.
-impl Handler<MemDBMessage> for MemDBActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: MemDBMessage, _ctx: &mut Context<Self>) {
-        log::warn!(
-            "Received MemDBMessage via deprecated RoomHandle bridge: {:?}",
-            msg
-        );
-        // This should not be used in production - messages should come through TranslatorActor
-    }
-}
-
 impl Handler<StorePingResult> for MemDBActor {
     type Result = Result<(), MemDBError>;
 
@@ -447,52 +421,6 @@ impl Handler<GetStats> for MemDBActor {
 ///
 /// Handles incoming network messages from other MemDB peers.
 /// The behavior depends on the actor's role:
-/// Handles the `CreateRoom` message, creating typed channels for network messaging.
-/// The channels are stored for SessionManager to use for message routing.
-impl Handler<CreateRoom> for MemDBActor {
-    type Result = ();
-
-    fn handle(&mut self, _msg: CreateRoom, _ctx: &mut Context<Self>) -> Self::Result {
-        // Create the Room<T> with typed message handling
-        let (room, channels) = zznet_room::room::Room::new(
-            "memdb".to_string(),
-            _ctx.address().recipient::<MemDBMessage>(),
-        );
-
-        // Store the room and channels
-        self.room = Some(room);
-        self.room_channels = Some(std::sync::Arc::new(channels));
-
-        log::info!("✓ Room created for MemDBActor, ready for SessionManager wiring");
-    }
-}
-
-/// Handles the `GetRoomChannels` message, creating and returning room channels for network messaging.
-/// If channels don't exist yet, they are created on-demand.
-impl Handler<GetRoomChannels> for MemDBActor {
-    type Result = MessageResult<GetRoomChannels>;
-
-    fn handle(&mut self, _msg: GetRoomChannels, _ctx: &mut Context<Self>) -> Self::Result {
-        // Create room on-demand if it doesn't exist yet
-        if self.room.is_none() {
-            // Create the Room<T> with typed message handling
-            let (room, channels) = zznet_room::room::Room::new(
-                "memdb".to_string(),
-                _ctx.address().recipient::<MemDBMessage>(),
-            );
-
-            // Store the room and channels
-            self.room = Some(room);
-            self.room_channels = Some(std::sync::Arc::new(channels));
-
-            log::info!("✓ Room created on-demand for MemDBActor, ready for SessionManager wiring");
-        }
-
-        let channels = self.room_channels.clone();
-        MessageResult(GetRoomChannelsResponse { channels })
-    }
-}
-
 #[cfg(test)]
 #[allow(deprecated)]
 mod tests {
