@@ -260,13 +260,16 @@ impl CollectorService {
             .start()
             .map_err(|e| CollectorError::Component(format!("IntentConfig start failed: {}", e)))?;
 
-        // Start Pinger
-        let pinger_handle = builders.pinger.start()?;
+        // Start MemDB with Router
+        let memdb_addr = builders.memdb_addr; // Already started in create_builders
+
+        // Start Pinger with Router
+        let pinger_handle = builders.pinger.router_actor(router_actor.clone()).start()?;
 
         Ok(StartedComponents {
             intent_config: intent_addr,
             pinger: pinger_handle,
-            memdb_addr: builders.memdb_addr,
+            memdb_addr,
             peer_manager: builders.peer_manager,
             router_actor,
         })

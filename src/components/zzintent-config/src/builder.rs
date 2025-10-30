@@ -93,12 +93,13 @@ impl IntentConfigBuilder {
     /// It internally creates the `IntentConfigActor` and starts it on the
     /// currently running Actix System.
     ///
-    /// Phase 7.2: Now creates three-actor system:
+    /// Phase 7.2: Builds the three-actor system:
     /// - IntentConfigActor (Main Actor - business logic)
     /// - IntentConfigNetworkManager (Manager Actor - peer lifecycle)
-    /// - IntentConfigNetworkActor (Network Actor - per-peer, created by Manager)
+    /// - IntentConfigTranslatorActor (Per-peer translator, created by Manager)
     ///
-    /// NetworkManager uses PeerManagerActor directly for authorization and channel access.
+    /// NetworkManager also owns the RoomActor<T> instances that serialize messages
+    /// for each peer and wires them to the translators.
     ///
     /// # Errors
     ///
@@ -129,13 +130,8 @@ impl IntentConfigBuilder {
         {
             log::info!("Creating IntentConfigNetworkManager for three-actor pattern");
 
-            // Create a dummy broadcast receiver for PeerLifecycleEvents
-            // This will be replaced when PeerManager provides subscribe_events()
-            let (_tx, rx) = tokio::sync::broadcast::channel(100);
-
             let network_manager = crate::network_manager::IntentConfigNetworkManager::new(
                 actor_addr.clone(),
-                rx,
                 peer_manager,
                 router_actor,
             )

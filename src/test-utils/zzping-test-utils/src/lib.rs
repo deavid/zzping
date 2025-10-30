@@ -10,24 +10,10 @@
 
 use std::time::Duration;
 use tokio::sync::mpsc;
-use zznet_api::types::{RoomId, SessionError};
+use zznet_api::types::RoomId;
 
-/// A minimal RoomHandle implementation used in tests to provide a room id
-/// for PeerSession so joined_rooms can be negotiated. This does not process
-/// inbound messages — it's only to satisfy PeerSession invariants.
-pub struct DummyRoomHandle {
-    id: RoomId,
-}
-
-impl DummyRoomHandle {
-    /// Create a new `DummyRoomHandle` with the provided `RoomId`.
-    ///
-    /// This handle does not process messages; it only provides a stable
-    /// `room_id()` implementation for use in tests where a `RoomHandle` is required.
-    pub fn new(id: RoomId) -> Self {
-        Self { id }
-    }
-}
+// create_peer_with_message_capture() removed in Phase 8 (used SessionManager)
+// Tests should create peers and channels directly using PeerSession::new_connected()
 
 // SessionManager-based test utilities removed in Phase 8
 // These functions were deprecated and unused. Tests should use PeerManagerActor directly.
@@ -128,22 +114,3 @@ impl Default for MessageCaptureChannels {
 
 // create_peer_with_message_capture() removed in Phase 8 (used SessionManager)
 // Tests should create peers and channels directly using PeerSession::new_connected()
-
-impl zznet_room::room_handle::RoomHandle for DummyRoomHandle {
-    fn room_id(&self) -> &RoomId {
-        &self.id
-    }
-
-    fn send_message(&mut self, _bytes: Vec<u8>) -> Result<(), SessionError> {
-        // No-op for tests
-        Ok(())
-    }
-
-    fn spawn_forwarder(
-        &mut self,
-        _tx: mpsc::Sender<(RoomId, Vec<u8>)>,
-    ) -> Result<(), SessionError> {
-        // No-op for tests
-        Ok(())
-    }
-}

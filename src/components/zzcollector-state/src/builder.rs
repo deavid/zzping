@@ -3,12 +3,11 @@
 //! This builder creates the three-actor system:
 //! 1. CStateActor (MainActor - business logic)
 //! 2. CStateNetworkManager (Manager - peer lifecycle and routing)
-//! 3. CStateNetworkActor (per-peer, created by Manager)
+//! 3. CStateTranslatorActor (per-peer, created by Manager)
 
-use crate::{actor::CStateActor, config::CStateConfig, network_messages::CStateMessage};
+use crate::{actor::CStateActor, config::CStateConfig};
 use actix::prelude::*;
 use zznet_peer_manager::PeerManagerActor;
-use zznet_room::room::TypedSender;
 use zznet_router::RouterActor;
 
 /// A builder for constructing `CStateActor` instances.
@@ -18,7 +17,6 @@ pub struct CStateBuilder {
     config: CStateConfig,
     peer_manager: Option<Addr<PeerManagerActor>>,
     router_actor: Option<Addr<RouterActor>>,
-    typed_sender: Option<TypedSender<CStateMessage>>,
 }
 
 impl CStateBuilder {
@@ -28,7 +26,6 @@ impl CStateBuilder {
             config,
             peer_manager: None,
             router_actor: None,
-            typed_sender: None,
         }
     }
 
@@ -50,21 +47,12 @@ impl CStateBuilder {
         self
     }
 
-    /// Set the TypedSender for broadcasting network messages.
-    ///
-    /// This should be obtained from `room.typed_sender()` where room is a
-    /// `Room<CStateMessage>`. Required for network message broadcasting.
-    pub fn typed_sender(mut self, typed_sender: TypedSender<CStateMessage>) -> Self {
-        self.typed_sender = Some(typed_sender);
-        self
-    }
-
     /// Builds and starts the `CStateActor` along with its NetworkManager.
     ///
     /// Phase 7.3: This creates the complete three-actor system:
     /// - CStateActor (business logic, zero network dependencies)
     /// - CStateNetworkManager (orchestrates peer lifecycle)
-    /// - CStateNetworkActor instances (created per peer by NetworkManager)
+    /// - CStateTranslatorActor instances (created per peer by NetworkManager)
     ///
     /// Returns the address of the MainActor.
     pub fn build(self) -> Addr<CStateActor> {
@@ -73,20 +61,14 @@ impl CStateBuilder {
         let actor_addr = CStateActor::create(move |_ctx| CStateActor::new(config));
 
         // Phase 7.3: Create NetworkManager if we have PeerManagerActor and RouterActor
-        if let (Some(peer_manager), Some(_router_actor)) = (self.peer_manager, self.router_actor) {
+        if let (Some(peer_manager), Some(router_actor)) = (self.peer_manager, self.router_actor) {
             log::info!("Creating CStateNetworkManager for three-actor pattern");
 
-            let mut network_manager =
-                crate::network_manager::CStateNetworkManager::new(actor_addr.clone(), peer_manager);
-
-            // Set TypedSender if provided
-            if let Some(typed_sender) = self.typed_sender {
-                network_manager = network_manager.with_typed_sender(typed_sender);
-            } else {
-                log::warn!(
-                    "NetworkManager created without TypedSender - network communication disabled"
-                );
-            }
+            let network_manager = crate::network_manager::CStateNetworkManager::new(
+                actor_addr.clone(),
+                peer_manager,
+                router_actor,
+            );
 
             let network_manager = network_manager.start();
 

@@ -34,8 +34,8 @@ use zznet_router::RouterActor;
 pub struct ComponentBuilders {
     /// Builder for IntentConfig component
     pub intent_config: IntentConfigBuilder,
-    /// Address of the running MemDB actor
-    pub memdb_addr: Addr<MemDBActor>,
+    /// Builder for MemDB component
+    pub memdb_builder: MemDBBuilder,
     /// Builder for CState component
     pub cstate_builder: CStateBuilder,
     /// PeerManagerActor for network communication shared across actors
@@ -163,9 +163,8 @@ impl DatabaseService {
             .config_for_database(config_path)
             .peer_manager(peer_manager_actor.clone());
 
-        let memdb_addr = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
-            .peer_manager(peer_manager_actor.clone())
-            .build();
+        let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
+            .peer_manager(peer_manager_actor.clone());
 
         let cstate_builder = CStateBuilder::new(CStateConfig::for_database(
             self.config.components.stale_timeout_secs,
@@ -175,7 +174,7 @@ impl DatabaseService {
 
         Ok(ComponentBuilders {
             intent_config,
-            memdb_addr,
+            memdb_builder,
             cstate_builder,
             peer_manager: peer_manager_actor,
         })
@@ -202,7 +201,7 @@ impl DatabaseService {
         // Destructure builders
         let ComponentBuilders {
             intent_config,
-            memdb_addr,
+            memdb_builder,
             cstate_builder,
             peer_manager,
             ..
@@ -211,13 +210,16 @@ impl DatabaseService {
         // Configure IntentConfig with RouterActor
         let intent_config = intent_config.router(router_actor.clone());
 
+        // Configure MemDB with RouterActor and build
+        let memdb_addr = memdb_builder.router(router_actor.clone()).build();
+
+        // Configure CState with RouterActor and build
+        let cstate_addr = cstate_builder.router(router_actor.clone()).build();
+
         // Start IntentConfig
         let intent_addr = intent_config
             .start()
             .map_err(|e| DatabaseError::Component(format!("IntentConfig start failed: {}", e)))?;
-
-        // Start CState
-        let cstate_addr = cstate_builder.build();
 
         Ok(StartedComponents {
             intent_config: intent_addr,

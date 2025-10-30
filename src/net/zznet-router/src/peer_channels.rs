@@ -1,19 +1,20 @@
+use actix::Recipient;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use zznet_api::types::{PeerChannels as PeerChannelsTrait, PeerId, RoomId, SessionError};
-use zznet_room::room_handle::RoomHandle;
+use zznet_room::room_manager::InboundRoomPayload;
 
 /// Shared room storage for a peer.
-type SessionRooms = Arc<TokioMutex<HashMap<RoomId, Box<dyn RoomHandle>>>>;
+type SessionRooms = Arc<TokioMutex<HashMap<RoomId, Recipient<InboundRoomPayload>>>>;
 
 /// Builder for PeerChannels with immutable construction.
 ///
 /// Collects rooms before connecting transport channels.
 pub struct PeerChannelsBuilder {
     peer_id: PeerId,
-    rooms: HashMap<RoomId, Box<dyn RoomHandle>>,
+    rooms: HashMap<RoomId, Recipient<InboundRoomPayload>>,
 }
 
 impl PeerChannelsBuilder {
@@ -29,7 +30,7 @@ impl PeerChannelsBuilder {
     pub fn add_room(
         &mut self,
         room_id: RoomId,
-        room: Box<dyn RoomHandle>,
+        room: Recipient<InboundRoomPayload>,
     ) -> Result<(), SessionError> {
         if self.rooms.contains_key(&room_id) {
             return Err(SessionError::RoomAlreadyExists {
@@ -51,17 +52,7 @@ impl PeerChannelsBuilder {
     ) -> Result<PeerChannels, SessionError> {
         let (broadcast_tx, _) = broadcast::channel(100);
 
-        let mut rooms_map = self.rooms;
-
-        // Spawn forwarder for each room (Component → Peer)
-        for (room_id, room) in &mut rooms_map {
-            room.spawn_forwarder(outbound_tx.clone()).map_err(|_| {
-                SessionError::RoomReceiverAlreadySpawned {
-                    peer_id: self.peer_id.clone(),
-                    room_id: room_id.clone(),
-                }
-            })?;
-        }
+        let rooms_map = self.rooms;
 
         // Wrap in Arc<Mutex<>> for sharing
         let rooms = Arc::new(TokioMutex::new(rooms_map));
@@ -132,16 +123,10 @@ impl PeerChannels {
         room_id: RoomId,
         bytes: Vec<u8>,
     ) {
-        let mut rooms_lock = rooms.lock().await;
-        if let Some(room) = rooms_lock.get_mut(&room_id) {
-            if let Err(e) = room.send_message(bytes) {
-                tracing::warn!(
-                    "Failed to route message to room {} on peer {}: {:?}",
-                    room_id,
-                    peer_id,
-                    e
-                );
-            }
+        let rooms_lock = rooms.lock().await;
+        if let Some(room_recipient) = rooms_lock.get(&room_id) {
+            let message = InboundRoomPayload { payload: bytes };
+            room_recipient.do_send(message);
         } else {
             tracing::warn!(
                 "Received message for unknown/unjoined room {} on peer {}",

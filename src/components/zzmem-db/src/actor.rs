@@ -17,57 +17,7 @@ use crate::storage::StorageBackend;
 use actix::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use zznet_api::types::{PeerId, RoomId};
-use zznet_room::room_handle::RoomHandle;
-
-/// Room handle that forwards MemDB messages to the MemDBActor
-pub struct MemDBRoomHandle {
-    addr: Addr<MemDBActor>,
-    room_id: RoomId,
-}
-
-impl MemDBRoomHandle {
-    /// Create a new MemDBRoomHandle that forwards messages to the given actor address
-    pub fn new(addr: Addr<MemDBActor>) -> Self {
-        Self {
-            addr,
-            room_id: RoomId::from("memdb"),
-        }
-    }
-}
-
-impl RoomHandle for MemDBRoomHandle {
-    fn room_id(&self) -> &RoomId {
-        &self.room_id
-    }
-
-    fn send_message(&mut self, bytes: Vec<u8>) -> Result<(), zznet_api::types::SessionError> {
-        // Deserialize the bytes to MemDBMessage
-        let config = bincode::config::standard();
-        match bincode::serde::decode_from_slice::<MemDBMessage, _>(&bytes, config) {
-            Ok((msg, _)) => {
-                self.addr.do_send(msg);
-                Ok(())
-            }
-            Err(e) => {
-                tracing::error!("Failed to deserialize MemDBMessage: {:?}", e);
-                // Return a generic error - deserialization failures are logged but don't have a specific variant
-                Err(zznet_api::types::SessionError::RoomNotFound {
-                    peer_id: zznet_api::types::PeerId::from("unknown"),
-                    room_id: self.room_id.clone(),
-                })
-            }
-        }
-    }
-
-    fn spawn_forwarder(
-        &mut self,
-        _tx: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
-    ) -> Result<(), zznet_api::types::SessionError> {
-        // Not needed for direct forwarding
-        Ok(())
-    }
-}
+use zznet_api::types::PeerId;
 
 /// The MemDBActor handles ping result storage and querying.
 ///
@@ -412,7 +362,7 @@ impl Handler<MemDBMessage> for MemDBActor {
             "Received MemDBMessage via deprecated RoomHandle bridge: {:?}",
             msg
         );
-        // This should not be used in production - messages should come through NetworkActor
+        // This should not be used in production - messages should come through TranslatorActor
     }
 }
 
@@ -787,53 +737,6 @@ mod tests {
         let result = actor.handle(msg, &mut Context::new());
 
         assert!(matches!(result, Err(MemDBError::WrongRole)));
-    }
-
-    #[actix::test]
-    async fn test_memdb_room_handle_new() {
-        let actor = MemDBActor::new(MemDBConfig::for_collector(100));
-        let addr = actor.start();
-        let room_handle = MemDBRoomHandle::new(addr);
-
-        // Test that room_id returns the correct room
-        assert_eq!(room_handle.room_id().as_str(), "memdb");
-    }
-
-    #[actix::test]
-    async fn test_memdb_room_handle_send_message() {
-        let actor = MemDBActor::new(MemDBConfig::for_database(100, None));
-        let addr = actor.start();
-        let mut room_handle = MemDBRoomHandle::new(addr);
-
-        // Phase 5.7: This test validates the bridge Handler<MemDBMessage> for MemDBRoomHandle compatibility
-        // Send a message - this should succeed (message goes to actor mailbox via bridge)
-        let msg = MemDBMessage::Query {
-            sender_peer_id: "test-peer".to_string(),
-            target: "example.com".to_string(),
-            from_ms: 1000,
-            to_ms: 2000,
-        };
-
-        // Serialize the message to bytes
-        let config = bincode::config::standard();
-        let bytes = bincode::serde::encode_to_vec(&msg, config).unwrap();
-
-        let result = room_handle.send_message(bytes);
-        assert!(result.is_ok());
-    }
-
-    #[actix::test]
-    async fn test_memdb_room_handle_spawn_forwarder() {
-        let actor = MemDBActor::new(MemDBConfig::for_collector(100));
-        let addr = actor.start();
-        let mut room_handle = MemDBRoomHandle::new(addr);
-
-        // Create a dummy channel
-        let (tx, _rx) = tokio::sync::mpsc::channel(10);
-
-        // spawn_forwarder should succeed (returns Ok(()))
-        let result = room_handle.spawn_forwarder(tx);
-        assert!(result.is_ok());
     }
 
     #[actix::test]

@@ -8,8 +8,7 @@ use tokio::sync::mpsc;
 use zznet_api::types::{PeerId, PeerIdentity, Permission, RoomId};
 use zznet_peer_manager::PeerManagerActor;
 use zznet_router::{
-    BroadcastToPeers, HandlePublishRooms, OnPeerConnected, OnPeerDisconnected, RouterActor,
-    SendToPeer,
+    HandlePublishRooms, OnPeerConnected, OnPeerDisconnected, PeerSender, RouterActor,
 };
 
 /// Helper function to create a test Permission
@@ -125,7 +124,7 @@ async fn test_router_actor_message_routing() {
     let router_actor = RouterActor::new(offered_rooms, None).start();
 
     // Create a peer and connect it
-    let (outbound_tx, _outbound_rx) = mpsc::channel(10);
+    let (outbound_tx, mut outbound_rx) = mpsc::channel(10);
     let (_inbound_tx, inbound_rx) = mpsc::channel(10);
 
     let peer_id = PeerId::from("test-peer");
@@ -148,21 +147,35 @@ async fn test_router_actor_message_routing() {
     let negotiate_result = router_actor.send(negotiate_msg).await.unwrap();
     assert!(negotiate_result.is_ok(), "Room negotiation should succeed");
 
-    // Test sending a message to the peer
+    // Get the peer's outbound sender from the RouterActor
+    let peer_sender_msg = zznet_router::PeerSender {
+        peer_id: peer_id.clone(),
+    };
+
+    let peer_sender_result = router_actor.send(peer_sender_msg).await.unwrap();
+    assert!(peer_sender_result.is_some(), "Should get peer sender");
+
+    let peer_sender = peer_sender_result.unwrap();
+
+    // Test sending a message to the peer using the direct channel
     let room_id = RoomId::new("test-room");
     let message_data = b"test message".to_vec();
 
-    let send_msg = SendToPeer {
-        peer_id: peer_id.clone(),
-        room_id: room_id.clone(),
-        bytes: message_data.clone(),
-    };
+    let send_result = peer_sender
+        .send((room_id.clone(), message_data.clone()))
+        .await;
+    assert!(send_result.is_ok(), "Direct message send should succeed");
 
-    let result = router_actor.send(send_msg).await;
-    assert!(result.is_ok(), "Message send should succeed");
+    // Verify message was received on the outbound channel
+    let received = outbound_rx.recv().await;
+    assert!(
+        received.is_some(),
+        "Should receive message on outbound channel"
+    );
 
-    // Verify message was received (this would fail in real scenario without proper setup)
-    // In a full integration test, we'd need to set up the peer channels properly
+    let (received_room_id, received_data) = received.unwrap();
+    assert_eq!(received_room_id, room_id, "Room ID should match");
+    assert_eq!(received_data, message_data, "Message data should match");
 }
 
 #[actix::test]
@@ -178,10 +191,12 @@ async fn test_router_actor_broadcast() {
         PeerId::from("peer-3"),
     ];
 
-    // Connect all peers (simplified - in real test would need proper channels)
+    // Connect all peers (keep outbound receivers alive)
+    let mut outbound_receivers = Vec::new();
     for peer_id in &peer_ids {
-        let (outbound_tx, _outbound_rx) = mpsc::channel(10);
+        let (outbound_tx, outbound_rx) = mpsc::channel(10);
         let (_inbound_tx, inbound_rx) = mpsc::channel(10);
+        outbound_receivers.push(outbound_rx);
 
         let connect_msg = OnPeerConnected {
             peer_id: peer_id.clone(),
@@ -202,15 +217,23 @@ async fn test_router_actor_broadcast() {
         assert!(negotiate_result.is_ok(), "Room negotiation should succeed");
     }
 
-    // Test broadcast to all peers
-    let broadcast_msg = BroadcastToPeers {
-        peer_ids: peer_ids.clone(),
-        room_id: RoomId::new("broadcast-room"),
-        bytes: b"broadcast message".to_vec(),
-    };
+    // Test broadcast to all peers by getting each peer sender and sending individually
+    let room_id = RoomId::new("broadcast-room");
+    let message_bytes = b"broadcast message".to_vec();
 
-    let result = router_actor.send(broadcast_msg).await;
-    assert!(result.is_ok(), "Broadcast should succeed");
+    for peer_id in &peer_ids {
+        let peer_sender_msg = PeerSender {
+            peer_id: peer_id.clone(),
+        };
+        let peer_sender_option = router_actor.send(peer_sender_msg).await.unwrap();
+        assert!(peer_sender_option.is_some(), "Should get peer sender");
+
+        let peer_sender = peer_sender_option.unwrap();
+        let send_result = peer_sender
+            .send((room_id.clone(), message_bytes.clone()))
+            .await;
+        assert!(send_result.is_ok(), "Broadcast message send should succeed");
+    }
 }
 
 #[actix::test]

@@ -8,7 +8,7 @@
 //! ## Actors
 //! - **IntentConfigActor** (actor.rs) - Main business logic actor (config storage, subscribers)
 //! - **IntentConfigNetworkManager** (network_manager.rs) - Peer lifecycle orchestration
-//! - **IntentConfigNetworkActor** (network_actor.rs) - Per-peer protocol translation
+//! - **IntentConfigTranslatorActor** (translator_actor.rs) - Per-peer protocol translation
 //!
 //! ## Internal Communication
 //! - **internal_messages** - Messages between the three actors (not public API)
@@ -22,5 +22,5 @@ pub mod network_messages;
 
 // Phase 3: Three-actor pattern modules
 pub mod internal_messages;
-pub mod network_actor;
 pub mod network_manager;
+pub mod translator_actor;

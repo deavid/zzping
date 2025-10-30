@@ -11,6 +11,7 @@ use crate::pinger::PingBackend;
 use actix::{Actor, Addr};
 use std::sync::Arc;
 use zzmem_db::actor::MemDBActor;
+use zznet_router::RouterActor;
 
 /// A builder for configuring and starting a `PingerActor`.
 ///
@@ -23,6 +24,7 @@ pub struct PingerBuilder {
     initial_targets: Vec<TargetConfig>,
     enabled: bool,
     backend: Option<Arc<dyn PingBackend>>,
+    router_actor: Option<Addr<RouterActor>>,
 }
 
 impl PingerBuilder {
@@ -37,6 +39,7 @@ impl PingerBuilder {
             initial_targets: Vec::new(),
             enabled: true,
             backend: None,
+            router_actor: None,
         }
     }
 
@@ -86,6 +89,14 @@ impl PingerBuilder {
         self
     }
 
+    /// Configures the RouterActor for network communication.
+    ///
+    /// This enables the pinger to receive configuration updates over the network.
+    pub fn router_actor(mut self, router_actor: Addr<RouterActor>) -> Self {
+        self.router_actor = Some(router_actor);
+        self
+    }
+
     /// Consumes the builder to construct, start, and return a handle to the `PingerActor`.
     ///
     /// This method finalizes the configuration, starts the actor, and provides a `PingerHandle`
@@ -109,6 +120,21 @@ impl PingerBuilder {
         actor = actor.with_enabled(self.enabled);
 
         let addr = Actor::start(actor);
+
+        // Create NetworkManager if we have RouterActor
+        if let Some(router_actor) = self.router_actor {
+            log::info!("Creating PingerNetworkManager for Router integration");
+
+            let network_manager =
+                crate::network_manager::PingerNetworkManager::new(addr.clone(), router_actor);
+
+            network_manager.start();
+
+            log::info!("✓ PingerNetworkManager created and registered with Router");
+        } else {
+            log::debug!("No RouterActor provided - NetworkManager not created");
+        }
+
         Ok(PingerHandle::new(addr))
     }
 }

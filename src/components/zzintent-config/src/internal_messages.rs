@@ -3,7 +3,7 @@
 //! These messages are used for communication between:
 //! - IntentConfigActor (Main Actor - business logic)
 //! - IntentConfigNetworkManager (Manager Actor - peer lifecycle)
-//! - IntentConfigNetworkActor (Network Actor - per-peer protocol)
+//! - IntentConfigTranslatorActor (Translator Actor - per-peer protocol)
 //!
 //! These are NOT exposed in the public API - they are internal implementation details
 //! of the three-actor architecture.
@@ -42,12 +42,12 @@ pub struct SendErrorToPeer {
 }
 
 // ============================================================================
-// Messages: NetworkActor → NetworkManager
+// Messages: TranslatorActor → NetworkManager
 // ============================================================================
 
 /// Inbound config change request from a peer
 ///
-/// Sent by NetworkActor when it receives a RequestConfigChange message
+/// Sent by TranslatorActor when it receives a RequestConfigChange message
 /// from its peer. NetworkManager is responsible for:
 /// 1. Querying PeerManager for authorization (role check)
 /// 2. Forwarding to MainActor if authorized
@@ -65,7 +65,7 @@ pub struct InboundConfigChangeRequest {
 
 /// Inbound request to get current configuration
 ///
-/// Sent by NetworkActor when it receives a GetConfig message from its peer.
+/// Sent by TranslatorActor when it receives a GetConfig message from its peer.
 /// NetworkManager forwards to MainActor for processing.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "IntentConfigData")]
@@ -100,13 +100,13 @@ pub struct NetworkConfigChangeRequest {
 }
 
 // ============================================================================
-// Messages: NetworkManager → NetworkActor
+// Messages: NetworkManager → TranslatorActor
 // ============================================================================
 
 /// Command to send a config update to the peer
 ///
 /// Sent by NetworkManager when broadcasting config updates.
-/// NetworkActor serializes and sends via Room<T>.
+/// TranslatorActor forwards to RoomActor<T> for serialization.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct SendConfigUpdateToPeer {
@@ -117,7 +117,7 @@ pub struct SendConfigUpdateToPeer {
 /// Command to send an error message to the peer
 ///
 /// Sent by NetworkManager when an error needs to be communicated.
-/// NetworkActor serializes and sends via Room<T>.
+/// TranslatorActor forwards to RoomActor<T> for serialization.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct SendErrorMessageToPeer {
@@ -128,7 +128,7 @@ pub struct SendErrorMessageToPeer {
 /// Command to send the current config in response to GetConfig request
 ///
 /// Sent by NetworkManager in response to InboundGetConfigRequest.
-/// NetworkActor serializes and sends via Room<T>.
+/// TranslatorActor forwards to RoomActor<T> for serialization.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct SendConfigResponseToPeer {
@@ -146,17 +146,17 @@ pub struct SendConfigResponseToPeer {
 // 1. External API → MainActor.UpdateConfig
 // 2. MainActor validates, persists, broadcasts locally
 // 3. MainActor → BroadcastConfigUpdate → NetworkManager
-// 4. NetworkManager iterates network_actors HashMap
-// 5. NetworkManager → SendConfigUpdateToPeer → NetworkActor[each peer]
-// 6. NetworkActor serializes IntentConfigNetworkMsg::ConfigUpdate
-// 7. NetworkActor → Room<T>.send() → Peer
+// 4. NetworkManager iterates translator_actors HashMap
+// 5. NetworkManager → SendConfigUpdateToPeer → TranslatorActor[each peer]
+// 6. TranslatorActor forwards IntentConfigNetworkMsg::ConfigUpdate to RoomActor<T>
+// 7. RoomActor<T> serializes and sends → Peer
 // ```
 //
 // # Message Flow: Config Change Request (Collector → Database)
 //
 // ```text
-// 1. Peer → Room<T> → NetworkActor.IntentConfigNetworkMsg::RequestConfigChange
-// 2. NetworkActor → InboundConfigChangeRequest → NetworkManager
+// 1. Peer → RoomActor<T> → TranslatorActor.IntentConfigNetworkMsg::RequestConfigChange
+// 2. TranslatorActor → InboundConfigChangeRequest → NetworkManager
 // 3. NetworkManager → PeerManager.get_peer_role(peer_id)
 // 4. NetworkManager checks authorization (role = ClientAdmin?)
 // 5a. If authorized:
@@ -164,19 +164,19 @@ pub struct SendConfigResponseToPeer {
 //     - MainActor validates, persists, broadcasts
 //     - MainActor → BroadcastConfigUpdate → NetworkManager
 // 5b. If not authorized:
-//     - NetworkManager → SendErrorMessageToPeer("unauthorized") → NetworkActor
-//     - NetworkActor → Room<T> → Error message to peer
+//     - NetworkManager → SendErrorMessageToPeer("unauthorized") → TranslatorActor
+//     - TranslatorActor → RoomActor<T> → Error message to peer
 // ```
 //
 // # Message Flow: Get Config Request (Collector → Database)
 //
 // ```text
-// 1. Peer → Room<T> → NetworkActor.IntentConfigNetworkMsg::QueryCurrentConfig
-// 2. NetworkActor → InboundGetConfigRequest → NetworkManager
+// 1. Peer → RoomActor<T> → TranslatorActor.IntentConfigNetworkMsg::QueryCurrentConfig
+// 2. TranslatorActor → InboundGetConfigRequest → NetworkManager
 // 3. NetworkManager → MainActor.GetCurrentConfig
 // 4. MainActor → returns IntentConfigData → NetworkManager
-// 6. NetworkActor serializes IntentConfigNetworkMsg::CurrentConfig
-// 7. NetworkActor → Room<T>.send() → Peer
+// 6. TranslatorActor forwards IntentConfigNetworkMsg::CurrentConfig to RoomActor<T>
+// 7. RoomActor<T> serializes and sends → Peer
 // ```
 
 // ============================================================================

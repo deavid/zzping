@@ -30,19 +30,16 @@ pub mod room;
 /// Room message trait shared with components.
 pub mod room_message_trait;
 
-/// Type-erased handle used by the router to manage rooms.
-pub mod room_handle;
-
-/// Adapter that bridges `Room<T>` channels with the router.
-pub mod room_adapter;
-
 /// Component-provided room factory trait for Router registration.
 pub mod room_manager;
 
+/// Generic room actor for centralized (de-)serialization.
+pub mod actor;
+
 // Export public types
+pub use actor::RoomActor;
 pub use room::{Room, RoomChannels, RoomError, RoomRegistry, SendError};
-pub use room_adapter::RoomAdapter;
-pub use room_handle::RoomHandle;
+pub use room_manager::RoomInboundRecipient;
 pub use room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
 
 #[cfg(test)]

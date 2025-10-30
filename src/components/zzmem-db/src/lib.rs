@@ -12,7 +12,7 @@
 //! The component follows the three-actor pattern:
 //! - **MainActor** (MemDBActor): Pure business logic, zero network dependencies
 //! - **NetworkManager**: Peer lifecycle orchestration and message routing
-//! - **NetworkActor**: Per-peer protocol translation
+//! - **TranslatorActor**: Per-peer protocol translation
 //!
 //! ## Rooms
 //!
@@ -28,11 +28,11 @@ pub mod config;
 pub mod internal_messages;
 /// Internal actor messages (legacy, API messages)
 pub mod messages;
-/// NetworkActor - per-peer protocol translation
-pub mod network_actor;
 /// NetworkManager - peer lifecycle and routing
 pub mod network_manager;
 /// Network protocol messages
 pub mod network_messages;
 /// Storage backend for Database role
 pub mod storage;
+/// TranslatorActor - per-peer protocol translation
+pub mod translator_actor;

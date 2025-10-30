@@ -23,8 +23,8 @@ mod actor;
 mod peer_channels;
 
 pub use actor::{
-    BroadcastToPeers, HandlePublishRooms, IsRoomJoined, OnPeerConnected, OnPeerDisconnected,
-    PeerJoinedRooms, PeerSender, RegisterManager, RouterActor, SendToPeer, SubscribePeerInbound,
+    HandlePublishRooms, IsRoomJoined, OnPeerConnected, OnPeerDisconnected, PeerJoinedRooms,
+    PeerSender, RegisterManager, RouterActor, SubscribePeerInbound,
 };
 pub use peer_channels::PeerChannels;
 
@@ -386,8 +386,11 @@ mod tests {
                 _peer_id: PeerId,
                 _permission: Permission,
                 _room_id: &RoomId,
-            ) -> Result<Option<Box<dyn zznet_room::room_handle::RoomHandle>>, CreateError>
-            {
+                _outbound_to_peer: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
+            ) -> Result<
+                Option<actix::Recipient<zznet_room::room_manager::InboundRoomPayload>>,
+                CreateError,
+            > {
                 Ok(None)
             }
         }
@@ -430,8 +433,11 @@ mod tests {
                 _peer_id: PeerId,
                 _permission: Permission,
                 _room_id: &RoomId,
-            ) -> Result<Option<Box<dyn zznet_room::room_handle::RoomHandle>>, CreateError>
-            {
+                _outbound_to_peer: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
+            ) -> Result<
+                Option<actix::Recipient<zznet_room::room_manager::InboundRoomPayload>>,
+                CreateError,
+            > {
                 Ok(None)
             }
         }

@@ -16,5 +16,11 @@ pub mod builder;
 pub mod error;
 /// Message types exchanged between actors.
 pub mod messages;
+/// Network manager for Router integration.
+pub mod network_manager;
+/// Network protocol messages for remote communication.
+pub mod network_messages;
 /// Core ping logic and backend abstractions.
 pub mod pinger;
+/// Translator actor for per-peer message translation.
+pub mod translator_actor;

@@ -23,6 +23,7 @@ tracing.workspace = true
 bincode.workspace = true
 thiserror.workspace = true
 log.workspace = true
+async-trait.workspace = true
 zznet-auth.workspace = true
 zznet-api.workspace = true
 zznet-peer-manager.workspace = true

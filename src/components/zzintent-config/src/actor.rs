@@ -22,7 +22,7 @@ pub struct IntentConfigActor {
     config: crate::config::IntentConfigConfig,
 
     /// NetworkManager actor for three-actor pattern (Phase 7.2)
-    /// Manages per-peer NetworkActors and handles PeerLifecycleEvents
+    /// Manages per-peer TranslatorActors and handles PeerLifecycleEvents
     network_manager: Option<Addr<IntentConfigNetworkManager>>,
 }
 

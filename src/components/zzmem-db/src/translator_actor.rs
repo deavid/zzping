@@ -1,49 +1,41 @@
-//! NetworkActor for MemDB component - per-peer protocol translation.
+//! TranslatorActor for MemDB component - per-peer protocol translation.
 //!
-//! This module implements the NetworkActor in the three-actor pattern:
+//! This module implements the TranslatorActor in the three-actor pattern:
 //! - **MainActor** (MemDBActor): Pure business logic, zero network dependencies
 //! - **NetworkManager**: Peer lifecycle, message routing orchestration
-//! - **NetworkActor** (this file): Per-peer protocol translation
+//! - **TranslatorActor** (this file): Per-peer protocol translation
 //!
 //! ## Responsibilities
 //!
 //! 1. **Inbound Translation** (Network → MainActor):
-//!    - Receives MemDBMessage from network via Handler<MemDBMessage>
+//!    - Receives MemDBMessage from RoomActor<T> via Handler<MemDBMessage>
 //!    - Translates to internal messages (InboundSubmitBatch, InboundQuery, etc.)
 //!    - Forwards to MainActor with peer_id context
 //!
-//! 2. **Outbound Translation** (MainActor → Network):
-//!    - Receives SendToNetwork from NetworkManager
-//!    - Sends MemDBMessage over network via Room<T>
-//!
-//! 3. **Per-Peer Context**:
-//!    - Each NetworkActor is tied to one peer
+//! 2. **Per-Peer Context**:
+//!    - Each TranslatorActor is tied to one peer
 //!    - Adds peer_id to all messages
 //!    - Handles protocol-level concerns
 
 use actix::prelude::*;
 use zznet_api::types::PeerId;
-use zznet_room::room::TypedSender;
 
 use crate::actor::MemDBActor;
 use crate::internal_messages::{
-    InboundBatchAck, InboundQuery, InboundQueryResponse, InboundSubmitBatch, SendToNetwork,
+    InboundBatchAck, InboundQuery, InboundQueryResponse, InboundSubmitBatch,
 };
 use crate::network_manager::MemDBNetworkManager;
 use crate::network_messages::MemDBMessage;
 
-/// NetworkActor handles protocol translation for a single peer.
+/// TranslatorActor handles protocol translation for a single peer.
 ///
-/// One NetworkActor is created per connected peer. It:
+/// One TranslatorActor is created per connected peer. It:
 /// - Receives network messages and translates them to internal messages
 /// - Sends network messages on behalf of MainActor
 /// - Provides per-peer context (peer_id) to all messages
-pub struct MemDBNetworkActor {
+pub struct MemDBTranslatorActor {
     /// The peer ID this actor represents
     peer_id: PeerId,
-
-    /// TypedSender for sending messages to this peer
-    typed_sender: TypedSender<MemDBMessage>,
 
     /// Reference to MainActor for forwarding inbound messages
     main_actor: Addr<MemDBActor>,
@@ -53,32 +45,30 @@ pub struct MemDBNetworkActor {
     manager: Addr<MemDBNetworkManager>,
 }
 
-impl MemDBNetworkActor {
-    /// Create a new NetworkActor for the given peer.
+impl MemDBTranslatorActor {
+    /// Create a new TranslatorActor for the given peer.
     pub fn new(
         peer_id: PeerId,
-        typed_sender: TypedSender<MemDBMessage>,
         main_actor: Addr<MemDBActor>,
         manager: Addr<MemDBNetworkManager>,
     ) -> Self {
         Self {
             peer_id,
-            typed_sender,
             main_actor,
             manager,
         }
     }
 }
 
-impl Actor for MemDBNetworkActor {
+impl Actor for MemDBTranslatorActor {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Self::Context) {
-        tracing::trace!("MemDBNetworkActor started for peer {}", self.peer_id);
+        tracing::trace!("MemDBTranslatorActor started for peer {}", self.peer_id);
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
-        tracing::trace!("MemDBNetworkActor stopped for peer {}", self.peer_id);
+        tracing::trace!("MemDBTranslatorActor stopped for peer {}", self.peer_id);
     }
 }
 
@@ -86,12 +76,12 @@ impl Actor for MemDBNetworkActor {
 // INBOUND PROTOCOL TRANSLATION (Network → MainActor)
 // ============================================================================
 
-impl Handler<MemDBMessage> for MemDBNetworkActor {
+impl Handler<MemDBMessage> for MemDBTranslatorActor {
     type Result = ();
 
     fn handle(&mut self, msg: MemDBMessage, _ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!(
-            "NetworkActor received message from peer {}: {:?}",
+            "TranslatorActor received message from peer {}: {:?}",
             self.peer_id,
             msg
         );
@@ -144,25 +134,5 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
 // ============================================================================
 // OUTBOUND PROTOCOL TRANSLATION (MainActor → Network)
 // ============================================================================
-
-impl Handler<SendToNetwork> for MemDBNetworkActor {
-    type Result = ResponseActFuture<Self, ()>;
-
-    fn handle(&mut self, msg: SendToNetwork, _ctx: &mut Self::Context) -> Self::Result {
-        tracing::trace!(
-            "NetworkActor sending message to peer {}: {:?}",
-            self.peer_id,
-            msg.message
-        );
-
-        let typed_sender = self.typed_sender.clone();
-        Box::pin(
-            async move {
-                if let Err(e) = typed_sender.send(msg.message).await {
-                    tracing::warn!("Failed to send message: {:?}", e);
-                }
-            }
-            .into_actor(self),
-        )
-    }
-}
+// OUTBOUND HANDLING REMOVED - Now handled by RoomActor<T>
+// ============================================================================

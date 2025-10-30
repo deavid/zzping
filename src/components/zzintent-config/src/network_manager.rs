@@ -1,36 +1,39 @@
 //! IntentConfig Network Manager Actor
 //!
-//! The Manager Actor in the three-actor pattern. Responsibilities:
+//! The Manager actor in the three-actor pattern. Responsibilities:
 //! - Subscribe to PeerLifecycleEvent bus from zznet-peer-manager
-//! - Spawn IntentConfigNetworkActor when peer joins with "intent-config" room
-//! - Destroy IntentConfigNetworkActor when peer disconnects
-//! - Handle broadcast requests from MainActor (BroadcastConfigUpdate)
+//! - Spawn `IntentConfigTranslatorActor` when peers join the "intent-config" room
+//! - Destroy per-peer actors when peers disconnect
+//! - Handle broadcast requests from MainActor (`BroadcastConfigUpdate`)
 //! - Forward inbound requests to MainActor (after authorization check)
 //! - Query PeerManager for role/permission checks
 
 use crate::internal_messages::{
     BroadcastConfigUpdate, InboundConfigChangeRequest, InboundGetConfigRequest,
-    NetworkConfigChangeRequest, SendConfigUpdateToPeer, SendErrorMessageToPeer, SendErrorToPeer,
+    NetworkConfigChangeRequest, SendErrorToPeer,
 };
 use crate::messages::{GetCurrentConfig, IntentConfigData};
-use crate::network_actor::IntentConfigNetworkActor;
+use crate::network_messages::IntentConfigNetworkMsg;
+use crate::translator_actor::IntentConfigTranslatorActor;
 use actix::prelude::*;
-use std::collections::HashMap;
-use tokio::sync::broadcast;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 
 // Phase 7.2: Use traits for interface segregation (control-plane vs data-plane)
-use zznet_api::types::{PeerId, PeerLifecycleEvent};
+use zznet_api::types::{PeerId, PeerLifecycleEvent, Permission, RoomId};
 use zznet_peer_manager::PeerManagerActor;
+use zznet_room::actor::RoomActor;
+use zznet_room::room_manager::{CreateError, RoomInboundRecipient, RoomManager};
 use zznet_router::RouterActor;
 
-/// IntentConfigNetworkManager - Orchestrates per-peer network actors
+/// IntentConfigNetworkManager orchestrates the per-peer translator layer.
 ///
-/// This actor is the bridge between the business logic (IntentConfigActor)
-/// and the network (per-peer IntentConfigNetworkActors). It subscribes to
-/// peer lifecycle events and manages the fleet of network actors.
+/// This actor bridges the business logic (`IntentConfigActor`) and the network stack
+/// (`IntentConfigTranslatorActor` + `RoomActor`). It subscribes to peer lifecycle events
+/// and manages the fleet of translators attached to each peer.
 ///
 /// # Responsibilities
-/// - Lifecycle: Spawn/destroy NetworkActors as peers connect/disconnect
+/// - Lifecycle: Spawn/destroy translator actors as peers connect/disconnect
 /// - Broadcast: Fan-out config updates to all connected peers
 /// - Authorization: Query PeerManager for role/permission checks before forwarding requests
 /// - Coordination: Aggregate responses from multiple peers when needed
@@ -40,133 +43,77 @@ use zznet_router::RouterActor;
 pub struct IntentConfigNetworkManager {
     /// Address of the main business logic actor
     main_actor: Addr<crate::actor::IntentConfigActor>,
-
-    /// Per-peer network actors (one per connected peer with "intent-config" room)
-    network_actors: HashMap<PeerId, Addr<IntentConfigNetworkActor>>,
-
-    /// Receiver for peer lifecycle events
-    _event_rx: broadcast::Receiver<PeerLifecycleEvent>,
-
+    /// Per-peer translator actors for message translation
+    translator_actors: Arc<RwLock<HashMap<PeerId, Addr<IntentConfigTranslatorActor>>>>,
+    /// Per-peer room actors for serialization
+    room_actors: Arc<RwLock<HashMap<PeerId, Addr<RoomActor<IntentConfigNetworkMsg>>>>>,
     /// PeerManagerActor for control-plane queries
     peer_manager: Addr<PeerManagerActor>,
-
     /// RouterActor for data-plane message routing
     router_actor: Addr<RouterActor>,
+    /// Address of this NetworkManager (set in started())
+    self_addr: Option<Addr<IntentConfigNetworkManager>>,
+}
+
+impl Clone for IntentConfigNetworkManager {
+    fn clone(&self) -> Self {
+        Self {
+            main_actor: self.main_actor.clone(),
+            translator_actors: Arc::clone(&self.translator_actors),
+            room_actors: Arc::clone(&self.room_actors),
+            peer_manager: self.peer_manager.clone(),
+            router_actor: self.router_actor.clone(),
+            self_addr: self.self_addr.clone(),
+        }
+    }
 }
 
 impl IntentConfigNetworkManager {
     /// Create a new NetworkManager tied to the provided IntentConfigActor.
     pub fn new(
         main_actor: Addr<crate::actor::IntentConfigActor>,
-        event_rx: broadcast::Receiver<PeerLifecycleEvent>,
         peer_manager: Addr<PeerManagerActor>,
         router_actor: Addr<RouterActor>,
     ) -> Self {
         Self {
             main_actor,
-            network_actors: HashMap::new(),
-            _event_rx: event_rx,
+            translator_actors: Arc::new(RwLock::new(HashMap::new())),
+            room_actors: Arc::new(RwLock::new(HashMap::new())),
             peer_manager,
             router_actor,
+            self_addr: None,
         }
     }
 
-    /// Spawn a new NetworkActor for a peer (synchronous version using RouterActor)
-    ///
-    /// Called when PeerAdded/PeerConnected event indicates the peer
-    /// has joined the "intent-config" room.
-    fn spawn_network_actor_sync(
-        peer_manager: &Addr<PeerManagerActor>,
-        router_actor: &Addr<RouterActor>,
-        peer_id: PeerId,
-        manager_addr: Addr<IntentConfigNetworkManager>,
-        network_actors: &mut HashMap<PeerId, Addr<IntentConfigNetworkActor>>,
-    ) {
-        log::info!("Spawning IntentConfigNetworkActor for peer: {}", peer_id);
+    /// Destroy per-peer actors when lifecycle events indicate removal.
+    fn destroy_peer_actors(&mut self, peer_id: &PeerId) {
+        let mut removed_translator = false;
+        let mut removed_room_actor = false;
 
-        // Check if peer is connected using PeerManagerActor
-        let rt = tokio::runtime::Handle::current();
-        let is_connected_future = peer_manager.send(zznet_peer_manager::IsPeerConnected {
-            peer_id: peer_id.clone(),
-        });
-        let is_connected = rt.block_on(is_connected_future).unwrap_or(false);
-
-        if !is_connected {
-            log::warn!(
-                "Peer {} not yet reported as connected in PeerManager when spawning NetworkActor",
-                peer_id
-            );
+        if self
+            .translator_actors
+            .write()
+            .unwrap()
+            .remove(peer_id)
+            .is_some()
+        {
+            removed_translator = true;
         }
 
-        // Get peer role using PeerManagerActor
-        let role_future = peer_manager.send(zznet_peer_manager::GetPeerRole {
-            peer_id: peer_id.clone(),
-        });
-        if let Some(role) = rt.block_on(role_future).unwrap_or(None) {
-            log::debug!(
-                "Peer {} authorized with role '{}' before wiring network actor",
-                peer_id,
-                role.as_str()
-            );
+        if self.room_actors.write().unwrap().remove(peer_id).is_some() {
+            removed_room_actor = true;
         }
 
-        // For migration: block on async RouterActor calls
-        // TODO: Make this fully async
-        let rt = tokio::runtime::Handle::current();
-        let peer_sender_future = router_actor.send(zznet_router::PeerSender {
-            peer_id: peer_id.clone(),
-        });
-        let peer_receiver_future = router_actor.send(zznet_router::SubscribePeerInbound {
-            peer_id: peer_id.clone(),
-        });
-
-        let peer_sender = match rt.block_on(peer_sender_future) {
-            Ok(Some(sender)) => sender,
-            _ => {
-                log::error!("Failed to get peer sender for {}: peer not found", peer_id);
-                return;
-            }
-        };
-
-        let peer_receiver = match rt.block_on(peer_receiver_future) {
-            Ok(Some(receiver)) => receiver,
-            _ => {
-                log::error!(
-                    "Failed to subscribe to peer inbound for {}: peer not found",
-                    peer_id
-                );
-                return;
-            }
-        };
-
-        // Step 3: Create NetworkActor with real channels
-        let network_actor = IntentConfigNetworkActor::new(
-            peer_id.clone(),
-            manager_addr,
-            peer_sender,
-            peer_receiver,
-        )
-        .start();
-
-        network_actors.insert(peer_id.clone(), network_actor);
-        log::info!(
-            "NetworkActor spawned for peer {} - {} active actors",
-            peer_id,
-            network_actors.len()
-        );
-    }
-
-    /// Destroy NetworkActor for a peer when lifecycle events indicate removal.
-    fn destroy_network_actor(&mut self, peer_id: &PeerId) {
-        if let Some(_actor) = self.network_actors.remove(peer_id) {
-            log::info!("Destroying IntentConfigNetworkActor for peer: {}", peer_id);
+        if removed_translator || removed_room_actor {
+            log::info!("Destroying actors for peer: {}", peer_id);
             log::debug!(
-                "NetworkActor destroyed - {} active actors remain",
-                self.network_actors.len()
+                "Actors destroyed - {} translators, {} room actors remain",
+                self.translator_actors.read().unwrap().len(),
+                self.room_actors.read().unwrap().len()
             );
         } else {
             log::warn!(
-                "Attempted to destroy non-existent NetworkActor for peer: {}",
+                "Attempted to destroy non-existent actors for peer: {}",
                 peer_id
             );
         }
@@ -183,8 +130,15 @@ impl Actor for IntentConfigNetworkManager {
     fn started(&mut self, ctx: &mut Self::Context) {
         log::info!("IntentConfigNetworkManager started");
 
-        // Note: PeerLifecycleEvent subscription deferred until PeerManager is standalone
-        // Events currently handled manually via Handler<PeerLifecycleEventWrapper>
+        // Set our own address for RoomManager implementation
+        let addr: Addr<IntentConfigNetworkManager> = ctx.address();
+        self.self_addr = Some(addr);
+
+        // Register ourselves as a RoomManager with the Router
+        let manager =
+            std::sync::Arc::new(self.clone()) as std::sync::Arc<dyn RoomManager + Send + Sync>;
+        let register_msg = zznet_router::RegisterManager { manager };
+        self.router_actor.do_send(register_msg);
 
         // Keep actor alive
         ctx.set_mailbox_capacity(1000);
@@ -193,10 +147,16 @@ impl Actor for IntentConfigNetworkManager {
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         log::info!("IntentConfigNetworkManager stopped");
 
-        // Clean up all network actors
-        let actor_count = self.network_actors.len();
-        self.network_actors.clear();
-        log::debug!("Stopped {} NetworkActors", actor_count);
+        // Clean up all actors
+        let translator_count = self.translator_actors.read().unwrap().len();
+        let room_count = self.room_actors.read().unwrap().len();
+        self.translator_actors.write().unwrap().clear();
+        self.room_actors.write().unwrap().clear();
+        log::debug!(
+            "Stopped {} TranslatorActors and {} RoomActors",
+            translator_count,
+            room_count
+        );
     }
 }
 
@@ -212,32 +172,23 @@ pub struct PeerLifecycleEventWrapper(pub PeerLifecycleEvent);
 impl Handler<PeerLifecycleEventWrapper> for IntentConfigNetworkManager {
     type Result = ();
 
-    fn handle(&mut self, msg: PeerLifecycleEventWrapper, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: PeerLifecycleEventWrapper, _ctx: &mut Self::Context) -> Self::Result {
         match msg.0 {
             PeerLifecycleEvent::PeerAdded { peer_id } => {
                 log::debug!("PeerLifecycleEvent::PeerAdded: {}", peer_id);
-                // Create the actor synchronously using RouterActor
-                let manager_addr = ctx.address();
-
-                Self::spawn_network_actor_sync(
-                    &self.peer_manager,
-                    &self.router_actor,
-                    peer_id,
-                    manager_addr,
-                    &mut self.network_actors,
-                );
+                // Actors are now created in create_for_peer when Router calls it
             }
             PeerLifecycleEvent::PeerConnected { peer_id } => {
                 log::debug!("PeerLifecycleEvent::PeerConnected: {}", peer_id);
-                // Network actor already created on PeerAdded
+                // Translator actor already created on PeerAdded
             }
             PeerLifecycleEvent::PeerDisconnected { peer_id } => {
                 log::debug!("PeerLifecycleEvent::PeerDisconnected: {}", peer_id);
-                self.destroy_network_actor(&peer_id);
+                self.destroy_peer_actors(&peer_id);
             }
             PeerLifecycleEvent::PeerRemoved { peer_id } => {
                 log::debug!("PeerLifecycleEvent::PeerRemoved: {}", peer_id);
-                self.destroy_network_actor(&peer_id);
+                self.destroy_peer_actors(&peer_id);
             }
             PeerLifecycleEvent::PeerIdentityUpdated { peer_id, identity } => {
                 log::debug!(
@@ -245,7 +196,7 @@ impl Handler<PeerLifecycleEventWrapper> for IntentConfigNetworkManager {
                     peer_id,
                     identity
                 );
-                // Identity updates don't affect IntentConfig NetworkActors
+                // Identity updates don't affect IntentConfig translator actors
                 // Authorization is checked on each request, not cached
             }
         }
@@ -262,15 +213,17 @@ impl Handler<BroadcastConfigUpdate> for IntentConfigNetworkManager {
     fn handle(&mut self, msg: BroadcastConfigUpdate, _ctx: &mut Self::Context) -> Self::Result {
         log::info!(
             "Broadcasting config update to {} peers",
-            self.network_actors.len()
+            self.room_actors.read().unwrap().len()
         );
 
-        // Fan-out to all network actors
-        for (peer_id, actor) in &self.network_actors {
+        // Fan-out to all room actors
+        for (peer_id, room_actor) in self.room_actors.read().unwrap().iter() {
             log::debug!("Sending config update to peer: {}", peer_id);
-            actor.do_send(SendConfigUpdateToPeer {
-                config: msg.config.clone(),
-            });
+            let network_msg = IntentConfigNetworkMsg::ConfigUpdate {
+                targets: msg.config.targets.clone(),
+                ping_rate_pps: msg.config.ping_rate_pps,
+            };
+            room_actor.do_send(network_msg);
         }
 
         log::debug!("Broadcast complete");
@@ -285,18 +238,19 @@ impl Handler<SendErrorToPeer> for IntentConfigNetworkManager {
     type Result = ();
 
     fn handle(&mut self, msg: SendErrorToPeer, _ctx: &mut Self::Context) -> Self::Result {
-        if let Some(actor) = self.network_actors.get(&msg.peer_id) {
+        if let Some(room_actor) = self.room_actors.read().unwrap().get(&msg.peer_id) {
             log::info!(
                 "Sending error to peer {}: {}",
                 msg.peer_id,
                 msg.error_message
             );
-            actor.do_send(SendErrorMessageToPeer {
-                error_message: msg.error_message,
-            });
+            let network_msg = IntentConfigNetworkMsg::Error {
+                reason: msg.error_message,
+            };
+            room_actor.do_send(network_msg);
         } else {
             log::warn!(
-                "Cannot send error to peer {} - no NetworkActor exists",
+                "Cannot send error to peer {} - no RoomActor exists",
                 msg.peer_id
             );
         }
@@ -304,7 +258,7 @@ impl Handler<SendErrorToPeer> for IntentConfigNetworkManager {
 }
 
 // ============================================================================
-// Handler: InboundConfigChangeRequest (from NetworkActor)
+// Handler: InboundConfigChangeRequest (from TranslatorActor)
 // ============================================================================
 
 impl Handler<InboundConfigChangeRequest> for IntentConfigNetworkManager {
@@ -317,7 +271,7 @@ impl Handler<InboundConfigChangeRequest> for IntentConfigNetworkManager {
         let peer_id = msg.peer_id.clone();
         let targets = msg.targets;
         let ping_rate_pps = msg.ping_rate_pps;
-        let manager_addr = ctx.address();
+        let manager_addr: Addr<IntentConfigNetworkManager> = ctx.address();
 
         // Check authorization using PeerManagerActor
         let rt = tokio::runtime::Handle::current();
@@ -380,7 +334,7 @@ impl Handler<InboundConfigChangeRequest> for IntentConfigNetworkManager {
 }
 
 // ============================================================================
-// Handler: InboundGetConfigRequest (from NetworkActor)
+// Handler: InboundGetConfigRequest (from TranslatorActor)
 // ============================================================================
 
 impl Handler<InboundGetConfigRequest> for IntentConfigNetworkManager {
@@ -410,6 +364,63 @@ impl Handler<InboundGetConfigRequest> for IntentConfigNetworkManager {
                 }
             }
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl RoomManager for IntentConfigNetworkManager {
+    fn managed_rooms(&self) -> HashSet<RoomId> {
+        let mut rooms = HashSet::new();
+        rooms.insert(RoomId::from("intent-config"));
+        rooms
+    }
+
+    async fn create_for_peer(
+        &self,
+        peer_id: PeerId,
+        _permission: Permission,
+        room_id: &RoomId,
+        outbound_to_peer: tokio::sync::mpsc::Sender<(zznet_api::types::RoomId, Vec<u8>)>,
+    ) -> Result<Option<RoomInboundRecipient>, CreateError> {
+        // Only handle the "intent-config" room
+        if room_id != &RoomId::from("intent-config") {
+            return Ok(None);
+        }
+
+        // Create the translator actor
+        let translator = IntentConfigTranslatorActor::new(
+            peer_id.clone(),
+            self.self_addr.as_ref().unwrap().clone(),
+        );
+
+        // Start the translator actor
+        let translator_addr = translator.start();
+
+        // Create the RoomActor<IntentConfigNetworkMsg>
+        let room_actor = RoomActor::new(
+            RoomId::from("intent-config"),
+            outbound_to_peer,
+            translator_addr
+                .clone()
+                .recipient::<IntentConfigNetworkMsg>(),
+        );
+
+        // Start the RoomActor
+        let room_actor_addr = room_actor.start();
+
+        // Store the addresses in the maps
+        {
+            let mut translators = self.translator_actors.write().unwrap();
+            translators.insert(peer_id.clone(), translator_addr);
+
+            let mut room_actors = self.room_actors.write().unwrap();
+            room_actors.insert(peer_id, room_actor_addr.clone());
+        }
+
+        // Return the RoomActor's raw inbound recipient
+        let recipient = RoomActor::inbound_recipient(&room_actor_addr);
+
+        Ok(Some(recipient))
     }
 }
 

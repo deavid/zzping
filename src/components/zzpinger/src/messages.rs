@@ -19,7 +19,7 @@ pub struct UpdateTargets {
 
 /// Configuration for a single ping target. Defines timing and addressing for ping operations.
 /// Validation prevents zero rates or timeouts that could cause infinite loops or hangs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
 pub struct TargetConfig {
     /// Target hostname or IP address
     pub target: String,

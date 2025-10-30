@@ -102,7 +102,12 @@ impl Handler<OnPeerConnected> for RouterActor {
                 for manager in router.managers.values() {
                     for room_id in manager.managed_rooms() {
                         if let Ok(Some(room)) = manager
-                            .create_for_peer(peer_id.clone(), permission.clone(), &room_id)
+                            .create_for_peer(
+                                peer_id.clone(),
+                                permission.clone(),
+                                &room_id,
+                                outbound_tx.clone(),
+                            )
                             .await
                             && let Err(e) = builder.add_room(room_id.clone(), room)
                         {
@@ -184,68 +189,6 @@ impl Handler<HandlePublishRooms> for RouterActor {
                 .handle_publish_rooms(&peer_id, peer_rooms)
                 .await
                 .map_err(|e| format!("Failed to handle publish rooms: {:?}", e))
-        })
-    }
-}
-
-/// Send message to peer room
-#[derive(Message)]
-#[rtype(result = "Result<(), String>")]
-pub struct SendToPeer {
-    /// The ID of the target peer
-    pub peer_id: PeerId,
-    /// The ID of the room to send to
-    pub room_id: RoomId,
-    /// The message bytes to send
-    pub bytes: Vec<u8>,
-}
-
-impl Handler<SendToPeer> for RouterActor {
-    type Result = ResponseFuture<Result<(), String>>;
-
-    fn handle(&mut self, msg: SendToPeer, _ctx: &mut Context<Self>) -> Self::Result {
-        let router_arc = self.router.clone();
-        let peer_id = msg.peer_id;
-        let room_id = msg.room_id;
-        let bytes = msg.bytes;
-
-        Box::pin(async move {
-            let router = router_arc.lock().await;
-            router
-                .send_to_room(&peer_id, &room_id, bytes)
-                .await
-                .map_err(|e| format!("Failed to send to peer: {:?}", e))
-        })
-    }
-}
-
-/// Broadcast to peers
-#[derive(Message)]
-#[rtype(result = "Result<(), String>")]
-pub struct BroadcastToPeers {
-    /// The IDs of the target peers
-    pub peer_ids: Vec<PeerId>,
-    /// The ID of the room to broadcast to
-    pub room_id: RoomId,
-    /// The message bytes to broadcast
-    pub bytes: Vec<u8>,
-}
-
-impl Handler<BroadcastToPeers> for RouterActor {
-    type Result = ResponseFuture<Result<(), String>>;
-
-    fn handle(&mut self, msg: BroadcastToPeers, _ctx: &mut Context<Self>) -> Self::Result {
-        let router_arc = self.router.clone();
-        let peer_ids = msg.peer_ids;
-        let room_id = msg.room_id;
-        let bytes = msg.bytes;
-
-        Box::pin(async move {
-            let router = router_arc.lock().await;
-            router
-                .broadcast_to_peers(&peer_ids, &room_id, bytes)
-                .await
-                .map_err(|e| format!("Failed to broadcast: {:?}", e))
         })
     }
 }
