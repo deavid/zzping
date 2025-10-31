@@ -50,8 +50,8 @@ pub struct MockConnection {
     peer_id: String,
     /// Optional error to inject on next operation.
     inject_error: Arc<Mutex<Option<TransportError>>>,
-    /// The peer identity for this connection.
-    peer_identity: PeerIdentity,
+    /// The peer identity for this connection (None for plain TCP, Some for TLS).
+    peer_identity: Option<PeerIdentity>,
 }
 
 impl MockConnection {
@@ -89,8 +89,8 @@ impl MockConnection {
     /// Sets the peer identity for this connection.
     ///
     /// This allows tests to configure specific identities for ACL testing.
-    /// By default, mock connections have identity "mock" with peer-specific SAN.
-    pub fn with_peer_identity(mut self, identity: PeerIdentity) -> Self {
+    /// By default, mock connections may have None (plain TCP) or Some identity (TLS).
+    pub fn with_peer_identity(mut self, identity: Option<PeerIdentity>) -> Self {
         self.peer_identity = identity;
         self
     }
@@ -135,7 +135,7 @@ impl TransportConnection for MockConnection {
     }
 
     fn peer_identity(&self) -> Option<PeerIdentity> {
-        Some(self.peer_identity.clone())
+        self.peer_identity.clone()
     }
 }
 
@@ -171,11 +171,7 @@ pub fn create_mock_pair(base_id: &str) -> (MockConnection, MockConnection) {
         rx: Mutex::new(rx_a),
         peer_id: format!("{}_a", base_id),
         inject_error: Arc::new(Mutex::new(None)),
-        peer_identity: PeerIdentity {
-            common_name: "mock".to_string(),
-            san_username: format!("{}_a", base_id),
-            peer_addr: format!("mock:{}_a", base_id),
-        },
+        peer_identity: None, // Plain TCP by default
     };
 
     let conn_b = MockConnection {
@@ -183,11 +179,7 @@ pub fn create_mock_pair(base_id: &str) -> (MockConnection, MockConnection) {
         rx: Mutex::new(rx_b),
         peer_id: format!("{}_b", base_id),
         inject_error: Arc::new(Mutex::new(None)),
-        peer_identity: PeerIdentity {
-            common_name: "mock".to_string(),
-            san_username: format!("{}_b", base_id),
-            peer_addr: format!("mock:{}_b", base_id),
-        },
+        peer_identity: None, // Plain TCP by default
     };
 
     (conn_a, conn_b)

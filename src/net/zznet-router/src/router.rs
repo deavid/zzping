@@ -23,6 +23,7 @@ pub struct Router {
     offered_rooms: Vec<RoomId>,
 
     /// Optional maximum number of rooms per peer
+    // FIXME: DEPRECATED - REMOVE rooms per peer.
     max_rooms_per_peer: Option<usize>,
 
     /// Data-plane channels registered for each peer
@@ -38,19 +39,6 @@ type InboundReceiver = broadcast::Receiver<(RoomId, Vec<u8>)>;
 
 impl Router {
     /// Create a new Router
-    ///
-    /// # Arguments
-    /// * `offered_rooms` - List of room IDs this router offers
-    /// * `max_rooms_per_peer` - Optional limit on rooms per peer
-    ///
-    /// # Example
-    /// ```
-    /// use zznet_router::Router;
-    /// use zznet_api::types::RoomId;
-    ///
-    /// let rooms = vec![RoomId::from("chat"), RoomId::from("data")];
-    /// let router = Router::new(rooms, None);
-    /// ```
     pub fn new(offered_rooms: Vec<RoomId>, max_rooms_per_peer: Option<usize>) -> Self {
         tracing::info!(
             "Router created with {} offered rooms, max_rooms_per_peer = {:?}",
@@ -256,7 +244,7 @@ mod tests {
     #[tokio::test]
     async fn test_register_manager_collision() {
         use std::collections::HashSet;
-        use zznet_api::types::{PeerId, Permission, RoomId};
+        use zznet_api::types::{PeerId, Role, RoomId};
         use zznet_room::room_manager::{CreateError, RoomManager};
 
         struct MockManager {
@@ -272,7 +260,7 @@ mod tests {
             async fn create_for_peer(
                 &self,
                 _peer_id: PeerId,
-                _permission: Permission,
+                _role: Role,
                 _room_id: &RoomId,
                 _outbound_to_peer: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
             ) -> Result<
@@ -303,7 +291,7 @@ mod tests {
     #[tokio::test]
     async fn test_registered_rooms() {
         use std::collections::HashSet;
-        use zznet_api::types::{PeerId, Permission, RoomId};
+        use zznet_api::types::{PeerId, Role, RoomId};
         use zznet_room::room_manager::{CreateError, RoomManager};
 
         struct MockManager {
@@ -319,7 +307,7 @@ mod tests {
             async fn create_for_peer(
                 &self,
                 _peer_id: PeerId,
-                _permission: Permission,
+                _role: Role,
                 _room_id: &RoomId,
                 _outbound_to_peer: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
             ) -> Result<

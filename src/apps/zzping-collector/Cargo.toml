@@ -17,14 +17,13 @@ zzcollector-state.workspace = true
 zzping-auth.workspace = true
 
 # Network layer dependencies
-zznet-peer-manager.workspace = true # Peer state management
-zznet-router.workspace = true       # Message routing
-# zznet-builder.workspace = true  # DEPRECATED - Phase 3 migration to zznet-room
-zznet-room.workspace = true          # Vision-aligned Room<T> pattern
-zznet-transport-tcp.workspace = true
-zznet-auth.workspace = true
 zznet-api.workspace = true
+zznet-builder.workspace = true
+zznet-auth.workspace = true
 zznet-hello.workspace = true
+zznet-room.workspace = true          # Vision-aligned Room<T> pattern
+zznet-router.workspace = true        # Message routing
+zznet-transport-tcp.workspace = true
 
 # Runtime dependencies
 tokio.workspace = true

@@ -3,19 +3,17 @@
 //! This builder creates the three-actor system:
 //! 1. CStateActor (MainActor - business logic)
 //! 2. CStateNetworkManager (Manager - peer lifecycle and routing)
-//! 3. CStateTranslatorActor (per-peer, created by Manager)
+//! 3. CStateNetworkActor (per-peer, created by Manager)
 
 use crate::{actor::CStateActor, config::CStateConfig};
 use actix::prelude::*;
-use zznet_peer_manager::PeerManagerActor;
 use zznet_router::RouterActor;
 
 /// A builder for constructing `CStateActor` instances.
 ///
-/// Phase 7.3: Creates and wires all three actors together with PeerManagerActor.
+/// Phase 7.3: Creates and wires all three actors together with Router.
 pub struct CStateBuilder {
     config: CStateConfig,
-    peer_manager: Option<Addr<PeerManagerActor>>,
     router_actor: Option<Addr<RouterActor>>,
 }
 
@@ -24,18 +22,8 @@ impl CStateBuilder {
     pub fn new(config: CStateConfig) -> Self {
         Self {
             config,
-            peer_manager: None,
             router_actor: None,
         }
-    }
-
-    /// Set the PeerManagerActor for network communication.
-    ///
-    /// This is required for the three-actor pattern. If not set, the actor
-    /// will run in standalone mode without network capabilities.
-    pub fn peer_manager(mut self, peer_manager: Addr<PeerManagerActor>) -> Self {
-        self.peer_manager = Some(peer_manager);
-        self
     }
 
     /// Set the RouterActor for network communication.
@@ -52,7 +40,7 @@ impl CStateBuilder {
     /// Phase 7.3: This creates the complete three-actor system:
     /// - CStateActor (business logic, zero network dependencies)
     /// - CStateNetworkManager (orchestrates peer lifecycle)
-    /// - CStateTranslatorActor instances (created per peer by NetworkManager)
+    /// - CStateNetworkActor instances (created per peer by NetworkManager)
     ///
     /// Returns the address of the MainActor.
     pub fn build(self) -> Addr<CStateActor> {
@@ -60,15 +48,12 @@ impl CStateBuilder {
         let config = self.config.clone();
         let actor_addr = CStateActor::create(move |_ctx| CStateActor::new(config));
 
-        // Phase 7.3: Create NetworkManager if we have PeerManagerActor and RouterActor
-        if let (Some(peer_manager), Some(router_actor)) = (self.peer_manager, self.router_actor) {
+        // Phase 7.3: Create NetworkManager if we have RouterActor
+        if let Some(router_actor) = self.router_actor {
             log::info!("Creating CStateNetworkManager for three-actor pattern");
 
-            let network_manager = crate::network_manager::CStateNetworkManager::new(
-                actor_addr.clone(),
-                peer_manager,
-                router_actor,
-            );
+            let network_manager =
+                crate::network_manager::CStateNetworkManager::new(actor_addr.clone(), router_actor);
 
             let network_manager = network_manager.start();
 
@@ -79,7 +64,7 @@ impl CStateBuilder {
 
             log::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
         } else {
-            log::debug!("No Router/PeerManager - NetworkManager not created (standalone mode)");
+            log::debug!("No Router - NetworkManager not created (standalone mode)");
         }
 
         actor_addr

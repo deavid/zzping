@@ -2471,7 +2471,6 @@ dependencies = [
  "uuid",
  "zznet-api",
  "zznet-auth",
- "zznet-peer-manager",
  "zznet-room",
  "zznet-router",
  "zzping-auth",
@@ -2497,7 +2496,6 @@ dependencies = [
  "zznet-api",
  "zznet-auth",
  "zznet-hello",
- "zznet-peer-manager",
  "zznet-room",
  "zznet-router",
  "zzping-auth",
@@ -2520,7 +2518,6 @@ dependencies = [
  "tracing",
  "zznet-api",
  "zznet-auth",
- "zznet-peer-manager",
  "zznet-room",
  "zznet-router",
  "zzping-auth",
@@ -2553,6 +2550,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "zznet-builder"
+version = "0.3.0-dev"
+dependencies = [
+ "actix-rt",
+ "anyhow",
+ "async-trait",
+ "clap",
+ "ron",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "zznet-hello"
 version = "0.3.0-dev"
 dependencies = [
@@ -2565,21 +2582,9 @@ dependencies = [
  "tracing",
  "zznet-api",
  "zznet-auth",
- "zznet-peer-manager",
  "zznet-room",
  "zznet-router",
  "zznet-transport-tcp",
-]
-
-[[package]]
-name = "zznet-peer-manager"
-version = "0.3.0-dev"
-dependencies = [
- "actix",
- "tokio",
- "tracing",
- "zznet-api",
- "zznet-router",
 ]
 
 [[package]]
@@ -2606,7 +2611,6 @@ dependencies = [
  "tokio",
  "tracing",
  "zznet-api",
- "zznet-peer-manager",
  "zznet-room",
 ]
 
@@ -2669,8 +2673,8 @@ dependencies = [
  "zzmem-db",
  "zznet-api",
  "zznet-auth",
+ "zznet-builder",
  "zznet-hello",
- "zznet-peer-manager",
  "zznet-room",
  "zznet-router",
  "zznet-transport-tcp",
@@ -2706,8 +2710,8 @@ dependencies = [
  "zzmem-db",
  "zznet-api",
  "zznet-auth",
+ "zznet-builder",
  "zznet-hello",
- "zznet-peer-manager",
  "zznet-room",
  "zznet-router",
  "zznet-transport-tcp",

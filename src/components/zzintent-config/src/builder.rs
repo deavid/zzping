@@ -3,8 +3,6 @@
 use crate::actor::IntentConfigActor;
 use crate::config::IntentConfigConfig;
 use actix::prelude::*;
-use std::time::Duration;
-use zznet_peer_manager::PeerManagerActor;
 use zznet_router::RouterActor;
 
 /// A builder for the IntentConfig component.
@@ -14,10 +12,7 @@ use zznet_router::RouterActor;
 /// is constructed and started in a controlled manner.
 pub struct IntentConfigBuilder {
     config: IntentConfigConfig,
-    peer_manager: Option<Addr<PeerManagerActor>>,
     router_actor: Option<Addr<RouterActor>>,
-    /// Per-peer broadcast timeout used when sending messages via PeerManager
-    broadcast_timeout: Duration,
 }
 
 impl IntentConfigBuilder {
@@ -25,9 +20,7 @@ impl IntentConfigBuilder {
     pub fn new() -> Self {
         Self {
             config: IntentConfigConfig::default(),
-            peer_manager: None,
             router_actor: None,
-            broadcast_timeout: Duration::from_millis(500),
         }
     }
 }
@@ -60,25 +53,12 @@ impl IntentConfigBuilder {
         self
     }
 
-    /// Set the PeerManagerActor for network operations (Phase 7.2)
-    pub fn peer_manager(mut self, peer_manager: Addr<PeerManagerActor>) -> Self {
-        self.peer_manager = Some(peer_manager);
-        self
-    }
-
     /// Set the RouterActor for data-plane operations.
     ///
     /// This is required for the IntentConfigNetworkManager to communicate
     /// with peers for configuration updates.
     pub fn router(mut self, router_actor: Addr<RouterActor>) -> Self {
         self.router_actor = Some(router_actor);
-        self
-    }
-
-    /// Set the per-peer broadcast timeout used when sending network messages.
-    /// Default is 500ms.
-    pub fn broadcast_timeout(mut self, timeout: Duration) -> Self {
-        self.broadcast_timeout = timeout;
         self
     }
 
@@ -96,7 +76,7 @@ impl IntentConfigBuilder {
     /// Phase 7.2: Builds the three-actor system:
     /// - IntentConfigActor (Main Actor - business logic)
     /// - IntentConfigNetworkManager (Manager Actor - peer lifecycle)
-    /// - IntentConfigTranslatorActor (Per-peer translator, created by Manager)
+    /// - IntentConfigNetworkActor (Per-peer translator, created by Manager)
     ///
     /// NetworkManager also owns the RoomActor<T> instances that serialize messages
     /// for each peer and wires them to the translators.
@@ -124,15 +104,12 @@ impl IntentConfigBuilder {
         // Start the main actor first (needed for NetworkManager creation)
         let actor_addr = actor.start();
 
-        // Phase 7.2: Create NetworkManager if we have PeerManagerActor and RouterActor
-        if let (Some(peer_manager), Some(router_actor)) =
-            (self.peer_manager.take(), self.router_actor.take())
-        {
+        // Phase 7.2: Create NetworkManager if we have RouterActor
+        if let Some(router_actor) = self.router_actor.take() {
             log::info!("Creating IntentConfigNetworkManager for three-actor pattern");
 
             let network_manager = crate::network_manager::IntentConfigNetworkManager::new(
                 actor_addr.clone(),
-                peer_manager,
                 router_actor,
             )
             .start();
@@ -144,7 +121,7 @@ impl IntentConfigBuilder {
 
             log::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
         } else {
-            log::debug!("No Router/PeerManager - NetworkManager not created (standalone mode)");
+            log::debug!("No Router - NetworkManager not created (standalone mode)");
         }
 
         Ok(actor_addr)

@@ -2,7 +2,7 @@
 //!
 //! The Manager actor in the three-actor pattern. Responsibilities:
 //! - Subscribe to PeerLifecycleEvent bus from zznet-peer-manager
-//! - Spawn `IntentConfigTranslatorActor` when peers join the "intent-config" room
+//! - Spawn `IntentConfigNetworkActor` when peers join the "intent-config" room
 //! - Destroy per-peer actors when peers disconnect
 //! - Handle broadcast requests from MainActor (`BroadcastConfigUpdate`)
 //! - Forward inbound requests to MainActor (after authorization check)
@@ -13,15 +13,14 @@ use crate::internal_messages::{
     NetworkConfigChangeRequest, SendErrorToPeer,
 };
 use crate::messages::{GetCurrentConfig, IntentConfigData};
+use crate::network_actor::IntentConfigNetworkActor;
 use crate::network_messages::IntentConfigNetworkMsg;
-use crate::translator_actor::IntentConfigTranslatorActor;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 
 // Phase 7.2: Use traits for interface segregation (control-plane vs data-plane)
-use zznet_api::types::{PeerId, PeerLifecycleEvent, Permission, RoomId};
-use zznet_peer_manager::PeerManagerActor;
+use zznet_api::types::{PeerId, PeerLifecycleEvent, RoomId};
 use zznet_room::actor::RoomActor;
 use zznet_room::room_manager::{CreateError, RoomInboundRecipient, RoomManager};
 use zznet_router::RouterActor;
@@ -29,13 +28,13 @@ use zznet_router::RouterActor;
 /// IntentConfigNetworkManager orchestrates the per-peer translator layer.
 ///
 /// This actor bridges the business logic (`IntentConfigActor`) and the network stack
-/// (`IntentConfigTranslatorActor` + `RoomActor`). It subscribes to peer lifecycle events
+/// (`IntentConfigNetworkActor` + `RoomActor`). It subscribes to peer lifecycle events
 /// and manages the fleet of translators attached to each peer.
 ///
 /// # Responsibilities
 /// - Lifecycle: Spawn/destroy translator actors as peers connect/disconnect
 /// - Broadcast: Fan-out config updates to all connected peers
-/// - Authorization: Query PeerManager for role/permission checks before forwarding requests
+/// - Authorization: Handled by NetworkActors (they have the Role)
 /// - Coordination: Aggregate responses from multiple peers when needed
 ///
 /// # Message Flow
@@ -44,11 +43,9 @@ pub struct IntentConfigNetworkManager {
     /// Address of the main business logic actor
     main_actor: Addr<crate::actor::IntentConfigActor>,
     /// Per-peer translator actors for message translation
-    translator_actors: Arc<RwLock<HashMap<PeerId, Addr<IntentConfigTranslatorActor>>>>,
+    translator_actors: Arc<RwLock<HashMap<PeerId, Addr<IntentConfigNetworkActor>>>>,
     /// Per-peer room actors for serialization
     room_actors: Arc<RwLock<HashMap<PeerId, Addr<RoomActor<IntentConfigNetworkMsg>>>>>,
-    /// PeerManagerActor for control-plane queries
-    peer_manager: Addr<PeerManagerActor>,
     /// RouterActor for data-plane message routing
     router_actor: Addr<RouterActor>,
     /// Address of this NetworkManager (set in started())
@@ -61,7 +58,6 @@ impl Clone for IntentConfigNetworkManager {
             main_actor: self.main_actor.clone(),
             translator_actors: Arc::clone(&self.translator_actors),
             room_actors: Arc::clone(&self.room_actors),
-            peer_manager: self.peer_manager.clone(),
             router_actor: self.router_actor.clone(),
             self_addr: self.self_addr.clone(),
         }
@@ -72,14 +68,12 @@ impl IntentConfigNetworkManager {
     /// Create a new NetworkManager tied to the provided IntentConfigActor.
     pub fn new(
         main_actor: Addr<crate::actor::IntentConfigActor>,
-        peer_manager: Addr<PeerManagerActor>,
         router_actor: Addr<RouterActor>,
     ) -> Self {
         Self {
             main_actor,
             translator_actors: Arc::new(RwLock::new(HashMap::new())),
             room_actors: Arc::new(RwLock::new(HashMap::new())),
-            peer_manager,
             router_actor,
             self_addr: None,
         }
@@ -153,7 +147,7 @@ impl Actor for IntentConfigNetworkManager {
         self.translator_actors.write().unwrap().clear();
         self.room_actors.write().unwrap().clear();
         log::debug!(
-            "Stopped {} TranslatorActors and {} RoomActors",
+            "Stopped {} NetworkActors and {} RoomActors",
             translator_count,
             room_count
         );
@@ -258,73 +252,30 @@ impl Handler<SendErrorToPeer> for IntentConfigNetworkManager {
 }
 
 // ============================================================================
-// Handler: InboundConfigChangeRequest (from TranslatorActor)
+// Handler: InboundConfigChangeRequest (from NetworkActor)
 // ============================================================================
 
 impl Handler<InboundConfigChangeRequest> for IntentConfigNetworkManager {
     type Result = ();
 
-    fn handle(&mut self, msg: InboundConfigChangeRequest, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(
+        &mut self,
+        msg: InboundConfigChangeRequest,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
         log::info!("Received config change request from peer: {}", msg.peer_id);
 
-        let main_actor = self.main_actor.clone();
-        let peer_id = msg.peer_id.clone();
-        let targets = msg.targets;
-        let ping_rate_pps = msg.ping_rate_pps;
-        let manager_addr: Addr<IntentConfigNetworkManager> = ctx.address();
-
-        // Check authorization using PeerManagerActor
-        let rt = tokio::runtime::Handle::current();
-        let role_future = self.peer_manager.send(zznet_peer_manager::GetPeerRole {
-            peer_id: peer_id.clone(),
-        });
-        let role = rt.block_on(role_future).unwrap_or(None);
-        let authorized = match role {
-            Some(role) => {
-                let is_admin = role.as_str() == "client-admin";
-                if !is_admin {
-                    log::warn!(
-                        "Peer {} has role '{}' - not authorized (requires 'client-admin')",
-                        peer_id,
-                        role.as_str()
-                    );
-                }
-                is_admin
-            }
-            None => {
-                log::warn!("Peer {} has no role - not authorized", peer_id);
-                false
-            }
-        };
-
-        if !authorized {
-            log::warn!(
-                "Config change request from peer {} DENIED - insufficient permissions",
-                peer_id
-            );
-
-            // Send error back to peer
-            manager_addr.do_send(SendErrorToPeer {
-                peer_id: peer_id.clone(),
-                error_message: "Unauthorized: ClientAdmin role required".to_string(),
-            });
-            return;
-        }
-
-        // Forward to MainActor for processing
-        log::debug!(
-            "Config change request from peer {} AUTHORIZED - forwarding to MainActor",
-            peer_id
-        );
+        // Authorization is now handled by NetworkActor (has the Role)
+        // If we receive this message, the peer is already authorized
 
         let auth_request = NetworkConfigChangeRequest {
-            peer_id,
-            targets,
-            ping_rate_pps,
+            peer_id: msg.peer_id,
+            targets: msg.targets,
+            ping_rate_pps: msg.ping_rate_pps,
             authorized: true,
         };
 
-        if let Err(e) = main_actor.try_send(auth_request) {
+        if let Err(e) = self.main_actor.try_send(auth_request) {
             log::error!(
                 "Failed to forward config change request to main actor: {}",
                 e
@@ -334,7 +285,7 @@ impl Handler<InboundConfigChangeRequest> for IntentConfigNetworkManager {
 }
 
 // ============================================================================
-// Handler: InboundGetConfigRequest (from TranslatorActor)
+// Handler: InboundGetConfigRequest (from NetworkActor)
 // ============================================================================
 
 impl Handler<InboundGetConfigRequest> for IntentConfigNetworkManager {
@@ -378,7 +329,7 @@ impl RoomManager for IntentConfigNetworkManager {
     async fn create_for_peer(
         &self,
         peer_id: PeerId,
-        _permission: Permission,
+        role: zznet_api::types::Role,
         room_id: &RoomId,
         outbound_to_peer: tokio::sync::mpsc::Sender<(zznet_api::types::RoomId, Vec<u8>)>,
     ) -> Result<Option<RoomInboundRecipient>, CreateError> {
@@ -387,9 +338,10 @@ impl RoomManager for IntentConfigNetworkManager {
             return Ok(None);
         }
 
-        // Create the translator actor
-        let translator = IntentConfigTranslatorActor::new(
+        // Create the translator actor with the peer's role
+        let translator = IntentConfigNetworkActor::new(
             peer_id.clone(),
+            role,
             self.self_addr.as_ref().unwrap().clone(),
         );
 

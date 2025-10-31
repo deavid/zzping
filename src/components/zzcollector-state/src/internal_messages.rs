@@ -3,7 +3,7 @@
 //! These messages are used for communication between:
 //! - CStateActor (MainActor) - Business logic
 //! - CStateNetworkManager - Peer lifecycle orchestration
-//! - CStateTranslatorActor - Per-peer protocol translation
+//! - CStateNetworkActor - Per-peer protocol translation
 //!
 //! These are INTERNAL messages and are NOT sent over the network.
 
@@ -12,12 +12,12 @@ use actix::prelude::*;
 use zznet_api::types::PeerId;
 
 // ============================================================================
-// Inbound Messages (TranslatorActor → MainActor)
+// Inbound Messages (NetworkActor → MainActor)
 // ============================================================================
 
 /// A heartbeat message received from a collector peer.
 ///
-/// TranslatorActor translates CStateMessage::Heartbeat into this internal message
+/// NetworkActor translates CStateMessage::Heartbeat into this internal message
 /// and forwards it to MainActor for business logic processing.
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -42,7 +42,7 @@ pub struct InboundHeartbeat {
 
 /// A heartbeat acknowledgment received from the database.
 ///
-/// TranslatorActor translates CStateMessage::HeartbeatAck into this internal message.
+/// NetworkActor translates CStateMessage::HeartbeatAck into this internal message.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct InboundHeartbeatAck {
@@ -56,7 +56,7 @@ pub struct InboundHeartbeatAck {
 
 /// A query for the list of collectors from an admin peer.
 ///
-/// TranslatorActor translates CStateMessage::QueryCollectors into this internal message.
+/// NetworkActor translates CStateMessage::QueryCollectors into this internal message.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct InboundQueryCollectors {
@@ -66,7 +66,7 @@ pub struct InboundQueryCollectors {
 
 /// A collector list received from the database (for monitoring).
 ///
-/// TranslatorActor translates CStateMessage::CollectorList into this internal message.
+/// NetworkActor translates CStateMessage::CollectorList into this internal message.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct InboundCollectorList {
@@ -78,7 +78,7 @@ pub struct InboundCollectorList {
 
 /// Registration rejected message received from database.
 ///
-/// TranslatorActor translates CStateMessage::RegistrationRejected into this internal message.
+/// NetworkActor translates CStateMessage::RegistrationRejected into this internal message.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct InboundRegistrationRejected {
@@ -90,7 +90,7 @@ pub struct InboundRegistrationRejected {
 
 /// Unauthorized message received from database.
 ///
-/// TranslatorActor translates CStateMessage::Unauthorized into this internal message.
+/// NetworkActor translates CStateMessage::Unauthorized into this internal message.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct InboundUnauthorized {
@@ -101,12 +101,12 @@ pub struct InboundUnauthorized {
 }
 
 // ============================================================================
-// Outbound Messages (MainActor → NetworkManager → TranslatorActor)
+// Outbound Messages (MainActor → NetworkManager → NetworkActor)
 // ============================================================================
 
 /// Command to send a heartbeat acknowledgment to a specific peer.
 ///
-/// MainActor sends this to NetworkManager, which forwards it to the appropriate TranslatorActor.
+/// MainActor sends this to NetworkManager, which forwards it to the appropriate NetworkActor.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct SendHeartbeatAck {
@@ -120,7 +120,7 @@ pub struct SendHeartbeatAck {
 
 /// Command to send the collector list to a specific peer (admin).
 ///
-/// MainActor sends this to NetworkManager, which forwards it to the appropriate TranslatorActor.
+/// MainActor sends this to NetworkManager, which forwards it to the appropriate NetworkActor.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct SendCollectorList {
@@ -132,7 +132,7 @@ pub struct SendCollectorList {
 
 /// Command to send a registration rejection to a specific peer.
 ///
-/// MainActor sends this to NetworkManager, which forwards it to the appropriate TranslatorActor.
+/// MainActor sends this to NetworkManager, which forwards it to the appropriate NetworkActor.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct SendRegistrationRejected {
@@ -144,7 +144,7 @@ pub struct SendRegistrationRejected {
 
 /// Command to send an unauthorized message to a specific peer.
 ///
-/// MainActor sends this to NetworkManager, which forwards it to the appropriate TranslatorActor.
+/// MainActor sends this to NetworkManager, which forwards it to the appropriate NetworkActor.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct SendUnauthorized {
@@ -157,7 +157,7 @@ pub struct SendUnauthorized {
 /// Command to broadcast a heartbeat to all database peers.
 ///
 /// MainActor (in Collector role) sends this to NetworkManager, which broadcasts
-/// to all connected TranslatorActors.
+/// to all connected NetworkActors.
 #[derive(Message, Clone)]
 #[rtype(result = "()")]
 pub struct BroadcastHeartbeat {

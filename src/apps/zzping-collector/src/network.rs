@@ -81,9 +81,7 @@ impl CollectorNetwork {
         allowed_roles.insert(zznet_api::types::Role::new("database"));
         allowed_roles.insert(zznet_api::types::Role::new("collector"));
 
-        // Step 2: Use the shared PeerManagerActor from components.
-        // Components and ConnectionManager now share the same lifecycle state.
-        let peer_manager_actor = components.peer_manager.clone();
+        // Step 2: Components are ready (peer_manager no longer needed by ConnectionManager)
 
         // FIXME(audit-blocker-2): Router.register_peer() not wired after HELLO handshake
         // - ConnectionManager.room_handler_wirer signature was changed to accept PeerChannels
@@ -105,11 +103,8 @@ impl CollectorNetwork {
         //   critical for functionality, but audit identifies it as a blocker for consistency
         // - See audit doc section 4.2 for details
 
-        let connection_manager = ConnectionManager::new(
-            peer_manager_actor,
-            components.router_actor.clone(),
-            allowed_roles,
-        );
+        let connection_manager =
+            ConnectionManager::new(components.router_actor.clone(), allowed_roles);
 
         let connection_manager_addr = connection_manager.start();
 

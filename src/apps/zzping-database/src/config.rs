@@ -117,35 +117,15 @@ impl DatabaseConfig {
     /// Reads and parses the RON configuration file. Fails if the file
     /// cannot be read or contains invalid RON syntax.
     pub fn load(path: &str) -> crate::error::Result<Self> {
-        // Read the RON file contents
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            crate::error::DatabaseError::Config(format!(
-                "Failed to read config file {}: {}",
-                path, e
-            ))
+        use zznet_builder::config::{load_ron_config, resolve_path_relative_to_config};
+
+        // Load the config using the utility
+        let config: Self = load_ron_config(path).map_err(|e| {
+            crate::error::DatabaseError::Config(format!("Failed to load config: {}", e))
         })?;
 
-        let config: Self = ron::from_str(&content).map_err(|e| {
-            crate::error::DatabaseError::Config(format!("Failed to parse config: {}", e))
-        })?;
-
-        // Resolve relative paths relative to the config file directory.
-        // This makes paths in the RON file behave intuitively: relative paths
-        // are interpreted relative to the config file location, not the CWD.
-        let config_file_dir = std::path::Path::new(path)
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from("."));
-
-        // Helper to resolve a single path string
-        let resolve = |p: &str| {
-            let pb = std::path::Path::new(p);
-            if pb.is_relative() {
-                config_file_dir.join(pb).to_string_lossy().to_string()
-            } else {
-                p.to_string()
-            }
-        };
+        // Helper to resolve a single path string relative to the config file
+        let resolve = |p: &str| resolve_path_relative_to_config(path, p);
 
         // Resolve CA certs and server cert/key paths (if TLS enabled)
         let mut resolved = config.clone();
@@ -156,13 +136,7 @@ impl DatabaseConfig {
         }
 
         // Resolve data_dir (mandatory) relative to the config file directory
-        let d = resolved.data_dir.clone();
-        let dpath = std::path::Path::new(&d);
-        resolved.data_dir = if dpath.is_relative() {
-            config_file_dir.join(dpath).to_string_lossy().to_string()
-        } else {
-            d
-        };
+        resolved.data_dir = resolve(&resolved.data_dir);
 
         Ok(resolved)
     }
@@ -243,6 +217,22 @@ impl DatabaseConfig {
         }
 
         Ok(())
+    }
+}
+
+/// Implement ZZNetConfig trait for DatabaseConfig
+impl zznet_builder::traits::ZZNetConfig for DatabaseConfig {
+    fn validate(&self) -> anyhow::Result<()> {
+        DatabaseConfig::validate(self).map_err(|e| anyhow::anyhow!("{}", e))
+    }
+
+    fn log_startup_info(&self) {
+        tracing::info!(
+            "Database service configuration: {}:{}, TLS: {}",
+            self.bind_host,
+            self.bind_port,
+            self.tls.is_some()
+        );
     }
 }
 

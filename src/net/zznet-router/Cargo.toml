@@ -20,9 +20,6 @@ zznet-room = { workspace = true }
 async-trait.workspace = true
 # Phase 2 will add: actix, bytes, zznet-api
 
-[dev-dependencies]
-# Phase 2 will add: tokio-test
-zznet-peer-manager = { workspace = true }
 
 [lints]
 # This makes the crate inherit all lints defined in [workspace.lints]

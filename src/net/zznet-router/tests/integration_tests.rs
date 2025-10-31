@@ -1,27 +1,18 @@
-//! Integration tests for RouterActor and PeerManagerActor interactions
+//! Integration tests for RouterActor
 //!
-//! These tests validate the complete lifecycle flow between RouterActor and PeerManagerActor,
+//! These tests validate the lifecycle flow of RouterActor,
 //! including peer connection, room negotiation, and message routing.
 
 use actix::prelude::*;
 use tokio::sync::mpsc;
-use zznet_api::types::{PeerId, PeerIdentity, Permission, RoomId};
-use zznet_peer_manager::PeerManagerActor;
+use zznet_api::types::{PeerId, Role, RoomId};
 use zznet_router::{
     HandlePublishRooms, OnPeerConnected, OnPeerDisconnected, PeerSender, RouterActor,
 };
 
-/// Helper function to create a test Permission
-fn create_test_permission(peer_id: PeerId) -> Permission {
-    Permission {
-        peer_id,
-        identity: PeerIdentity {
-            common_name: "test-role".to_string(),
-            san_username: "test-user".to_string(),
-            peer_addr: "127.0.0.1:12345".to_string(),
-        },
-        capabilities: 0, // No special capabilities for tests
-    }
+/// Helper function to create a test Role
+fn create_test_role() -> Role {
+    Role::new("test-role")
 }
 
 #[actix::test]
@@ -29,9 +20,6 @@ async fn test_router_actor_peer_lifecycle() {
     // Create RouterActor with some offered rooms
     let offered_rooms = vec![RoomId::new("shared-room"), RoomId::new("unique-room")];
     let router_actor = RouterActor::new(offered_rooms.clone(), None).start();
-
-    // Create PeerManagerActor
-    let _peer_manager = PeerManagerActor::new(None).start();
 
     // Create channels for peer connection
     let (outbound_tx, _outbound_rx) = mpsc::channel(10);
@@ -42,7 +30,7 @@ async fn test_router_actor_peer_lifecycle() {
     // Test peer connection
     let connect_msg = OnPeerConnected {
         peer_id: peer_id.clone(),
-        permission: create_test_permission(peer_id.clone()),
+        role: create_test_role(),
         outbound_tx,
         inbound_rx,
     };
@@ -84,7 +72,7 @@ async fn test_router_actor_room_negotiation() {
 
     let connect_msg = OnPeerConnected {
         peer_id: peer_id.clone(),
-        permission: create_test_permission(peer_id.clone()),
+        role: create_test_role(),
         outbound_tx,
         inbound_rx,
     };
@@ -131,7 +119,7 @@ async fn test_router_actor_message_routing() {
 
     let connect_msg = OnPeerConnected {
         peer_id: peer_id.clone(),
-        permission: create_test_permission(peer_id.clone()),
+        role: create_test_role(),
         outbound_tx,
         inbound_rx,
     };
@@ -200,7 +188,7 @@ async fn test_router_actor_broadcast() {
 
         let connect_msg = OnPeerConnected {
             peer_id: peer_id.clone(),
-            permission: create_test_permission(peer_id.clone()),
+            role: create_test_role(),
             outbound_tx,
             inbound_rx,
         };
@@ -247,7 +235,7 @@ async fn test_router_actor_edge_cases() {
 
     let connect_msg1 = OnPeerConnected {
         peer_id: peer_id.clone(),
-        permission: create_test_permission(peer_id.clone()),
+        role: create_test_role(),
         outbound_tx: outbound_tx1,
         inbound_rx: inbound_rx1,
     };
@@ -264,7 +252,7 @@ async fn test_router_actor_edge_cases() {
 
     let connect_msg2 = OnPeerConnected {
         peer_id: peer_id.clone(),
-        permission: create_test_permission(peer_id.clone()),
+        role: create_test_role(),
         outbound_tx: outbound_tx2,
         inbound_rx: inbound_rx2,
     };
@@ -299,7 +287,7 @@ async fn test_router_actor_empty_room_intersection() {
 
     let connect_msg = OnPeerConnected {
         peer_id: peer_id.clone(),
-        permission: create_test_permission(peer_id.clone()),
+        role: create_test_role(),
         outbound_tx,
         inbound_rx,
     };

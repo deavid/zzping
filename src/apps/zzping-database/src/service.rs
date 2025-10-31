@@ -1,6 +1,7 @@
 use crate::config::{DatabaseConfig, DatabaseTlsConfig};
 use crate::error::DatabaseError;
 use actix::{Actor, Addr};
+use async_trait::async_trait;
 use zzcollector_state::actor::CStateActor;
 use zzcollector_state::builder::CStateBuilder;
 use zzcollector_state::config::CStateConfig;
@@ -9,7 +10,6 @@ use zzintent_config::builder::IntentConfigBuilder;
 use zzmem_db::actor::MemDBActor;
 use zzmem_db::builder::MemDBBuilder;
 use zzmem_db::config::MemDBConfig;
-use zznet_peer_manager::PeerManagerActor;
 use zznet_router::RouterActor;
 
 // Room Handler Architecture
@@ -38,8 +38,6 @@ pub struct ComponentBuilders {
     pub memdb_builder: MemDBBuilder,
     /// Builder for CState component
     pub cstate_builder: CStateBuilder,
-    /// PeerManagerActor for network communication shared across actors
-    pub peer_manager: Addr<PeerManagerActor>,
 }
 /// Started components (running actors).
 ///
@@ -54,8 +52,6 @@ pub struct StartedComponents {
     pub memdb_addr: Addr<MemDBActor>,
     /// Address of the running CState actor (database role)
     pub cstate: Addr<CStateActor>,
-    /// PeerManagerActor for network communication shared across actors
-    pub peer_manager: Addr<PeerManagerActor>,
     /// RouterActor for data-plane message routing
     pub router_actor: Addr<RouterActor>,
 }
@@ -73,7 +69,7 @@ impl DatabaseService {
         Ok(Self { config })
     }
 
-    pub async fn run(self) -> Result<(), DatabaseError> {
+    pub async fn run_impl(self) -> Result<(), DatabaseError> {
         tracing::info!("Database service starting");
 
         // Step 1: Create builders (including PeerManagerActor)
@@ -107,6 +103,11 @@ impl DatabaseService {
             .run(&_started)
             .await
             .map_err(|e| DatabaseError::Service(format!("Network error: {}", e)))
+    }
+
+    /// Public run method that delegates to the internal implementation
+    pub async fn run(self) -> Result<(), DatabaseError> {
+        self.run_impl().await
     }
 
     /// Build TLS configuration for the transport layer (TcpTransportServer)
@@ -150,33 +151,23 @@ impl DatabaseService {
     /// let components = DatabaseService::start_components(builders).await?;
     /// ```
     pub fn create_builders(&self) -> Result<ComponentBuilders, DatabaseError> {
-        // Create the shared PeerManagerActor once for the entire application
-        let peer_manager_actor = PeerManagerActor::new(None).start();
-
-        tracing::info!("Created PeerManagerActor for component communication");
-
         // Create IntentConfig builder - database configuration
         let data_dir = std::path::PathBuf::from(&self.config.data_dir);
         let config_path = data_dir.join("intent.ron");
 
-        let intent_config = IntentConfigBuilder::new()
-            .config_for_database(config_path)
-            .peer_manager(peer_manager_actor.clone());
+        let intent_config = IntentConfigBuilder::new().config_for_database(config_path);
 
-        let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
-            .peer_manager(peer_manager_actor.clone());
+        let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None));
 
         let cstate_builder = CStateBuilder::new(CStateConfig::for_database(
             self.config.components.stale_timeout_secs,
             Some(self.config.components.max_collectors),
-        ))
-        .peer_manager(peer_manager_actor.clone());
+        ));
 
         Ok(ComponentBuilders {
             intent_config,
             memdb_builder,
             cstate_builder,
-            peer_manager: peer_manager_actor,
         })
     }
 
@@ -203,8 +194,6 @@ impl DatabaseService {
             intent_config,
             memdb_builder,
             cstate_builder,
-            peer_manager,
-            ..
         } = builders;
 
         // Configure IntentConfig with RouterActor
@@ -225,7 +214,6 @@ impl DatabaseService {
             intent_config: intent_addr,
             memdb_addr,
             cstate: cstate_addr,
-            peer_manager,
             router_actor,
         })
     }
@@ -239,6 +227,30 @@ impl DatabaseService {
         Self::start_components(builders).await
     }
     // Manual TLS and per-connection handler code removed per refactor plan.
+}
+
+/// Implement ZZNetService trait for DatabaseService
+#[async_trait]
+impl zznet_builder::traits::ZZNetService for DatabaseService {
+    type Config = DatabaseConfig;
+    type Error = DatabaseError;
+
+    fn new(config: Self::Config) -> Result<Self, Self::Error> {
+        config.validate().map_err(|e| {
+            DatabaseError::Config(format!("Configuration validation failed: {}", e))
+        })?;
+        Ok(Self { config })
+    }
+
+    async fn run(self) -> Result<(), Self::Error> {
+        self.run_impl()
+            .await
+            .map_err(|e| DatabaseError::Service(format!("Service error: {}", e)))
+    }
+
+    fn service_name() -> &'static str {
+        "ZZPing Database"
+    }
 }
 
 #[cfg(test)]

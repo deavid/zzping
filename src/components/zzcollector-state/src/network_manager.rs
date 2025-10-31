@@ -1,23 +1,22 @@
 //! Network Manager for the CState component.
 //!
-//! This actor orchestrates peer lifecycle and manages per-peer TranslatorActors.
+//! This actor orchestrates peer lifecycle and manages per-peer NetworkActors.
 //! It acts as a bridge between the business logic (CStateActor) and the network
-//! layer (CStateTranslatorActor instances).
+//! layer (CStateNetworkActor instances).
 
 use crate::{
     internal_messages::{
         BroadcastHeartbeat, SendCollectorList, SendHeartbeatAck, SendRegistrationRejected,
         SendUnauthorized,
     },
+    network_actor::CStateNetworkActor,
     network_messages::CStateMessage,
-    translator_actor::CStateTranslatorActor,
 };
 use actix::prelude::*;
 use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use zznet_api::types::{PeerId, Permission, RoomId};
-use zznet_peer_manager::PeerManagerActor;
+use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
 use zznet_room::room_manager::{CreateError, RoomInboundRecipient, RoomManager};
 use zznet_router::RouterActor;
@@ -40,23 +39,21 @@ pub struct PeerRemoved {
     pub peer_id: PeerId,
 }
 
-/// The NetworkManager orchestrates peer lifecycle and manages TranslatorActors.
+/// The NetworkManager orchestrates peer lifecycle and manages NetworkActors.
 ///
 /// Responsibilities:
-/// - Subscribe to PeerLifecycleEvents from PeerManager
-/// - Spawn/stop CStateTranslatorActor per connected peer
-/// - Register Room<CStateMessage> with PeerManager
-/// - Route outbound messages to appropriate TranslatorActors
+/// - Subscribe to PeerLifecycleEvents from Router
+/// - Spawn/stop CStateNetworkActor per connected peer
+/// - Register Room<CStateMessage> with Router
+/// - Route outbound messages to appropriate NetworkActors
 /// - Handle peer disconnection cleanup
 pub struct CStateNetworkManager {
     /// The router actor for sending messages
     router: Addr<RouterActor>,
-    /// The peer manager for peer operations
-    peer_manager: Addr<PeerManagerActor>,
     /// The main actor for handling internal messages
     main_actor: Addr<crate::actor::CStateActor>,
     /// Per-peer translator actors for message translation
-    translator_actors: Arc<RwLock<HashMap<PeerId, Addr<CStateTranslatorActor>>>>,
+    translator_actors: Arc<RwLock<HashMap<PeerId, Addr<CStateNetworkActor>>>>,
     /// Per-peer room actors for serialization
     room_actors: Arc<RwLock<HashMap<PeerId, Addr<RoomActor<CStateMessage>>>>>,
     /// Address of this NetworkManager (set in started())
@@ -67,7 +64,6 @@ impl Clone for CStateNetworkManager {
     fn clone(&self) -> Self {
         Self {
             router: self.router.clone(),
-            peer_manager: self.peer_manager.clone(),
             main_actor: self.main_actor.clone(),
             translator_actors: Arc::clone(&self.translator_actors),
             room_actors: Arc::clone(&self.room_actors),
@@ -81,16 +77,10 @@ impl CStateNetworkManager {
     ///
     /// # Arguments
     /// * `main_actor` - Address of the CStateActor (business logic)
-    /// * `peer_manager` - PeerManagerActor for peer state queries
     /// * `router` - RouterActor for data-plane message routing
-    pub fn new(
-        main_actor: Addr<crate::actor::CStateActor>,
-        peer_manager: Addr<PeerManagerActor>,
-        router: Addr<RouterActor>,
-    ) -> Self {
+    pub fn new(main_actor: Addr<crate::actor::CStateActor>, router: Addr<RouterActor>) -> Self {
         Self {
             router,
-            peer_manager,
             main_actor,
             translator_actors: Arc::new(RwLock::new(HashMap::new())),
             room_actors: Arc::new(RwLock::new(HashMap::new())),
@@ -124,7 +114,7 @@ impl Actor for CStateNetworkManager {
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         info!(
-            "CStateNetworkManager stopped, cleaning up {} TranslatorActors and {} RoomActors",
+            "CStateNetworkManager stopped, cleaning up {} NetworkActors and {} RoomActors",
             self.translator_actors.read().unwrap().len(),
             self.room_actors.read().unwrap().len()
         );
@@ -176,7 +166,7 @@ impl Handler<PeerRemoved> for CStateNetworkManager {
 }
 
 // ============================================================================
-// Outbound Message Handlers (MainActor → NetworkManager → TranslatorActor)
+// Outbound Message Handlers (MainActor → NetworkManager → NetworkActor)
 // ============================================================================
 
 impl Handler<SendHeartbeatAck> for CStateNetworkManager {
@@ -288,7 +278,7 @@ impl RoomManager for CStateNetworkManager {
     async fn create_for_peer(
         &self,
         peer_id: PeerId,
-        _permission: Permission,
+        role: zznet_api::types::Role,
         room_id: &RoomId,
         outbound_to_peer: tokio::sync::mpsc::Sender<(zznet_api::types::RoomId, Vec<u8>)>,
     ) -> Result<Option<RoomInboundRecipient>, CreateError> {
@@ -297,9 +287,10 @@ impl RoomManager for CStateNetworkManager {
             return Ok(None);
         }
 
-        // Create the translator actor
-        let translator = CStateTranslatorActor::new(
+        // Create the translator actor with the peer's role
+        let translator = CStateNetworkActor::new(
             peer_id.clone(),
+            role,
             self.main_actor.clone(),
             self.self_addr.as_ref().unwrap().clone(),
         );
@@ -338,7 +329,7 @@ mod tests {
     // Phase 4.4: Tests will be added when implementing NetworkManager functionality.
     // These will cover:
     // - PeerAdded/PeerRemoved handling
-    // - TranslatorActor spawning and cleanup
+    // - NetworkActor spawning and cleanup
     // - Message routing (unicast and broadcast)
     // - SessionManager bridge pattern
 }

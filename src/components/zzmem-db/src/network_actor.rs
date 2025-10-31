@@ -1,9 +1,9 @@
-//! TranslatorActor for MemDB component - per-peer protocol translation.
+//! NetworkActor for MemDB component - per-peer protocol translation.
 //!
-//! This module implements the TranslatorActor in the three-actor pattern:
+//! This module implements the NetworkActor in the three-actor pattern:
 //! - **MainActor** (MemDBActor): Pure business logic, zero network dependencies
 //! - **NetworkManager**: Peer lifecycle, message routing orchestration
-//! - **TranslatorActor** (this file): Per-peer protocol translation
+//! - **NetworkActor** (this file): Per-peer protocol translation
 //!
 //! ## Responsibilities
 //!
@@ -13,12 +13,13 @@
 //!    - Forwards to MainActor with peer_id context
 //!
 //! 2. **Per-Peer Context**:
-//!    - Each TranslatorActor is tied to one peer
+//!    - Each NetworkActor is tied to one peer
+//!    - Stores peer's Role for authorization (TODO: add auth logic)
 //!    - Adds peer_id to all messages
 //!    - Handles protocol-level concerns
 
 use actix::prelude::*;
-use zznet_api::types::PeerId;
+use zznet_api::types::{PeerId, Role};
 
 use crate::actor::MemDBActor;
 use crate::internal_messages::{
@@ -27,15 +28,19 @@ use crate::internal_messages::{
 use crate::network_manager::MemDBNetworkManager;
 use crate::network_messages::MemDBMessage;
 
-/// TranslatorActor handles protocol translation for a single peer.
+/// NetworkActor handles protocol translation for a single peer.
 ///
-/// One TranslatorActor is created per connected peer. It:
+/// One NetworkActor is created per connected peer. It:
 /// - Receives network messages and translates them to internal messages
+/// - Stores peer's Role for authorization checks (TODO: add auth logic)
 /// - Sends network messages on behalf of MainActor
 /// - Provides per-peer context (peer_id) to all messages
-pub struct MemDBTranslatorActor {
+pub struct MemDBNetworkActor {
     /// The peer ID this actor represents
     peer_id: PeerId,
+
+    /// Role of this peer (for authorization checks)
+    _role: Role,
 
     /// Reference to MainActor for forwarding inbound messages
     main_actor: Addr<MemDBActor>,
@@ -45,30 +50,32 @@ pub struct MemDBTranslatorActor {
     manager: Addr<MemDBNetworkManager>,
 }
 
-impl MemDBTranslatorActor {
-    /// Create a new TranslatorActor for the given peer.
+impl MemDBNetworkActor {
+    /// Create a new NetworkActor for the given peer.
     pub fn new(
         peer_id: PeerId,
+        role: Role,
         main_actor: Addr<MemDBActor>,
         manager: Addr<MemDBNetworkManager>,
     ) -> Self {
         Self {
             peer_id,
+            _role: role,
             main_actor,
             manager,
         }
     }
 }
 
-impl Actor for MemDBTranslatorActor {
+impl Actor for MemDBNetworkActor {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Self::Context) {
-        tracing::trace!("MemDBTranslatorActor started for peer {}", self.peer_id);
+        tracing::trace!("MemDBNetworkActor started for peer {}", self.peer_id);
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
-        tracing::trace!("MemDBTranslatorActor stopped for peer {}", self.peer_id);
+        tracing::trace!("MemDBNetworkActor stopped for peer {}", self.peer_id);
     }
 }
 
@@ -76,12 +83,12 @@ impl Actor for MemDBTranslatorActor {
 // INBOUND PROTOCOL TRANSLATION (Network → MainActor)
 // ============================================================================
 
-impl Handler<MemDBMessage> for MemDBTranslatorActor {
+impl Handler<MemDBMessage> for MemDBNetworkActor {
     type Result = ();
 
     fn handle(&mut self, msg: MemDBMessage, _ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!(
-            "TranslatorActor received message from peer {}: {:?}",
+            "NetworkActor received message from peer {}: {:?}",
             self.peer_id,
             msg
         );

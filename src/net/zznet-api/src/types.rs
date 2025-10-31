@@ -24,8 +24,16 @@ pub struct PeerIdentity {
 
 /// Precomputed permission snapshot for a peer, derived from role at connection time.
 ///
+/// **DEPRECATED**: Use `Role` directly instead. This struct added unnecessary complexity
+/// by bundling peer_id, identity, and capabilities when only the role string is needed.
+/// Components should receive `Role` and perform their own role-based authorization.
+///
 /// Components receive this at room creation and never query roles at runtime.
 /// Contains peer_id, identity summary, and precomputed capability flags.
+#[deprecated(
+    since = "0.3.0",
+    note = "Use Role directly instead. Permission adds unnecessary complexity."
+)]
 #[derive(Debug, Clone)]
 pub struct Permission {
     /// Unique identifier for the peer.
@@ -43,7 +51,7 @@ pub struct Permission {
 /// identifier for a peer's role. Application code (auth layer / components)
 /// perform mapping from `Role` -> component-specific permission enums.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-pub struct Role(pub String);
+pub struct Role(String);
 
 impl Role {
     /// Create a Role from &str

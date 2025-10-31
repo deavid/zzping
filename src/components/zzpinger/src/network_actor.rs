@@ -1,6 +1,6 @@
 //! Per-peer Translator Actor for the Pinger component.
 //!
-//! Each TranslatorActor handles protocol translation for a single peer connection.
+//! Each NetworkActor handles protocol translation for a single peer connection.
 //! It translates between network messages (PingerMessage) and internal messages.
 //! This replaces the old NetworkActor which handled both serialization and translation.
 
@@ -10,13 +10,13 @@ use actix::prelude::*;
 use log::debug;
 use zznet_api::types::PeerId;
 
-/// Per-peer TranslatorActor that handles protocol translation.
+/// Per-peer NetworkActor that handles protocol translation.
 ///
 /// Responsibilities:
 /// - Translate PingerMessage (network, typed) to internal messages (MainActor)
 /// - Handle network errors (peer disconnected, send failures)
 /// - No longer handles raw bytes or serialization (delegated to RoomActor<T>)
-pub struct PingerTranslatorActor {
+pub struct PingerNetworkActor {
     /// The peer ID this actor manages.
     peer_id: PeerId,
 
@@ -28,8 +28,8 @@ pub struct PingerTranslatorActor {
     manager: Addr<crate::network_manager::PingerNetworkManager>,
 }
 
-impl PingerTranslatorActor {
-    /// Creates a new PingerTranslatorActor for a specific peer.
+impl PingerNetworkActor {
+    /// Creates a new PingerNetworkActor for a specific peer.
     ///
     /// # Arguments
     /// * `peer_id` - The peer ID this actor manages
@@ -48,19 +48,19 @@ impl PingerTranslatorActor {
     }
 }
 
-impl Actor for PingerTranslatorActor {
+impl Actor for PingerNetworkActor {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Self::Context) {
-        debug!("PingerTranslatorActor started for peer: {:?}", self.peer_id);
+        debug!("PingerNetworkActor started for peer: {:?}", self.peer_id);
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
-        debug!("PingerTranslatorActor stopped for peer: {:?}", self.peer_id);
+        debug!("PingerNetworkActor stopped for peer: {:?}", self.peer_id);
     }
 }
 
-impl Handler<PingerMessage> for PingerTranslatorActor {
+impl Handler<PingerMessage> for PingerNetworkActor {
     type Result = ();
 
     fn handle(&mut self, msg: PingerMessage, _ctx: &mut Context<Self>) -> Self::Result {

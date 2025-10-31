@@ -5,7 +5,6 @@ use zznet_api::transport::{TransportClient as _, TransportServer as _};
 use zznet_api::types::Role;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
-use zznet_peer_manager::PeerManagerActor;
 use zznet_router::RouterActor;
 use zznet_transport_tcp::server::TcpTransportServer;
 
@@ -46,14 +45,12 @@ async fn transport_accept_and_send_to_connection_manager() {
 
             // Start ConnectionManager actor
             use actix::prelude::*;
-            // Create a PeerManagerActor
-            let peer_mgr_addr = PeerManagerActor::new(None).start();
             // Create a RouterActor
             let router_addr = RouterActor::new(vec![], None).start();
             // Build allowed roles set (accept admin)
             let mut allowed = std::collections::HashSet::new();
             allowed.insert(Role::new("admin"));
-            let mgr = ConnectionManager::new(peer_mgr_addr, router_addr, allowed).start();
+            let mgr = ConnectionManager::new(router_addr, allowed).start();
 
             // Send transport using HandleTransport, ensure try_send succeeds
             let config = HelloConfig::default();

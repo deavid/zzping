@@ -1,6 +1,7 @@
 //! Configuration structures and loading.
 
 use serde::{Deserialize, Serialize};
+use zznet_builder::traits::ZZNetConfig;
 
 use crate::error::CollectorError;
 
@@ -83,21 +84,11 @@ impl CollectorConfig {
             reconnect_delay_ms: 100, // Fast reconnect for testing
         }
     }
+}
 
-    /// Load configuration from a RON file.
-    pub fn load(path: &str) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            CollectorError::Config(format!("Failed to read config file {}: {}", path, e))
-        })?;
-
-        let config: Self = ron::from_str(&content)
-            .map_err(|e| CollectorError::Config(format!("Failed to parse config: {}", e)))?;
-
-        Ok(config)
-    }
-
-    /// Validate configuration values.
-    pub fn validate(&self) -> anyhow::Result<()> {
+/// Implement ZZNetConfig trait for CollectorConfig
+impl ZZNetConfig for CollectorConfig {
+    fn validate(&self) -> anyhow::Result<()> {
         if self.collector_id.is_empty() {
             Err(CollectorError::Config(
                 "collector_id cannot be empty".into(),
@@ -148,6 +139,16 @@ impl CollectorConfig {
 
         Ok(())
     }
+
+    fn log_startup_info(&self) {
+        tracing::info!("Collector ID: {}", self.collector_id);
+        tracing::info!("Database: {}:{}", self.database_host, self.database_port);
+        if self.tls.is_some() {
+            tracing::info!("TLS: enabled (mTLS connection)");
+        } else {
+            tracing::warn!("TLS: disabled (plain TCP connection)");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -156,6 +157,7 @@ mod tests {
     use std::io::Write;
     use std::path::Path;
     use tempfile::NamedTempFile;
+    use zznet_builder::config::load_ron_config;
 
     fn create_test_config() -> CollectorConfig {
         let certs_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -264,7 +266,7 @@ mod tests {
         temp_file.write_all(config_content.as_bytes()).unwrap();
         let path = temp_file.path().to_str().unwrap();
 
-        let config = CollectorConfig::load(path).expect("Failed to load config");
+        let config = load_ron_config::<CollectorConfig>(path).expect("Failed to load config");
         assert_eq!(config.collector_id, "test-collector");
         assert_eq!(config.database_host, "127.0.0.1");
         assert_eq!(config.database_port, 8443);
@@ -272,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_load_nonexistent_file_fails() {
-        let result = CollectorConfig::load("/nonexistent/path/config.ron");
+        let result = load_ron_config::<CollectorConfig>("/nonexistent/path/config.ron");
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Failed to read"));
     }
@@ -285,7 +287,7 @@ mod tests {
         temp_file.write_all(invalid_content.as_bytes()).unwrap();
         let path = temp_file.path().to_str().unwrap();
 
-        let result = CollectorConfig::load(path);
+        let result = load_ron_config::<CollectorConfig>(path);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Failed to parse"));
     }

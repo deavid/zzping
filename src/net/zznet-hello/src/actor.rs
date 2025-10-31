@@ -123,11 +123,11 @@ pub struct HelloActor {
     /// Active rooms negotiated during handshake.
     active_rooms: Vec<String>,
     // FIXME: peer_role MUST NOT be an Option<T>, it is mandatory.
-    /// Peer's role string received during handshake (CN from certificate).
+    /// Peer's role string received during handshake.
     peer_role: Option<String>,
-    // TODO: why do we need to store peer_identity? This seems breaking an abstraction.
-    /// Peer's cryptographic identity from transport (None for plain TCP).
-    peer_identity: zznet_api::types::PeerIdentity,
+    /// TLS peer identity from transport (None for plain TCP).
+    /// Used to validate that HELLO role matches certificate CN when TLS is enabled.
+    tls_peer_identity: Option<zznet_api::types::PeerIdentity>,
     /// Sender to I/O task for outbound frames.
     io_tx: mpsc::UnboundedSender<Bytes>,
     /// Optional SessionManager recipient (for integration with higher layer). - FIXME: Why is this optional? it doesn't make sense
@@ -142,7 +142,7 @@ impl HelloActor {
     /// This is private - use `start_hello_actor()` to properly create and start the actor.
     fn new(
         config: HelloConfig,
-        peer_identity: zznet_api::types::PeerIdentity,
+        tls_peer_identity: Option<zznet_api::types::PeerIdentity>,
         io_tx: mpsc::UnboundedSender<Bytes>,
     ) -> Self {
         Self {
@@ -151,7 +151,7 @@ impl HelloActor {
             state: ActorState::Handshaking,
             active_rooms: Vec::new(),
             peer_role: None,
-            peer_identity,
+            tls_peer_identity,
             io_tx,
             session_manager: None,
             inbound_tx: None,
@@ -274,11 +274,36 @@ impl HelloActor {
             // Notify SessionManager if configured
             if let Some(ref session_mgr) = self.session_manager {
                 if let Some(ref peer_role) = self.peer_role {
+                    // TLS VALIDATION: If TLS is enabled, the certificate CN must match the HELLO role
+                    if let Some(ref tls_identity) = self.tls_peer_identity {
+                        if tls_identity.common_name != *peer_role {
+                            error!(
+                                "TLS validation FAILED: Certificate CN '{}' does not match HELLO role '{}'",
+                                tls_identity.common_name, peer_role
+                            );
+                            self.handle_error(
+                                HelloError::HandshakeFailed(format!(
+                                    "TLS certificate CN '{}' does not match HELLO role '{}'",
+                                    tls_identity.common_name, peer_role
+                                )),
+                                ctx,
+                            );
+                            return;
+                        }
+                        info!(
+                            "TLS validation SUCCESS: Certificate CN '{}' matches HELLO role",
+                            tls_identity.common_name
+                        );
+                    } else {
+                        debug!(
+                            "No TLS identity available - plain TCP connection, no validation performed"
+                        );
+                    }
+
                     if let Some(peer_hostname) = self.handshake.peer_hostname() {
                         let msg = HandshakeComplete {
                             peer_id: peer_hostname.to_string(),
                             peer_role_str: peer_role.clone(),
-                            peer_identity: self.peer_identity.clone(),
                             active_rooms: self.active_rooms.clone(),
                             hello_actor: ctx.address(),
                         };
@@ -577,17 +602,18 @@ pub fn start_hello_actor_with_session_manager(
 ) -> Addr<HelloActor> {
     let (io_tx, io_rx) = mpsc::unbounded_channel();
 
-    // Get peer identity from transport (None for plain TCP)
-    let peer_identity = transport.peer_identity().unwrap_or_else(|| {
-        // For plain TCP, create a dummy identity
-        zznet_api::types::PeerIdentity {
-            common_name: "unused".to_string(),
-            san_username: "unused".to_string(),
-            peer_addr: "unknown".to_string(),
-        }
-    });
+    // Extract TLS peer identity from transport (if available)
+    let tls_peer_identity = transport.peer_identity();
+    if let Some(ref identity) = tls_peer_identity {
+        debug!(
+            "TLS connection detected: CN='{}', SAN='{}', addr='{}'",
+            identity.common_name, identity.san_username, identity.peer_addr
+        );
+    } else {
+        debug!("Plain TCP connection detected (no TLS identity)");
+    }
 
-    let mut actor = HelloActor::new(config, peer_identity, io_tx);
+    let mut actor = HelloActor::new(config, tls_peer_identity, io_tx);
     if let Some(sm) = session_manager {
         actor = actor.with_session_manager(sm);
     }

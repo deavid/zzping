@@ -14,11 +14,8 @@ use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::{broadcast, mpsc};
 use zznet_api::transport::TransportConnection;
-use zznet_api::types::AuthContext;
 use zznet_api::types::Role;
 use zznet_api::types::{PeerId, RoomId};
-use zznet_peer_manager::PeerState;
-use zznet_peer_manager::{AddPeer, ConnectPeerWithChannels, GetPeerIds, PeerManagerActor};
 use zznet_router::{PeerSender, RouterActor, SubscribePeerInbound as RouterSubscribePeerInbound};
 
 // Authorizer type removed - authorization is represented by a set of allowed Roles
@@ -31,20 +28,11 @@ use zznet_router::{PeerSender, RouterActor, SubscribePeerInbound as RouterSubscr
 ///
 /// Generic over TRole: the application's role type
 pub struct ConnectionManager {
-    /// PeerManagerActor address for peer lifecycle management
-    ///
-    /// DESIGN: Uses PeerManagerActor for peer connection lifecycle:
-    /// - ConnectionManager sends AddPeer after HELLO handshake completes
-    /// - PeerManagerActor manages peer sessions and routing
-    /// - Components receive their own Addr<PeerManagerActor> for queries
-    /// - This enables concurrent access without blocking
-    peer_manager: Addr<PeerManagerActor>,
-
     /// RouterActor address for data-plane operations
     ///
     /// DESIGN: RouterActor handles peer channels and message routing
-    /// - ConnectionManager forwards GetPeerSender/SubscribePeerInbound to RouterActor
-    /// - This replaces deprecated PeerManagerActor data-plane methods
+    /// - ConnectionManager sends OnPeerConnected directly to RouterActor after HELLO handshake completes
+    /// - RouterActor manages peer sessions and routing
     router_actor: Addr<RouterActor>,
 
     /// Maps PeerId to HelloActor address
@@ -52,27 +40,21 @@ pub struct ConnectionManager {
     hello_actors: HashMap<PeerId, Addr<HelloActor>>,
     /// Set of allowed canonical `Role`s for this ConnectionManager.
     /// Connections will only be accepted when the HELLO role string maps to
-    /// a `Role` that appears in this set (TLS CN checked if present).
+    /// a `Role` that appears in this set.
     allowed_roles: HashSet<Role>,
 }
 
 impl ConnectionManager {
-    /// Create a new ConnectionManager with PeerManagerActor and RouterActor.
+    /// Create a new ConnectionManager with RouterActor.
     ///
     /// SECURITY: A set of allowed roles is REQUIRED. There is no code path that
     /// allows connections without explicit allowed roles.
     ///
     /// # Arguments
-    /// - `peer_manager`: PeerManagerActor address for peer lifecycle management
     /// - `router_actor`: RouterActor address for data-plane operations
     /// - `allowed_roles`: set of canonical `zznet_api::types::Role` strings that are permitted
-    pub fn new(
-        peer_manager: Addr<PeerManagerActor>,
-        router_actor: Addr<RouterActor>,
-        allowed_roles: HashSet<Role>,
-    ) -> Self {
+    pub fn new(router_actor: Addr<RouterActor>, allowed_roles: HashSet<Role>) -> Self {
         Self {
-            peer_manager,
             router_actor,
             hello_actors: HashMap::new(),
             allowed_roles,
@@ -197,13 +179,12 @@ impl Handler<HandleTransport> for ConnectionManager {
 #[rtype(result = "Vec<PeerId>")]
 pub struct GetPeers;
 
-/// Handler for GetPeers - Forward to PeerManagerActor via message passing
+/// Handler for GetPeers - Returns list of connected HelloActor peer IDs
 impl Handler<GetPeers> for ConnectionManager {
-    type Result = ResponseFuture<Vec<PeerId>>;
+    type Result = Vec<PeerId>;
 
     fn handle(&mut self, _msg: GetPeers, _ctx: &mut Context<Self>) -> Self::Result {
-        let pm_addr = self.peer_manager.clone();
-        Box::pin(async move { pm_addr.send(GetPeerIds).await.unwrap_or_default() })
+        self.hello_actors.keys().cloned().collect()
     }
 }
 
@@ -321,156 +302,101 @@ impl Handler<HandshakeComplete> for ConnectionManager {
         );
 
         // SECURITY: Authorizer is MANDATORY.
-        // HELLO role is the PRIMARY source, TLS identity (if present) validates it.
-        let auth_ctx = AuthContext {
-            hello_role_str: msg.peer_role_str.clone(),
-            peer_identity: if msg.peer_identity.common_name != "unused" {
-                Some(msg.peer_identity.clone())
-            } else {
-                None
-            },
-        };
+        // HELLO role is the PRIMARY source (no TLS validation needed).
+        let role = Role::new(&msg.peer_role_str);
 
-        // Determine role by validating TLS CN (if present) and checking allowed_roles
-        let role_opt = {
-            // If TLS identity exists, ensure CN matches HELLO role string
-            if let Some(ref peer_identity) = auth_ctx.peer_identity {
-                if peer_identity.common_name != auth_ctx.hello_role_str {
-                    None
-                } else {
-                    let role = Role::new(&auth_ctx.hello_role_str);
-                    if self.allowed_roles.contains(&role) {
-                        Some(role)
-                    } else {
-                        None
-                    }
-                }
-            } else {
-                let role = Role::new(&auth_ctx.hello_role_str);
-                if self.allowed_roles.contains(&role) {
-                    Some(role)
-                } else {
-                    None
-                }
-            }
-        };
-
-        match role_opt {
-            Some(role) => {
-                tracing::info!(
-                    "Peer {} authorized as {:?} (HELLO={}, identity={})",
-                    peer_id,
-                    role,
-                    msg.peer_role_str,
-                    auth_ctx
-                        .peer_identity
-                        .as_ref()
-                        .map(|id| id.full_identity())
-                        .unwrap_or_else(|| "none (plain TCP)".to_string())
-                );
-
-                // Prepare data to perform session mutations asynchronously without blocking the actor thread.
-                let pm_addr = self.peer_manager.clone();
-                let hello_actor = msg.hello_actor.clone();
-                let actor_addr = _ctx.address();
-
-                // Create channels for SessionBridge
-                let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(100);
-                let (conn_to_session_tx, conn_to_session_rx) = tokio::sync::mpsc::channel(100);
-                let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
-
-                // Spawn an async task to create connected peer session and add to PeerManager
-                tokio::spawn(async move {
-                    let peer_id_api = zznet_api::types::PeerId::from(peer_id.as_str());
-
-                    let peer_state = PeerState::new_connected(
-                        peer_id_api.clone(),
-                        Some(role.clone()),
-                        Some(msg.peer_identity.clone()),
-                    );
-
-                    let connect_result = pm_addr
-                        .send(ConnectPeerWithChannels {
-                            peer_id: peer_id_api.clone(),
-                            outbound_tx: outbound_tx.clone(),
-                            inbound_rx: conn_to_session_rx,
-                        })
-                        .await;
-
-                    if let Err(e) = connect_result {
-                        tracing::error!("Failed to connect peer channels for {}: {:?}", peer_id, e);
-                        return;
-                    }
-
-                    let add_result = pm_addr.send(AddPeer { peer_state }).await;
-
-                    // Check the result
-                    match add_result {
-                        Ok(result) => {
-                            if let Err(error_msg) = result {
-                                tracing::error!(
-                                    "PeerManager rejected peer {}: {}",
-                                    peer_id,
-                                    error_msg
-                                );
-                                return;
-                            }
-                        }
-                        Err(mailbox_error) => {
-                            tracing::error!(
-                                "Failed to send AddPeer to PeerManager: {:?}",
-                                mailbox_error
-                            );
-                            return;
-                        }
-                    }
-
-                    // Give HelloActor the channel for forwarding received messages
-                    let set_inbound_msg = crate::actor::SetInboundChannel {
-                        tx: hello_to_conn_tx,
-                    };
-                    if let Err(e) = hello_actor.try_send(set_inbound_msg) {
-                        tracing::error!("Failed to set inbound channel on HelloActor: {:?}", e);
-                        // continue - we still notify the actor to start the bridge
-                    }
-
-                    // Prepare HelloActor clone to send back to actor
-                    let send_hello_actor = hello_actor.clone();
-
-                    // Send channels back to actor so it can start the SessionBridge inside
-                    // the actor context (this avoids spawn_local being called outside LocalSet).
-                    let inner_msg = HandshakePostProcessedInner {
-                        peer_id: peer_id_api,
-                        hello_actor: send_hello_actor,
-                        outbound_rx: Some(outbound_rx),
-                        conn_to_session_tx: conn_to_session_tx.clone(),
-                        hello_to_conn_rx: Some(hello_to_conn_rx),
-                    };
-
-                    tracing::info!("Connected to peer {} as {:?}", peer_id, role);
-
-                    actor_addr.do_send(inner_msg);
-                });
-            }
-            None => {
-                // SECURITY: Authorization FAILED. Loud logging and immediate disconnect.
-                tracing::error!(
-                    "!!! SECURITY REJECTION !!!: Peer {} REJECTED by authorizer",
-                    peer_id
-                );
-                tracing::error!(
-                    "    HELLO claimed role: {} | TLS identity: {}",
-                    msg.peer_role_str,
-                    auth_ctx
-                        .peer_identity
-                        .as_ref()
-                        .map(|id| id.full_identity())
-                        .unwrap_or_else(|| "none (plain TCP)".to_string())
-                );
-                tracing::warn!("Disconnecting unauthorized peer {}", peer_id);
-                msg.hello_actor.do_send(crate::actor::Disconnect);
-            }
+        // Check if role is allowed
+        if !self.allowed_roles.contains(&role) {
+            // SECURITY: Authorization FAILED. Loud logging and immediate disconnect.
+            tracing::error!(
+                "!!! SECURITY REJECTION !!!: Peer {} REJECTED by authorizer",
+                peer_id
+            );
+            tracing::error!(
+                "    HELLO claimed role: {} (not in allowed roles)",
+                msg.peer_role_str
+            );
+            tracing::warn!("Disconnecting unauthorized peer {}", peer_id);
+            msg.hello_actor.do_send(crate::actor::Disconnect);
+            return;
         }
+
+        tracing::info!(
+            "Peer {} authorized as {:?} (HELLO={})",
+            peer_id,
+            role,
+            msg.peer_role_str
+        );
+
+        // Prepare data to send connection directly to RouterActor
+        let router_addr = self.router_actor.clone();
+        let hello_actor = msg.hello_actor.clone();
+        let actor_addr = _ctx.address();
+
+        // Create channels for SessionBridge
+        let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(100);
+        let (conn_to_session_tx, conn_to_session_rx) = tokio::sync::mpsc::channel(100);
+        let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
+
+        // Spawn an async task to connect peer directly to RouterActor
+        tokio::spawn(async move {
+            let peer_id_api = zznet_api::types::PeerId::from(peer_id.as_str());
+
+            // Send OnPeerConnected directly to RouterActor with Role
+            let connect_result = router_addr
+                .send(zznet_router::OnPeerConnected {
+                    peer_id: peer_id_api.clone(),
+                    role: role.clone(),
+                    outbound_tx: outbound_tx.clone(),
+                    inbound_rx: conn_to_session_rx,
+                })
+                .await;
+
+            if let Err(e) = connect_result {
+                tracing::error!(
+                    "Failed to connect peer to RouterActor for {}: {:?}",
+                    peer_id,
+                    e
+                );
+                return;
+            }
+
+            match connect_result.unwrap() {
+                Ok(_) => {
+                    tracing::info!("Successfully connected peer {} to RouterActor", peer_id);
+                }
+                Err(error_msg) => {
+                    tracing::error!("RouterActor rejected peer {}: {}", peer_id, error_msg);
+                    return;
+                }
+            }
+
+            // Give HelloActor the channel for forwarding received messages
+            let set_inbound_msg = crate::actor::SetInboundChannel {
+                tx: hello_to_conn_tx,
+            };
+            if let Err(e) = hello_actor.try_send(set_inbound_msg) {
+                tracing::error!("Failed to set inbound channel on HelloActor: {:?}", e);
+                // continue - we still notify the actor to start the bridge
+            }
+
+            // Prepare HelloActor clone to send back to actor
+            let send_hello_actor = hello_actor.clone();
+
+            // Send channels back to actor so it can start the SessionBridge inside
+            // the actor context (this avoids spawn_local being called outside LocalSet).
+            let inner_msg = HandshakePostProcessedInner {
+                peer_id: peer_id_api.clone(),
+                hello_actor: send_hello_actor,
+                outbound_rx: Some(outbound_rx),
+                conn_to_session_tx: conn_to_session_tx.clone(),
+                hello_to_conn_rx: Some(hello_to_conn_rx),
+            };
+
+            tracing::info!("Connected to peer {} as {:?}", peer_id, role);
+
+            actor_addr.do_send(inner_msg);
+        });
     }
 }
 
@@ -525,9 +451,6 @@ mod tests {
         let _b = TestMessages::MemDB;
         let _c = TestMessages::Health;
 
-        // Create PeerManagerActor
-        let peer_manager = zznet_peer_manager::PeerManagerActor::new(None).start();
-
         // Create RouterActor
         let router_actor = zznet_router::RouterActor::new(vec![], None).start();
 
@@ -535,7 +458,7 @@ mod tests {
         let mut allowed = HashSet::new();
         allowed.insert(Role::new("admin"));
 
-        let _manager = ConnectionManager::new(peer_manager, router_actor, allowed);
+        let _manager = ConnectionManager::new(router_actor, allowed);
         // Just test it compiles and constructs
     }
 }

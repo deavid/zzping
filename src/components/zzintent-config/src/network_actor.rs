@@ -3,15 +3,16 @@
 //! The Translator Actor in the three-actor pattern. Responsibilities:
 //! - Receive typed IntentConfigNetworkMsg from RoomActor<T>
 //! - Translate network messages to domain messages for MainActor (via Manager)
+//! - Store peer's Role and handle authorization checks
 //!
-//! Lifecycle: One TranslatorActor per connected peer, managed by NetworkManager
+//! Lifecycle: One NetworkActor per connected peer, managed by NetworkManager
 
 use crate::internal_messages::{InboundConfigChangeRequest, InboundGetConfigRequest};
 use crate::network_messages::IntentConfigNetworkMsg;
 use actix::prelude::*;
-use zznet_api::types::PeerId;
+use zznet_api::types::{PeerId, Role};
 
-/// IntentConfigTranslatorActor - Handles protocol translation for one peer
+/// IntentConfigNetworkActor - Handles protocol translation for one peer
 ///
 /// This actor exists for the lifetime of a peer connection and handles
 /// all message translation for that specific peer. It is the
@@ -25,52 +26,70 @@ use zznet_api::types::PeerId;
 /// # Responsibilities
 /// - Receive IntentConfigNetworkMsg from RoomActor<T>
 /// - Translate to domain messages (InboundConfigChangeRequest, etc.)
+/// - Handle authorization checks using stored Role
 /// - Forward to NetworkManager for processing
 /// - Receive commands from NetworkManager (SendConfigUpdateToPeer, etc.)
 /// - Send typed messages to RoomActor<T>
 ///
 /// # Message Flow
 /// See `internal_messages.rs` for detailed message flow diagrams.
-pub struct IntentConfigTranslatorActor {
+pub struct IntentConfigNetworkActor {
     /// ID of the peer this actor represents
     peer_id: PeerId,
+
+    /// Role of this peer (for authorization checks)
+    role: Role,
 
     /// Address of the NetworkManager (for forwarding inbound requests)
     manager: Addr<crate::network_manager::IntentConfigNetworkManager>,
 }
 
-impl IntentConfigTranslatorActor {
-    /// Create a new TranslatorActor for a specific peer
+impl IntentConfigNetworkActor {
+    /// Create a new NetworkActor for a specific peer
     ///
     /// # Arguments
     /// - `peer_id` - ID of the peer this actor represents
+    /// - `role` - Role of the peer (for authorization)
     /// - `manager` - Address of NetworkManager for forwarding requests
     pub fn new(
         peer_id: PeerId,
+        role: Role,
         manager: Addr<crate::network_manager::IntentConfigNetworkManager>,
     ) -> Self {
-        Self { peer_id, manager }
+        Self {
+            peer_id,
+            role,
+            manager,
+        }
     }
 
     /// Get the peer ID this actor represents
     pub fn peer_id(&self) -> &PeerId {
         &self.peer_id
     }
+
+    /// Check if this peer is authorized for admin operations
+    ///
+    /// Currently checks for "client-admin" role.
+    /// TODO: Make this more flexible/configurable
+    fn is_authorized(&self) -> bool {
+        self.role.as_str() == "client-admin"
+    }
 }
 
-impl Actor for IntentConfigTranslatorActor {
+impl Actor for IntentConfigNetworkActor {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Self::Context) {
         log::debug!(
-            "IntentConfigTranslatorActor started for peer: {}",
+            "IntentConfigNetworkActor started for peer: {}",
             self.peer_id
         );
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         log::debug!(
-            "IntentConfigTranslatorActor stopped for peer: {}",
+            "IntentConfigNetworkActor stopped for peer: {}",
             self.peer_id
         );
     }
@@ -80,7 +99,7 @@ impl Actor for IntentConfigTranslatorActor {
 // Handler: IntentConfigNetworkMsg (from RoomActor<T>)
 // ============================================================================
 
-impl Handler<IntentConfigNetworkMsg> for IntentConfigTranslatorActor {
+impl Handler<IntentConfigNetworkMsg> for IntentConfigNetworkActor {
     type Result = ();
 
     fn handle(&mut self, msg: IntentConfigNetworkMsg, _ctx: &mut Self::Context) -> Self::Result {
@@ -102,6 +121,29 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigTranslatorActor {
                     sender_peer_id,
                     targets,
                     ping_rate_pps
+                );
+
+                // Check authorization using stored role
+                if !self.is_authorized() {
+                    log::warn!(
+                        "Peer {} with role '{}' is not authorized for config changes (requires 'client-admin')",
+                        self.peer_id,
+                        self.role.as_str()
+                    );
+
+                    // Send error back via Manager
+                    self.manager
+                        .do_send(crate::internal_messages::SendErrorToPeer {
+                            peer_id: self.peer_id.clone(),
+                            error_message: "Unauthorized: ClientAdmin role required".to_string(),
+                        });
+                    return;
+                }
+
+                log::debug!(
+                    "Peer {} AUTHORIZED for config change (role: {})",
+                    self.peer_id,
+                    self.role.as_str()
                 );
 
                 // Translate to domain message and forward to Manager
@@ -179,5 +221,5 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigTranslatorActor {
 mod tests {
     // Phase 3.9 COMPLETE: Integration tests in tests/three_actor_integration_tests.rs
     // These tests cover the happy-path scenarios for the three-actor pattern.
-    // Unit tests for individual TranslatorActor methods are not required at this stage.
+    // Unit tests for individual NetworkActor methods are not required at this stage.
 }

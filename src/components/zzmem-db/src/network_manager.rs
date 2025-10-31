@@ -3,13 +3,13 @@
 //! This module implements the NetworkManager actor in the three-actor pattern:
 //! - **MainActor** (MemDBActor): Pure business logic, zero network dependencies
 //! - **NetworkManager** (this file): Peer lifecycle, message routing orchestration
-//! - **TranslatorActor**: Per-peer protocol translation
+//! - **NetworkActor**: Per-peer protocol translation
 //!
 //! ## Responsibilities
 //!
 //! 1. **Peer Lifecycle Management**:
-//!    - Spawns MemDBTranslatorActor when peer joins
-//!    - Removes TranslatorActor when peer leaves
+//!    - Spawns MemDBNetworkActor when peer joins
+//!    - Removes NetworkActor when peer leaves
 //!    - Tracks all active peer connections
 //!
 //! 2. **Message Routing**:
@@ -19,21 +19,20 @@
 //!
 //! 3. **Room Management**:
 //!    - Stores Room<MemDBMessage> for network communication
-//!    - Provides Room access to TranslatorActors
+//!    - Provides Room access to NetworkActors
 
 use actix::prelude::*;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use zznet_api::types::{PeerId, Permission, RoomId};
-use zznet_peer_manager::PeerManagerActor;
+use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
 use zznet_room::room_manager::{CreateError, RoomInboundRecipient, RoomManager};
 use zznet_router::RouterActor;
 
 use crate::actor::MemDBActor;
 use crate::internal_messages::{SendBatchAck, SendQueryResponse, SendSubmitBatch};
+use crate::network_actor::MemDBNetworkActor;
 use crate::network_messages::MemDBMessage;
-use crate::translator_actor::MemDBTranslatorActor;
 
 /// Temporary bridge messages for SessionManager integration.
 /// Phase 6.4: Using real PeerLifecycleEvent from zznet-peer-manager
@@ -55,25 +54,22 @@ pub struct PeerRemoved {
 
 /// NetworkManager orchestrates peer lifecycle and message routing for MemDB.
 ///
-/// This actor sits between MainActor and TranslatorActors:
-/// - Spawns/removes TranslatorActors as peers join/leave
+/// This actor sits between MainActor and NetworkActors:
+/// - Spawns/removes NetworkActors as peers join/leave
 /// - Routes outbound messages to appropriate peer's RoomActor
 /// - Manages RoomActor addresses for network communication
 pub struct MemDBNetworkManager {
     /// Reference to the MainActor for business logic
     main_actor: Addr<MemDBActor>,
 
-    /// Active TranslatorActors, one per connected peer
-    translators: Arc<RwLock<HashMap<PeerId, Addr<MemDBTranslatorActor>>>>,
+    /// Active NetworkActors, one per connected peer
+    translators: Arc<RwLock<HashMap<PeerId, Addr<MemDBNetworkActor>>>>,
 
     /// RoomActor addresses for outbound sends
     room_actors: Arc<RwLock<HashMap<PeerId, Addr<RoomActor<MemDBMessage>>>>>,
 
     /// Address of this NetworkManager (set in started())
     self_addr: Option<Addr<MemDBNetworkManager>>,
-
-    /// PeerManagerActor for control-plane queries
-    peer_manager: Addr<PeerManagerActor>,
 
     /// RouterActor for data-plane message routing
     router_actor: Addr<RouterActor>,
@@ -86,7 +82,6 @@ impl Clone for MemDBNetworkManager {
             translators: Arc::clone(&self.translators),
             room_actors: Arc::clone(&self.room_actors),
             self_addr: self.self_addr.clone(),
-            peer_manager: self.peer_manager.clone(),
             router_actor: self.router_actor.clone(),
         }
     }
@@ -94,17 +89,12 @@ impl Clone for MemDBNetworkManager {
 
 impl MemDBNetworkManager {
     /// Create a new NetworkManager.
-    pub fn new(
-        main_actor: Addr<MemDBActor>,
-        peer_manager: Addr<PeerManagerActor>,
-        router_actor: Addr<RouterActor>,
-    ) -> Self {
+    pub fn new(main_actor: Addr<MemDBActor>, router_actor: Addr<RouterActor>) -> Self {
         Self {
             main_actor,
             translators: Arc::new(RwLock::new(HashMap::new())),
             room_actors: Arc::new(RwLock::new(HashMap::new())),
             self_addr: None,
-            peer_manager,
             router_actor,
         }
     }
@@ -128,7 +118,7 @@ impl Actor for MemDBNetworkManager {
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         tracing::debug!(
-            "MemDBNetworkManager stopped, cleaning up {} TranslatorActors and {} RoomActors",
+            "MemDBNetworkManager stopped, cleaning up {} NetworkActors and {} RoomActors",
             self.translators.read().unwrap().len(),
             self.room_actors.read().unwrap().len()
         );
@@ -267,7 +257,7 @@ impl RoomManager for MemDBNetworkManager {
     async fn create_for_peer(
         &self,
         peer_id: PeerId,
-        _permission: Permission,
+        role: zznet_api::types::Role,
         room_id: &RoomId,
         outbound_to_peer: tokio::sync::mpsc::Sender<(zznet_api::types::RoomId, Vec<u8>)>,
     ) -> Result<Option<RoomInboundRecipient>, CreateError> {
@@ -277,13 +267,14 @@ impl RoomManager for MemDBNetworkManager {
         }
 
         tracing::debug!(
-            "Creating MemDBTranslatorActor and RoomActor for peer: {:?}",
+            "Creating MemDBNetworkActor and RoomActor for peer: {:?}",
             peer_id
         );
 
-        // Create the translator actor
-        let translator = MemDBTranslatorActor::new(
+        // Create the translator actor with the peer's role
+        let translator = MemDBNetworkActor::new(
             peer_id.clone(),
+            role,
             self.main_actor.clone(),
             self.self_addr.as_ref().unwrap().clone(),
         );

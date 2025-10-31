@@ -3,7 +3,6 @@
 use actix::prelude::*;
 
 use crate::error::HelloError;
-use zznet_api::types::PeerIdentity;
 
 /// Message sent TO HelloActor FROM SessionManager to send a room message.
 ///
@@ -29,10 +28,8 @@ pub struct SendRoomMessage {
 pub struct HandshakeComplete {
     /// Unique identifier for the peer.
     pub peer_id: String,
-    /// Peer's authentication role as a string (CN from certificate).
+    /// Peer's authentication role as a string (from HELLO handshake).
     pub peer_role_str: String,
-    /// Peer's cryptographic identity from transport layer.
-    pub peer_identity: PeerIdentity,
     /// Rooms negotiated during handshake (intersection of offered rooms).
     pub active_rooms: Vec<String>,
     /// Address of this HelloActor for sending messages.

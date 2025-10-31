@@ -18,14 +18,13 @@ zzpinger.workspace = true
 zzping-auth.workspace = true
 
 # Network layer dependencies
-zznet-peer-manager.workspace = true # Peer state management
-zznet-router.workspace = true       # Message routing
-# zznet-builder.workspace = true  # DEPRECATED: AI-generated, not in vision. Removing for Phase 3 migration.
-zznet-room.workspace = true          # Phase 3: Proper vision architecture
-zznet-transport-tcp.workspace = true
-zznet-auth.workspace = true
 zznet-api.workspace = true
+zznet-builder.workspace = true
+zznet-auth.workspace = true
 zznet-hello.workspace = true
+zznet-room.workspace = true          # Phase 3: Proper vision architecture
+zznet-router.workspace = true        # Message routing
+zznet-transport-tcp.workspace = true
 
 # Runtime dependencies
 tokio.workspace = true

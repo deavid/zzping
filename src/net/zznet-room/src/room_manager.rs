@@ -6,7 +6,7 @@
 use actix::Recipient;
 use std::collections::HashSet;
 use tokio::sync::mpsc;
-use zznet_api::types::{PeerId, Permission, RoomId};
+use zznet_api::types::{PeerId, Role, RoomId};
 
 /// Message type for inbound room payloads.
 ///
@@ -40,8 +40,8 @@ pub enum CreateError {
 /// Component-provided factory for creating Room<T> instances per peer.
 ///
 /// Components register a RoomManager with the Router at startup.
-/// Router calls create_for_peer() when a peer connects, passing a Permission snapshot.
-/// Components never query roles at runtime; all auth decisions are precomputed in Permission.
+/// Router calls create_for_peer() when a peer connects, passing the peer's Role.
+/// Components perform their own role-based authorization as needed.
 #[async_trait::async_trait]
 pub trait RoomManager: Send + Sync {
     /// Returns the set of room IDs this manager can provide.
@@ -58,7 +58,7 @@ pub trait RoomManager: Send + Sync {
     ///
     /// # Arguments
     /// * `peer_id` - Unique peer identifier
-    /// * `permission` - Precomputed permission snapshot (no runtime role queries)
+    /// * `role` - The peer's role for authorization decisions
     /// * `room_id` - The room to create (must be in managed_rooms())
     /// * `outbound_to_peer` - Channel for sending outbound messages to the peer
     ///
@@ -69,7 +69,7 @@ pub trait RoomManager: Send + Sync {
     async fn create_for_peer(
         &self,
         peer_id: PeerId,
-        permission: Permission,
+        role: Role,
         room_id: &RoomId,
         outbound_to_peer: mpsc::Sender<(RoomId, Vec<u8>)>,
     ) -> Result<Option<RoomInboundRecipient>, CreateError>;
@@ -83,8 +83,8 @@ pub trait RoomManager: Send + Sync {
 pub struct CreateRoomForPeer {
     /// The peer ID for which to create the room.
     pub peer_id: PeerId,
-    /// The permission snapshot for this peer.
-    pub permission: Permission,
+    /// The peer's role for authorization.
+    pub role: Role,
     /// The room ID to create.
     pub room_id: RoomId,
     /// The outbound sender to the peer.

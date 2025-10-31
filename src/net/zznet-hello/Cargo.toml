@@ -17,7 +17,6 @@ workspace = true
 [dependencies]
 zznet-api = { workspace = true }
 zznet-auth = { workspace = true }
-zznet-peer-manager = { workspace = true }
 zznet-router = { workspace = true }
 zznet-room = { workspace = true }
 actix.workspace = true

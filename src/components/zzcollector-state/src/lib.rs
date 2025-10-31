@@ -11,8 +11,8 @@
 //! This component follows the three-actor pattern for clean separation of concerns:
 //!
 //! - **CStateActor** (MainActor): Pure business logic - collector registry, health tracking
-//! - **CStateNetworkManager**: Peer lifecycle orchestration, spawns TranslatorActors
-//! - **CStateTranslatorActor**: Per-peer protocol translation via RoomActor<CStateMessage>
+//! - **CStateNetworkManager**: Peer lifecycle orchestration, spawns NetworkActors
+//! - **CStateNetworkActor**: Per-peer protocol translation via RoomActor<CStateMessage>
 
 pub mod actor;
 pub mod api;
@@ -20,10 +20,10 @@ pub mod builder;
 pub mod config;
 pub mod internal_messages;
 pub mod messages;
+pub mod network_actor;
 pub mod network_manager;
 pub mod network_messages;
 pub mod state;
-pub mod translator_actor;
 
 #[cfg(test)]
 mod tests;

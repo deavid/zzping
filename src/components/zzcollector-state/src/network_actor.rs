@@ -1,6 +1,6 @@
 //! Per-peer Translator Actor for the CState component.
 //!
-//! Each TranslatorActor handles protocol translation for a single peer connection.
+//! Each NetworkActor handles protocol translation for a single peer connection.
 //! It translates between network messages (CStateMessage) and internal messages.
 //! This replaces the old NetworkActor which handled both serialization and translation.
 
@@ -13,17 +13,21 @@ use crate::{
 };
 use actix::prelude::*;
 use log::debug;
-use zznet_api::types::PeerId;
+use zznet_api::types::{PeerId, Role};
 
-/// Per-peer TranslatorActor that handles protocol translation.
+/// Per-peer NetworkActor that handles protocol translation.
 ///
 /// Responsibilities:
 /// - Translate CStateMessage (network, typed) to internal messages (MainActor)
+/// - Store peer's Role for authorization checks (TODO: add auth logic)
 /// - Handle network errors (peer disconnected, send failures)
 /// - No longer handles raw bytes or serialization (delegated to RoomActor<T>)
-pub struct CStateTranslatorActor {
+pub struct CStateNetworkActor {
     /// The peer ID this actor manages.
     peer_id: PeerId,
+
+    /// Role of this peer (for authorization checks)
+    _role: Role,
 
     /// Link to MainActor for forwarding inbound messages.
     main_actor: Addr<crate::actor::CStateActor>,
@@ -33,43 +37,46 @@ pub struct CStateTranslatorActor {
     manager: Addr<crate::network_manager::CStateNetworkManager>,
 }
 
-impl CStateTranslatorActor {
-    /// Creates a new CStateTranslatorActor for a specific peer.
+impl CStateNetworkActor {
+    /// Creates a new CStateNetworkActor for a specific peer.
     ///
     /// # Arguments
     /// * `peer_id` - The peer ID this actor manages
+    /// * `role` - Role of the peer (for authorization)
     /// * `main_actor` - Address of the CStateActor (business logic)
     /// * `manager` - Address of the NetworkManager (parent)
     pub fn new(
         peer_id: PeerId,
+        role: Role,
         main_actor: Addr<crate::actor::CStateActor>,
         manager: Addr<crate::network_manager::CStateNetworkManager>,
     ) -> Self {
         Self {
             peer_id,
+            _role: role,
             main_actor,
             manager,
         }
     }
 }
 
-impl Actor for CStateTranslatorActor {
+impl Actor for CStateNetworkActor {
     type Context = Context<Self>;
 
     fn started(&mut self, _ctx: &mut Self::Context) {
-        debug!("CStateTranslatorActor started for peer: {:?}", self.peer_id);
+        debug!("CStateNetworkActor started for peer: {:?}", self.peer_id);
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
-        debug!("CStateTranslatorActor stopped for peer: {:?}", self.peer_id);
+        debug!("CStateNetworkActor stopped for peer: {:?}", self.peer_id);
     }
 }
 
 // ============================================================================
-// Inbound Message Handlers (RoomActor<T> → TranslatorActor → MainActor)
+// Inbound Message Handlers (RoomActor<T> → NetworkActor → MainActor)
 // ============================================================================
 
-impl Handler<CStateMessage> for CStateTranslatorActor {
+impl Handler<CStateMessage> for CStateNetworkActor {
     type Result = ();
 
     fn handle(&mut self, msg: CStateMessage, _ctx: &mut Context<Self>) -> Self::Result {

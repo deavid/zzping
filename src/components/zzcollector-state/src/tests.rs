@@ -13,7 +13,7 @@ async fn test_database_role_sends_ack_and_query_response() {
     let builder = CStateBuilder::new(config);
     let actor = builder.build();
 
-    // Send heartbeat via internal message (simulates TranslatorActor forwarding)
+    // Send heartbeat via internal message (simulates NetworkActor forwarding)
     let msg = InboundHeartbeat {
         peer_id: PeerId::from("test-peer"),
         collector_id: "test-collector".to_string(),

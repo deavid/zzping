@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use log::{debug, info};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
-use zznet_api::types::{PeerId, Permission, RoomId};
+use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
 use zznet_room::room_manager::{CreateError, RoomInboundRecipient, RoomManager};
 use zznet_router::RouterActor;
@@ -16,7 +16,7 @@ use zznet_router::RouterActor;
 /// The NetworkManager for the Pinger component.
 ///
 /// This actor implements RoomManager to register the "pinger" room with the Router.
-/// It creates TranslatorActors and RoomActors<T> for peers that want to send configuration updates.
+/// It creates NetworkActors and RoomActors<T> for peers that want to send configuration updates.
 pub struct PingerNetworkManager {
     /// Address of the main PingerActor for business logic
     main_actor: Addr<crate::actor::PingerActor>,
@@ -28,7 +28,7 @@ pub struct PingerNetworkManager {
     router_actor: Addr<RouterActor>,
 
     /// Per-peer translator actors for message translation
-    translators: Arc<RwLock<HashMap<PeerId, Addr<crate::translator_actor::PingerTranslatorActor>>>>,
+    translators: Arc<RwLock<HashMap<PeerId, Addr<crate::network_actor::PingerNetworkActor>>>>,
 
     /// Per-peer RoomActor addresses for outbound sends
     room_actors:
@@ -112,7 +112,7 @@ impl RoomManager for PingerNetworkManager {
     async fn create_for_peer(
         &self,
         peer_id: PeerId,
-        _permission: Permission,
+        _role: zznet_api::types::Role,
         room_id: &RoomId,
         outbound_to_peer: tokio::sync::mpsc::Sender<(zznet_api::types::RoomId, Vec<u8>)>,
     ) -> Result<Option<RoomInboundRecipient>, CreateError> {
@@ -122,12 +122,12 @@ impl RoomManager for PingerNetworkManager {
         }
 
         debug!(
-            "Creating PingerTranslatorActor and RoomActor for peer: {:?}",
+            "Creating PingerNetworkActor and RoomActor for peer: {:?}",
             peer_id
         );
 
         // Create the translator actor
-        let translator = crate::translator_actor::PingerTranslatorActor::new(
+        let translator = crate::network_actor::PingerNetworkActor::new(
             peer_id.clone(),
             self.main_actor.clone(),
             self.self_addr.as_ref().unwrap().clone(),

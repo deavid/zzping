@@ -14,6 +14,7 @@ mod common;
 use common::test_utils;
 use std::time::Duration;
 use tracing::info;
+use zznet_builder::traits::ZZNetConfig;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_e2e_component_lifecycle() {

@@ -6,7 +6,7 @@
 use actix::prelude::*;
 use std::sync::Arc;
 use tokio::sync::{broadcast, mpsc};
-use zznet_api::types::{PeerId, Permission, RoomId};
+use zznet_api::types::{PeerId, Role, RoomId};
 use zznet_room::room_manager::RoomManager;
 
 use crate::router::Router;
@@ -76,8 +76,8 @@ impl Handler<RegisterManager> for RouterActor {
 pub struct OnPeerConnected {
     /// The ID of the connected peer
     pub peer_id: PeerId,
-    /// The permission level of the peer
-    pub permission: Permission,
+    /// The role of the peer
+    pub role: Role,
     /// Sender for outbound messages to the peer
     pub outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
     /// Receiver for inbound messages from the peer
@@ -90,7 +90,7 @@ impl Handler<OnPeerConnected> for RouterActor {
     fn handle(&mut self, msg: OnPeerConnected, _ctx: &mut Context<Self>) -> Self::Result {
         let router_arc = self.router.clone();
         let peer_id = msg.peer_id.clone();
-        let permission = msg.permission;
+        let role = msg.role;
         let outbound_tx = msg.outbound_tx;
         let inbound_rx = msg.inbound_rx;
 
@@ -104,7 +104,7 @@ impl Handler<OnPeerConnected> for RouterActor {
                         if let Ok(Some(room)) = manager
                             .create_for_peer(
                                 peer_id.clone(),
-                                permission.clone(),
+                                role.clone(),
                                 &room_id,
                                 outbound_tx.clone(),
                             )

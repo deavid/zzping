@@ -70,9 +70,7 @@ impl DatabaseNetwork {
         allowed_roles.insert(zznet_api::types::Role::new(AuthRole::ClientRo.as_str()));
         allowed_roles.insert(zznet_api::types::Role::new(AuthRole::ClientAdmin.as_str()));
 
-        // Step 3: Use the shared PeerManagerActor from components
-        // so ConnectionManager and components observe the same lifecycle state.
-        let peer_manager_actor = components.peer_manager.clone();
+        // Step 3: Components are ready (peer_manager no longer needed by ConnectionManager)
 
         // FIXME(audit-blocker-2): Router.register_peer() not wired after HELLO handshake
         // - ConnectionManager.room_handler_wirer signature was changed to accept PeerChannels
@@ -95,11 +93,8 @@ impl DatabaseNetwork {
         // - See audit doc section 4.2 for details
 
         // Step 4: Create ConnectionManager (manages HelloActors)
-        let connection_manager = ConnectionManager::new(
-            peer_manager_actor,
-            components.router_actor.clone(),
-            allowed_roles,
-        );
+        let connection_manager =
+            ConnectionManager::new(components.router_actor.clone(), allowed_roles);
 
         let connection_manager_addr = connection_manager.start();
 

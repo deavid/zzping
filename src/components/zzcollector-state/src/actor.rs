@@ -8,7 +8,7 @@
 //!
 //! Network concerns are handled by:
 //! - CStateNetworkManager (peer lifecycle orchestration)
-//! - CStateTranslatorActor (per-peer protocol translation)
+//! - CStateNetworkActor (per-peer protocol translation)
 
 use crate::{
     config::CStateConfig,
@@ -183,7 +183,7 @@ impl Handler<ForceHeartbeat> for CStateActor {
 }
 
 // ============================================================================
-// Inbound Message Handlers (TranslatorActor → MainActor)
+// Inbound Message Handlers (NetworkActor → MainActor)
 // ============================================================================
 
 impl Handler<InboundHeartbeat> for CStateActor {

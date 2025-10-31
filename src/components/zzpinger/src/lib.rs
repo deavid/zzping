@@ -11,7 +11,7 @@ pub mod api;
 pub mod builder;
 pub mod error;
 pub mod messages;
+pub mod network_actor;
 pub mod network_manager;
 pub mod network_messages;
 pub mod pinger;
-pub mod translator_actor;
