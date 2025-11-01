@@ -45,15 +45,6 @@ pub enum HandshakeFrame {
         rooms: Vec<String>,
     },
 
-    /// Acknowledge handshake with selected rooms.
-    ///
-    /// The selected rooms are the intersection of both peers' offered rooms,
-    /// filtered by authorization rules.
-    Ack {
-        /// List of room names both peers will use.
-        rooms: Vec<String>,
-    },
-
     /// Handshake error - peer is rejecting the connection.
     Error {
         /// Human-readable error message.
@@ -119,18 +110,6 @@ mod tests {
     fn test_offer_frame_roundtrip() {
         let frame = Frame::Handshake(HandshakeFrame::Offer {
             rooms: vec!["memdb".to_string(), "query".to_string()],
-        });
-
-        let bytes = frame.serialize().unwrap();
-        let decoded = Frame::deserialize(&bytes).unwrap();
-
-        assert_eq!(frame, decoded);
-    }
-
-    #[test]
-    fn test_ack_frame_roundtrip() {
-        let frame = Frame::Handshake(HandshakeFrame::Ack {
-            rooms: vec!["memdb".to_string()],
         });
 
         let bytes = frame.serialize().unwrap();

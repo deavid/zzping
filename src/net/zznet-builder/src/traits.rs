@@ -116,7 +116,7 @@ pub trait ZZNetService: Sized + Send + 'static {
     type Config: ZZNetConfig;
 
     /// The error type returned by the service's `new` and `run` methods.
-    type Error: std::error::Error + Send + Sync + 'static;
+    type Error: Into<anyhow::Error> + Send + Sync + 'static;
 
     /// Creates a new instance of the service from a validated configuration.
     fn new(config: Self::Config) -> Result<Self, Self::Error>;

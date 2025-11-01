@@ -99,9 +99,6 @@ impl RoomMessageTrait for CStateMessage {
         ron::de::from_bytes(bytes).map_err(|e| DeserializationError::Failed(e.to_string()))
     }
 
-    fn supported_rooms() -> Vec<RoomId> {
-        vec![RoomId::from(CSTATE_ROOM)]
-    }
 }
 
 #[cfg(test)]

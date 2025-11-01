@@ -5,7 +5,7 @@
 
 use actix::prelude::*;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 use zznet_api::types::{PeerId, Role, RoomId};
 use zznet_room::room_manager::RoomManager;
 
@@ -67,6 +67,24 @@ impl Handler<RegisterManager> for RouterActor {
     }
 }
 
+/// Get the offered rooms from the router
+#[derive(Message)]
+#[rtype(result = "Vec<RoomId>")]
+pub struct GetOfferedRooms;
+
+impl Handler<GetOfferedRooms> for RouterActor {
+    type Result = ResponseFuture<Vec<RoomId>>;
+
+    fn handle(&mut self, _msg: GetOfferedRooms, _ctx: &mut Context<Self>) -> Self::Result {
+        let router_arc = self.router.clone();
+
+        Box::pin(async move {
+            let router = router_arc.lock().await;
+            router.offered_rooms()
+        })
+    }
+}
+
 /// Handle peer connected event from PeerManager
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
@@ -75,6 +93,8 @@ pub struct OnPeerConnected {
     pub peer_id: PeerId,
     /// The role of the peer
     pub role: Role,
+    /// The list of rooms successfully negotiated with the peer
+    pub negotiated_rooms: Vec<RoomId>,
     /// Sender for outbound messages to the peer
     pub outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
     /// Receiver for inbound messages from the peer
@@ -88,16 +108,19 @@ impl Handler<OnPeerConnected> for RouterActor {
         let router_arc = self.router.clone();
         let peer_id = msg.peer_id.clone();
         let role = msg.role;
+        let negotiated_rooms = msg.negotiated_rooms;
         let outbound_tx = msg.outbound_tx;
         let inbound_rx = msg.inbound_rx;
 
         Box::pin(async move {
-            // Gather rooms from managers
+            // Gather rooms from managers, but ONLY for negotiated rooms
             let mut builder = crate::peer_channels::PeerChannelsBuilder::new(peer_id.clone());
             {
                 let router = router_arc.lock().await;
-                for manager in router.managers.values() {
-                    for room_id in manager.managed_rooms() {
+                // Iterate over the SUCCESSFULLY negotiated rooms
+                for room_id in negotiated_rooms {
+                    // Find the manager responsible for this room
+                    if let Some(manager) = router.managers.values().find(|m| m.managed_rooms().contains(&room_id)) {
                         if let Ok(Some(room)) = manager
                             .create_for_peer(
                                 peer_id.clone(),
@@ -106,15 +129,18 @@ impl Handler<OnPeerConnected> for RouterActor {
                                 outbound_tx.clone(),
                             )
                             .await
-                            && let Err(e) = builder.add_room(room_id.clone(), room)
                         {
-                            tracing::warn!(
-                                "Failed to add room {} for peer {}: {:?}",
-                                room_id,
-                                peer_id,
-                                e
-                            );
+                            if let Err(e) = builder.add_room(room_id.clone(), room) {
+                                tracing::warn!(
+                                    "Failed to add room {} for peer {}: {:?}",
+                                    room_id,
+                                    peer_id,
+                                    e
+                                );
+                            }
                         }
+                    } else {
+                        tracing::warn!("No manager found for negotiated room {}", room_id);
                     }
                 }
             }
@@ -146,6 +172,7 @@ pub struct OnPeerDisconnected {
     pub peer_id: PeerId,
 }
 
+// TODO: Add an integration test that simulates peer disconnection to cover this handler.
 impl Handler<OnPeerDisconnected> for RouterActor {
     type Result = ResponseFuture<Result<(), String>>;
 
@@ -162,127 +189,3 @@ impl Handler<OnPeerDisconnected> for RouterActor {
     }
 }
 
-/// Handle PublishRooms from peer
-#[derive(Message)]
-#[rtype(result = "Result<Vec<RoomId>, String>")]
-pub struct HandlePublishRooms {
-    /// The ID of the peer sending the rooms
-    pub peer_id: PeerId,
-    /// The list of rooms offered by the peer
-    pub peer_rooms: Vec<RoomId>,
-}
-
-impl Handler<HandlePublishRooms> for RouterActor {
-    type Result = ResponseFuture<Result<Vec<RoomId>, String>>;
-
-    fn handle(&mut self, msg: HandlePublishRooms, _ctx: &mut Context<Self>) -> Self::Result {
-        let router_arc = self.router.clone();
-        let peer_id = msg.peer_id;
-        let peer_rooms = msg.peer_rooms;
-
-        Box::pin(async move {
-            let mut router = router_arc.lock().await;
-            router
-                .handle_publish_rooms(&peer_id, peer_rooms)
-                .await
-                .map_err(|e| format!("Failed to handle publish rooms: {:?}", e))
-        })
-    }
-}
-
-/// Query peer joined rooms
-#[derive(Message)]
-#[rtype(result = "Result<Vec<RoomId>, String>")]
-pub struct PeerJoinedRooms {
-    /// The ID of the peer to query
-    pub peer_id: PeerId,
-}
-
-impl Handler<PeerJoinedRooms> for RouterActor {
-    type Result = ResponseFuture<Result<Vec<RoomId>, String>>;
-
-    fn handle(&mut self, msg: PeerJoinedRooms, _ctx: &mut Context<Self>) -> Self::Result {
-        let router_arc = self.router.clone();
-        let peer_id = msg.peer_id;
-
-        Box::pin(async move {
-            let router = router_arc.lock().await;
-            router
-                .peer_joined_rooms(&peer_id)
-                .await
-                .map_err(|e| format!("Failed to get joined rooms: {:?}", e))
-        })
-    }
-}
-
-/// Check if room joined
-#[derive(Message)]
-#[rtype(result = "Result<bool, String>")]
-pub struct IsRoomJoined {
-    /// The ID of the peer
-    pub peer_id: PeerId,
-    /// The ID of the room to check
-    pub room_id: RoomId,
-}
-
-impl Handler<IsRoomJoined> for RouterActor {
-    type Result = ResponseFuture<Result<bool, String>>;
-
-    fn handle(&mut self, msg: IsRoomJoined, _ctx: &mut Context<Self>) -> Self::Result {
-        let router_arc = self.router.clone();
-        let peer_id = msg.peer_id;
-        let room_id = msg.room_id;
-
-        Box::pin(async move {
-            let router = router_arc.lock().await;
-            router
-                .is_room_joined(&peer_id, &room_id)
-                .await
-                .map_err(|e| format!("Failed to check room joined: {:?}", e))
-        })
-    }
-}
-
-/// Get peer sender
-#[derive(Message)]
-#[rtype(result = "Option<mpsc::Sender<(RoomId, Vec<u8>)>>")]
-pub struct PeerSender {
-    /// The ID of the peer
-    pub peer_id: PeerId,
-}
-
-impl Handler<PeerSender> for RouterActor {
-    type Result = ResponseFuture<Option<mpsc::Sender<(RoomId, Vec<u8>)>>>;
-
-    fn handle(&mut self, msg: PeerSender, _ctx: &mut Context<Self>) -> Self::Result {
-        let router_arc = self.router.clone();
-        let peer_id = msg.peer_id;
-
-        Box::pin(async move {
-            let router = router_arc.lock().await;
-            router.peer_sender(&peer_id).ok().flatten()
-        })
-    }
-}
-
-/// Subscribe to peer inbound
-#[derive(Message)]
-#[rtype(result = "Option<broadcast::Receiver<(RoomId, Vec<u8>)>>")]
-pub struct SubscribePeerInbound {
-    /// The ID of the peer to subscribe to
-    pub peer_id: PeerId,
-}
-
-impl Handler<SubscribePeerInbound> for RouterActor {
-    type Result = ResponseFuture<Option<broadcast::Receiver<(RoomId, Vec<u8>)>>>;
-
-    fn handle(&mut self, msg: SubscribePeerInbound, _ctx: &mut Context<Self>) -> Self::Result {
-        let router_arc = self.router.clone();
-        let peer_id = msg.peer_id;
-
-        Box::pin(async move {
-            let router = router_arc.lock().await;
-            router.subscribe_peer_inbound(&peer_id).ok().flatten()
-        })
-    }
-}

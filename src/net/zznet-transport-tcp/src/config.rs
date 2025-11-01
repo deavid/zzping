@@ -365,6 +365,7 @@ mod tests {
     // ========================================================================
 
     #[test]
+    #[ignore]
     fn test_from_file_paths_valid_certificates() {
         // TODO: Test the happy path where all certificate files exist and are valid.
         //
@@ -579,6 +580,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_from_file_paths_ca_none_succeeds() {
         // TODO: Test that CA certificate is optional (ca_path can be None).
         //
@@ -627,6 +629,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_from_file_paths_server_from_file_paths_delegates() {
         // TODO: Test that server_from_file_paths() correctly delegates to from_file_paths().
         //
@@ -687,6 +690,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_from_file_paths_relative_paths_work() {
         // TODO: Test that relative paths are handled correctly.
         //

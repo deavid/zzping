@@ -4,7 +4,7 @@
 //! It has no network-facing actors and only receives local messages.
 
 use crate::messages::{GetCounter, PublishToA, SendPingFromB, SetComponentA, StateUpdate};
-use actix::{Actor, Addr, Context, Handler, MessageResult, Recipient};
+use actix::{Actor, Addr, Context, Handler, MessageResult};
 
 /// MainActor for ComponentB - handles local state updates.
 #[derive(Debug, Default)]
@@ -27,25 +27,6 @@ impl ComponentBActor {
         }
     }
 
-    /// Subscribe to ComponentA's state updates
-    pub fn subscribe_to_component_a(
-        &self,
-        component_a_addr: Addr<super::component_a::ComponentAActor>,
-    ) {
-        // Send subscription message to ComponentA
-        component_a_addr.do_send(super::messages::Subscribe {
-            recipient: self.get_recipient(),
-        });
-    }
-
-    /// Get recipient for state updates
-    fn get_recipient(&self) -> Recipient<StateUpdate> {
-        // This is a bit tricky in Actix - we need the actor's address
-        // In practice, this would be called after the actor is started
-        // For now, we'll handle this in the test harness
-        unimplemented!("get_recipient should be called from test harness with actor address")
-    }
-
     /// Internal helper to set the ComponentA address
     fn set_component_a_addr(&mut self, addr: Addr<super::component_a::ComponentAActor>) {
         self.component_a = Some(addr);
@@ -55,11 +36,6 @@ impl ComponentBActor {
     fn update_state(&mut self, state: StateUpdate) {
         self.counter = state.counter;
         self.data = state.data;
-    }
-
-    /// Get the current counter value (for testing)
-    pub fn get_counter(&self) -> u64 {
-        self.counter
     }
 }
 
@@ -82,29 +58,6 @@ impl Handler<SetComponentA> for ComponentBActor {
     fn handle(&mut self, msg: SetComponentA, _ctx: &mut Self::Context) {
         tracing::debug!("ComponentBActor: SetComponentA received");
         self.set_component_a_addr(msg.component_a);
-    }
-}
-
-/// Handle requests from tests/components to publish a local value to ComponentA.
-impl Handler<PublishToA> for ComponentBActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: PublishToA, _ctx: &mut Self::Context) -> Self::Result {
-        tracing::debug!("ComponentBActor: PublishToA({})", msg.data);
-        // This is a local trigger, so we just update our own state
-        // and forward to ComponentA to handle the network broadcast.
-        self.counter += 1;
-        self.data = msg.data.clone();
-
-        // Forward to ComponentA if available
-        if let Some(ref addr) = self.component_a {
-            addr.do_send(StateUpdate {
-                counter: self.counter,
-                data: self.data.clone(),
-            });
-        } else {
-            tracing::warn!("ComponentBActor: ComponentA addr not set, cannot forward");
-        }
     }
 }
 

@@ -103,10 +103,8 @@ impl PeerIdentity {
 // a stable, minimal set of shared types instead of the old `zznet-session` crate.
 // ---------------------------------------------------------------------------
 
-use async_trait::async_trait;
 use std::fmt;
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc};
 
 /// Unique identifier for a peer
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -345,28 +343,6 @@ pub trait PeerStateMut: PeerStateView {
 
     /// Update the authenticated identity (or clear when unknown).
     fn set_identity(&mut self, identity: Option<PeerIdentity>);
-}
-
-/// Data-plane capabilities required for routing bytes to a peer.
-#[async_trait]
-pub trait PeerChannels: Send + Sync {
-    /// Identifier for this peer.
-    fn peer_id(&self) -> &PeerId;
-
-    /// Rooms successfully negotiated with this peer.
-    async fn joined_rooms(&self) -> Vec<RoomId>;
-
-    /// Returns true when the given room is joined with the peer.
-    async fn is_room_joined(&self, room_id: &RoomId) -> bool;
-
-    /// Clone of the outbound sender for direct byte transmission.
-    fn outbound_sender(&self) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>>;
-
-    /// Subscribe to raw inbound messages from the peer.
-    fn subscribe_inbound(&self) -> Option<broadcast::Receiver<(RoomId, Vec<u8>)>>;
-
-    /// Send raw bytes to a specific room for this peer.
-    async fn send_to_room(&self, room_id: &RoomId, bytes: Vec<u8>) -> Result<(), SessionError>;
 }
 
 #[cfg(test)]

@@ -102,9 +102,6 @@ impl RoomMessageTrait for MemDBMessage {
             .map_err(|e| DeserializationError::BincodeError(e.to_string()))
     }
 
-    fn supported_rooms() -> Vec<RoomId> {
-        vec![RoomId::from("memdb")]
-    }
 }
 
 #[cfg(test)]
@@ -252,10 +249,4 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn test_supported_rooms() {
-        let rooms = MemDBMessage::supported_rooms();
-        assert_eq!(rooms.len(), 1);
-        assert_eq!(rooms[0], RoomId::from("memdb"));
-    }
 }

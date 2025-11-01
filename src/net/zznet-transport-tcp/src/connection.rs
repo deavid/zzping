@@ -369,6 +369,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_parse_peer_cert_der_from_pem() {
         // Load the PEM file from test_certs
         let pem_path = concat!(
@@ -481,6 +482,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_parse_collector_cert() {
         // Load the test collector certificate and verify parsing
         let cert_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))

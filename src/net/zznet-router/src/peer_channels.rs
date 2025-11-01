@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
-use zznet_api::types::{PeerChannels as PeerChannelsTrait, PeerId, RoomId, SessionError};
+use zznet_api::types::{PeerId, RoomId, SessionError};
 use zznet_room::room_manager::InboundRoomPayload;
 
 /// Shared room storage for a peer.
@@ -79,7 +79,7 @@ impl PeerChannelsBuilder {
 ///
 /// Immutable after construction; owns transport channels and routing task.
 pub struct PeerChannels {
-    peer_id: PeerId,
+    pub(crate) peer_id: PeerId,
     outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
     inbound_broadcast: broadcast::Sender<(RoomId, Vec<u8>)>,
     joined_rooms: TokioMutex<Vec<RoomId>>,
@@ -87,35 +87,6 @@ pub struct PeerChannels {
 }
 
 impl PeerChannels {
-    /// Handle PublishRooms negotiation and compute joined rooms.
-    ///
-    /// Takes both local offered rooms and peer offered rooms, computes intersection.
-    /// Returns error if intersection is empty.
-    pub async fn handle_publish_rooms(
-        &self,
-        local_rooms: &[RoomId],
-        peer_rooms: Vec<RoomId>,
-    ) -> Result<(), SessionError> {
-        use std::collections::HashSet;
-
-        let local_set: HashSet<_> = local_rooms.iter().cloned().collect();
-        let peer_set: HashSet<_> = peer_rooms.into_iter().collect();
-        let intersection: Vec<RoomId> = local_set.intersection(&peer_set).cloned().collect();
-
-        let mut joined = self.joined_rooms.lock().await;
-        *joined = intersection;
-
-        if joined.is_empty() {
-            tracing::warn!(
-                "Peer {} offered rooms have no intersection with local rooms",
-                self.peer_id
-            );
-            return Err(SessionError::EmptyIntersection);
-        }
-
-        Ok(())
-    }
-
     /// Helper for routing inbound bytes to rooms.
     async fn route_inbound_message(
         rooms: &SessionRooms,
@@ -149,67 +120,10 @@ impl PeerChannels {
         tracing::debug!("Peer {} inbound task stopped", peer_id);
     }
 
-    /// Clone of the outbound sender (always available since connected).
-    pub fn outbound_sender(&self) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>> {
-        Some(self.outbound_tx.clone())
-    }
-
-    /// Subscribe to inbound broadcast channel (always available since connected).
-    pub fn subscribe_inbound(&self) -> Option<broadcast::Receiver<(RoomId, Vec<u8>)>> {
-        Some(self.inbound_broadcast.subscribe())
-    }
-
-    /// Send raw bytes to the specified room.
-    pub async fn send_raw_to_room(
-        &self,
-        room_id: &RoomId,
-        bytes: Vec<u8>,
-    ) -> Result<(), SessionError> {
-        self.outbound_tx
-            .send((room_id.clone(), bytes))
-            .await
-            .map_err(|_| SessionError::SendFailed)
-    }
-
     /// Disconnect transport wiring and stop routing tasks.
+    // TODO: This is called by RouterActor::OnPeerDisconnected. An integration test is needed.
     pub fn disconnect(&self) {
         self.inbound_task.abort();
     }
-
-    /// Inspect joined rooms.
-    pub async fn joined_rooms(&self) -> Vec<RoomId> {
-        self.joined_rooms.lock().await.clone()
-    }
-
-    /// Check whether a room was negotiated with the peer.
-    pub async fn is_room_joined(&self, room_id: &RoomId) -> bool {
-        self.joined_rooms.lock().await.contains(room_id)
-    }
 }
 
-#[async_trait::async_trait]
-impl PeerChannelsTrait for PeerChannels {
-    fn peer_id(&self) -> &PeerId {
-        &self.peer_id
-    }
-
-    async fn joined_rooms(&self) -> Vec<RoomId> {
-        self.joined_rooms.lock().await.clone()
-    }
-
-    async fn is_room_joined(&self, room_id: &RoomId) -> bool {
-        self.joined_rooms.lock().await.contains(room_id)
-    }
-
-    fn outbound_sender(&self) -> Option<mpsc::Sender<(RoomId, Vec<u8>)>> {
-        Some(self.outbound_tx.clone())
-    }
-
-    fn subscribe_inbound(&self) -> Option<broadcast::Receiver<(RoomId, Vec<u8>)>> {
-        Some(self.inbound_broadcast.subscribe())
-    }
-
-    async fn send_to_room(&self, room_id: &RoomId, bytes: Vec<u8>) -> Result<(), SessionError> {
-        self.send_raw_to_room(room_id, bytes).await
-    }
-}

@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::peer_channels::PeerChannels;
-use zznet_api::types::{PeerChannels as PeerChannelsTrait, PeerId, RoomId, SessionError};
+use zznet_api::types::{PeerId, RoomId, SessionError};
 use zznet_room::room_manager::RoomManager;
 
 /// Router - Data Plane for room management and message routing
@@ -45,6 +45,11 @@ impl Router {
         }
     }
 
+    /// Get the offered rooms
+    pub fn offered_rooms(&self) -> Vec<RoomId> {
+        self.offered_rooms.clone()
+    }
+
     /// Register a room manager with the router.
     ///
     /// Enforces strict 1:1 room↔component mapping; fails on any collision.
@@ -73,7 +78,7 @@ impl Router {
 
     /// Register a peer's channel set with the router.
     pub fn register_peer(&mut self, channels: PeerChannels) -> Result<(), SessionError> {
-        let peer_id = channels.peer_id().clone();
+        let peer_id = channels.peer_id.clone();
 
         if self.peers.contains_key(&peer_id) {
             return Err(SessionError::PeerAlreadyExists(peer_id));
@@ -84,78 +89,16 @@ impl Router {
     }
 
     /// Disconnect but retain the peer's registered channels.
+    // TODO: This is called by RouterActor::OnPeerDisconnected. An integration test is needed.
     pub fn disconnect_peer(&mut self, peer_id: &PeerId) -> Result<(), SessionError> {
-        let peer = self.peer_mut(peer_id)?;
+        let peer = self
+            .peers
+            .get_mut(peer_id)
+            .ok_or_else(|| SessionError::PeerNotFound(peer_id.clone()))?;
         peer.disconnect();
         Ok(())
     }
 
-    fn peer_mut(&mut self, peer_id: &PeerId) -> Result<&mut PeerChannels, SessionError> {
-        self.peers
-            .get_mut(peer_id)
-            .ok_or_else(|| SessionError::PeerNotFound(peer_id.clone()))
-    }
-
-    fn peer(&self, peer_id: &PeerId) -> Result<&PeerChannels, SessionError> {
-        self.peers
-            .get(peer_id)
-            .ok_or_else(|| SessionError::PeerNotFound(peer_id.clone()))
-    }
-
-    /// Handle PublishRooms from a peer
-    ///
-    /// Delegates to PeerSession for actual negotiation, validates room limits
-    ///
-    /// # Errors
-    /// - `SessionError::RoomLimitExceeded` if peer tries to join too many rooms
-    pub async fn handle_publish_rooms(
-        &mut self,
-        peer_id: &PeerId,
-        peer_rooms: Vec<RoomId>,
-    ) -> Result<Vec<RoomId>, SessionError> {
-        let offered = self.offered_rooms.clone();
-        let peer = self.peer_mut(peer_id)?;
-        peer.handle_publish_rooms(&offered, peer_rooms).await?;
-        let joined_rooms = peer.joined_rooms().await;
-
-        tracing::debug!(
-            "Room negotiation complete for {}: {} rooms joined",
-            peer_id,
-            joined_rooms.len()
-        );
-
-        Ok(joined_rooms)
-    }
-
-    // NOTE: Direct send/broadcast helpers were removed. Callers should obtain
-    // the peer outbound sender via `peer_sender()` and perform sends directly.
-
-    /// Get the rooms joined with a specific peer
-    pub async fn peer_joined_rooms(&self, peer_id: &PeerId) -> Result<Vec<RoomId>, SessionError> {
-        Ok(self.peer(peer_id)?.joined_rooms().await)
-    }
-
-    /// Check if a specific room is joined with a peer
-    pub async fn is_room_joined(
-        &self,
-        peer_id: &PeerId,
-        room_id: &RoomId,
-    ) -> Result<bool, SessionError> {
-        Ok(self.peer(peer_id)?.is_room_joined(room_id).await)
-    }
-
-    /// Clone the outbound sender if the peer is connected.
-    pub fn peer_sender(&self, peer_id: &PeerId) -> Result<Option<OutboundSender>, SessionError> {
-        Ok(self.peer(peer_id)?.outbound_sender())
-    }
-
-    /// Subscribe to inbound messages from the peer if connected.
-    pub fn subscribe_peer_inbound(
-        &self,
-        peer_id: &PeerId,
-    ) -> Result<Option<InboundReceiver>, SessionError> {
-        Ok(self.peer(peer_id)?.subscribe_inbound())
-    }
 }
 
 #[cfg(test)]

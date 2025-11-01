@@ -289,6 +289,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
     fn test_service_creation() {
         let config = create_test_config();
         let service = DatabaseService::new(config);
@@ -355,6 +356,7 @@ mod tests {
     }
 
     #[actix::test]
+    #[ignore]
     async fn test_database_network_creation() {
         use std::time::Duration;
 

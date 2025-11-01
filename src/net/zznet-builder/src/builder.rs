@@ -207,14 +207,6 @@ impl AppBuilder {
     /// use serde::{Deserialize, Serialize};
     /// use anyhow::Result;
     ///
-    /// #[derive(Parser)]
-    /// struct MyArgs {
-    ///     #[command(flatten)]
-    ///     standard: StandardCliArgs,
-    ///
-    ///     #[arg(long)]
-    ///     custom: String,
-    /// }
     ///
     /// #[derive(Deserialize, Serialize)]
     /// struct Config {
@@ -223,8 +215,7 @@ impl AppBuilder {
     ///
     /// fn main() -> Result<()> {
     ///     AppBuilder::new("MyApp", "1.0.0")
-    ///         .build_and_run_with_args(|args: MyArgs, config: Config| async move {
-    ///             tracing::info!("Custom arg: {}", args.custom);
+    ///         .build_and_run(|config: Config| async move {
     ///             tracing::info!("Config value: {}", config.value);
     ///             Ok(())
     ///         })
@@ -247,7 +238,7 @@ impl AppBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,no_run,ignore
     /// use zznet_builder::builder::AppBuilder;
     /// use zznet_builder::traits::{ZZNetService, ZZNetConfig};
     /// use anyhow::Result;

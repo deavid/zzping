@@ -21,7 +21,6 @@ mod peer_channels;
 mod router;
 
 pub use actor::{
-    HandlePublishRooms, IsRoomJoined, OnPeerConnected, OnPeerDisconnected, PeerJoinedRooms,
-    PeerSender, RegisterManager, RouterActor, SubscribePeerInbound,
+    GetOfferedRooms, OnPeerConnected, OnPeerDisconnected, RegisterManager, RouterActor,
 };
 pub use peer_channels::PeerChannels;

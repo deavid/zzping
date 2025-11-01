@@ -4,9 +4,9 @@
 
 #[cfg(test)]
 mod hello_session_integration {
-    use crate::actor::{HelloConfig, start_hello_actor};
+    use crate::actor::HelloConfig;
     // Integration tests operate at application level; pass role identifier strings.
-    use crate::session_messages::{HandshakeComplete, InboundRoomMessage};
+    use crate::session_messages::HandshakeComplete;
     use actix::prelude::*;
     use std::time::Duration;
     use tokio::sync::mpsc;
@@ -70,7 +70,7 @@ mod hello_session_integration {
         );
 
         // Start server HelloActor
-        let _server_actor = start_hello_actor(Box::new(server_transport), server_config);
+        let _server_actor = crate::actor::start_hello_actor_with_session_manager(Box::new(server_transport), server_config, None);
 
         // Wait for handshake to complete and verify SessionManager was notified
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -86,48 +86,6 @@ mod hello_session_integration {
         } else {
             panic!("HandshakeComplete was not received by MockSessionManager");
         }
-
-        // Cleanup
-        client_actor.do_send(crate::actor::Disconnect);
-    }
-
-    #[actix::test]
-    async fn test_session_manager_can_send_to_hello_actor() {
-        // Create mock transports
-        let (client_transport, server_transport) = create_mock_pair("test-send");
-
-        // Configure and start actors
-        let client_config = HelloConfig {
-            our_role: "collector".to_string(),
-            offered_rooms: vec!["intentconfig".to_string()],
-            handshake_timeout: Duration::from_millis(10),
-            hostname: "client-host".to_string(),
-        };
-
-        let server_config = HelloConfig {
-            our_role: "database".to_string(),
-            offered_rooms: vec!["intentconfig".to_string()],
-            handshake_timeout: Duration::from_millis(10),
-            hostname: "server-host".to_string(),
-        };
-
-        let client_actor = start_hello_actor(Box::new(client_transport), client_config);
-        let _server_actor = start_hello_actor(Box::new(server_transport), server_config);
-
-        // Wait for handshake
-        tokio::time::sleep(Duration::from_millis(1)).await;
-
-        // Try to send InboundRoomMessage to HelloActor
-        let msg = InboundRoomMessage {
-            from_room: "intentconfig".to_string(),
-            to_room: "intentconfig".to_string(),
-            payload: vec![1, 2, 3, 4],
-        };
-
-        let result = client_actor.send(msg).await;
-
-        // Should succeed (HelloActor has Handler<InboundRoomMessage>)
-        assert!(result.is_ok());
 
         // Cleanup
         client_actor.do_send(crate::actor::Disconnect);
@@ -180,7 +138,7 @@ mod hello_session_integration {
         );
 
         // Start server HelloActor
-        let _server_actor = start_hello_actor(Box::new(server_transport), server_config);
+        let _server_actor = crate::actor::start_hello_actor_with_session_manager(Box::new(server_transport), server_config, None);
 
         // Wait for handshake attempt
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -249,7 +207,7 @@ mod hello_session_integration {
         );
 
         // Start server HelloActor
-        let _server_actor = start_hello_actor(Box::new(server_transport), server_config);
+        let _server_actor = crate::actor::start_hello_actor_with_session_manager(Box::new(server_transport), server_config, None);
 
         // Wait for handshake to complete
         tokio::time::sleep(Duration::from_millis(20)).await;

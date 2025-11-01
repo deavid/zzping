@@ -10,7 +10,8 @@
 //! Applications can implement their own roles:
 //!
 //! ```rust
-//! use zznet_auth::{ApplicationRole, AclManager};
+//! use zznet_auth::role::ApplicationRole;
+//! use zznet_auth::acl::AclManager;
 //! use serde::{Deserialize, Serialize};
 //!
 //! #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
