@@ -120,7 +120,11 @@ impl Handler<OnPeerConnected> for RouterActor {
                 // Iterate over the SUCCESSFULLY negotiated rooms
                 for room_id in negotiated_rooms {
                     // Find the manager responsible for this room
-                    if let Some(manager) = router.managers.values().find(|m| m.managed_rooms().contains(&room_id)) {
+                    if let Some(manager) = router
+                        .managers
+                        .values()
+                        .find(|m| m.managed_rooms().contains(&room_id))
+                    {
                         if let Ok(Some(room)) = manager
                             .create_for_peer(
                                 peer_id.clone(),
@@ -129,15 +133,14 @@ impl Handler<OnPeerConnected> for RouterActor {
                                 outbound_tx.clone(),
                             )
                             .await
+                            && let Err(e) = builder.add_room(room_id.clone(), room)
                         {
-                            if let Err(e) = builder.add_room(room_id.clone(), room) {
-                                tracing::warn!(
-                                    "Failed to add room {} for peer {}: {:?}",
-                                    room_id,
-                                    peer_id,
-                                    e
-                                );
-                            }
+                            tracing::warn!(
+                                "Failed to add room {} for peer {}: {:?}",
+                                room_id,
+                                peer_id,
+                                e
+                            );
                         }
                     } else {
                         tracing::warn!("No manager found for negotiated room {}", room_id);
@@ -146,7 +149,7 @@ impl Handler<OnPeerConnected> for RouterActor {
             }
 
             // Build PeerChannels
-            let peer_channels = match builder.build(outbound_tx, inbound_rx).await {
+            let peer_channels = match builder.build(inbound_rx).await {
                 Ok(pc) => pc,
                 Err(e) => return Err(format!("Failed to build PeerChannels: {:?}", e)),
             };
@@ -188,4 +191,3 @@ impl Handler<OnPeerDisconnected> for RouterActor {
         })
     }
 }
-

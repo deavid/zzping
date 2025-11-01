@@ -47,7 +47,6 @@ impl PeerChannelsBuilder {
     /// Spawns the inbound routing task and sets up channels.
     pub async fn build(
         self,
-        outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
         inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
     ) -> Result<PeerChannels, SessionError> {
         let (broadcast_tx, _) = broadcast::channel(100);
@@ -67,9 +66,6 @@ impl PeerChannelsBuilder {
 
         Ok(PeerChannels {
             peer_id: self.peer_id,
-            outbound_tx,
-            inbound_broadcast: broadcast_tx,
-            joined_rooms: TokioMutex::new(Vec::new()),
             inbound_task: task,
         })
     }
@@ -80,9 +76,6 @@ impl PeerChannelsBuilder {
 /// Immutable after construction; owns transport channels and routing task.
 pub struct PeerChannels {
     pub(crate) peer_id: PeerId,
-    outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
-    inbound_broadcast: broadcast::Sender<(RoomId, Vec<u8>)>,
-    joined_rooms: TokioMutex<Vec<RoomId>>,
     inbound_task: JoinHandle<()>,
 }
 
@@ -126,4 +119,3 @@ impl PeerChannels {
         self.inbound_task.abort();
     }
 }
-

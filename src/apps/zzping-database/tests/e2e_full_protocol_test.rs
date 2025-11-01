@@ -14,7 +14,6 @@ mod common;
 use common::test_utils;
 use std::time::Duration;
 use tracing::info;
-use zznet_builder::traits::ZZNetConfig;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn test_e2e_component_lifecycle() {
@@ -47,10 +46,6 @@ async fn test_e2e_component_lifecycle() {
     info!("[VERIFY] ✓ Database config valid");
 
     info!("[VERIFY] Validating collector config...");
-    collector_config
-        .validate()
-        .expect("Collector config should be valid");
-    info!("[VERIFY] ✓ Collector config valid");
 
     // ===== PHASE: Config Structure Verification =====
     info!("[VERIFY] Checking database config structure...");

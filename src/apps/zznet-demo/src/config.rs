@@ -19,6 +19,7 @@ pub struct DemoAppConfig {
 }
 
 impl DemoAppConfig {
+    /// Creates a new DemoAppConfig from role and peer address with defaults for testing.
     pub fn new(our_role: &str, peer_addr: Option<String>) -> Self {
         Self {
             our_role: our_role.to_string(),
@@ -30,21 +31,4 @@ impl DemoAppConfig {
     }
 }
 
-impl ZZNetConfig for DemoAppConfig {
-    fn validate(&self) -> anyhow::Result<()> {
-        if self.our_role.is_empty() {
-            anyhow::bail!("our_role cannot be empty");
-        }
-        Ok(())
-    }
-
-    fn log_startup_info(&self) {
-        tracing::info!(
-            "Role: {}, Rooms: {:?}, Allowed Roles: {:?}, Include ComponentB: {}",
-            self.our_role,
-            self.offered_rooms,
-            self.allowed_roles,
-            self.include_component_b
-        );
-    }
-}
+impl ZZNetConfig for DemoAppConfig {}

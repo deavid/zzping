@@ -55,7 +55,7 @@ use crate::cli::StandardCliArgs;
 use crate::logging::init_logging_from_args;
 use crate::runtime::{install_crypto_provider, run_actix};
 use crate::signals::ShutdownSignals;
-use crate::traits::{ZZNetConfig, ZZNetService};
+use crate::traits::ZZNetService;
 use anyhow::{Context, Result};
 use clap::Parser;
 use serde::de::DeserializeOwned;
@@ -295,14 +295,6 @@ impl AppBuilder {
 
         // Run in Actix runtime
         run_actix(|| async move {
-            // Validate configuration
-            config
-                .validate()
-                .context("Configuration validation failed")?;
-
-            // Log app-specific startup info
-            config.log_startup_info();
-
             // Create service
             let service = S::new(config)
                 .map_err(|e| anyhow::anyhow!(e))

@@ -220,9 +220,6 @@ impl Handler<HandshakeComplete> for ConnectionManager {
                 // continue - we still notify the actor to start the bridge
             }
 
-            // Prepare HelloActor clone to send back to actor
-            let send_hello_actor = hello_actor.clone();
-
             // Send channels back to actor so it can start the SessionBridge inside
             // the actor context (this avoids spawn_local being called outside LocalSet).
             let bridge = SessionBridge::new(
@@ -281,7 +278,6 @@ mod tests {
         ) -> Result<Self, zznet_room::room_message_trait::DeserializationError> {
             Ok(TestMessages::IntentConfig) // Stub for testing
         }
-
     }
 
     #[actix::test]

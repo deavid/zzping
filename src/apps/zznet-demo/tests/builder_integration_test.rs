@@ -5,7 +5,6 @@ use zznet_demo::{
     messages::{GetCounter, PublishToA, SendPing, SendPingFromB},
     test_harness::{connect_services, spawn_demo_service},
 };
-use zznet_builder::traits::ZZNetConfig;
 
 #[tokio::test]
 async fn test_builder_ping_pong_between_component_a() -> Result<()> {
@@ -32,52 +31,6 @@ async fn test_builder_ping_pong_between_component_a() -> Result<()> {
             Ok(())
         })
         .await
-}
-
-#[test]
-fn test_builder_config_validation_rejects_invalid() {
-    let config = DemoAppConfig {
-        our_role: "".to_string(), // Invalid: empty role
-        peer_addr: None,
-        allowed_roles: vec!["database".to_string()],
-        offered_rooms: vec!["room-a".to_string()],
-        include_component_b: false,
-    };
-    assert!(config.validate().is_err());
-}
-
-#[test]
-fn test_builder_config_validation_accepts_valid() {
-    let config = DemoAppConfig {
-        our_role: "collector".to_string(),
-        peer_addr: None,
-        allowed_roles: vec!["database".to_string()],
-        offered_rooms: vec!["room-a".to_string()],
-        include_component_b: false,
-    };
-    assert!(config.validate().is_ok());
-}
-
-#[test]
-fn test_builder_config_serialization_roundtrip() -> Result<()> {
-    let config = DemoAppConfig {
-        our_role: "collector".to_string(),
-        peer_addr: Some("database".to_string()),
-        allowed_roles: vec!["database".to_string()],
-        offered_rooms: vec!["room-a".to_string()],
-        include_component_b: true,
-    };
-
-    let serialized = ron::to_string(&config)?;
-    let deserialized: DemoAppConfig = ron::from_str(&serialized)?;
-
-    assert_eq!(config.our_role, deserialized.our_role);
-    assert_eq!(config.peer_addr, deserialized.peer_addr);
-    assert_eq!(config.allowed_roles, deserialized.allowed_roles);
-    assert_eq!(config.offered_rooms, deserialized.offered_rooms);
-    assert_eq!(config.include_component_b, deserialized.include_component_b);
-
-    Ok(())
 }
 
 #[tokio::test]

@@ -41,11 +41,8 @@ impl ZZNetService for DemoAppService {
         )
         .start();
 
-        let allowed_roles: HashSet<Role> = config
-            .allowed_roles
-            .iter()
-            .map(|r| Role::new(r))
-            .collect();
+        let allowed_roles: HashSet<Role> =
+            config.allowed_roles.iter().map(|r| Role::new(r)).collect();
 
         let connection_manager =
             ConnectionManager::new(router.clone(), config.our_role.clone(), allowed_roles).start();
@@ -53,9 +50,7 @@ impl ZZNetService for DemoAppService {
         let component_a = ComponentAActor::new().start();
         let network_manager =
             ComponentANetworkManager::new(component_a.clone(), router.clone()).start();
-        component_a.do_send(SetNetworkManager {
-            network_manager,
-        });
+        component_a.do_send(SetNetworkManager { network_manager });
 
         let component_b = if config.include_component_b {
             let comp_b = ComponentBActor::new().start();
@@ -80,8 +75,6 @@ impl ZZNetService for DemoAppService {
 
     async fn run(self) -> Result<(), Self::Error> {
         tracing::info!("DemoAppService is running");
-        let (_tx, rx) = tokio::sync::oneshot::channel::<()>();
-        let _ = rx.await;
         Ok(())
     }
 }

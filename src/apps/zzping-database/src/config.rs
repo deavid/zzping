@@ -221,20 +221,7 @@ impl DatabaseConfig {
 }
 
 /// Implement ZZNetConfig trait for DatabaseConfig
-impl zznet_builder::traits::ZZNetConfig for DatabaseConfig {
-    fn validate(&self) -> anyhow::Result<()> {
-        DatabaseConfig::validate(self).map_err(|e| anyhow::anyhow!("{}", e))
-    }
-
-    fn log_startup_info(&self) {
-        tracing::info!(
-            "Database service configuration: {}:{}, TLS: {}",
-            self.bind_host,
-            self.bind_port,
-            self.tls.is_some()
-        );
-    }
-}
+impl zznet_builder::traits::ZZNetConfig for DatabaseConfig {}
 
 #[cfg(test)]
 mod tests {

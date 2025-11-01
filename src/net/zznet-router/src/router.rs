@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use tokio::sync::{broadcast, mpsc};
 
 use crate::peer_channels::PeerChannels;
 use zznet_api::types::{PeerId, RoomId, SessionError};
@@ -28,10 +27,6 @@ pub struct Router {
     /// Registered room managers: RoomId -> Manager (strict 1:1 mapping enforced)
     pub(crate) managers: HashMap<RoomId, std::sync::Arc<dyn RoomManager + Send + Sync>>,
 }
-
-// Type aliases to reduce signature complexity in public methods
-type OutboundSender = mpsc::Sender<(RoomId, Vec<u8>)>;
-type InboundReceiver = broadcast::Receiver<(RoomId, Vec<u8>)>;
 
 impl Router {
     /// Create a new Router
@@ -98,7 +93,6 @@ impl Router {
         peer.disconnect();
         Ok(())
     }
-
 }
 
 #[cfg(test)]
