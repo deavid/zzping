@@ -22,10 +22,6 @@ pub struct Router {
     /// Used during PublishRooms to compute intersection with peers
     offered_rooms: Vec<RoomId>,
 
-    /// Optional maximum number of rooms per peer
-    // FIXME: DEPRECATED - REMOVE rooms per peer.
-    max_rooms_per_peer: Option<usize>,
-
     /// Data-plane channels registered for each peer
     peers: HashMap<PeerId, PeerChannels>,
 
@@ -39,16 +35,11 @@ type InboundReceiver = broadcast::Receiver<(RoomId, Vec<u8>)>;
 
 impl Router {
     /// Create a new Router
-    pub fn new(offered_rooms: Vec<RoomId>, max_rooms_per_peer: Option<usize>) -> Self {
-        tracing::info!(
-            "Router created with {} offered rooms, max_rooms_per_peer = {:?}",
-            offered_rooms.len(),
-            max_rooms_per_peer
-        );
+    pub fn new(offered_rooms: Vec<RoomId>) -> Self {
+        tracing::info!("Router created with {} offered rooms", offered_rooms.len(),);
 
         Self {
             offered_rooms,
-            max_rooms_per_peer,
             peers: HashMap::new(),
             managers: HashMap::new(),
         }
@@ -76,27 +67,6 @@ impl Router {
         }
         for room_id in managed_rooms {
             self.managers.insert(room_id, manager.clone());
-        }
-        Ok(())
-    }
-
-    // Registered rooms can be obtained from `self.managers` directly.
-
-    /// Validate room count against max_rooms_per_peer
-    ///
-    /// Returns error if room_count exceeds the limit
-    pub fn validate_room_count(
-        &self,
-        peer_id: &PeerId,
-        room_count: usize,
-    ) -> Result<(), SessionError> {
-        if let Some(max_rooms) = self.max_rooms_per_peer
-            && room_count > max_rooms
-        {
-            return Err(SessionError::RoomLimitExceeded {
-                peer_id: peer_id.clone(),
-                max: max_rooms,
-            });
         }
         Ok(())
     }
@@ -148,9 +118,6 @@ impl Router {
         peer.handle_publish_rooms(&offered, peer_rooms).await?;
         let joined_rooms = peer.joined_rooms().await;
 
-        // Validate room limit after negotiation
-        self.validate_room_count(peer_id, joined_rooms.len())?;
-
         tracing::debug!(
             "Room negotiation complete for {}: {} rooms joined",
             peer_id,
@@ -198,47 +165,19 @@ mod tests {
     #[tokio::test]
     async fn test_router_offered_rooms() {
         let offered = vec![RoomId::from("room1"), RoomId::from("room2")];
-        let router = Router::new(offered.clone(), None);
+        let router = Router::new(offered.clone());
 
         assert_eq!(router.offered_rooms.as_slice(), offered.as_slice());
     }
 
     #[tokio::test]
     async fn test_set_offered_rooms() {
-        let mut router = Router::new(vec![], None);
+        let mut router = Router::new(vec![]);
 
         let new_rooms = vec![RoomId::from("roomA"), RoomId::from("roomB")];
         router.offered_rooms = new_rooms.clone();
 
         assert_eq!(router.offered_rooms.as_slice(), new_rooms.as_slice());
-    }
-
-    #[tokio::test]
-    async fn test_validate_room_count() {
-        let router = Router::new(vec![], Some(2));
-        let peer_id = PeerId::from("test-peer");
-
-        // 1 room - OK
-        assert!(router.validate_room_count(&peer_id, 1).is_ok());
-
-        // 2 rooms - OK
-        assert!(router.validate_room_count(&peer_id, 2).is_ok());
-
-        // 3 rooms - Should fail
-        let result = router.validate_room_count(&peer_id, 3);
-        assert!(matches!(
-            result,
-            Err(SessionError::RoomLimitExceeded { max: 2, .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn test_max_rooms_per_peer() {
-        let router_unlimited = Router::new(vec![], None);
-        assert_eq!(router_unlimited.max_rooms_per_peer, None);
-
-        let router_limited = Router::new(vec![], Some(5));
-        assert_eq!(router_limited.max_rooms_per_peer, Some(5));
     }
 
     #[tokio::test]
@@ -271,7 +210,7 @@ mod tests {
             }
         }
 
-        let mut router = Router::new(vec![], None);
+        let mut router = Router::new(vec![]);
 
         let manager1 = std::sync::Arc::new(MockManager {
             rooms: HashSet::from([RoomId::from("room1")]),
@@ -318,7 +257,7 @@ mod tests {
             }
         }
 
-        let mut router = Router::new(vec![], None);
+        let mut router = Router::new(vec![]);
 
         let manager1 = std::sync::Arc::new(MockManager {
             rooms: HashSet::from([RoomId::from("room1"), RoomId::from("room2")]),

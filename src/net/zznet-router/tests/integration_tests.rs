@@ -19,7 +19,7 @@ fn create_test_role() -> Role {
 async fn test_router_actor_peer_lifecycle() {
     // Create RouterActor with some offered rooms
     let offered_rooms = vec![RoomId::new("shared-room"), RoomId::new("unique-room")];
-    let router_actor = RouterActor::new(offered_rooms.clone(), None).start();
+    let router_actor = RouterActor::new(offered_rooms.clone()).start();
 
     // Create channels for peer connection
     let (outbound_tx, _outbound_rx) = mpsc::channel(10);
@@ -61,7 +61,7 @@ async fn test_router_actor_peer_lifecycle() {
 async fn test_router_actor_room_negotiation() {
     // Create RouterActor with offered rooms
     let offered_rooms = vec![RoomId::new("shared-room"), RoomId::new("unique-room")];
-    let router_actor = RouterActor::new(offered_rooms.clone(), None).start();
+    let router_actor = RouterActor::new(offered_rooms.clone()).start();
 
     let peer_id = PeerId::from("test-peer");
     let peer_rooms = vec![RoomId::new("shared-room"), RoomId::new("peer-only-room")];
@@ -109,7 +109,7 @@ async fn test_router_actor_room_negotiation() {
 async fn test_router_actor_message_routing() {
     // Create RouterActor
     let offered_rooms = vec![RoomId::new("test-room")];
-    let router_actor = RouterActor::new(offered_rooms, None).start();
+    let router_actor = RouterActor::new(offered_rooms).start();
 
     // Create a peer and connect it
     let (outbound_tx, mut outbound_rx) = mpsc::channel(10);
@@ -170,7 +170,7 @@ async fn test_router_actor_message_routing() {
 async fn test_router_actor_broadcast() {
     // Create RouterActor
     let offered_rooms = vec![RoomId::new("broadcast-room")];
-    let router_actor = RouterActor::new(offered_rooms, None).start();
+    let router_actor = RouterActor::new(offered_rooms).start();
 
     // Create multiple peers
     let peer_ids = vec![
@@ -226,7 +226,7 @@ async fn test_router_actor_broadcast() {
 
 #[actix::test]
 async fn test_router_actor_edge_cases() {
-    let router_actor = RouterActor::new(vec![], None).start();
+    let router_actor = RouterActor::new(vec![]).start();
 
     // Test connecting same peer twice
     let peer_id = PeerId::from("duplicate-peer");
@@ -277,7 +277,7 @@ async fn test_router_actor_edge_cases() {
 #[actix::test]
 async fn test_router_actor_empty_room_intersection() {
     let offered_rooms = vec![RoomId::new("router-room")];
-    let router_actor = RouterActor::new(offered_rooms, None).start();
+    let router_actor = RouterActor::new(offered_rooms).start();
 
     // Connect the peer first
     let (outbound_tx, _outbound_rx) = mpsc::channel(10);

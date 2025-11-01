@@ -20,12 +20,9 @@ pub struct RouterActor {
 
 impl RouterActor {
     /// Create a new RouterActor
-    pub fn new(offered_rooms: Vec<RoomId>, max_rooms_per_peer: Option<usize>) -> Self {
+    pub fn new(offered_rooms: Vec<RoomId>) -> Self {
         Self {
-            router: Arc::new(tokio::sync::Mutex::new(Router::new(
-                offered_rooms,
-                max_rooms_per_peer,
-            ))),
+            router: Arc::new(tokio::sync::Mutex::new(Router::new(offered_rooms))),
         }
     }
 }

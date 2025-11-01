@@ -66,7 +66,7 @@ impl CollectorService {
 
     /// Starts all collector components from their builders.
     pub async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
-        let router_actor = RouterActor::new(vec![], None).start();
+        let router_actor = RouterActor::new(vec![]).start();
         let intent_addr = builders
             .intent_config
             .router(router_actor.clone())

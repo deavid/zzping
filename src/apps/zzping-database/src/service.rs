@@ -187,7 +187,7 @@ impl DatabaseService {
         builders: ComponentBuilders,
     ) -> Result<StartedComponents, DatabaseError> {
         // Start RouterActor
-        let router_actor = RouterActor::new(vec![], None).start();
+        let router_actor = RouterActor::new(vec![]).start();
 
         // Destructure builders
         let ComponentBuilders {

@@ -452,7 +452,7 @@ mod tests {
         let _c = TestMessages::Health;
 
         // Create RouterActor
-        let router_actor = zznet_router::RouterActor::new(vec![], None).start();
+        let router_actor = zznet_router::RouterActor::new(vec![]).start();
 
         // Build allowed roles set for test (accept any admin role)
         let mut allowed = HashSet::new();

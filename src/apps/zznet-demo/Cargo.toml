@@ -1,0 +1,32 @@
+[package]
+name = "zznet-demo"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Integration tests and examples for the zznet framework"
+
+[lints]
+workspace = true
+
+[dependencies]
+actix.workspace = true
+tokio.workspace = true
+serde.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+bincode.workspace = true
+zznet-api.workspace = true
+zznet-auth.workspace = true
+zznet-hello.workspace = true
+zznet-room.workspace = true
+zznet-router.workspace = true
+zznet-builder.workspace = true
+
+[dev-dependencies]
+ntest.workspace = true
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber.workspace = true

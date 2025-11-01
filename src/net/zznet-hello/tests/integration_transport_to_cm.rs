@@ -46,7 +46,7 @@ async fn transport_accept_and_send_to_connection_manager() {
             // Start ConnectionManager actor
             use actix::prelude::*;
             // Create a RouterActor
-            let router_addr = RouterActor::new(vec![], None).start();
+            let router_addr = RouterActor::new(vec![]).start();
             // Build allowed roles set (accept admin)
             let mut allowed = std::collections::HashSet::new();
             allowed.insert(Role::new("admin"));
