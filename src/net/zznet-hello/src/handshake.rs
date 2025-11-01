@@ -69,22 +69,12 @@ impl Handshake {
         matches!(self.state, HandshakeState::Complete { .. })
     }
 
-    /// Check if handshake has failed.
-    pub fn is_failed(&self) -> bool {
-        matches!(self.state, HandshakeState::Failed(_))
-    }
-
     /// Get the list of active rooms if handshake is complete.
     pub fn active_rooms(&self) -> Option<&[String]> {
         match &self.state {
             HandshakeState::Complete { active_rooms } => Some(active_rooms),
             _ => None,
         }
-    }
-
-    /// Get current state (for debugging/logging).
-    pub fn state(&self) -> &HandshakeState {
-        &self.state
     }
 
     /// Get the peer hostname if available.
@@ -168,7 +158,6 @@ impl Handshake {
                 hostname,
             } => self.process_hello(version, role_str, hostname),
             HandshakeFrame::Offer { rooms } => self.process_offer(rooms),
-            HandshakeFrame::Ack { rooms } => self.process_ack(rooms),
             HandshakeFrame::Error { message } => {
                 self.state = HandshakeState::Failed(message.clone());
                 Err(HelloError::HandshakeFailed(message))
@@ -215,6 +204,7 @@ impl Handshake {
             }
             HandshakeState::Complete { .. } => {
                 // Already complete, ignore duplicate HELLO
+                tracing::warn!("Received duplicate HELLO frame, ignoring");
                 Ok(None)
             }
             HandshakeState::Failed(_) => Err(HelloError::InvalidState(
@@ -234,11 +224,9 @@ impl Handshake {
                     .collect();
 
                 if intersection.is_empty() {
-                    let error_frame = Frame::Handshake(HandshakeFrame::Error {
-                        message: "No common rooms".to_string(),
-                    });
+                    tracing::warn!("No common rooms found during handshake");
                     self.state = HandshakeState::Failed("No common rooms".to_string());
-                    return Ok(Some(error_frame.serialize()?));
+                    return Err(HelloError::HandshakeFailed("No common rooms".to_string()));
                 }
 
                 // Complete handshake with agreed rooms
@@ -246,11 +234,8 @@ impl Handshake {
                     active_rooms: intersection.clone(),
                 };
 
-                // Send ACK with agreed rooms
-                let ack_frame = Frame::Handshake(HandshakeFrame::Ack {
-                    rooms: intersection,
-                });
-                Ok(Some(ack_frame.serialize()?))
+                // Handshake is complete, no response needed from here
+                Ok(None)
             }
             _ => Err(HelloError::InvalidState(format!(
                 "Cannot process OFFER in state {:?}",
@@ -259,24 +244,6 @@ impl Handshake {
         }
     }
 
-    fn process_ack(&mut self, peer_rooms: Vec<String>) -> Result<Option<Vec<u8>>, HelloError> {
-        match &self.state {
-            HandshakeState::Complete { active_rooms } => {
-                // Verify peer agrees on the same rooms
-                if active_rooms != &peer_rooms {
-                    self.state = HandshakeState::Failed("Room mismatch in ACK".to_string());
-                    return Err(HelloError::HandshakeFailed(
-                        "Peer ACK'd different rooms than agreed".to_string(),
-                    ));
-                }
-                Ok(None)
-            }
-            _ => Err(HelloError::InvalidState(format!(
-                "Cannot process ACK in state {:?}",
-                self.state
-            ))),
-        }
-    }
 }
 
 impl Default for Handshake {
@@ -294,7 +261,6 @@ mod tests {
         let handshake = Handshake::new();
         assert_eq!(handshake.state, HandshakeState::Start);
         assert!(!handshake.is_complete());
-        assert!(!handshake.is_failed());
     }
 
     #[test]
@@ -369,7 +335,6 @@ mod tests {
 
         let result = handshake.process_frame(&bad_data).unwrap();
         assert!(result.is_some()); // Should return error frame
-        assert!(handshake.is_failed());
     }
 
     #[test]
@@ -408,19 +373,17 @@ mod tests {
         // 5. Responder sends OFFER
         let offer2 = responder.create_offer_frame().unwrap();
 
-        // 6. Initiator processes responder's OFFER and sends ACK
-        let ack1_data = initiator.process_frame(&offer2).unwrap().unwrap();
+        // 6. Initiator processes responder's OFFER
+        let response1 = initiator.process_frame(&offer2).unwrap();
         assert!(initiator.is_complete());
+        assert!(response1.is_none()); // No ACK frame sent
         assert_eq!(initiator.active_rooms(), Some(&["memdb".to_string()][..]));
 
-        // 7. Responder processes initiator's OFFER and sends ACK
-        let ack2_data = responder.process_frame(&offer1).unwrap().unwrap();
+        // 7. Responder processes initiator's OFFER
+        let response2 = responder.process_frame(&offer1).unwrap();
         assert!(responder.is_complete());
+        assert!(response2.is_none()); // No ACK frame sent
         assert_eq!(responder.active_rooms(), Some(&["memdb".to_string()][..]));
-
-        // 8. Cross-verify ACKs (optional - verify both agree)
-        initiator.process_frame(&ack2_data).unwrap();
-        responder.process_frame(&ack1_data).unwrap();
 
         // Both should be complete with same rooms
         assert_eq!(initiator.active_rooms(), responder.active_rooms());
@@ -447,11 +410,10 @@ mod tests {
 
         // Send OFFER - should fail with no common rooms
         let offer = initiator.create_offer_frame().unwrap();
-        let result = responder.process_frame(&offer).unwrap();
+        let result = responder.process_frame(&offer);
 
-        // Should return error frame
-        assert!(result.is_some());
-        assert!(responder.is_failed());
+        // Should return error
+        assert!(result.is_err());
     }
 
     #[test]

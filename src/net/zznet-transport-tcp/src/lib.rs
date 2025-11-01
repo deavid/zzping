@@ -13,7 +13,8 @@
 //! ## Usage
 //!
 //! ```rust,no_run
-//! use zznet_transport_tcp::{TcpTransportClient, TlsConfig};
+//! use zznet_transport_tcp::client::TcpTransportClient;
+//! use zznet_transport_tcp::config::TlsConfig;
 //! use zznet_api::transport::TransportClient;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {

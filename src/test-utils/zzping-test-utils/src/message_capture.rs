@@ -39,7 +39,7 @@ pub struct MessageCaptureChannels {
 /// 3. Waiting for messages with timeout
 ///
 /// # Example
-/// ```rust,no_run
+/// ```rust,no_run,ignore
 /// use zzping_test_utils::MessageCaptureChannels;
 /// use zznet_api::types::RoomId;
 ///

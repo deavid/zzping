@@ -38,10 +38,6 @@ impl RoomMessageTrait for ComponentAMessage {
             .map_err(|e| DeserializationError::BincodeError(e.to_string()))?;
         Ok(msg)
     }
-
-    fn supported_rooms() -> Vec<RoomId> {
-        vec!["room-a".into()]
-    }
 }
 
 /// A message to instruct ComponentA to send a ping.

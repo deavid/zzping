@@ -1,7 +1,9 @@
-//! Full stack integration tests for zznet-demo.
+//! Framework-level integration tests for zznet.
 //!
-//! These tests exercise the entire zznet framework by creating two complete
-//! application stacks that communicate over mock connections.
+//! These tests exercise the zznet framework by manually wiring two complete
+//! application stacks that communicate over mock connections. This provides
+//! a lower-level validation of the core routing and negotiation logic,
+//! separate from the builder-based integration tests.
 
 use actix::prelude::*;
 use std::collections::HashSet;
@@ -27,17 +29,19 @@ pub struct AppStack {
     component_a: Addr<ComponentAActor>,
     /// Optional ComponentB instance
     component_b: Option<Addr<ComponentBActor>>,
-    /// Allowed roles for authorization
-    allowed_roles: HashSet<Role>,
 }
 impl AppStack {
     /// Create a new application stack with the specified role and optional ComponentB.
-    pub async fn new(include_component_b: bool) -> Self {
-        Self::new_with_roles(include_component_b, vec!["collector", "database"]).await
+    pub async fn new(our_role: &str, include_component_b: bool) -> Self {
+        Self::new_with_roles(our_role, include_component_b, vec!["collector", "database"]).await
     }
 
     /// Create a new application stack with specific allowed roles for testing
-    pub async fn new_with_roles(include_component_b: bool, allowed_role_names: Vec<&str>) -> Self {
+    pub async fn new_with_roles(
+        our_role: &str,
+        include_component_b: bool,
+        allowed_role_names: Vec<&str>,
+    ) -> Self {
         // Create the core actors
         let router = RouterActor::new(vec![RoomId::from("room-a")]).start();
 
@@ -49,7 +53,8 @@ impl AppStack {
 
         // Create connection manager
         let connection_manager =
-            ConnectionManager::new(router.clone(), allowed_roles.clone()).start();
+            ConnectionManager::new(router.clone(), our_role.to_string(), allowed_roles.clone())
+                .start();
 
         // Create ComponentA
         let component_a = ComponentAActor::new().start();
@@ -81,7 +86,6 @@ impl AppStack {
             connection_manager,
             component_a,
             component_b,
-            allowed_roles,
         }
     }
 
@@ -92,19 +96,15 @@ impl AppStack {
 
         // Get the actual roles from the stacks
         let our_role = self
-            .allowed_roles
-            .iter()
-            .next()
-            .unwrap()
-            .as_str()
-            .to_string();
+            .connection_manager
+            .send(zznet_hello::messages::GetRole)
+            .await
+            .unwrap();
         let other_role = other
-            .allowed_roles
-            .iter()
-            .next()
-            .unwrap()
-            .as_str()
-            .to_string();
+            .connection_manager
+            .send(zznet_hello::messages::GetRole)
+            .await
+            .unwrap();
 
         // Create HELLO configs for both sides using actual roles
         let hello_config_a = HelloConfig {
@@ -131,7 +131,7 @@ impl AppStack {
         });
 
         // Give some time for the handshake to complete
-        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }
 
@@ -142,8 +142,8 @@ mod tests {
     #[actix::test]
     async fn ping_pong_between_component_a() {
         // Create two app stacks
-        let mut stack_a = AppStack::new(false).await;
-        let mut stack_b = AppStack::new(false).await;
+        let mut stack_a = AppStack::new("collector", false).await;
+        let mut stack_b = AppStack::new("database", false).await;
 
         // Connect them
         stack_a.connect_to(&mut stack_b).await;
@@ -165,8 +165,8 @@ mod tests {
     #[actix::test]
     async fn component_a_publishes_to_component_b() {
         // Create two app stacks, one with component B
-        let mut stack_a = AppStack::new(false).await;
-        let mut stack_b = AppStack::new(true).await;
+        let mut stack_a = AppStack::new("collector", false).await;
+        let mut stack_b = AppStack::new("database", true).await;
 
         // Connect them
         stack_a.connect_to(&mut stack_b).await;
@@ -194,8 +194,8 @@ mod tests {
     #[actix::test]
     async fn component_b_sends_message_via_component_a() {
         // Create two app stacks, one with component B
-        let mut stack_a = AppStack::new(false).await;
-        let mut stack_b = AppStack::new(true).await;
+        let mut stack_a = AppStack::new("collector", false).await;
+        let mut stack_b = AppStack::new("database", true).await;
 
         // Connect them
         stack_a.connect_to(&mut stack_b).await;
@@ -227,20 +227,20 @@ mod tests {
     #[actix::test]
     async fn unauthorized_connection_is_rejected() {
         // Create two application stacks with incompatible roles
-        let mut stack1 = AppStack::new_with_roles(false, vec!["collector"]).await;
-        let mut stack2 = AppStack::new_with_roles(false, vec!["database"]).await;
+        let mut stack1 = AppStack::new_with_roles("collector", false, vec!["collector"]).await;
+        let mut stack2 = AppStack::new_with_roles("attacker", false, vec!["database"]).await;
 
         // Attempt to connect them
         stack1.connect_to(&mut stack2).await;
 
         // Give time for handshake to fail
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Verify that a message sent from stack 1 does not arrive at stack 2.
         stack1.component_a.do_send(SendPing {
             data: "should not be received".to_string(),
         });
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let stack2_counter = stack2.component_a.send(GetCounter).await.unwrap();
         assert_eq!(

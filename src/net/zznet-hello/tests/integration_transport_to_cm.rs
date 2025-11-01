@@ -50,7 +50,7 @@ async fn transport_accept_and_send_to_connection_manager() {
             // Build allowed roles set (accept admin)
             let mut allowed = std::collections::HashSet::new();
             allowed.insert(Role::new("admin"));
-            let mgr = ConnectionManager::new(router_addr, allowed).start();
+            let mgr = ConnectionManager::new(router_addr, "test".to_string(), allowed).start();
 
             // Send transport using HandleTransport, ensure try_send succeeds
             let config = HelloConfig::default();

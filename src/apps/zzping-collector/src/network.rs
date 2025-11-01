@@ -103,8 +103,11 @@ impl CollectorNetwork {
         //   critical for functionality, but audit identifies it as a blocker for consistency
         // - See audit doc section 4.2 for details
 
-        let connection_manager =
-            ConnectionManager::new(components.router_actor.clone(), allowed_roles);
+        let connection_manager = ConnectionManager::new(
+            components.router_actor.clone(),
+            "collector".to_string(),
+            allowed_roles,
+        );
 
         let connection_manager_addr = connection_manager.start();
 

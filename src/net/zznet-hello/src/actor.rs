@@ -34,8 +34,7 @@ use zznet_api::transport::TransportConnection;
 use crate::error::HelloError;
 use crate::handshake::Handshake;
 use crate::protocol::{Frame, HandshakeFrame, RoomFrame};
-use crate::serialize;
-use crate::session_messages::{HandshakeComplete, InboundRoomMessage};
+use crate::session_messages::HandshakeComplete;
 // No direct dependency on application role enums here; protocol-level code uses raw role strings.
 
 /// Configuration for HelloActor.
@@ -180,12 +179,12 @@ impl HelloActor {
             self.config.hostname.clone(),
         ) {
             Ok(hello_data) => {
-                self.send_frame_to_io(hello_data);
+                self.send_frame_to_io(hello_data, ctx);
 
                 // Immediately send OFFER frame
                 match self.handshake.create_offer_frame() {
                     Ok(offer_data) => {
-                        self.send_frame_to_io(offer_data);
+                        self.send_frame_to_io(offer_data, ctx);
 
                         // Schedule handshake timeout
                         ctx.run_later(self.config.handshake_timeout, |act, ctx| {
@@ -212,9 +211,11 @@ impl HelloActor {
     }
 
     /// Send a frame to the I/O task for transmission.
-    fn send_frame_to_io(&self, data: Vec<u8>) {
+    fn send_frame_to_io(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
         if let Err(e) = self.io_tx.send(Bytes::from(data)) {
             error!("Failed to send frame to I/O task: {}", e);
+            // FIXME: Actor must call ctx.stop() inside send_frame_to_io on failure.
+            ctx.stop();
         }
     }
 
@@ -249,7 +250,7 @@ impl HelloActor {
                 // Send response if state machine generated one
                 if let Some(response_data) = response {
                     debug!("Sending handshake response");
-                    self.send_frame_to_io(response_data);
+                    self.send_frame_to_io(response_data, ctx);
                 }
 
                 // Check if handshake is complete
@@ -259,12 +260,14 @@ impl HelloActor {
             }
             Err(e) => {
                 error!("Handshake frame processing failed: {}", e);
+                // TODO: In `handle_handshake_frame`, if `self.handshake.process_frame()` returns `Err`, call `self.handle_error()` to terminate the actor.
                 self.handle_error(e, ctx);
             }
         }
     }
 
     /// Complete the handshake and transition to Ready state.
+    // TODO: Add a test case that uses a TLS-enabled transport to cover certificate validation logic in `complete_handshake`.
     fn complete_handshake(&mut self, ctx: &mut Context<Self>) {
         if let Some(rooms) = self.handshake.active_rooms() {
             info!("Handshake complete! Active rooms: {:?}", rooms);
@@ -371,6 +374,7 @@ impl HelloActor {
     }
 
     /// Handle an error by transitioning to Failed state and stopping.
+    // TODO (Architectural Review): Is sending an Error frame necessary? This adds complexity. Consider simplifying to just log and stop.
     fn handle_error(&mut self, error: HelloError, ctx: &mut Context<Self>) {
         error!("HelloActor fatal error: {}", error);
         self.state = ActorState::Failed;
@@ -381,7 +385,7 @@ impl HelloActor {
         })
         .serialize()
         {
-            self.send_frame_to_io(error_frame);
+            self.send_frame_to_io(error_frame, ctx);
         }
 
         // Give time for error frame to send, then stop
@@ -391,6 +395,7 @@ impl HelloActor {
     }
 
     /// Spawn the I/O task that handles transport operations.
+    // TODO: Add a negative test using `inject_error` on the mock transport to verify that transport send/recv errors cause the `HelloActor` to terminate.
     fn spawn_io_task(
         mut transport: Box<dyn TransportConnection>,
         mut io_rx: mpsc::UnboundedReceiver<Bytes>,
@@ -479,7 +484,7 @@ impl Handler<IoError> for HelloActor {
 impl Handler<SendMessage> for HelloActor {
     type Result = Result<(), HelloError>;
 
-    fn handle(&mut self, msg: SendMessage, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: SendMessage, ctx: &mut Context<Self>) -> Self::Result {
         if self.state != ActorState::Ready {
             return Err(HelloError::InvalidState(format!(
                 "Cannot send in state {:?}",
@@ -504,46 +509,7 @@ impl Handler<SendMessage> for HelloActor {
 
         let frame_data = room_frame.serialize()?;
         debug!("Sending room message: {} -> {}", msg.from_room, msg.to_room);
-        self.send_frame_to_io(frame_data);
-
-        Ok(())
-    }
-}
-
-impl Handler<InboundRoomMessage> for HelloActor {
-    type Result = Result<(), HelloError>;
-
-    fn handle(&mut self, msg: InboundRoomMessage, _ctx: &mut Context<Self>) -> Self::Result {
-        debug!(
-            "Received inbound room message from SessionManager: {} -> {}",
-            msg.from_room, msg.to_room
-        );
-
-        // Check state
-        if self.state != ActorState::Ready {
-            return Err(HelloError::InvalidState(format!(
-                "Cannot send message in state {:?}",
-                self.state
-            )));
-        }
-
-        // Verify room is active
-        if !self.active_rooms.contains(&msg.from_room) {
-            return Err(HelloError::InvalidState(format!(
-                "Room '{}' not in active rooms: {:?}",
-                msg.from_room, self.active_rooms
-            )));
-        }
-
-        // Create and send room frame
-        let room_frame = Frame::Room(RoomFrame::Message {
-            from_room: msg.from_room.clone(),
-            to_room: msg.to_room.clone(),
-            payload: msg.payload,
-        });
-
-        let frame_data = room_frame.serialize()?;
-        self.send_frame_to_io(frame_data);
+        self.send_frame_to_io(frame_data, ctx);
 
         Ok(())
     }
@@ -556,8 +522,9 @@ impl Handler<Disconnect> for HelloActor {
         info!("Disconnect requested");
 
         // Send disconnect frame
-        if let Ok(frame_data) = serialize::create_disconnect_frame() {
-            self.send_frame_to_io(frame_data);
+        let frame = Frame::Room(RoomFrame::Disconnect);
+        if let Ok(frame_data) = frame.serialize() {
+            self.send_frame_to_io(frame_data, ctx);
         }
 
         // Give time for disconnect frame to send
@@ -574,21 +541,6 @@ impl Handler<SetInboundChannel> for HelloActor {
         self.inbound_tx = Some(msg.tx);
         debug!("Set inbound channel for forwarding received messages");
     }
-}
-
-/// Start a HelloActor with the given transport and configuration.
-///
-/// This is the proper way to create and start a HelloActor. It handles:
-/// - Creating the actor with proper channel setup
-/// - Spawning the I/O task
-/// - Starting the actor in the actix system
-///
-/// Returns the actor address for sending messages.
-pub fn start_hello_actor(
-    transport: Box<dyn TransportConnection>,
-    config: HelloConfig,
-) -> Addr<HelloActor> {
-    start_hello_actor_with_session_manager(transport, config, None)
 }
 
 /// Start a HelloActor with optional SessionManager integration
@@ -694,8 +646,8 @@ mod tests {
             hostname: "host2".to_string(),
         };
 
-        let addr1 = start_hello_actor(Box::new(conn1), config1);
-        let _addr2 = start_hello_actor(Box::new(conn2), config2);
+        let addr1 = start_hello_actor_with_session_manager(Box::new(conn1), config1, None);
+        let _addr2 = start_hello_actor_with_session_manager(Box::new(conn2), config2, None);
 
         // Wait for handshake to complete (both should finish)
         // In reality, they should complete quickly
@@ -719,7 +671,7 @@ mod tests {
         let (conn1, _conn2) = create_mock_pair("test2");
 
         let config = HelloConfig::default();
-        let addr = start_hello_actor(Box::new(conn1), config);
+        let addr = start_hello_actor_with_session_manager(Box::new(conn1), config, None);
 
         // Send disconnect
         addr.do_send(Disconnect);

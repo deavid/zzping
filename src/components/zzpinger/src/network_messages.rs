@@ -67,9 +67,6 @@ impl RoomMessageTrait for PingerMessage {
             .map_err(|e| DeserializationError::BincodeError(e.to_string()))
     }
 
-    fn supported_rooms() -> Vec<RoomId> {
-        vec![RoomId::from("pinger")]
-    }
 }
 
 #[cfg(test)]
@@ -97,13 +94,6 @@ mod tests {
             PingerMessage::deserialize_for_room(&RoomId::from("pinger"), &bytes).unwrap();
 
         assert_eq!(original, deserialized);
-    }
-
-    #[test]
-    fn test_supported_rooms() {
-        let rooms = PingerMessage::supported_rooms();
-        assert_eq!(rooms.len(), 1);
-        assert_eq!(rooms[0], RoomId::from("pinger"));
     }
 
     #[test]

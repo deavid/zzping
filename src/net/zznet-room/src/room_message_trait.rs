@@ -87,9 +87,4 @@ pub trait RoomMessageTrait: Clone + Send + Sync + Unpin + std::fmt::Debug + 'sta
     /// into the inner message type.
     fn deserialize_for_room(room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError>;
 
-    /// Get list of all rooms this application supports
-    ///
-    /// This is a compile-time list derived from the enum variants.
-    /// Used during room negotiation to determine which rooms to join.
-    fn supported_rooms() -> Vec<RoomId>;
 }

@@ -46,16 +46,3 @@ pub struct ConnectionLost {
     pub reason: String,
 }
 
-/// Message received BY HelloActor FROM SessionManager with room message.
-///
-/// This is the inbound direction: application → SessionManager → HelloActor → transport.
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "Result<(), HelloError>")]
-pub struct InboundRoomMessage {
-    /// Source room name.
-    pub from_room: String,
-    /// Destination room name.
-    pub to_room: String,
-    /// Serialized payload.
-    pub payload: Vec<u8>,
-}

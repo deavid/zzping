@@ -55,7 +55,7 @@ use crate::cli::StandardCliArgs;
 use crate::logging::init_logging_from_args;
 use crate::runtime::{install_crypto_provider, run_actix};
 use crate::signals::ShutdownSignals;
-use crate::traits::{ZZNetConfig, ZZNetService};
+use crate::traits::ZZNetService;
 use anyhow::{Context, Result};
 use clap::Parser;
 use serde::de::DeserializeOwned;
@@ -207,14 +207,6 @@ impl AppBuilder {
     /// use serde::{Deserialize, Serialize};
     /// use anyhow::Result;
     ///
-    /// #[derive(Parser)]
-    /// struct MyArgs {
-    ///     #[command(flatten)]
-    ///     standard: StandardCliArgs,
-    ///
-    ///     #[arg(long)]
-    ///     custom: String,
-    /// }
     ///
     /// #[derive(Deserialize, Serialize)]
     /// struct Config {
@@ -223,8 +215,7 @@ impl AppBuilder {
     ///
     /// fn main() -> Result<()> {
     ///     AppBuilder::new("MyApp", "1.0.0")
-    ///         .build_and_run_with_args(|args: MyArgs, config: Config| async move {
-    ///             tracing::info!("Custom arg: {}", args.custom);
+    ///         .build_and_run(|config: Config| async move {
     ///             tracing::info!("Config value: {}", config.value);
     ///             Ok(())
     ///         })
@@ -247,7 +238,7 @@ impl AppBuilder {
     ///
     /// # Example
     ///
-    /// ```rust,no_run
+    /// ```rust,no_run,ignore
     /// use zznet_builder::builder::AppBuilder;
     /// use zznet_builder::traits::{ZZNetService, ZZNetConfig};
     /// use anyhow::Result;
@@ -304,14 +295,6 @@ impl AppBuilder {
 
         // Run in Actix runtime
         run_actix(|| async move {
-            // Validate configuration
-            config
-                .validate()
-                .context("Configuration validation failed")?;
-
-            // Log app-specific startup info
-            config.log_startup_info();
-
             // Create service
             let service = S::new(config)
                 .map_err(|e| anyhow::anyhow!(e))

@@ -1,0 +1,80 @@
+//! `ZZNetService` implementation for the demo application.
+use crate::{
+    component_a::{ComponentAActor, ComponentANetworkManager},
+    component_b::ComponentBActor,
+    config::DemoAppConfig,
+    messages::{SetComponentA, SetNetworkManager, StateUpdate, Subscribe},
+};
+use actix::prelude::*;
+use anyhow::Result;
+use async_trait::async_trait;
+use std::collections::HashSet;
+use zznet_api::types::{Role, RoomId};
+use zznet_builder::traits::ZZNetService;
+use zznet_hello::connection_manager::ConnectionManager;
+use zznet_router::RouterActor;
+
+/// Demo service that implements `ZZNetService`.
+pub struct DemoAppService {
+    /// The router actor.
+    pub router: Addr<RouterActor>,
+    /// The connection manager actor.
+    pub connection_manager: Addr<ConnectionManager>,
+    /// The ComponentA actor.
+    pub component_a: Addr<ComponentAActor>,
+    /// The ComponentB actor.
+    pub component_b: Option<Addr<ComponentBActor>>,
+}
+
+#[async_trait]
+impl ZZNetService for DemoAppService {
+    type Config = DemoAppConfig;
+    type Error = anyhow::Error;
+
+    fn new(config: Self::Config) -> Result<Self> {
+        let router = RouterActor::new(
+            config
+                .offered_rooms
+                .iter()
+                .map(|r| RoomId::from(r.as_str()))
+                .collect(),
+        )
+        .start();
+
+        let allowed_roles: HashSet<Role> =
+            config.allowed_roles.iter().map(|r| Role::new(r)).collect();
+
+        let connection_manager =
+            ConnectionManager::new(router.clone(), config.our_role.clone(), allowed_roles).start();
+
+        let component_a = ComponentAActor::new().start();
+        let network_manager =
+            ComponentANetworkManager::new(component_a.clone(), router.clone()).start();
+        component_a.do_send(SetNetworkManager { network_manager });
+
+        let component_b = if config.include_component_b {
+            let comp_b = ComponentBActor::new().start();
+            component_a.do_send(Subscribe {
+                recipient: comp_b.clone().recipient::<StateUpdate>(),
+            });
+            comp_b.do_send(SetComponentA {
+                component_a: component_a.clone(),
+            });
+            Some(comp_b)
+        } else {
+            None
+        };
+
+        Ok(Self {
+            router,
+            connection_manager,
+            component_a,
+            component_b,
+        })
+    }
+
+    async fn run(self) -> Result<(), Self::Error> {
+        tracing::info!("DemoAppService is running");
+        Ok(())
+    }
+}

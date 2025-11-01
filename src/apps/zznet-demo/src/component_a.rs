@@ -158,16 +158,6 @@ impl Handler<GetCounter> for ComponentAActor {
     }
 }
 
-impl Handler<StateUpdate> for ComponentAActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: StateUpdate, _ctx: &mut Self::Context) {
-        self.counter = msg.counter;
-        self.data = msg.data;
-        self.publish_state();
-    }
-}
-
 impl Handler<SetNetworkManager> for ComponentAActor {
     type Result = ();
 

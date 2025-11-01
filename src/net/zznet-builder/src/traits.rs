@@ -85,29 +85,7 @@ use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 
 /// A protocol for application configurations, enabling validation and startup logging.
-pub trait ZZNetConfig: DeserializeOwned + Send + Sync + 'static {
-    /// Validates the configuration after it has been loaded.
-    ///
-    /// This method should be used to check for semantic errors, invalid values,
-    /// or inconsistencies that cannot be caught by deserialization alone.
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(())` if the configuration is valid.
-    /// - `Err(anyhow::Error)` if validation fails.
-    fn validate(&self) -> anyhow::Result<()>;
-
-    /// Logs application-specific configuration details at startup.
-    ///
-    /// This provides a hook to log important configuration values (like IDs,
-    /// connection endpoints, etc.) after the configuration is loaded and
-    /// validated, but before the service starts.
-    ///
-    /// The default implementation does nothing.
-    fn log_startup_info(&self) {
-        tracing::debug!("Configuration loaded (no custom startup info logged).");
-    }
-}
+pub trait ZZNetConfig: DeserializeOwned + Send + Sync + 'static {}
 
 /// A protocol defining the lifecycle of a ZZNet application service.
 #[async_trait]
@@ -116,7 +94,7 @@ pub trait ZZNetService: Sized + Send + 'static {
     type Config: ZZNetConfig;
 
     /// The error type returned by the service's `new` and `run` methods.
-    type Error: std::error::Error + Send + Sync + 'static;
+    type Error: Into<anyhow::Error> + Send + Sync + 'static;
 
     /// Creates a new instance of the service from a validated configuration.
     fn new(config: Self::Config) -> Result<Self, Self::Error>;

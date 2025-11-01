@@ -231,9 +231,6 @@ impl RoomMessageTrait for IntentConfigNetworkMsg {
         result
     }
 
-    fn supported_rooms() -> Vec<RoomId> {
-        vec![RoomId::from("intent-config")]
-    }
 }
 
 #[cfg(test)]
