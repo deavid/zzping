@@ -2,7 +2,9 @@
 
 use crate::actor::IntentConfigActor;
 use crate::config::IntentConfigConfig;
+use crate::permissions::IntentConfigPermissions;
 use actix::prelude::*;
+use std::collections::HashMap;
 use zznet_router::RouterActor;
 
 /// A builder for the IntentConfig component.
@@ -13,6 +15,7 @@ use zznet_router::RouterActor;
 pub struct IntentConfigBuilder {
     config: IntentConfigConfig,
     router_actor: Option<Addr<RouterActor>>,
+    permissions_map: Option<HashMap<String, IntentConfigPermissions>>,
 }
 
 impl IntentConfigBuilder {
@@ -21,6 +24,7 @@ impl IntentConfigBuilder {
         Self {
             config: IntentConfigConfig::default(),
             router_actor: None,
+            permissions_map: None,
         }
     }
 }
@@ -62,9 +66,27 @@ impl IntentConfigBuilder {
         self
     }
 
+    /// Set the permissions map for role-to-permissions translation.
+    ///
+    /// This maps role strings to the specific permissions that peers with
+    /// those roles should have within this component. If not set, the
+    /// NetworkManager will deny all peer connections.
+    pub fn permissions_map(
+        mut self,
+        permissions_map: HashMap<String, IntentConfigPermissions>,
+    ) -> Self {
+        self.permissions_map = Some(permissions_map);
+        self
+    }
+
     /// Get the current configuration
     pub fn get_config(&self) -> &IntentConfigConfig {
         &self.config
+    }
+
+    /// Get the permissions map (for testing)
+    pub fn get_permissions_map(&self) -> Option<&HashMap<String, IntentConfigPermissions>> {
+        self.permissions_map.as_ref()
     }
 
     /// Starts the IntentConfigActor and returns its address (`Addr`).
@@ -108,9 +130,15 @@ impl IntentConfigBuilder {
         if let Some(router_actor) = self.router_actor.take() {
             log::info!("Creating IntentConfigNetworkManager for three-actor pattern");
 
+            let permissions_map = self.permissions_map.take().unwrap_or_else(|| {
+                log::warn!("No permissions_map provided - all peer connections will be denied");
+                HashMap::new()
+            });
+
             let network_manager = crate::network_manager::IntentConfigNetworkManager::new(
                 actor_addr.clone(),
                 router_actor,
+                permissions_map,
             )
             .start();
 

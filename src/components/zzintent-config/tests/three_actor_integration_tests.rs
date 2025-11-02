@@ -9,11 +9,16 @@
 //! All tests have strict 100ms timeouts to prevent hanging.
 
 use actix::prelude::*;
+use std::collections::HashMap;
 use std::time::Duration;
 use zzintent_config::{
     actor::IntentConfigActor,
     messages::{GetCurrentConfig, IntentConfigData, UpdateConfig},
+    network_manager::IntentConfigNetworkManager,
+    permissions::IntentConfigPermissions,
 };
+use zznet_api::types::RoomId;
+use zznet_router::RouterActor;
 
 /// Timeout constant for all async operations (100ms max)
 const TEST_TIMEOUT: Duration = Duration::from_millis(100);
@@ -244,4 +249,149 @@ async fn test_actor_default_configuration() {
         .expect("GetCurrentConfig failed");
     assert_eq!(updated, new_config);
     assert_ne!(updated, IntentConfigData::default());
+}
+
+/// Test authorization: collector role cannot write config
+#[actix::test]
+async fn test_collector_cannot_write_config() {
+    use std::collections::HashMap;
+    use zzintent_config::permissions::IntentConfigPermissions;
+    use zznet_router::RouterActor;
+
+    let actor = IntentConfigActor::default();
+    let actor_addr = actor.start();
+    let router = RouterActor::new(vec![]).start();
+
+    // Create permissions map: collector has read-only access
+    let mut permissions_map = HashMap::new();
+    permissions_map.insert(
+        "collector".to_string(),
+        IntentConfigPermissions::new(true, false), // can read, cannot write
+    );
+
+    let network_manager =
+        IntentConfigNetworkManager::new(actor_addr.clone(), router, permissions_map);
+
+    // Test the permissions map using the getter
+    let permissions = network_manager.permissions_map().get("collector");
+    assert!(permissions.is_some(), "collector should have permissions");
+    assert!(
+        permissions.unwrap().can_read_config,
+        "collector should can read"
+    );
+    assert!(
+        !permissions.unwrap().can_write_config,
+        "collector should not can write"
+    );
+}
+
+/// Test authorization: unknown role is denied
+#[actix::test]
+async fn test_unknown_role_denied() {
+    use std::collections::HashMap;
+    use zzintent_config::permissions::IntentConfigPermissions;
+    use zznet_router::RouterActor;
+
+    let actor = IntentConfigActor::default();
+    let actor_addr = actor.start();
+    let router = RouterActor::new(vec![]).start();
+
+    // Create permissions map with only collector role
+    let mut permissions_map = HashMap::new();
+    permissions_map.insert(
+        "collector".to_string(),
+        IntentConfigPermissions::new(true, false),
+    );
+
+    let network_manager =
+        IntentConfigNetworkManager::new(actor_addr.clone(), router, permissions_map);
+
+    // Test that unknown role has no permissions using the getter
+    let permissions = network_manager.permissions_map().get("hacker");
+    assert!(
+        permissions.is_none(),
+        "unknown role should have no permissions"
+    );
+}
+
+/// Test: Permissions Map Getter
+///
+/// Scenario: Verify that the permissions_map() getter returns the correct permissions
+/// that were injected during NetworkManager construction.
+#[actix::test]
+async fn test_permissions_map_getter() {
+    let actor = IntentConfigActor::default();
+    let actor_addr = actor.start();
+
+    let router = RouterActor::new(vec![RoomId::new("intent-config")]);
+    let router_addr = router.start();
+
+    // Create a test permissions map with multiple roles
+    let mut permissions_map = HashMap::new();
+    permissions_map.insert(
+        "client-admin".to_string(),
+        IntentConfigPermissions {
+            can_read_config: true,
+            can_write_config: true,
+        },
+    );
+    permissions_map.insert(
+        "collector".to_string(),
+        IntentConfigPermissions {
+            can_read_config: true,
+            can_write_config: false,
+        },
+    );
+    permissions_map.insert(
+        "viewer".to_string(),
+        IntentConfigPermissions {
+            can_read_config: true,
+            can_write_config: false,
+        },
+    );
+
+    // Create the network manager with permissions
+    let network_manager =
+        IntentConfigNetworkManager::new(actor_addr.clone(), router_addr, permissions_map.clone());
+
+    // Test that we can retrieve the permissions map
+    let retrieved_map = network_manager.permissions_map();
+    assert_eq!(retrieved_map.len(), 3, "should have 3 roles");
+
+    // Verify client-admin has full permissions
+    let admin_perms = retrieved_map
+        .get("client-admin")
+        .expect("client-admin should exist");
+    assert!(
+        admin_perms.can_read_config,
+        "client-admin should be able to read"
+    );
+    assert!(
+        admin_perms.can_write_config,
+        "client-admin should be able to write"
+    );
+
+    // Verify collector has read-only permissions
+    let collector_perms = retrieved_map
+        .get("collector")
+        .expect("collector should exist");
+    assert!(
+        collector_perms.can_read_config,
+        "collector should be able to read"
+    );
+    assert!(
+        !collector_perms.can_write_config,
+        "collector should NOT be able to write"
+    );
+
+    // Verify viewer has read-only permissions
+    let viewer_perms = retrieved_map.get("viewer").expect("viewer should exist");
+    assert!(
+        viewer_perms.can_read_config,
+        "viewer should be able to read"
+    );
+    assert!(
+        !viewer_perms.can_write_config,
+        "viewer should NOT be able to write"
+    );
 }

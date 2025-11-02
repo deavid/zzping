@@ -4,11 +4,56 @@
 //! It maintains a counter that can be updated via network messages and
 //! broadcasts state changes to local subscribers.
 
+/// ComponentA Permissions
+///
+/// Defines the permissions structure for ComponentA.
+pub mod permissions {
+    /// Permissions for ComponentA
+    ///
+    /// This struct defines what a peer can do within ComponentA's room.
+    /// Permissions are granted by the application based on the peer's global Role,
+    /// but the component itself is role-agnostic and only enforces these local permissions.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ComponentAPermissions {
+        /// Whether the peer can send ping messages
+        pub can_ping: bool,
+        /// Whether the peer can publish messages to ComponentA
+        pub can_publish: bool,
+    }
+
+    impl ComponentAPermissions {
+        /// Create a new permissions struct with the given capabilities
+        pub fn new(can_ping: bool, can_publish: bool) -> Self {
+            Self {
+                can_ping,
+                can_publish,
+            }
+        }
+
+        /// Permissions that allow full access (ping and publish)
+        pub fn full_access() -> Self {
+            Self::new(true, true)
+        }
+
+        /// Permissions that allow only pinging
+        pub fn ping_only() -> Self {
+            Self::new(true, false)
+        }
+
+        /// Permissions that deny all access
+        pub fn no_access() -> Self {
+            Self::new(false, false)
+        }
+    }
+}
+
+pub use permissions::ComponentAPermissions;
+
 use crate::messages::{
     ComponentAMessage, GetCounter, PublishToA, SendPing, SetNetworkManager, StateUpdate, Subscribe,
 };
 use actix::{Actor, Addr, Context, Handler, Recipient};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use tracing::info;
 use zznet_api::types::{PeerId, Role, RoomId};
@@ -185,16 +230,23 @@ pub struct ComponentANetworkManager {
             >,
         >,
     >,
+    /// Policy map from role strings to component-specific permissions
+    permissions_map: HashMap<String, ComponentAPermissions>,
 }
 
 impl ComponentANetworkManager {
     /// Create a new NetworkManager
-    pub fn new(main_actor: Addr<ComponentAActor>, router: Addr<zznet_router::RouterActor>) -> Self {
+    pub fn new(
+        main_actor: Addr<ComponentAActor>,
+        router: Addr<zznet_router::RouterActor>,
+        permissions_map: HashMap<String, ComponentAPermissions>,
+    ) -> Self {
         Self {
             main_actor,
             router,
             network_actors: Arc::new(RwLock::new(std::collections::HashMap::new())),
             room_actors: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            permissions_map,
         }
     }
 }
@@ -228,7 +280,7 @@ impl RoomManager for ComponentANetworkManager {
     async fn create_for_peer(
         &self,
         peer_id: PeerId,
-        _role: Role,
+        role: Role,
         room_id: &RoomId,
         outbound_to_peer: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
     ) -> Result<Option<RoomInboundRecipient>, CreateError> {
@@ -238,9 +290,18 @@ impl RoomManager for ComponentANetworkManager {
             room_id
         );
         if room_id.as_str() == "room-a" {
+            // Translate the global Role to component-specific Permissions
+            let permissions = self
+                .permissions_map
+                .get(role.as_str())
+                .cloned()
+                .ok_or_else(|| CreateError::InvalidPermission {
+                    room_id: room_id.clone(),
+                })?;
+
             // Create NetworkActor for this peer
             let network_actor =
-                ComponentANetworkActor::new(peer_id.clone(), self.main_actor.clone());
+                ComponentANetworkActor::new(peer_id.clone(), permissions, self.main_actor.clone());
             let network_actor_addr = network_actor.start();
 
             // Store the network actor
@@ -279,15 +340,22 @@ impl RoomManager for ComponentANetworkManager {
 pub struct ComponentANetworkActor {
     /// Peer this actor handles
     peer_id: PeerId,
+    /// Permissions for this peer
+    permissions: ComponentAPermissions,
     /// Main actor address
     main_actor: Addr<ComponentAActor>,
 }
 
 impl ComponentANetworkActor {
     /// Create a new NetworkActor for a specific peer
-    pub fn new(peer_id: PeerId, main_actor: Addr<ComponentAActor>) -> Self {
+    pub fn new(
+        peer_id: PeerId,
+        permissions: ComponentAPermissions,
+        main_actor: Addr<ComponentAActor>,
+    ) -> Self {
         Self {
             peer_id,
+            permissions,
             main_actor,
         }
     }
@@ -338,7 +406,31 @@ impl Handler<ComponentAMessage> for ComponentANetworkActor {
     type Result = ();
 
     fn handle(&mut self, msg: ComponentAMessage, _ctx: &mut Self::Context) -> Self::Result {
-        // Forward typed message to main actor
+        match msg {
+            ComponentAMessage::Ping(_) => {
+                // Check if peer can publish (send ping messages)
+                if !self.permissions.can_publish {
+                    tracing::warn!(
+                        "Peer {:?} is not authorized to send ping messages (requires can_publish permission)",
+                        self.peer_id
+                    );
+                    // TODO: Send error response if needed
+                    return;
+                }
+            }
+            ComponentAMessage::Pong(_) => {
+                // Pong messages are responses, allow if peer can ping
+                if !self.permissions.can_ping {
+                    tracing::warn!(
+                        "Peer {:?} is not authorized to send pong messages (requires can_ping permission)",
+                        self.peer_id
+                    );
+                    return;
+                }
+            }
+        }
+
+        // Forward authorized message to main actor
         self.main_actor.do_send(msg);
     }
 }

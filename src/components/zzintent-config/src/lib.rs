@@ -22,5 +22,6 @@ pub mod network_messages;
 
 // Phase 3: Three-actor pattern modules
 pub mod internal_messages;
-pub mod network_manager;
 pub mod network_actor;
+pub mod network_manager;
+pub mod permissions;

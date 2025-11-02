@@ -11,6 +11,7 @@ use crate::{
     },
     network_actor::CStateNetworkActor,
     network_messages::CStateMessage,
+    permissions::CStatePermissions,
 };
 use actix::prelude::*;
 use log::{debug, info, warn};
@@ -58,6 +59,8 @@ pub struct CStateNetworkManager {
     room_actors: Arc<RwLock<HashMap<PeerId, Addr<RoomActor<CStateMessage>>>>>,
     /// Address of this NetworkManager (set in started())
     self_addr: Option<Addr<CStateNetworkManager>>,
+    /// Permissions map for role-to-permissions translation
+    permissions_map: HashMap<String, CStatePermissions>,
 }
 
 impl Clone for CStateNetworkManager {
@@ -68,6 +71,7 @@ impl Clone for CStateNetworkManager {
             translator_actors: Arc::clone(&self.translator_actors),
             room_actors: Arc::clone(&self.room_actors),
             self_addr: self.self_addr.clone(),
+            permissions_map: self.permissions_map.clone(),
         }
     }
 }
@@ -78,14 +82,25 @@ impl CStateNetworkManager {
     /// # Arguments
     /// * `main_actor` - Address of the CStateActor (business logic)
     /// * `router` - RouterActor for data-plane message routing
-    pub fn new(main_actor: Addr<crate::actor::CStateActor>, router: Addr<RouterActor>) -> Self {
+    /// * `permissions_map` - Map of role strings to CStatePermissions
+    pub fn new(
+        main_actor: Addr<crate::actor::CStateActor>,
+        router: Addr<RouterActor>,
+        permissions_map: HashMap<String, CStatePermissions>,
+    ) -> Self {
         Self {
             router,
             main_actor,
             translator_actors: Arc::new(RwLock::new(HashMap::new())),
             room_actors: Arc::new(RwLock::new(HashMap::new())),
             self_addr: None,
+            permissions_map,
         }
+    }
+
+    /// Get the permissions map (for testing)
+    pub fn permissions_map(&self) -> &HashMap<String, CStatePermissions> {
+        &self.permissions_map
     }
 }
 
@@ -287,10 +302,33 @@ impl RoomManager for CStateNetworkManager {
             return Ok(None);
         }
 
-        // Create the translator actor with the peer's role
+        // Translate Role to Permissions using the policy map
+        let permissions = self
+            .permissions_map
+            .get(role.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                warn!(
+                    "Role '{}' not found in permissions map for peer {}",
+                    role.as_str(),
+                    peer_id
+                );
+                CreateError::InvalidPermission {
+                    room_id: room_id.clone(),
+                }
+            })?;
+
+        debug!(
+            "Creating NetworkActor for peer {} with role '{}': permissions = {:?}",
+            peer_id,
+            role.as_str(),
+            permissions
+        );
+
+        // Create the translator actor with the peer's permissions (not role)
         let translator = CStateNetworkActor::new(
             peer_id.clone(),
-            role,
+            permissions,
             self.main_actor.clone(),
             self.self_addr.as_ref().unwrap().clone(),
         );

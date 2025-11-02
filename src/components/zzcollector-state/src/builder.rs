@@ -5,8 +5,9 @@
 //! 2. CStateNetworkManager (Manager - peer lifecycle and routing)
 //! 3. CStateNetworkActor (per-peer, created by Manager)
 
-use crate::{actor::CStateActor, config::CStateConfig};
+use crate::{actor::CStateActor, config::CStateConfig, permissions::CStatePermissions};
 use actix::prelude::*;
+use std::collections::HashMap;
 use zznet_router::RouterActor;
 
 /// A builder for constructing `CStateActor` instances.
@@ -15,6 +16,7 @@ use zznet_router::RouterActor;
 pub struct CStateBuilder {
     config: CStateConfig,
     router_actor: Option<Addr<RouterActor>>,
+    permissions_map: Option<HashMap<String, CStatePermissions>>,
 }
 
 impl CStateBuilder {
@@ -23,6 +25,7 @@ impl CStateBuilder {
         Self {
             config,
             router_actor: None,
+            permissions_map: None,
         }
     }
 
@@ -33,6 +36,21 @@ impl CStateBuilder {
     pub fn router(mut self, router_actor: Addr<RouterActor>) -> Self {
         self.router_actor = Some(router_actor);
         self
+    }
+
+    /// Set the permissions map for role-to-permissions translation.
+    ///
+    /// This maps role strings to the specific permissions that peers with
+    /// those roles should have within this component. If not set, the
+    /// NetworkManager will deny all peer connections.
+    pub fn permissions_map(mut self, permissions_map: HashMap<String, CStatePermissions>) -> Self {
+        self.permissions_map = Some(permissions_map);
+        self
+    }
+
+    /// Get the permissions map (for testing)
+    pub fn get_permissions_map(&self) -> Option<&HashMap<String, CStatePermissions>> {
+        self.permissions_map.as_ref()
     }
 
     /// Builds and starts the `CStateActor` along with its NetworkManager.
@@ -52,8 +70,16 @@ impl CStateBuilder {
         if let Some(router_actor) = self.router_actor {
             log::info!("Creating CStateNetworkManager for three-actor pattern");
 
-            let network_manager =
-                crate::network_manager::CStateNetworkManager::new(actor_addr.clone(), router_actor);
+            let permissions_map = self.permissions_map.unwrap_or_else(|| {
+                log::warn!("No permissions_map provided - all peer connections will be denied");
+                HashMap::new()
+            });
+
+            let network_manager = crate::network_manager::CStateNetworkManager::new(
+                actor_addr.clone(),
+                router_actor,
+                permissions_map,
+            );
 
             let network_manager = network_manager.start();
 

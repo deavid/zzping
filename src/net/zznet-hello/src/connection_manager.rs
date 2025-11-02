@@ -174,7 +174,10 @@ impl Handler<HandshakeComplete> for ConnectionManager {
         let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
 
         // Spawn an async task to connect peer directly to RouterActor
-        tokio::spawn(async move {
+        // CRITICAL: Use actix::spawn (not tokio::spawn) to ensure task runs within
+        // the Actix LocalSet context. This is required because SessionBridge.start()
+        // calls spawn_local, which panics if called outside a LocalSet.
+        actix::spawn(async move {
             let peer_id_api = zznet_api::types::PeerId::from(peer_id.as_str());
 
             // Send OnPeerConnected directly to RouterActor with Role

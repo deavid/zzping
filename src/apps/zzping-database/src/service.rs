@@ -2,11 +2,14 @@ use crate::config::{DatabaseConfig, DatabaseTlsConfig};
 use crate::error::DatabaseError;
 use actix::{Actor, Addr};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use zzcollector_state::actor::CStateActor;
 use zzcollector_state::builder::CStateBuilder;
 use zzcollector_state::config::CStateConfig;
+use zzcollector_state::permissions::CStatePermissions;
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
+use zzintent_config::permissions::IntentConfigPermissions;
 use zzmem_db::actor::MemDBActor;
 use zzmem_db::builder::MemDBBuilder;
 use zzmem_db::config::MemDBConfig;
@@ -155,14 +158,39 @@ impl DatabaseService {
         let data_dir = std::path::PathBuf::from(&self.config.data_dir);
         let config_path = data_dir.join("intent.ron");
 
-        let intent_config = IntentConfigBuilder::new().config_for_database(config_path);
+        // Create permissions policy for intent-config
+        let mut intent_config_permissions = HashMap::new();
+        intent_config_permissions.insert(
+            "client-admin".to_string(),
+            IntentConfigPermissions::new(true, true), // can read and write
+        );
+        intent_config_permissions.insert(
+            "collector".to_string(),
+            IntentConfigPermissions::new(true, false), // can read but not write
+        );
+
+        let intent_config = IntentConfigBuilder::new()
+            .config_for_database(config_path)
+            .permissions_map(intent_config_permissions);
 
         let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None));
+
+        // Create permissions policy for cstate (collector state management)
+        let mut cstate_permissions = HashMap::new();
+        cstate_permissions.insert(
+            "collector".to_string(),
+            CStatePermissions::new(true, false), // can send heartbeats, cannot query collectors
+        );
+        cstate_permissions.insert(
+            "client-admin".to_string(),
+            CStatePermissions::new(false, true), // cannot send heartbeats, can query collectors
+        );
 
         let cstate_builder = CStateBuilder::new(CStateConfig::for_database(
             self.config.components.stale_timeout_secs,
             Some(self.config.components.max_collectors),
-        ));
+        ))
+        .permissions_map(cstate_permissions);
 
         Ok(ComponentBuilders {
             intent_config,
@@ -371,5 +399,51 @@ mod tests {
             crate::network::DatabaseNetwork::new("127.0.0.1:0", None, Duration::from_secs(10));
         // Network is now created successfully if we get here
         // We don't run() it as that would block indefinitely
+    }
+
+    #[test]
+    fn test_intent_config_permissions_policy() {
+        // Test that the intent-config policy is configured correctly
+        let config = create_test_config();
+        let service = DatabaseService::new(config).unwrap();
+        let builders = service.create_builders().unwrap();
+
+        // Get the permissions map from the builder
+        let permissions_map = builders
+            .intent_config
+            .get_permissions_map()
+            .expect("permissions_map should be set");
+
+        // Verify client-admin has full access
+        let admin_perms = permissions_map
+            .get("client-admin")
+            .expect("client-admin should have permissions");
+        assert!(
+            admin_perms.can_read_config,
+            "client-admin should be able to read"
+        );
+        assert!(
+            admin_perms.can_write_config,
+            "client-admin should be able to write"
+        );
+
+        // Verify collector has read-only access
+        let collector_perms = permissions_map
+            .get("collector")
+            .expect("collector should have permissions");
+        assert!(
+            collector_perms.can_read_config,
+            "collector should be able to read"
+        );
+        assert!(
+            !collector_perms.can_write_config,
+            "collector should NOT be able to write"
+        );
+
+        // Verify unknown roles don't have permissions
+        assert!(
+            permissions_map.get("hacker").is_none(),
+            "unknown roles should not have permissions"
+        );
     }
 }

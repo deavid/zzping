@@ -14,4 +14,5 @@ pub mod messages;
 pub mod network_actor;
 pub mod network_manager;
 pub mod network_messages;
+pub mod permissions;
 pub mod pinger;

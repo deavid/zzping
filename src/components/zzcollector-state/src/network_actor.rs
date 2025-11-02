@@ -13,21 +13,21 @@ use crate::{
 };
 use actix::prelude::*;
 use log::debug;
-use zznet_api::types::{PeerId, Role};
+use zznet_api::types::PeerId;
 
 /// Per-peer NetworkActor that handles protocol translation.
 ///
 /// Responsibilities:
 /// - Translate CStateMessage (network, typed) to internal messages (MainActor)
-/// - Store peer's Role for authorization checks (TODO: add auth logic)
+/// - Enforce component-specific permissions for authorization
 /// - Handle network errors (peer disconnected, send failures)
 /// - No longer handles raw bytes or serialization (delegated to RoomActor<T>)
 pub struct CStateNetworkActor {
     /// The peer ID this actor manages.
     peer_id: PeerId,
 
-    /// Role of this peer (for authorization checks)
-    _role: Role,
+    /// Permissions for this peer (immutable, set at construction)
+    permissions: crate::permissions::CStatePermissions,
 
     /// Link to MainActor for forwarding inbound messages.
     main_actor: Addr<crate::actor::CStateActor>,
@@ -42,18 +42,18 @@ impl CStateNetworkActor {
     ///
     /// # Arguments
     /// * `peer_id` - The peer ID this actor manages
-    /// * `role` - Role of the peer (for authorization)
+    /// * `permissions` - Component-specific permissions for this peer
     /// * `main_actor` - Address of the CStateActor (business logic)
     /// * `manager` - Address of the NetworkManager (parent)
     pub fn new(
         peer_id: PeerId,
-        role: Role,
+        permissions: crate::permissions::CStatePermissions,
         main_actor: Addr<crate::actor::CStateActor>,
         manager: Addr<crate::network_manager::CStateNetworkManager>,
     ) -> Self {
         Self {
             peer_id,
-            _role: role,
+            permissions,
             main_actor,
             manager,
         }
@@ -96,6 +96,20 @@ impl Handler<CStateMessage> for CStateNetworkActor {
                 last_config_update_ms,
                 connection_nonce,
             } => {
+                // Enforce permission: only peers with can_send_heartbeat can send heartbeats
+                if !self.permissions.can_send_heartbeat {
+                    debug!(
+                        "Peer {:?} attempted to send heartbeat without permission",
+                        self.peer_id
+                    );
+                    // Send unauthorized response back to peer
+                    self.main_actor.do_send(InboundUnauthorized {
+                        peer_id: self.peer_id.clone(),
+                        reason: "Not authorized to send heartbeats".to_string(),
+                    });
+                    return;
+                }
+
                 self.main_actor.do_send(InboundHeartbeat {
                     peer_id: self.peer_id.clone(),
                     collector_id,
@@ -112,6 +126,7 @@ impl Handler<CStateMessage> for CStateNetworkActor {
                 timestamp_ms,
                 server_time_ms,
             } => {
+                // HeartbeatAck is a response message, no permission check needed
                 self.main_actor.do_send(InboundHeartbeatAck {
                     peer_id: self.peer_id.clone(),
                     timestamp_ms,
@@ -120,6 +135,20 @@ impl Handler<CStateMessage> for CStateNetworkActor {
             }
 
             CStateMessage::QueryCollectors => {
+                // Enforce permission: only peers with can_query_collectors can query
+                if !self.permissions.can_query_collectors {
+                    debug!(
+                        "Peer {:?} attempted to query collectors without permission",
+                        self.peer_id
+                    );
+                    // Send unauthorized response back to peer
+                    self.main_actor.do_send(InboundUnauthorized {
+                        peer_id: self.peer_id.clone(),
+                        reason: "Not authorized to query collectors".to_string(),
+                    });
+                    return;
+                }
+
                 self.main_actor.do_send(InboundQueryCollectors {
                     peer_id: self.peer_id.clone(),
                 });

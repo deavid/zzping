@@ -14,11 +14,15 @@ use zznet_api::types::PeerId;
 ///
 /// Responsibilities:
 /// - Translate PingerMessage (network, typed) to internal messages (MainActor)
+/// - Enforce component-specific permissions for authorization
 /// - Handle network errors (peer disconnected, send failures)
 /// - No longer handles raw bytes or serialization (delegated to RoomActor<T>)
 pub struct PingerNetworkActor {
     /// The peer ID this actor manages.
     peer_id: PeerId,
+
+    /// Permissions for this peer (immutable, set at construction)
+    permissions: crate::permissions::PingerPermissions,
 
     /// Link to MainActor for forwarding inbound messages.
     main_actor: Addr<crate::actor::PingerActor>,
@@ -33,15 +37,18 @@ impl PingerNetworkActor {
     ///
     /// # Arguments
     /// * `peer_id` - The peer ID this actor manages
+    /// * `permissions` - Component-specific permissions for this peer
     /// * `main_actor` - Address of the PingerActor (business logic)
     /// * `manager` - Address of the NetworkManager (parent)
     pub fn new(
         peer_id: PeerId,
+        permissions: crate::permissions::PingerPermissions,
         main_actor: Addr<crate::actor::PingerActor>,
         manager: Addr<crate::network_manager::PingerNetworkManager>,
     ) -> Self {
         Self {
             peer_id,
+            permissions,
             main_actor,
             manager,
         }
@@ -72,6 +79,17 @@ impl Handler<PingerMessage> for PingerNetworkActor {
         // Translate network message to internal message and forward to MainActor
         match msg {
             PingerMessage::UpdateTargets { targets } => {
+                // Enforce permission: only peers with can_update_targets can update targets
+                if !self.permissions.can_update_targets {
+                    debug!(
+                        "Peer {:?} attempted to update targets without permission",
+                        self.peer_id
+                    );
+                    // Silently ignore unauthorized updates
+                    // (Could also send an error response if the protocol supported it)
+                    return;
+                }
+
                 self.main_actor.do_send(InternalUpdateTargets { targets });
             }
         }

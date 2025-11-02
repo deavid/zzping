@@ -9,8 +9,9 @@
 
 use crate::internal_messages::{InboundConfigChangeRequest, InboundGetConfigRequest};
 use crate::network_messages::IntentConfigNetworkMsg;
+use crate::permissions::IntentConfigPermissions;
 use actix::prelude::*;
-use zznet_api::types::{PeerId, Role};
+use zznet_api::types::PeerId;
 
 /// IntentConfigNetworkActor - Handles protocol translation for one peer
 ///
@@ -26,7 +27,7 @@ use zznet_api::types::{PeerId, Role};
 /// # Responsibilities
 /// - Receive IntentConfigNetworkMsg from RoomActor<T>
 /// - Translate to domain messages (InboundConfigChangeRequest, etc.)
-/// - Handle authorization checks using stored Role
+/// - Handle authorization checks using stored Permissions
 /// - Forward to NetworkManager for processing
 /// - Receive commands from NetworkManager (SendConfigUpdateToPeer, etc.)
 /// - Send typed messages to RoomActor<T>
@@ -37,8 +38,8 @@ pub struct IntentConfigNetworkActor {
     /// ID of the peer this actor represents
     peer_id: PeerId,
 
-    /// Role of this peer (for authorization checks)
-    role: Role,
+    /// Permissions of this peer (for authorization checks)
+    permissions: IntentConfigPermissions,
 
     /// Address of the NetworkManager (for forwarding inbound requests)
     manager: Addr<crate::network_manager::IntentConfigNetworkManager>,
@@ -49,16 +50,16 @@ impl IntentConfigNetworkActor {
     ///
     /// # Arguments
     /// - `peer_id` - ID of the peer this actor represents
-    /// - `role` - Role of the peer (for authorization)
+    /// - `permissions` - Permissions of the peer (for authorization)
     /// - `manager` - Address of NetworkManager for forwarding requests
     pub fn new(
         peer_id: PeerId,
-        role: Role,
+        permissions: IntentConfigPermissions,
         manager: Addr<crate::network_manager::IntentConfigNetworkManager>,
     ) -> Self {
         Self {
             peer_id,
-            role,
+            permissions,
             manager,
         }
     }
@@ -66,14 +67,6 @@ impl IntentConfigNetworkActor {
     /// Get the peer ID this actor represents
     pub fn peer_id(&self) -> &PeerId {
         &self.peer_id
-    }
-
-    /// Check if this peer is authorized for admin operations
-    ///
-    /// Currently checks for "client-admin" role.
-    /// TODO: Make this more flexible/configurable
-    fn is_authorized(&self) -> bool {
-        self.role.as_str() == "client-admin"
     }
 }
 
@@ -123,27 +116,25 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigNetworkActor {
                     ping_rate_pps
                 );
 
-                // Check authorization using stored role
-                if !self.is_authorized() {
+                // Check authorization using stored permissions
+                if !self.permissions.can_write_config {
                     log::warn!(
-                        "Peer {} with role '{}' is not authorized for config changes (requires 'client-admin')",
-                        self.peer_id,
-                        self.role.as_str()
+                        "Peer {} is not authorized for config changes (requires can_write_config permission)",
+                        self.peer_id
                     );
 
                     // Send error back via Manager
                     self.manager
                         .do_send(crate::internal_messages::SendErrorToPeer {
                             peer_id: self.peer_id.clone(),
-                            error_message: "Unauthorized: ClientAdmin role required".to_string(),
+                            error_message: "Unauthorized: Write permission required".to_string(),
                         });
                     return;
                 }
 
                 log::debug!(
-                    "Peer {} AUTHORIZED for config change (role: {})",
-                    self.peer_id,
-                    self.role.as_str()
+                    "Peer {} AUTHORIZED for config change (has write permission)",
+                    self.peer_id
                 );
 
                 // Translate to domain message and forward to Manager
@@ -156,6 +147,22 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigNetworkActor {
 
             IntentConfigNetworkMsg::QueryCurrentConfig => {
                 log::debug!("Peer {} requesting current config", self.peer_id);
+
+                // Check authorization using stored permissions
+                if !self.permissions.can_read_config {
+                    log::warn!(
+                        "Peer {} is not authorized to read config (requires can_read_config permission)",
+                        self.peer_id
+                    );
+
+                    // Send error back via Manager
+                    self.manager
+                        .do_send(crate::internal_messages::SendErrorToPeer {
+                            peer_id: self.peer_id.clone(),
+                            error_message: "Unauthorized: Read permission required".to_string(),
+                        });
+                    return;
+                }
 
                 // Forward to Manager for processing
                 let manager = self.manager.clone();

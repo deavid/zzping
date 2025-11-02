@@ -15,6 +15,7 @@ use crate::internal_messages::{
 use crate::messages::{GetCurrentConfig, IntentConfigData};
 use crate::network_actor::IntentConfigNetworkActor;
 use crate::network_messages::IntentConfigNetworkMsg;
+use crate::permissions::IntentConfigPermissions;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
@@ -50,6 +51,8 @@ pub struct IntentConfigNetworkManager {
     router_actor: Addr<RouterActor>,
     /// Address of this NetworkManager (set in started())
     self_addr: Option<Addr<IntentConfigNetworkManager>>,
+    /// Policy map from role strings to component-specific permissions
+    permissions_map: HashMap<String, IntentConfigPermissions>,
 }
 
 impl Clone for IntentConfigNetworkManager {
@@ -60,6 +63,7 @@ impl Clone for IntentConfigNetworkManager {
             room_actors: Arc::clone(&self.room_actors),
             router_actor: self.router_actor.clone(),
             self_addr: self.self_addr.clone(),
+            permissions_map: self.permissions_map.clone(),
         }
     }
 }
@@ -69,6 +73,7 @@ impl IntentConfigNetworkManager {
     pub fn new(
         main_actor: Addr<crate::actor::IntentConfigActor>,
         router_actor: Addr<RouterActor>,
+        permissions_map: HashMap<String, IntentConfigPermissions>,
     ) -> Self {
         Self {
             main_actor,
@@ -76,7 +81,13 @@ impl IntentConfigNetworkManager {
             room_actors: Arc::new(RwLock::new(HashMap::new())),
             router_actor,
             self_addr: None,
+            permissions_map,
         }
+    }
+
+    /// Get the permissions map (for testing)
+    pub fn permissions_map(&self) -> &HashMap<String, IntentConfigPermissions> {
+        &self.permissions_map
     }
 
     /// Destroy per-peer actors when lifecycle events indicate removal.
@@ -338,10 +349,19 @@ impl RoomManager for IntentConfigNetworkManager {
             return Ok(None);
         }
 
-        // Create the translator actor with the peer's role
+        // Translate the global Role to component-specific Permissions
+        let permissions = self
+            .permissions_map
+            .get(role.as_str())
+            .cloned()
+            .ok_or_else(|| CreateError::InvalidPermission {
+                room_id: room_id.clone(),
+            })?;
+
+        // Create the translator actor with the peer's permissions (not role)
         let translator = IntentConfigNetworkActor::new(
             peer_id.clone(),
-            role,
+            permissions,
             self.self_addr.as_ref().unwrap().clone(),
         );
 

@@ -14,6 +14,8 @@ use zznet_hello::connection_manager::ConnectionManager;
 use zznet_hello::connection_manager::HandleTransport;
 use zznet_router::RouterActor;
 
+use std::collections::HashMap;
+use zznet_demo::component_a::permissions::ComponentAPermissions;
 use zznet_demo::component_a::{ComponentAActor, ComponentANetworkManager};
 use zznet_demo::component_b::ComponentBActor;
 use zznet_demo::messages::{
@@ -59,9 +61,31 @@ impl AppStack {
         // Create ComponentA
         let component_a = ComponentAActor::new().start();
 
+        // Create permissions map for ComponentA (permissive for testing)
+        // Grant full permissions to all allowed roles so tests can communicate
+        let mut permissions_map = HashMap::new();
+        for role in &allowed_roles {
+            permissions_map.insert(
+                role.as_str().to_string(),
+                ComponentAPermissions {
+                    can_ping: true,
+                    can_publish: true,
+                },
+            );
+        }
+        // Also add our own role
+        permissions_map.insert(
+            our_role.to_string(),
+            ComponentAPermissions {
+                can_ping: true,
+                can_publish: true,
+            },
+        );
+
         // Create ComponentA's network manager and wire it
         let network_manager =
-            ComponentANetworkManager::new(component_a.clone(), router.clone()).start();
+            ComponentANetworkManager::new(component_a.clone(), router.clone(), permissions_map)
+                .start();
         component_a.do_send(SetNetworkManager {
             network_manager: network_manager.clone(),
         });
@@ -139,89 +163,104 @@ impl AppStack {
 mod tests {
     use super::*;
 
-    #[actix::test]
+    #[tokio::test]
     async fn ping_pong_between_component_a() {
-        // Create two app stacks
-        let mut stack_a = AppStack::new("collector", false).await;
-        let mut stack_b = AppStack::new("database", false).await;
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async move {
+                // Create two app stacks
+                let mut stack_a = AppStack::new("collector", false).await;
+                let mut stack_b = AppStack::new("database", false).await;
 
-        // Connect them
-        stack_a.connect_to(&mut stack_b).await;
+                // Connect them
+                stack_a.connect_to(&mut stack_b).await;
 
-        // Send a ping from A to B
-        let ping_data = "Hello from A".to_string();
-        stack_a.component_a.do_send(SendPing {
-            data: ping_data.clone(),
-        });
+                // Send a ping from A to B
+                let ping_data = "Hello from A".to_string();
+                stack_a.component_a.do_send(SendPing {
+                    data: ping_data.clone(),
+                });
 
-        // Wait for the message to be processed
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                // Wait for the message to be processed
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        // Check that component A in stack B received the ping
-        let counter = stack_b.component_a.send(GetCounter).await.unwrap();
-        assert_eq!(counter, 1);
+                // Check that component A in stack B received the ping
+                let counter = stack_b.component_a.send(GetCounter).await.unwrap();
+                assert_eq!(counter, 1);
+            })
+            .await;
     }
 
-    #[actix::test]
+    #[tokio::test]
     async fn component_a_publishes_to_component_b() {
-        // Create two app stacks, one with component B
-        let mut stack_a = AppStack::new("collector", false).await;
-        let mut stack_b = AppStack::new("database", true).await;
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async move {
+                // Create two app stacks, one with component B
+                let mut stack_a = AppStack::new("collector", false).await;
+                let mut stack_b = AppStack::new("database", true).await;
 
-        // Connect them
-        stack_a.connect_to(&mut stack_b).await;
+                // Connect them
+                stack_a.connect_to(&mut stack_b).await;
 
-        // Send a message that will cause A to publish its state
-        let publish_data = "State update from A".to_string();
-        stack_a.component_a.do_send(PublishToA {
-            data: publish_data.clone(),
-        });
+                // Send a message that will cause A to publish its state
+                let publish_data = "State update from A".to_string();
+                stack_a.component_a.do_send(PublishToA {
+                    data: publish_data.clone(),
+                });
 
-        // Wait for the message to be processed and published
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                // Wait for the message to be processed and published
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        // Check that component B in stack B received the state update
-        let counter_b = stack_b
-            .component_b
-            .as_ref()
-            .unwrap()
-            .send(GetCounter)
-            .await
-            .unwrap();
-        assert_eq!(counter_b, 1);
+                // Check that component B in stack B received the state update
+                let counter_b = stack_b
+                    .component_b
+                    .as_ref()
+                    .unwrap()
+                    .send(GetCounter)
+                    .await
+                    .unwrap();
+                assert_eq!(counter_b, 1);
+            })
+            .await;
     }
 
-    #[actix::test]
+    #[tokio::test]
     async fn component_b_sends_message_via_component_a() {
-        // Create two app stacks, one with component B
-        let mut stack_a = AppStack::new("collector", false).await;
-        let mut stack_b = AppStack::new("database", true).await;
+        let local = tokio::task::LocalSet::new();
+        local
+            .run_until(async move {
+                // Create two app stacks, one with component B
+                let mut stack_a = AppStack::new("collector", false).await;
+                let mut stack_b = AppStack::new("database", true).await;
 
-        // Connect them
-        stack_a.connect_to(&mut stack_b).await;
+                // Connect them
+                stack_a.connect_to(&mut stack_b).await;
 
-        // Tell component B on stack B to send a message.
-        // This will go B -> A (local) on stack B, then A (stack B) -> A (stack A) (network)
-        let ping_from_b_data = "Hello from B via A".to_string();
-        stack_b
-            .component_b
-            .as_ref()
-            .unwrap()
-            .do_send(SendPingFromB {
-                data: ping_from_b_data.clone(),
-            });
+                // Tell component B on stack B to send a message.
+                // This will go B -> A (local) on stack B, then A (stack B) -> A (stack A) (network)
+                let ping_from_b_data = "Hello from B via A".to_string();
+                stack_b
+                    .component_b
+                    .as_ref()
+                    .unwrap()
+                    .do_send(SendPingFromB {
+                        data: ping_from_b_data.clone(),
+                    });
 
-        // Wait for the message to traverse the stacks
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                // Wait for the message to traverse the stacks
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-        // Check that component A in stack A received the message
-        let counter_a = stack_a.component_a.send(GetCounter).await.unwrap();
-        assert_eq!(counter_a, 1);
+                // Check that component A in stack A received the message
+                let counter_a = stack_a.component_a.send(GetCounter).await.unwrap();
+                assert_eq!(counter_a, 1);
 
-        // Also check that Component A on Stack B, which originated the network message,
-        // also updated its own state.
-        let counter_a_stack_b = stack_b.component_a.send(GetCounter).await.unwrap();
-        assert_eq!(counter_a_stack_b, 1);
+                // Also check that Component A on Stack B, which originated the network message,
+                // also updated its own state.
+                let counter_a_stack_b = stack_b.component_a.send(GetCounter).await.unwrap();
+                assert_eq!(counter_a_stack_b, 1);
+            })
+            .await;
     }
 
     #[actix::test]

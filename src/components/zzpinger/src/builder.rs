@@ -7,8 +7,10 @@ use crate::actor::PingerActor;
 use crate::api::PingerHandle;
 use crate::error::PingerError;
 use crate::messages::TargetConfig;
+use crate::permissions::PingerPermissions;
 use crate::pinger::PingBackend;
 use actix::{Actor, Addr};
+use std::collections::HashMap;
 use std::sync::Arc;
 use zzmem_db::actor::MemDBActor;
 use zznet_router::RouterActor;
@@ -25,6 +27,7 @@ pub struct PingerBuilder {
     enabled: bool,
     backend: Option<Arc<dyn PingBackend>>,
     router_actor: Option<Addr<RouterActor>>,
+    permissions_map: Option<HashMap<String, PingerPermissions>>,
 }
 
 impl PingerBuilder {
@@ -40,6 +43,7 @@ impl PingerBuilder {
             enabled: true,
             backend: None,
             router_actor: None,
+            permissions_map: None,
         }
     }
 
@@ -97,6 +101,21 @@ impl PingerBuilder {
         self
     }
 
+    /// Set the permissions map for role-to-permissions translation.
+    ///
+    /// This maps role strings to the specific permissions that peers with
+    /// those roles should have within this component. If not set, the
+    /// NetworkManager will deny all peer connections.
+    pub fn permissions_map(mut self, permissions_map: HashMap<String, PingerPermissions>) -> Self {
+        self.permissions_map = Some(permissions_map);
+        self
+    }
+
+    /// Get the permissions map (for testing)
+    pub fn get_permissions_map(&self) -> Option<&HashMap<String, PingerPermissions>> {
+        self.permissions_map.as_ref()
+    }
+
     /// Consumes the builder to construct, start, and return a handle to the `PingerActor`.
     ///
     /// This method finalizes the configuration, starts the actor, and provides a `PingerHandle`
@@ -125,8 +144,16 @@ impl PingerBuilder {
         if let Some(router_actor) = self.router_actor {
             log::info!("Creating PingerNetworkManager for Router integration");
 
-            let network_manager =
-                crate::network_manager::PingerNetworkManager::new(addr.clone(), router_actor);
+            let permissions_map = self.permissions_map.unwrap_or_else(|| {
+                log::warn!("No permissions_map provided - all peer connections will be denied");
+                HashMap::new()
+            });
+
+            let network_manager = crate::network_manager::PingerNetworkManager::new(
+                addr.clone(),
+                router_actor,
+                permissions_map,
+            );
 
             network_manager.start();
 

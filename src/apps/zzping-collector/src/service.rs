@@ -8,8 +8,10 @@ use crate::error::CollectorError;
 use actix::{Actor, Addr};
 use anyhow::Result;
 use async_trait::async_trait;
+use std::collections::HashMap;
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
+use zzintent_config::permissions::IntentConfigPermissions;
 use zzmem_db::actor::MemDBActor;
 use zzmem_db::builder::MemDBBuilder;
 use zzmem_db::config::MemDBConfig;
@@ -17,6 +19,7 @@ use zznet_builder::traits::ZZNetService;
 use zznet_router::RouterActor;
 use zzpinger::api::PingerHandle;
 use zzpinger::builder::PingerBuilder;
+use zzpinger::permissions::PingerPermissions;
 
 /// Builders for all components (before wiring)
 pub struct ComponentBuilders {
@@ -49,8 +52,28 @@ pub struct CollectorService {
 impl CollectorService {
     /// Creates component builders for all collector components.
     pub fn create_builders(&self) -> Result<ComponentBuilders> {
-        let intent_config = IntentConfigBuilder::new().config_for_collector();
-        let pinger = PingerBuilder::new().enabled(true);
+        // Create permissions policy for intent-config (collector has read-only access)
+        let mut intent_config_permissions = HashMap::new();
+        intent_config_permissions.insert(
+            "collector".to_string(),
+            IntentConfigPermissions::new(true, false), // can read but not write
+        );
+
+        let intent_config = IntentConfigBuilder::new()
+            .config_for_collector()
+            .permissions_map(intent_config_permissions);
+
+        // Create permissions policy for pinger (collector can update targets)
+        let mut pinger_permissions = HashMap::new();
+        pinger_permissions.insert(
+            "collector".to_string(),
+            PingerPermissions::new(true), // can update targets
+        );
+
+        let pinger = PingerBuilder::new()
+            .enabled(true)
+            .permissions_map(pinger_permissions);
+
         let memdb_addr = MemDBBuilder::new(MemDBConfig::for_collector(
             self.config.components.memdb_batch_size,
         ))
