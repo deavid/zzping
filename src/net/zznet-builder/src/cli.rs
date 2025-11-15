@@ -11,7 +11,7 @@ use clap::Parser;
 /// a consistent user experience. Applications can extend these arguments
 /// by embedding this struct in a larger CLI structure.
 #[derive(Parser, Debug, Clone)]
-pub struct StandardCliArgs {
+pub(crate) struct StandardCliArgs {
     // FIXME: A "StandardCliArgs" is a very bad idea. This should be removed and we should expect some kind of struct or a way for others to
     // convert their CLI Args into ours. But doing StandardCliArgs::parse() just forces the usage of this as-is without ability to customize.
     /// Path to configuration file
@@ -32,7 +32,7 @@ impl StandardCliArgs {
     ///
     /// Returns "trace" if --trace is set, "debug" if --debug is set,
     /// otherwise "info".
-    pub fn log_level(&self) -> &'static str {
+    pub(crate) fn log_level(&self) -> &'static str {
         if self.trace {
             "trace"
         } else if self.debug {

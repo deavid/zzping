@@ -10,7 +10,7 @@ use anyhow::Result;
 /// This must be called early in the application lifecycle, before any TLS
 /// operations are performed. It's safe to call multiple times (subsequent
 /// calls will be ignored).
-pub fn install_crypto_provider() {
+pub(crate) fn install_crypto_provider() {
     let _ =
         rustls::crypto::CryptoProvider::install_default(rustls::crypto::ring::default_provider());
 }
@@ -19,7 +19,7 @@ pub fn install_crypto_provider() {
 ///
 /// This creates an Actix `System` and runs the provided async function
 /// within it, ensuring the Tokio reactor is installed correctly for Actix.
-pub fn run_actix<F, Fut>(f: F) -> Result<()>
+pub(crate) fn run_actix<F, Fut>(f: F) -> Result<()>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,

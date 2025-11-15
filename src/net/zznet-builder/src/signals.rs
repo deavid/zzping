@@ -9,7 +9,7 @@ use tracing::info;
 use tokio::signal::unix::{SignalKind, signal};
 
 /// Manages shutdown signals (Ctrl+C, SIGTERM, etc.)
-pub struct ShutdownSignals {
+pub(crate) struct ShutdownSignals {
     #[cfg(unix)]
     sigterm: tokio::signal::unix::Signal,
     #[cfg(unix)]
@@ -21,7 +21,7 @@ impl ShutdownSignals {
     ///
     /// On Unix systems, listens to SIGTERM and SIGINT (Ctrl+C).
     /// On Windows, only Ctrl+C is available (handled by Tokio).
-    pub fn new() -> Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         #[cfg(unix)]
         {
             let sigterm =
@@ -42,7 +42,7 @@ impl ShutdownSignals {
     ///
     /// Blocks until SIGTERM, SIGINT (Ctrl+C), or equivalent is received.
     /// Logs which signal was received.
-    pub async fn wait(&mut self) -> Result<()> {
+    pub(crate) async fn wait(&mut self) -> Result<()> {
         #[cfg(unix)]
         {
             tokio::select! {

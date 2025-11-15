@@ -5,7 +5,7 @@ use tracing_subscriber::EnvFilter;
 /// Initialize the global `tracing` subscriber with the provided level.
 ///
 /// Panics if a global subscriber has already been set.
-pub fn init_logging(level: &str) {
+fn init_logging(level: &str) {
     let filter = EnvFilter::new(level);
 
     let _ = tracing_subscriber::fmt()
@@ -17,6 +17,6 @@ pub fn init_logging(level: &str) {
 }
 
 /// Initialize logging using CLI args.
-pub fn init_logging_from_args(args: &crate::cli::StandardCliArgs) {
+pub(crate) fn init_logging_from_args(args: &crate::cli::StandardCliArgs) {
     init_logging(args.log_level());
 }

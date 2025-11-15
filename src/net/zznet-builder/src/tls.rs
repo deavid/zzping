@@ -22,6 +22,3 @@ pub fn to_transport_tls_config(
         server_name: "zzping".into(),
     }
 }
-
-#[cfg(test)]
-mod tests {}

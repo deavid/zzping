@@ -5,10 +5,9 @@
 //! configuration, TLS, runtime setup, and more.
 
 pub mod builder;
-pub mod cli;
-mod error;
-pub mod logging;
-pub mod runtime;
-pub mod signals;
+mod cli;
+mod logging;
+mod runtime;
+mod signals;
 pub mod tls;
 pub mod traits;

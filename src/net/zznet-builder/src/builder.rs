@@ -55,7 +55,7 @@ impl AppBuilder {
     /// and a programmatic shutdown is required. The provided `stop` future is
     /// awaited in parallel with OS signals; whichever resolves first will cause
     /// shutdown to proceed.
-    pub fn run_service_with_stop<S, StopFut>(self, stop: StopFut) -> Result<()>
+    pub(crate) fn run_service_with_stop<S, StopFut>(self, stop: StopFut) -> Result<()>
     where
         S: ZZNetService,
         StopFut: std::future::Future<Output = ()> + Send + 'static,
