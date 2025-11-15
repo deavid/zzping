@@ -1,7 +1,7 @@
 //! Security-focused tests for ACL enforcement and related checks.
 //!
 use std::collections::HashSet;
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 use zznet_auth::acl::AclManager;
 use zznet_auth::config::AclConfig;
 
@@ -47,7 +47,7 @@ fn generic_security_behaviour() {
 
     // Empty ACL should deny everything
     let manager: AclManager<MockRole> = AclManager::new();
-    let id = PeerIdentity {
+    let id = PeerTLSIdentity {
         common_name: "client-ro".to_string(),
         san_username: "eve".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -58,7 +58,7 @@ fn generic_security_behaviour() {
     let mut allowed = HashSet::new();
     allowed.insert("a".to_string());
     let manager2: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
-    let identity = PeerIdentity {
+    let identity = PeerTLSIdentity {
         common_name: "a".to_string(),
         san_username: "root".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),

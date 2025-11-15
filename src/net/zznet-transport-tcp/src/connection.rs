@@ -13,7 +13,7 @@ use x509_parser::prelude::*;
 
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportConnection;
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 
 use crate::framing;
 
@@ -27,14 +27,14 @@ pub struct TcpTransport {
     /// Peer address for logging.
     peer_addr: SocketAddr,
     /// Cached peer identity extracted from certificate or HELLO.
-    peer_identity: PeerIdentity,
+    peer_identity: Option<PeerTLSIdentity>,
 }
 
 enum TcpTransportStream {
-    /// Plain TCP connection (for testing).
+    /// Plain TCP connection.
     Plain(TcpStream),
-    /// TLS-encrypted TCP connection (production).
-    Tls(Box<tokio_rustls::client::TlsStream<TcpStream>>),
+    /// TLS-encrypted TCP client-side connection.
+    TlsClient(Box<tokio_rustls::client::TlsStream<TcpStream>>),
     /// TLS server-side connection.
     TlsServer(Box<tokio_rustls::server::TlsStream<TcpStream>>),
 }
@@ -44,15 +44,10 @@ impl TcpTransport {
     pub fn plain(stream: TcpStream, peer_addr: SocketAddr) -> Self {
         debug!("Created plain TCP transport for {}", peer_addr);
         // For plain TCP, create a dummy identity (will not be used since peer_identity() returns None)
-        let peer_identity = PeerIdentity {
-            common_name: "unused".to_string(),
-            san_username: "unused".to_string(),
-            peer_addr: peer_addr.to_string(),
-        };
         TcpTransport {
             stream: TcpTransportStream::Plain(stream),
             peer_addr,
-            peer_identity,
+            peer_identity: None,
         }
     }
 
@@ -62,9 +57,9 @@ impl TcpTransport {
         peer_addr: SocketAddr,
     ) -> Result<Self, zznet_api::error::TransportError> {
         debug!("Created TLS client transport for {}", peer_addr);
-        let peer_identity = Self::extract_identity_from_tls(&stream, peer_addr)?;
+        let peer_identity = Some(Self::extract_identity_from_tls_client(&stream, peer_addr)?);
         Ok(TcpTransport {
-            stream: TcpTransportStream::Tls(Box::new(stream)),
+            stream: TcpTransportStream::TlsClient(Box::new(stream)),
             peer_addr,
             peer_identity,
         })
@@ -76,7 +71,7 @@ impl TcpTransport {
         peer_addr: SocketAddr,
     ) -> Result<Self, zznet_api::error::TransportError> {
         debug!("Created TLS server transport for {}", peer_addr);
-        let peer_identity = Self::extract_identity_from_tls_server(&stream, peer_addr)?;
+        let peer_identity = Some(Self::extract_identity_from_tls_server(&stream, peer_addr)?);
         Ok(TcpTransport {
             stream: TcpTransportStream::TlsServer(Box::new(stream)),
             peer_addr,
@@ -85,10 +80,10 @@ impl TcpTransport {
     }
 
     /// Extracts peer identity from a TLS connection's certificate.
-    fn extract_identity_from_tls(
+    fn extract_identity_from_tls_client(
         stream: &tokio_rustls::client::TlsStream<TcpStream>,
         peer_addr: SocketAddr,
-    ) -> Result<PeerIdentity, TransportError> {
+    ) -> Result<PeerTLSIdentity, TransportError> {
         // Get the peer certificates from the rustls session
         let (_, conn) = stream.get_ref();
         let peer_certs_opt = conn.peer_certificates();
@@ -119,7 +114,7 @@ impl TcpTransport {
     fn extract_identity_from_tls_server(
         stream: &tokio_rustls::server::TlsStream<TcpStream>,
         peer_addr: SocketAddr,
-    ) -> Result<PeerIdentity, TransportError> {
+    ) -> Result<PeerTLSIdentity, TransportError> {
         // Similar to client, but for server stream
         let (_, conn) = stream.get_ref();
         let peer_certs_opt = conn.peer_certificates();
@@ -147,7 +142,7 @@ impl TcpTransport {
     fn parse_peer_cert_der(
         cert_der: &[u8],
         peer_addr: SocketAddr,
-    ) -> Result<PeerIdentity, TransportError> {
+    ) -> Result<PeerTLSIdentity, TransportError> {
         // Parse the certificate
         let (_, cert) = X509Certificate::from_der(cert_der).map_err(|e| {
             TransportError::IoError(format!("Failed to parse peer certificate: {:?}", e))
@@ -200,7 +195,7 @@ impl TcpTransport {
             })
             .ok_or_else(|| TransportError::IoError("SAN contains no DNS names".to_string()))?;
 
-        Ok(PeerIdentity {
+        Ok(PeerTLSIdentity {
             common_name,
             san_username,
             peer_addr: peer_addr.to_string(),
@@ -215,7 +210,9 @@ impl TransportConnection for TcpTransport {
 
         let result = match &mut self.stream {
             TcpTransportStream::Plain(stream) => framing::write_frame(stream, &data).await,
-            TcpTransportStream::Tls(stream) => framing::write_frame(stream.as_mut(), &data).await,
+            TcpTransportStream::TlsClient(stream) => {
+                framing::write_frame(stream.as_mut(), &data).await
+            }
             TcpTransportStream::TlsServer(stream) => {
                 framing::write_frame(stream.as_mut(), &data).await
             }
@@ -232,7 +229,7 @@ impl TransportConnection for TcpTransport {
 
         let result = match &mut self.stream {
             TcpTransportStream::Plain(stream) => framing::read_frame(stream).await,
-            TcpTransportStream::Tls(stream) => framing::read_frame(stream.as_mut()).await,
+            TcpTransportStream::TlsClient(stream) => framing::read_frame(stream.as_mut()).await,
             TcpTransportStream::TlsServer(stream) => framing::read_frame(stream.as_mut()).await,
         };
 
@@ -256,13 +253,8 @@ impl TransportConnection for TcpTransport {
         Some(self.peer_addr.to_string())
     }
 
-    fn peer_identity(&self) -> Option<PeerIdentity> {
-        match &self.stream {
-            TcpTransportStream::Plain(_) => None, // No TLS = no cryptographic identity
-            TcpTransportStream::Tls(_) | TcpTransportStream::TlsServer(_) => {
-                Some(self.peer_identity.clone())
-            }
-        }
+    fn peer_tls_identity(&self) -> Option<PeerTLSIdentity> {
+        self.peer_identity.clone()
     }
 }
 

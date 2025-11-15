@@ -85,7 +85,7 @@ impl<R: ApplicationRole> AclManager<R> {
     /// Returns the resolved role on success.
     pub fn authorize_peer(
         &self,
-        identity: &zznet_api::types::PeerIdentity,
+        identity: &zznet_api::types::PeerTLSIdentity,
     ) -> Result<R, crate::error::AuthError> {
         tracing::debug!(peer = %identity.full_identity(), "authorize_peer called");
 
@@ -284,8 +284,8 @@ mod tests {
         }
     }
 
-    fn mk_identity(cn: &str, username: &str) -> zznet_api::types::PeerIdentity {
-        zznet_api::types::PeerIdentity {
+    fn mk_identity(cn: &str, username: &str) -> zznet_api::types::PeerTLSIdentity {
+        zznet_api::types::PeerTLSIdentity {
             common_name: cn.to_string(),
             san_username: username.to_string(),
             peer_addr: "127.0.0.1:0".to_string(),
@@ -294,7 +294,7 @@ mod tests {
 
     fn mk_auth_ctx(
         hello_role: &str,
-        peer_id: Option<zznet_api::types::PeerIdentity>,
+        peer_id: Option<zznet_api::types::PeerTLSIdentity>,
     ) -> zznet_api::types::AuthContext {
         zznet_api::types::AuthContext {
             hello_role_str: hello_role.to_string(),

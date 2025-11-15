@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 use zznet_auth::acl::AclManager;
 use zznet_auth::role::ApplicationRole;
 
@@ -46,7 +46,7 @@ fn generic_unicode_and_long_usernames() {
 
     let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed.clone());
 
-    let id = PeerIdentity {
+    let id = PeerTLSIdentity {
         common_name: "u".to_string(),
         san_username: "josé".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -72,7 +72,7 @@ fn special_characters_in_usernames() {
     ];
 
     for (username, cn) in test_cases {
-        let id = PeerIdentity {
+        let id = PeerTLSIdentity {
             common_name: cn.to_string(),
             san_username: username.to_string(),
             peer_addr: "127.0.0.1:0".to_string(),
@@ -93,7 +93,7 @@ fn case_sensitivity_in_identities() {
     let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     // Case mismatch should fail
-    let id_upper = PeerIdentity {
+    let id_upper = PeerTLSIdentity {
         common_name: "U".to_string(),
         san_username: "ALICE".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -101,7 +101,7 @@ fn case_sensitivity_in_identities() {
     assert!(manager.authorize_peer(&id_upper).is_err());
 
     // Exact case should work
-    let id_exact = PeerIdentity {
+    let id_exact = PeerTLSIdentity {
         common_name: "u".to_string(),
         san_username: "Alice".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -117,7 +117,7 @@ fn whitespace_handling() {
     let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     // Leading/trailing whitespace in identity should not match
-    let id_with_space = PeerIdentity {
+    let id_with_space = PeerTLSIdentity {
         common_name: " client-ro ".to_string(),
         san_username: " user ".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -125,7 +125,7 @@ fn whitespace_handling() {
     assert!(manager.authorize_peer(&id_with_space).is_err());
 
     // Exact match should work
-    let id_exact = PeerIdentity {
+    let id_exact = PeerTLSIdentity {
         common_name: "u".to_string(),
         san_username: "user".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -136,7 +136,7 @@ fn whitespace_handling() {
 #[test]
 fn empty_and_boundary_strings() {
     // Empty username should be denied
-    let id_empty_user = PeerIdentity {
+    let id_empty_user = PeerTLSIdentity {
         common_name: "client-ro".to_string(),
         san_username: "".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -145,7 +145,7 @@ fn empty_and_boundary_strings() {
     assert!(empty_manager.authorize_peer(&id_empty_user).is_err());
 
     // Empty CN should be denied
-    let id_empty_cn = PeerIdentity {
+    let id_empty_cn = PeerTLSIdentity {
         common_name: "".to_string(),
         san_username: "user".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -169,7 +169,7 @@ fn network_address_variations() {
     ];
 
     for addr in addresses {
-        let id = PeerIdentity {
+        let id = PeerTLSIdentity {
             common_name: "u".to_string(),
             san_username: "user".to_string(),
             peer_addr: addr.to_string(),
@@ -192,7 +192,7 @@ fn role_boundary_cases() {
     let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     // Role only should work for any user in that role
-    let id_role = PeerIdentity {
+    let id_role = PeerTLSIdentity {
         common_name: "u".to_string(),
         san_username: "anyuser".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -200,7 +200,7 @@ fn role_boundary_cases() {
     assert!(manager.authorize_peer(&id_role).is_ok());
 
     // Specific user@role should work
-    let id_specific = PeerIdentity {
+    let id_specific = PeerTLSIdentity {
         common_name: "v".to_string(),
         san_username: "user".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -208,7 +208,7 @@ fn role_boundary_cases() {
     assert!(manager.authorize_peer(&id_specific).is_ok());
 
     // Wrong user for specific role should fail
-    let id_wrong = PeerIdentity {
+    let id_wrong = PeerTLSIdentity {
         common_name: "v".to_string(),
         san_username: "wronguser".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -226,7 +226,7 @@ fn concurrent_authorization_during_modification() {
         let mgr_clone = Arc::clone(&manager);
         let handle = thread::spawn(move || {
             for j in 0..100 {
-                let id = PeerIdentity {
+                let id = PeerTLSIdentity {
                     common_name: "client-ro".to_string(),
                     san_username: format!("user{}", j),
                     peer_addr: "127.0.0.1:0".to_string(),
@@ -262,7 +262,7 @@ fn very_long_common_names() {
 
     let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
-    let id = PeerIdentity {
+    let id = PeerTLSIdentity {
         common_name: "u".to_string(),
         san_username: long_username.clone(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -278,7 +278,7 @@ fn mixed_case_role_definitions() {
     let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     // Exact case match
-    let id = PeerIdentity {
+    let id = PeerTLSIdentity {
         common_name: "u".to_string(),
         san_username: "User".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),

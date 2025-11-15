@@ -70,7 +70,11 @@ mod hello_session_integration {
         );
 
         // Start server HelloActor
-        let _server_actor = crate::actor::start_hello_actor_with_session_manager(Box::new(server_transport), server_config, None);
+        let _server_actor = crate::actor::start_hello_actor_with_session_manager(
+            Box::new(server_transport),
+            server_config,
+            None,
+        );
 
         // Wait for handshake to complete and verify SessionManager was notified
         tokio::time::sleep(Duration::from_millis(1)).await;
@@ -93,14 +97,14 @@ mod hello_session_integration {
 
     #[actix::test]
     async fn test_tls_validation_rejects_mismatched_cn() {
-        use zznet_api::types::PeerIdentity;
+        use zznet_api::types::PeerTLSIdentity;
 
         // Create mock transports with TLS identity
         let (mut client_transport, server_transport) = create_mock_pair("test-tls-reject");
 
         // Configure client transport with TLS identity that DOES NOT match the HELLO role
         // The HELLO will say "collector" but the TLS CN will say "attacker"
-        client_transport = client_transport.with_peer_identity(Some(PeerIdentity {
+        client_transport = client_transport.with_peer_identity(Some(PeerTLSIdentity {
             common_name: "attacker".to_string(), // Mismatch!
             san_username: "attacker_user".to_string(),
             peer_addr: "192.168.1.100:12345".to_string(),
@@ -138,7 +142,11 @@ mod hello_session_integration {
         );
 
         // Start server HelloActor
-        let _server_actor = crate::actor::start_hello_actor_with_session_manager(Box::new(server_transport), server_config, None);
+        let _server_actor = crate::actor::start_hello_actor_with_session_manager(
+            Box::new(server_transport),
+            server_config,
+            None,
+        );
 
         // Wait for handshake attempt
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -155,7 +163,7 @@ mod hello_session_integration {
 
     #[actix::test]
     async fn test_tls_validation_accepts_matching_cn() {
-        use zznet_api::types::PeerIdentity;
+        use zznet_api::types::PeerTLSIdentity;
 
         // Create mock transports with TLS identity
         let (mut client_transport, mut server_transport) = create_mock_pair("test-tls-accept");
@@ -163,13 +171,13 @@ mod hello_session_integration {
         // Configure peer_identity for each transport:
         // - client_transport.peer_identity = what CLIENT sees (server's cert) = "database"
         // - server_transport.peer_identity = what SERVER sees (client's cert) = "collector"
-        client_transport = client_transport.with_peer_identity(Some(PeerIdentity {
+        client_transport = client_transport.with_peer_identity(Some(PeerTLSIdentity {
             common_name: "database".to_string(), // Server's cert as seen by client
             san_username: "database_user".to_string(),
             peer_addr: "192.168.1.101:12345".to_string(),
         }));
 
-        server_transport = server_transport.with_peer_identity(Some(PeerIdentity {
+        server_transport = server_transport.with_peer_identity(Some(PeerTLSIdentity {
             common_name: "collector".to_string(), // Client's cert as seen by server
             san_username: "collector_user".to_string(),
             peer_addr: "192.168.1.100:12345".to_string(),
@@ -207,7 +215,11 @@ mod hello_session_integration {
         );
 
         // Start server HelloActor
-        let _server_actor = crate::actor::start_hello_actor_with_session_manager(Box::new(server_transport), server_config, None);
+        let _server_actor = crate::actor::start_hello_actor_with_session_manager(
+            Box::new(server_transport),
+            server_config,
+            None,
+        );
 
         // Wait for handshake to complete
         tokio::time::sleep(Duration::from_millis(20)).await;

@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 use zznet_auth::acl::AclManager;
 use zznet_auth::role::ApplicationRole;
 
@@ -51,7 +51,7 @@ fn stress_large_acl_lookup() {
     let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     // Measure lookup time for a present and absent entry
-    let id_present = PeerIdentity {
+    let id_present = PeerTLSIdentity {
         common_name: "x".to_string(),
         san_username: "user9999".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -64,7 +64,7 @@ fn stress_large_acl_lookup() {
     // basic perf assertion: lookup should be fast
     assert!(dur.as_millis() < 50, "authorization too slow: {:?}", dur);
 
-    let id_absent = PeerIdentity {
+    let id_absent = PeerTLSIdentity {
         common_name: "client-ro".to_string(),
         san_username: "missing".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -80,17 +80,17 @@ fn test_high_connection_rate() {
     let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
     let identities = vec![
-        PeerIdentity {
+        PeerTLSIdentity {
             common_name: "x".to_string(),
             san_username: "root".to_string(),
             peer_addr: "127.0.0.1:8080".to_string(),
         },
-        PeerIdentity {
+        PeerTLSIdentity {
             common_name: "y".to_string(),
             san_username: "alice".to_string(),
             peer_addr: "127.0.0.1:8081".to_string(),
         },
-        PeerIdentity {
+        PeerTLSIdentity {
             common_name: "y".to_string(),
             san_username: "bob".to_string(),
             peer_addr: "127.0.0.1:8082".to_string(),
@@ -146,7 +146,7 @@ fn test_concurrent_acl_updates() {
                     let mut mgr = manager_clone.lock().unwrap();
                     mgr.allow_user(&user);
                     // Check it works
-                    let id = PeerIdentity {
+                    let id = PeerTLSIdentity {
                         common_name: "x".to_string(),
                         san_username: format!("user{}{}", i, j),
                         peer_addr: "127.0.0.1:0".to_string(),
@@ -166,7 +166,7 @@ fn test_concurrent_acl_updates() {
     }
 
     // Final state should be empty
-    let test_id = PeerIdentity {
+    let test_id = PeerTLSIdentity {
         common_name: "x".to_string(),
         san_username: "user00".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -181,7 +181,7 @@ fn test_long_running_connections() {
     allowed.insert("y".to_string());
     let manager: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
-    let id = PeerIdentity {
+    let id = PeerTLSIdentity {
         common_name: "y".to_string(),
         san_username: "root".to_string(),
         peer_addr: "127.0.0.1:8080".to_string(),
@@ -227,7 +227,7 @@ fn test_memory_usage_large_acl() {
     }
 
     // Verify lookups still work
-    let id = PeerIdentity {
+    let id = PeerTLSIdentity {
         common_name: "x".to_string(),
         san_username: "user999".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -240,7 +240,7 @@ fn test_memory_usage_large_acl() {
     }
 
     // Verify removals
-    let removed_id = PeerIdentity {
+    let removed_id = PeerTLSIdentity {
         common_name: "x".to_string(),
         san_username: "user550".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -263,7 +263,7 @@ fn test_acl_modification_race_conditions() {
                     let mut mgr = manager_clone.lock().unwrap();
                     mgr.allow_user(&user);
 
-                    let id = PeerIdentity {
+                    let id = PeerTLSIdentity {
                         common_name: "y".to_string(),
                         san_username: format!("race{}", i),
                         peer_addr: "127.0.0.1:0".to_string(),

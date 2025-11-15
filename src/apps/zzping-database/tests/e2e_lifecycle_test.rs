@@ -44,7 +44,7 @@ use zzping_database::service::DatabaseService;
 #[allow(unused_imports)]
 use zznet_api::mock::create_mock_pair;
 #[allow(unused_imports)]
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 #[allow(unused_imports)]
 use zznet_hello::connection_manager::HandleTransport;
 
@@ -63,13 +63,13 @@ fn create_e2e_mock_pair(
 
     // Patch the peer identities to have valid roles
     // Both connections present as "collector" (the role that connects to database)
-    let conn_a = conn_a.with_peer_identity(Some(PeerIdentity {
+    let conn_a = conn_a.with_peer_identity(Some(PeerTLSIdentity {
         common_name: "collector".to_string(),
         san_username: format!("{}_collector_1", base_id),
         peer_addr: format!("mock:{}_collector_1", base_id),
     }));
 
-    let conn_b = conn_b.with_peer_identity(Some(PeerIdentity {
+    let conn_b = conn_b.with_peer_identity(Some(PeerTLSIdentity {
         common_name: "collector".to_string(),
         san_username: format!("{}_collector_2", base_id),
         peer_addr: format!("mock:{}_collector_2", base_id),

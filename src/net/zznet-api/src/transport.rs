@@ -92,7 +92,7 @@ pub trait TransportConnection: Send {
     /// The HELLO protocol provides role claims for both TLS and TCP modes.
     /// - For TLS: Use this identity to validate the HELLO role claim
     /// - For TCP: No identity to validate against (insecure mode required)
-    fn peer_identity(&self) -> Option<crate::types::PeerIdentity>;
+    fn peer_tls_identity(&self) -> Option<crate::types::PeerTLSIdentity>;
 }
 
 /// A transport server that accepts incoming connections.

@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 use zznet_auth::acl::AclManager;
 use zznet_auth::role::ApplicationRole;
 
@@ -44,7 +44,7 @@ fn generic_acl_allows_role_only_entries() {
 
     let acl: AclManager<MockRole> = AclManager::with_allowed_peers(allowed);
 
-    let identity = PeerIdentity {
+    let identity = PeerTLSIdentity {
         common_name: "foo".to_string(),
         san_username: "root".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),

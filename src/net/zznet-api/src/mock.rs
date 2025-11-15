@@ -20,7 +20,7 @@
 
 use crate::error::TransportError;
 use crate::transport::{TransportClient, TransportConnection, TransportServer};
-use crate::types::PeerIdentity;
+use crate::types::PeerTLSIdentity;
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::sync::Arc;
@@ -51,7 +51,7 @@ pub struct MockConnection {
     /// Optional error to inject on next operation.
     inject_error: Arc<Mutex<Option<TransportError>>>,
     /// The peer identity for this connection (None for plain TCP, Some for TLS).
-    peer_identity: Option<PeerIdentity>,
+    peer_identity: Option<PeerTLSIdentity>,
 }
 
 impl MockConnection {
@@ -90,7 +90,7 @@ impl MockConnection {
     ///
     /// This allows tests to configure specific identities for ACL testing.
     /// By default, mock connections may have None (plain TCP) or Some identity (TLS).
-    pub fn with_peer_identity(mut self, identity: Option<PeerIdentity>) -> Self {
+    pub fn with_peer_identity(mut self, identity: Option<PeerTLSIdentity>) -> Self {
         self.peer_identity = identity;
         self
     }
@@ -134,7 +134,7 @@ impl TransportConnection for MockConnection {
         Some(format!("mock:{}", self.peer_id))
     }
 
-    fn peer_identity(&self) -> Option<PeerIdentity> {
+    fn peer_tls_identity(&self) -> Option<PeerTLSIdentity> {
         self.peer_identity.clone()
     }
 }

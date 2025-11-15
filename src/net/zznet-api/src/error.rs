@@ -40,13 +40,6 @@ pub enum TransportError {
         limit: usize,
     },
 
-    /// An error occurred during serialization or deserialization.
-    ///
-    /// This should be rare since serialization happens at a higher layer,
-    /// but can occur if frame headers are malformed.
-    #[error("Serialization error: {0}")]
-    SerializationError(String),
-
     /// The transport is in an invalid state for the requested operation.
     ///
     /// For example, trying to send on a closed connection or accept on a

@@ -13,7 +13,7 @@
 /// - Subject Alternative Name (SAN): first DNS entry represents username ("root" for services, actual username for users)
 /// - Peer Address: network address for logging and debugging
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PeerIdentity {
+pub struct PeerTLSIdentity {
     /// The common name from the certificate (represents role).
     pub common_name: String,
     /// The first DNS entry from SAN (username or "root" for services).
@@ -39,7 +39,7 @@ pub struct Permission {
     /// Unique identifier for the peer.
     pub peer_id: PeerId,
     /// Summary of peer identity (role and username).
-    pub identity: PeerIdentity,
+    pub identity: PeerTLSIdentity,
     /// Precomputed capability flags (e.g., can_read, can_write, is_admin).
     /// Components define their own flag meanings.
     pub capabilities: u32,
@@ -77,7 +77,7 @@ impl From<String> for Role {
     }
 }
 
-impl PeerIdentity {
+impl PeerTLSIdentity {
     /// Returns true if this identity represents a service (not a user).
     ///
     /// Services have "root" as their SAN username.
@@ -269,7 +269,7 @@ pub struct AuthContext {
     /// Role string from HELLO message - PRIMARY source of identity
     pub hello_role_str: String,
     /// Optional TLS peer identity for validation (None for plain TCP)
-    pub peer_identity: Option<PeerIdentity>,
+    pub peer_identity: Option<PeerTLSIdentity>,
 }
 
 /// Framework-level peer lifecycle events published by the control plane.
@@ -310,7 +310,7 @@ pub enum PeerLifecycleEvent {
         /// Identifier of the peer whose identity changed.
         peer_id: PeerId,
         /// The refreshed identity information for the peer.
-        identity: PeerIdentity,
+        identity: PeerTLSIdentity,
     },
 }
 
@@ -330,7 +330,7 @@ pub trait PeerStateView: Send + Sync {
     fn role(&self) -> Option<&Role>;
 
     /// Authenticated identity, if TLS validation completed.
-    fn identity(&self) -> Option<&PeerIdentity>;
+    fn identity(&self) -> Option<&PeerTLSIdentity>;
 }
 
 /// Mutable access to control-plane state for a peer.
@@ -342,7 +342,7 @@ pub trait PeerStateMut: PeerStateView {
     fn set_role(&mut self, role: Option<Role>);
 
     /// Update the authenticated identity (or clear when unknown).
-    fn set_identity(&mut self, identity: Option<PeerIdentity>);
+    fn set_identity(&mut self, identity: Option<PeerTLSIdentity>);
 }
 
 #[cfg(test)]
@@ -353,14 +353,14 @@ mod tests {
 
     #[test]
     fn test_peer_identity_is_service() {
-        let service = PeerIdentity {
+        let service = PeerTLSIdentity {
             common_name: "collector".to_string(),
             san_username: "root".to_string(),
             peer_addr: "192.168.1.100:5555".to_string(),
         };
         assert!(service.is_service());
 
-        let user = PeerIdentity {
+        let user = PeerTLSIdentity {
             common_name: "client-admin".to_string(),
             san_username: "alice".to_string(),
             peer_addr: "192.168.1.101:5556".to_string(),
@@ -370,14 +370,14 @@ mod tests {
 
     #[test]
     fn test_peer_identity_full_identity() {
-        let service = PeerIdentity {
+        let service = PeerTLSIdentity {
             common_name: "collector".to_string(),
             san_username: "root".to_string(),
             peer_addr: "192.168.1.100:5555".to_string(),
         };
         assert_eq!(service.full_identity(), "collector");
 
-        let user = PeerIdentity {
+        let user = PeerTLSIdentity {
             common_name: "client-admin".to_string(),
             san_username: "alice".to_string(),
             peer_addr: "192.168.1.101:5556".to_string(),

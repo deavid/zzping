@@ -2,7 +2,7 @@
 //!
 //! These are small, focused tests that exercise the ACL manager and
 //! configuration helpers.
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 use zznet_auth::{acl::AclManager, config::AclConfig};
 use zzping_auth::AuthRole;
 
@@ -20,7 +20,7 @@ fn moved_test_acl_config_to_manager() {
     let manager: AclManagerDefault =
         AclManagerDefault::with_allowed_peers(config.allowed_peers.into_iter().collect());
 
-    let collector_identity = PeerIdentity {
+    let collector_identity = PeerTLSIdentity {
         common_name: "collector".to_string(),
         san_username: "root".to_string(),
         peer_addr: "127.0.0.1:8080".to_string(),

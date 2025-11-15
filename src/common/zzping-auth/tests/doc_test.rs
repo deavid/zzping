@@ -1,7 +1,7 @@
 //! Moved documentation tests for ZZPing-specific AuthRole.
 //!
 use std::collections::HashSet;
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 use zzping_auth::AclManagerDefault;
 
 /// Basic ACL example moved from generic crate.
@@ -13,19 +13,19 @@ fn example_basic_acl_moved() {
 
     let acl: AclManagerDefault = AclManagerDefault::with_allowed_peers(allowed);
 
-    let admin_user = PeerIdentity {
+    let admin_user = PeerTLSIdentity {
         common_name: "client-admin".to_string(),
         san_username: "alice".to_string(),
         peer_addr: "127.0.0.1:8080".to_string(),
     };
 
-    let collector = PeerIdentity {
+    let collector = PeerTLSIdentity {
         common_name: "collector".to_string(),
         san_username: "root".to_string(),
         peer_addr: "127.0.0.1:8081".to_string(),
     };
 
-    let unauthorized = PeerIdentity {
+    let unauthorized = PeerTLSIdentity {
         common_name: "client-ro".to_string(),
         san_username: "bob".to_string(),
         peer_addr: "127.0.0.1:8082".to_string(),

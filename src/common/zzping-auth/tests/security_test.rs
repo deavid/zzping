@@ -1,7 +1,7 @@
 //! Security tests moved into application crate.
 //!
 use std::collections::HashSet;
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 use zzping_auth::{AclManagerDefault, config::AclConfig};
 
 #[test]
@@ -10,7 +10,7 @@ fn reject_missing_cn_or_san_moved() {
     assert!(cfg.validate().is_err());
 
     let manager = AclManagerDefault::new();
-    let id = PeerIdentity {
+    let id = PeerTLSIdentity {
         common_name: "client-ro".to_string(),
         san_username: "eve".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -24,7 +24,7 @@ fn acl_denies_when_not_listed_moved() {
     allowed.insert("collector".to_string());
     let manager = AclManagerDefault::with_allowed_peers(allowed);
 
-    let id = PeerIdentity {
+    let id = PeerTLSIdentity {
         common_name: "client-admin".to_string(),
         san_username: "mallory".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),

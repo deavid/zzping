@@ -1,7 +1,7 @@
 //! Edge-case tests moved to application crate.
 //!
 use std::collections::HashSet;
-use zznet_api::types::PeerIdentity;
+use zznet_api::types::PeerTLSIdentity;
 use zzping_auth::AclManagerDefault;
 
 #[test]
@@ -11,7 +11,7 @@ fn unicode_username_and_long_username_moved() {
 
     let manager = AclManagerDefault::with_allowed_peers(allowed);
 
-    let id = PeerIdentity {
+    let id = PeerTLSIdentity {
         common_name: "client-ro".to_string(),
         san_username: "josé".to_string(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -21,7 +21,7 @@ fn unicode_username_and_long_username_moved() {
     let long = "a".repeat(300);
     let mut mgr2 = AclManagerDefault::new();
     mgr2.allow_user(&format!("{}@client-ro", &long));
-    let id2 = PeerIdentity {
+    let id2 = PeerTLSIdentity {
         common_name: "client-ro".to_string(),
         san_username: long.clone(),
         peer_addr: "127.0.0.1:0".to_string(),
@@ -47,7 +47,7 @@ fn special_characters_in_usernames_moved() {
     ];
 
     for (username, cn) in test_cases {
-        let id = PeerIdentity {
+        let id = PeerTLSIdentity {
             common_name: cn.to_string(),
             san_username: username.to_string(),
             peer_addr: "127.0.0.1:0".to_string(),

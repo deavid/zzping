@@ -126,7 +126,7 @@ pub struct HelloActor {
     peer_role: Option<String>,
     /// TLS peer identity from transport (None for plain TCP).
     /// Used to validate that HELLO role matches certificate CN when TLS is enabled.
-    tls_peer_identity: Option<zznet_api::types::PeerIdentity>,
+    tls_peer_identity: Option<zznet_api::types::PeerTLSIdentity>,
     /// Sender to I/O task for outbound frames.
     io_tx: mpsc::UnboundedSender<Bytes>,
     /// Optional SessionManager recipient (for integration with higher layer). - FIXME: Why is this optional? it doesn't make sense
@@ -141,7 +141,7 @@ impl HelloActor {
     /// This is private - use `start_hello_actor()` to properly create and start the actor.
     fn new(
         config: HelloConfig,
-        tls_peer_identity: Option<zznet_api::types::PeerIdentity>,
+        tls_peer_identity: Option<zznet_api::types::PeerTLSIdentity>,
         io_tx: mpsc::UnboundedSender<Bytes>,
     ) -> Self {
         Self {
@@ -555,14 +555,14 @@ pub fn start_hello_actor_with_session_manager(
     let (io_tx, io_rx) = mpsc::unbounded_channel();
 
     // Extract TLS peer identity from transport (if available)
-    let tls_peer_identity = transport.peer_identity();
+    let tls_peer_identity = transport.peer_tls_identity();
     if let Some(ref identity) = tls_peer_identity {
         debug!(
             "TLS connection detected: CN='{}', SAN='{}', addr='{}'",
             identity.common_name, identity.san_username, identity.peer_addr
         );
     } else {
-        debug!("Plain TCP connection detected (no TLS identity)");
+        debug!("Connection with no TLS identity");
     }
 
     let mut actor = HelloActor::new(config, tls_peer_identity, io_tx);
