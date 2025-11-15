@@ -1,14 +1,10 @@
-//! ConnectionManager Actor - Coordinates HelloActors and SessionManager
+//! Manages the lifecycle of `HelloActor`s and authorizes incoming connections.
 //!
-//! This actor sits between the transport layer and the session layer:
-//! - Spawns HelloActor for each new connection
-//! - Receives HandshakeComplete notifications from HelloActors
-//! - Registers peer state and channel sets with the session layer
-//! - Routes messages between HelloActors and application components
-//! - Wires registered room handlers for new peers
+//! This actor is the bridge between the transport layer and the session layer.
+//! It spawns a `HelloActor` for each new connection, receives `HandshakeComplete`
+//! notifications, and then wires the authenticated peer into the `RouterActor`.
 
 use crate::actor::{HelloActor, HelloConfig, start_hello_actor_with_session_manager};
-use crate::messages::GetRole;
 use crate::session_bridge::SessionBridge;
 use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
@@ -17,42 +13,25 @@ use zznet_api::transport::TransportConnection;
 use zznet_api::types::{PeerId, Role, RoomId};
 use zznet_router::RouterActor;
 
-// Authorizer type removed - authorization is represented by a set of allowed Roles
-
-/// ConnectionManager coordinates HelloActors and PeerManager
+/// Coordinates `HelloActor`s and authorizes peers.
 ///
-/// SECURITY: ConnectionManager REQUIRES an authorizer function.
-/// There is no code path that allows connections without authorization.
-/// Every peer must be explicitly authorized before gaining access.
-///
-/// Generic over TRole: the application's role type
+/// A `ConnectionManager` is required for any service that accepts inbound
+/// connections. It ensures that every peer is authenticated and authorized
+/// before being passed to the `RouterActor`.
 pub struct ConnectionManager {
-    /// RouterActor address for data-plane operations
-    ///
-    /// DESIGN: RouterActor handles peer channels and message routing
-    /// - ConnectionManager sends OnPeerConnected directly to RouterActor after HELLO handshake completes
-    /// - RouterActor manages peer sessions and routing
+    /// The `RouterActor` for the data plane.
     router_actor: Addr<RouterActor>,
 
-    /// Maps PeerId to HelloActor address
-    /// Used to send InboundRoomMessage to the correct HelloActor
+    /// A map of `PeerId` to `HelloActor` address.
     hello_actors: HashMap<PeerId, Addr<HelloActor>>,
-    /// Set of allowed canonical `Role`s for this ConnectionManager.
-    /// Connections will only be accepted when the HELLO role string maps to
-    /// a `Role` that appears in this set.
+    /// The role of this service.
     pub our_role: String,
+    /// The set of roles this service is allowed to connect with.
     allowed_roles: HashSet<Role>,
 }
 
 impl ConnectionManager {
-    /// Create a new ConnectionManager with RouterActor.
-    ///
-    /// SECURITY: A set of allowed roles is REQUIRED. There is no code path that
-    /// allows connections without explicit allowed roles.
-    ///
-    /// # Arguments
-    /// - `router_actor`: RouterActor address for data-plane operations
-    /// - `allowed_roles`: set of canonical `zznet_api::types::Role` strings that are permitted
+    /// Creates a new `ConnectionManager`.
     pub fn new(
         router_actor: Addr<RouterActor>,
         our_role: String,
@@ -66,12 +45,8 @@ impl ConnectionManager {
         }
     }
 
-    /// Spawn a new HelloActor for an incoming/outgoing connection
-    ///
-    /// `peer_id`: Identifier for this peer
-    /// `transport`: The transport for this connection
-    /// `config`: HelloConfig for this connection
-    pub fn spawn_hello_actor(
+    /// Spawns a `HelloActor` for a new connection.
+    pub(crate) fn spawn_hello_actor(
         &mut self,
         peer_id: PeerId,
         transport: Box<dyn TransportConnection>,
@@ -94,13 +69,13 @@ impl Actor for ConnectionManager {
     type Context = Context<Self>;
 }
 
-/// Message for handing a transport connection to the ConnectionManager.
+/// Handles a new transport connection.
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct HandleTransport {
-    /// The transport connection to manage (boxed trait object).
+    /// The transport connection to manage.
     pub transport: Box<dyn zznet_api::transport::TransportConnection>,
-    /// HelloActor configuration for this connection.
+    /// The `HelloActor` configuration for this connection.
     pub config: crate::actor::HelloConfig,
 }
 
@@ -121,10 +96,11 @@ impl Handler<HandleTransport> for ConnectionManager {
     }
 }
 
-/// Handler for HandshakeComplete - Called when HelloActor completes handshake
+/// Authorizes a peer after a successful handshake.
 ///
-/// SECURITY: Every connection goes through the mandatory authorizer.
-/// No code path allows unauthenticated connections.
+/// This handler is critical for security. It verifies the peer's role against
+/// the `allowed_roles` set. If the role is not permitted, the connection is
+/// immediately terminated.
 impl Handler<HandshakeComplete> for ConnectionManager {
     type Result = ();
 
@@ -137,8 +113,7 @@ impl Handler<HandshakeComplete> for ConnectionManager {
             msg.active_rooms
         );
 
-        // SECURITY: Authorizer is MANDATORY.
-        // HELLO role is the PRIMARY source (no TLS validation needed).
+        // SECURITY: The HELLO role is the primary source of identity.
         let role = Role::new(&msg.peer_role_str);
 
         // Check if role is allowed
@@ -236,14 +211,6 @@ impl Handler<HandshakeComplete> for ConnectionManager {
 
             tracing::info!("Connected to peer {} as {:?}", peer_id, role);
         });
-    }
-}
-
-impl Handler<GetRole> for ConnectionManager {
-    type Result = String;
-
-    fn handle(&mut self, _msg: GetRole, _ctx: &mut Context<Self>) -> Self::Result {
-        self.our_role.clone()
     }
 }
 

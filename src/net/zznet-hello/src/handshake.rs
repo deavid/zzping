@@ -1,62 +1,57 @@
-//! Pure state machine logic for the HELLO protocol handshake.
+//! Implements the HELLO protocol handshake as a pure state machine.
 //!
-//! This module implements a symmetric handshake where either peer can initiate.
-//! The state machine is deliberately isolated from I/O and actor concerns,
-//! making it easy to unit test.
+//! This module is isolated from I/O and actor concerns, making it easy to
+//! unit test the handshake logic. The handshake is symmetric, allowing either
+//! peer to initiate.
 //!
-//! Handshake sequence:
-//! 1. Initiator sends HELLO (version, role, offered rooms)
-//! 2. Responder sends HELLO (version, role, offered rooms)
-//! 3. Both sides compute intersection of offered rooms
-//! 4. Both sides filter by authorization (role can access room)
-//! 5. Handshake complete with active rooms
-//!
-//! Note: The current implementation is simplified compared to the full OFFER/ACK
-//! sequence described in the protocol module. This matches the existing working
-//! implementation from zznet-connection.
+//! The sequence is:
+//! 1. Both peers send a `HELLO` frame with their version, role, and hostname.
+//! 2. Both peers send an `OFFER` frame with the rooms they wish to use.
+//! 3. Both sides compute the intersection of offered rooms to determine the
+//!    set of `active_rooms` for the session.
 
 use crate::error::HelloError;
 use crate::protocol::{Frame, HandshakeFrame};
 
-/// Current state of the handshake process.
+/// The current state of the handshake process.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HandshakeState {
-    /// Initial state - no messages sent or received yet.
+pub(crate) enum HandshakeState {
+    /// The initial state before any messages are sent or received.
     Start,
 
-    /// We sent HELLO, waiting for peer's HELLO.
+    /// State after sending our `HELLO` frame, while waiting for the peer's `HELLO` and `OFFER`.
     SentHello {
-        /// Rooms we offered to the peer.
+        /// The rooms we offered to the peer.
         our_offered_rooms: Vec<String>,
     },
 
-    /// Handshake completed successfully.
+    /// The handshake has completed successfully.
     Complete {
-        /// Negotiated rooms both peers will use.
+        /// The set of rooms negotiated for the session.
         active_rooms: Vec<String>,
     },
 
-    /// Handshake failed.
+    /// The handshake has failed.
     Failed(String),
 }
 
-/// State machine for the HELLO handshake protocol.
+/// A pure state machine for the HELLO handshake protocol.
 ///
-/// This is a pure state machine with no I/O. Call methods to transition
-/// between states and generate frames to send.
+/// This struct manages state transitions based on method calls and incoming frames,
+/// generating outgoing frames as needed. It does not perform any I/O.
 #[derive(Debug, Clone)]
-pub struct Handshake {
+pub(crate) struct Handshake {
     state: HandshakeState,
     protocol_version: String,
     peer_hostname: Option<String>,
 }
 
 impl Handshake {
-    /// Protocol version constant.
-    pub const PROTOCOL_VERSION: &'static str = "1.0";
+    /// The protocol version used for the handshake.
+    pub(crate) const PROTOCOL_VERSION: &'static str = "1.0";
 
-    /// Create a new handshake in the Start state.
-    pub fn new() -> Self {
+    /// Creates a new `Handshake` in the `Start` state.
+    pub(crate) fn new() -> Self {
         Self {
             state: HandshakeState::Start,
             protocol_version: Self::PROTOCOL_VERSION.to_string(),
@@ -64,29 +59,27 @@ impl Handshake {
         }
     }
 
-    /// Check if handshake has completed successfully.
-    pub fn is_complete(&self) -> bool {
+    /// Returns `true` if the handshake has completed successfully.
+    pub(crate) fn is_complete(&self) -> bool {
         matches!(self.state, HandshakeState::Complete { .. })
     }
 
-    /// Get the list of active rooms if handshake is complete.
-    pub fn active_rooms(&self) -> Option<&[String]> {
+    /// Returns the list of active rooms if the handshake is complete.
+    pub(crate) fn active_rooms(&self) -> Option<&[String]> {
         match &self.state {
             HandshakeState::Complete { active_rooms } => Some(active_rooms),
             _ => None,
         }
     }
 
-    /// Get the peer hostname if available.
-    pub fn peer_hostname(&self) -> Option<&str> {
+    /// Returns the peer's hostname if the `HELLO` frame has been processed.
+    pub(crate) fn peer_hostname(&self) -> Option<&str> {
         self.peer_hostname.as_deref()
     }
 
-    /// Create the initial HELLO frame to send to peer.
-    ///
-    /// Transitions from Start → SentHello.
-    /// Returns the serialized frame ready to send.
-    pub fn create_hello_frame(
+    /// Creates the initial `HELLO` frame to be sent to the peer.
+    /// This transitions the state from `Start` to `SentHello`.
+    pub(crate) fn create_hello_frame(
         &mut self,
         role_str: String,
         offered_rooms: Vec<String>,
@@ -100,13 +93,11 @@ impl Handshake {
                     hostname,
                 });
 
-                let serialized = frame.serialize()?;
-
                 self.state = HandshakeState::SentHello {
                     our_offered_rooms: offered_rooms,
                 };
 
-                Ok(serialized)
+                Ok(frame.serialize()?)
             }
             _ => Err(HelloError::InvalidState(format!(
                 "Cannot create HELLO from state {:?}",
@@ -115,9 +106,8 @@ impl Handshake {
         }
     }
 
-    /// Create an OFFER frame using the rooms we previously offered in create_hello_frame.
-    /// Returns serialized OFFER frame bytes.
-    pub fn create_offer_frame(&mut self) -> Result<Vec<u8>, HelloError> {
+    /// Creates the `OFFER` frame containing the rooms we wish to use.
+    pub(crate) fn create_offer_frame(&mut self) -> Result<Vec<u8>, HelloError> {
         match &self.state {
             HandshakeState::SentHello { our_offered_rooms } => {
                 let frame = Frame::Handshake(HandshakeFrame::Offer {
@@ -132,11 +122,11 @@ impl Handshake {
         }
     }
 
-    /// Process an incoming frame from the peer.
-    ///
-    /// This drives the state machine forward. May return a frame to send in response.
-    /// Currently implements simplified handshake (HELLO only, no OFFER/ACK).
-    pub fn process_frame(&mut self, frame_data: &[u8]) -> Result<Option<Vec<u8>>, HelloError> {
+    /// Processes an incoming frame from the peer to drive the state machine forward.
+    pub(crate) fn process_frame(
+        &mut self,
+        frame_data: &[u8],
+    ) -> Result<Option<Vec<u8>>, HelloError> {
         let frame = Frame::deserialize(frame_data)?;
 
         match frame {
@@ -171,9 +161,8 @@ impl Handshake {
         _peer_role_str: String,
         peer_hostname: String,
     ) -> Result<Option<Vec<u8>>, HelloError> {
-        // Store the peer hostname
         self.peer_hostname = Some(peer_hostname);
-        // Validate protocol version
+
         if peer_version != self.protocol_version {
             let error_frame = Frame::Handshake(HandshakeFrame::Error {
                 message: format!(
@@ -187,8 +176,8 @@ impl Handshake {
 
         match &self.state {
             HandshakeState::Start => {
-                // Peer sent HELLO before we did - this is an error in our simplified protocol.
-                // In a real implementation, we'd reply with our HELLO.
+                // This indicates the peer sent HELLO before we did. In our simplified
+                // symmetric protocol, this is an error because we expect to initiate.
                 self.state =
                     HandshakeState::Failed("Received HELLO before sending ours".to_string());
                 Err(HelloError::InvalidState(
@@ -196,14 +185,11 @@ impl Handshake {
                 ))
             }
             HandshakeState::SentHello { .. } => {
-                // This is the expected case - we sent HELLO, now got peer's HELLO.
-                // We stay in SentHello state and wait for OFFER frames.
-                // The peer will also need to send OFFER with their rooms.
-
+                // We sent HELLO, and now we've received the peer's HELLO.
+                // The state remains `SentHello` as we wait for the `OFFER` frame.
                 Ok(None)
             }
             HandshakeState::Complete { .. } => {
-                // Already complete, ignore duplicate HELLO
                 tracing::warn!("Received duplicate HELLO frame, ignoring");
                 Ok(None)
             }
@@ -216,7 +202,6 @@ impl Handshake {
     fn process_offer(&mut self, peer_rooms: Vec<String>) -> Result<Option<Vec<u8>>, HelloError> {
         match &self.state {
             HandshakeState::SentHello { our_offered_rooms } => {
-                // Compute intersection of offered rooms
                 let intersection: Vec<String> = our_offered_rooms
                     .iter()
                     .filter(|room| peer_rooms.contains(room))
@@ -229,12 +214,10 @@ impl Handshake {
                     return Err(HelloError::HandshakeFailed("No common rooms".to_string()));
                 }
 
-                // Complete handshake with agreed rooms
                 self.state = HandshakeState::Complete {
-                    active_rooms: intersection.clone(),
+                    active_rooms: intersection,
                 };
 
-                // Handshake is complete, no response needed from here
                 Ok(None)
             }
             _ => Err(HelloError::InvalidState(format!(

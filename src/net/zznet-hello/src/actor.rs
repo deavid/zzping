@@ -1,23 +1,8 @@
-//! HelloActor: Production-quality actor bridging transport to session management.
+//! Implements the HELLO protocol, bridging a transport connection to the session layer.
 //!
-//! This implements the complete HELLO protocol handler using an actor + background task pattern:
-//! - Spawns a tokio task to handle transport I/O
-//! - Executes handshake state machine in actor context
-//! - Routes messages between transport and SessionManager
-//! - Handles errors, timeouts, and graceful shutdown
-//!
-//! ## Architecture
-//!
-//! ```text
-//! HelloActor (actix)
-//!   ├─> I/O Task (tokio) ─> TransportConnection
-//!   │    ├─ recv() loop
-//!   │    └─ send() on demand
-//!   └─> SessionManager (actix)
-//! ```
-//!
-//! The I/O task and actor communicate via tokio mpsc channels, avoiding
-//! borrow checker issues with async trait objects.
+//! The `HelloActor` spawns a dedicated Tokio task for transport I/O,
+//! communicating with it via MPSC channels. This isolates blocking I/O from
+//! the actor's single-threaded context.
 
 use actix::prelude::*;
 use bytes::Bytes;
@@ -28,25 +13,22 @@ use tracing::{debug, error, info, trace, warn};
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportConnection;
 
-// HelloActor must be application-agnostic at protocol level. Store our role as a
-// role identifier string; the application is responsible for converting its
-// concrete role enum to/from this string.
+// The HELLO protocol is application-agnostic; it uses a role string, not a concrete enum.
 use crate::error::HelloError;
 use crate::handshake::Handshake;
 use crate::protocol::{Frame, HandshakeFrame, RoomFrame};
 use crate::session_messages::HandshakeComplete;
-// No direct dependency on application role enums here; protocol-level code uses raw role strings.
 
-/// Configuration for HelloActor.
+/// Configures a `HelloActor`.
 #[derive(Debug, Clone)]
 pub struct HelloConfig {
-    /// Our authentication role.
+    /// This service's role.
     pub our_role: String,
-    /// Rooms we want to offer to the peer.
+    /// Rooms this service offers to peers.
     pub offered_rooms: Vec<String>,
-    /// Timeout for handshake completion.
+    /// Handshake timeout.
     pub handshake_timeout: Duration,
-    /// Our hostname/identifier.
+    /// This service's hostname.
     pub hostname: String,
 }
 
@@ -61,65 +43,65 @@ impl Default for HelloConfig {
     }
 }
 
-/// Current state of the HelloActor.
+/// `HelloActor` state.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ActorState {
-    /// Performing handshake.
+pub(crate) enum ActorState {
+    /// Handshaking with peer.
     Handshaking,
-    /// Handshake complete, ready for room communication.
+    /// Ready for room communication.
     Ready,
-    /// Connection failed or closed.
+    /// Terminal state after failure or closure.
     Failed,
 }
 
-/// Internal message: Frame received from transport.
+/// A frame received from the transport.
 #[derive(Message)]
 #[rtype(result = "()")]
 struct ReceivedFrame {
     data: Vec<u8>,
 }
 
-/// Internal message: I/O task encountered an error.
+/// An error from the I/O task.
 #[derive(Message)]
 #[rtype(result = "()")]
 struct IoError {
     error: HelloError,
 }
 
-/// Message to send data through this connection.
+/// Sends a message to a room via this connection.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "Result<(), HelloError>")]
-pub struct SendMessage {
-    /// Source room name.
+pub(crate) struct SendMessage {
+    /// The source room.
     pub from_room: String,
-    /// Destination room name.
+    /// The destination room.
     pub to_room: String,
-    /// Serialized message payload.
+    /// The message payload.
     pub payload: Vec<u8>,
 }
 
-/// Message to gracefully disconnect.
+/// Requests a graceful disconnect.
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct Disconnect;
+pub(crate) struct Disconnect;
 
-/// Message to set the inbound channel for forwarding received messages to SessionManager.
+/// Provides the channel for forwarding inbound room messages.
 #[derive(Message)]
 #[rtype(result = "()")]
-pub struct SetInboundChannel {
-    /// Channel to send inbound messages to ConnectionManager (which will deserialize).
+pub(crate) struct SetInboundChannel {
+    /// Channel for forwarding inbound room messages.
     pub tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
 }
 
-/// Production-quality actor managing a connection through HELLO protocol.
-pub struct HelloActor {
-    /// Configuration for this connection.
+/// Manages a connection's lifecycle using the HELLO protocol.
+pub(crate) struct HelloActor {
+    /// Connection configuration.
     config: HelloConfig,
-    /// Handshake state machine.
+    /// The HELLO protocol state machine.
     handshake: Handshake,
-    /// Current actor state.
+    /// The actor's current state.
     state: ActorState,
-    /// Active rooms negotiated during handshake.
+    /// Rooms negotiated during handshake.
     active_rooms: Vec<String>,
     // FIXME: peer_role MUST NOT be an Option<T>, it is mandatory.
     /// Peer's role string received during handshake.
@@ -136,8 +118,6 @@ pub struct HelloActor {
 }
 
 impl HelloActor {
-    /// Create a new HelloActor.
-    ///
     /// This is private - use `start_hello_actor()` to properly create and start the actor.
     fn new(
         config: HelloConfig,
@@ -157,15 +137,13 @@ impl HelloActor {
         }
     }
 
-    /// Set the SessionManager recipient for this actor.
-    ///
-    /// This should be called after creating the actor but before starting handshake.
-    pub fn with_session_manager(mut self, recipient: Recipient<HandshakeComplete>) -> Self {
+    /// Sets the recipient for the `HandshakeComplete` message.
+    pub(crate) fn with_session_manager(mut self, recipient: Recipient<HandshakeComplete>) -> Self {
         self.session_manager = Some(recipient);
         self
     }
 
-    /// Start the handshake process by sending HELLO and OFFER frames.
+    /// Sends HELLO and OFFER frames to initiate the handshake.
     fn start_handshake(&mut self, ctx: &mut Context<Self>) {
         debug!(
             "Starting HELLO handshake, role={}, rooms={:?}",
@@ -210,16 +188,16 @@ impl HelloActor {
         }
     }
 
-    /// Send a frame to the I/O task for transmission.
+    /// Sends a raw frame to the I/O task.
     fn send_frame_to_io(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
         if let Err(e) = self.io_tx.send(Bytes::from(data)) {
-            error!("Failed to send frame to I/O task: {}", e);
+            error!("I/O channel closed: {}", e);
             // FIXME: Actor must call ctx.stop() inside send_frame_to_io on failure.
             ctx.stop();
         }
     }
 
-    /// Handle a received frame based on current state.
+    /// Routes a received frame based on the current actor state.
     fn handle_received_frame(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
         match self.state {
             ActorState::Handshaking => {
@@ -234,7 +212,7 @@ impl HelloActor {
         }
     }
 
-    /// Handle a frame during handshake phase.
+    /// Processes a frame during the `Handshaking` state.
     fn handle_handshake_frame(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
         // First, try to extract peer role string if this is a HELLO frame
         if let Ok(Frame::Handshake(HandshakeFrame::Hello { role_str, .. })) =
@@ -266,7 +244,7 @@ impl HelloActor {
         }
     }
 
-    /// Complete the handshake and transition to Ready state.
+    /// Transitions to `Ready` state and notifies the `SessionManager`.
     // TODO: Add a test case that uses a TLS-enabled transport to cover certificate validation logic in `complete_handshake`.
     fn complete_handshake(&mut self, ctx: &mut Context<Self>) {
         if let Some(rooms) = self.handshake.active_rooms() {
@@ -331,7 +309,7 @@ impl HelloActor {
         }
     }
 
-    /// Handle a room frame (after handshake complete).
+    /// Processes a frame during the `Ready` state.
     fn handle_room_frame(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
         match Frame::deserialize(&data) {
             Ok(Frame::Room(room_frame)) => {
@@ -373,7 +351,7 @@ impl HelloActor {
         }
     }
 
-    /// Handle an error by transitioning to Failed state and stopping.
+    /// Logs an error, sends an error frame to the peer, and stops the actor.
     // TODO (Architectural Review): Is sending an Error frame necessary? This adds complexity. Consider simplifying to just log and stop.
     fn handle_error(&mut self, error: HelloError, ctx: &mut Context<Self>) {
         error!("HelloActor fatal error: {}", error);
@@ -394,7 +372,7 @@ impl HelloActor {
         });
     }
 
-    /// Spawn the I/O task that handles transport operations.
+    /// Spawns the I/O task that handles transport operations.
     // TODO: Add a negative test using `inject_error` on the mock transport to verify that transport send/recv errors cause the `HelloActor` to terminate.
     fn spawn_io_task(
         mut transport: Box<dyn TransportConnection>,
@@ -540,11 +518,11 @@ impl Handler<SetInboundChannel> for HelloActor {
     }
 }
 
-/// Start a HelloActor with optional SessionManager integration
+/// Creates and starts a `HelloActor` and its associated I/O task.
 ///
-/// This is the full-featured version that allows connecting HelloActor
-/// to a SessionManager for Phase 4 integration.
-pub fn start_hello_actor_with_session_manager(
+/// This is the primary entry point for creating a `HelloActor`. It wires up the
+/// actor, its I/O task, and the transport, returning the actor's address.
+pub(crate) fn start_hello_actor_with_session_manager(
     transport: Box<dyn TransportConnection>,
     config: HelloConfig,
     session_manager: Option<Recipient<HandshakeComplete>>,

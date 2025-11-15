@@ -7,8 +7,6 @@ use zznet_api::mock::create_mock_pair;
 use zznet_builder::traits::ZZNetService;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::HandleTransport;
-use zznet_hello::messages::GetRole;
-use zznet_router::GetOfferedRooms;
 
 /// Spawns a `DemoAppService` and returns the service and the address of ComponentA.
 pub async fn spawn_demo_service(
@@ -60,46 +58,33 @@ pub async fn spawn_demo_service_with_builder(
 }
 
 /// Connects two `DemoAppService` instances using a mock transport.
-pub async fn connect_services(service_a: &DemoAppService, service_b: &DemoAppService) {
+pub async fn connect_services(
+    service_a: &DemoAppService,
+    config_a: &DemoAppConfig,
+    service_b: &DemoAppService,
+    config_b: &DemoAppConfig,
+) {
     let (transport_a, transport_b) = create_mock_pair("test");
 
-    let offered_rooms_a = service_a
-        .router
-        .send(GetOfferedRooms)
-        .await
-        .unwrap()
-        .iter()
-        .map(|r| r.as_str().to_string())
-        .collect();
-
-    let offered_rooms_b = service_b
-        .router
-        .send(GetOfferedRooms)
-        .await
-        .unwrap()
-        .iter()
-        .map(|r| r.as_str().to_string())
-        .collect();
-
-    let config_a = HelloConfig {
-        our_role: service_a.connection_manager.send(GetRole).await.unwrap(),
-        offered_rooms: offered_rooms_a,
+    let hello_config_a = HelloConfig {
+        our_role: config_a.our_role.clone(),
+        offered_rooms: config_a.offered_rooms.clone(),
+        hostname: format!("service_a_host_{}", config_a.our_role), // Example hostname
         handshake_timeout: std::time::Duration::from_secs(1),
-        hostname: "service_a".to_string(),
     };
 
-    let config_b = HelloConfig {
-        our_role: service_b.connection_manager.send(GetRole).await.unwrap(),
-        offered_rooms: offered_rooms_b,
+    let hello_config_b = HelloConfig {
+        our_role: config_b.our_role.clone(),
+        offered_rooms: config_b.offered_rooms.clone(),
+        hostname: format!("service_b_host_{}", config_b.our_role), // Example hostname
         handshake_timeout: std::time::Duration::from_secs(1),
-        hostname: "service_b".to_string(),
     };
 
     service_a
         .connection_manager
         .send(HandleTransport {
             transport: Box::new(transport_a),
-            config: config_a,
+            config: hello_config_a,
         })
         .await
         .unwrap()
@@ -109,7 +94,7 @@ pub async fn connect_services(service_a: &DemoAppService, service_b: &DemoAppSer
         .connection_manager
         .send(HandleTransport {
             transport: Box::new(transport_b),
-            config: config_b,
+            config: hello_config_b,
         })
         .await
         .unwrap()

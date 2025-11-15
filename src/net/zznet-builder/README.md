@@ -1,68 +1,25 @@
 # ZZNet Application Builder (`zznet-builder`)
 
-This crate provides a complete application framework for building ZZNet applications with minimal boilerplate. It handles all the standard concerns: CLI parsing, logging, configuration, TLS, runtime setup, and graceful shutdown.
-
-The core of the crate is the `AppBuilder`, which uses the `ZZNetService` and `ZZNetConfig` traits to manage the application lifecycle.
-
 ## Vision
 
-The goal of `zznet-builder` is to enforce a DRY (Don't Repeat Yourself) and consistent architecture for all applications in the `zzping` workspace. By using the builder, a new service can be created with just a few lines of code in `main.rs`, delegating all the complex setup and error handling to the framework.
+To provide a standardized, DRY (Don't Repeat Yourself) framework for bootstrapping `zznet` applications. The builder enforces a consistent architecture, eliminating boilerplate code and reducing the complexity of creating new services.
 
-## Usage
+## Concept
 
-To create a new application, you need to:
+The `zznet-builder` is a fluent API that handles all common application setup and lifecycle concerns, including:
 
-1.  Define a configuration struct and implement `ZZNetConfig` for it.
-2.  Define a service struct and implement `ZZNetService` for it.
-3.  In your `main.rs`, instantiate and run the `AppBuilder`.
+-   **CLI Parsing:** Standardized command-line argument handling.
+-   **Logging:** Centralized logging initialization.
+-   **Configuration:** Loading and parsing of application-specific configuration files.
+-   **TLS:** Simplified and consistent TLS setup for clients and servers.
+-   **Runtime:** Management of the Actix actor runtime.
+-   **Graceful Shutdown:** Handling of OS signals for clean application termination.
 
-### Example
+## Core Abstractions
 
-Here is a complete example of a minimal `main.rs`:
+Applications integrate with the builder by implementing two core traits:
 
-```rust,ignore
-use anyhow::Result;
-use async_trait::async_trait;
-use serde::Deserialize;
-use zznet_builder::builder::AppBuilder;
-use zznet_builder::traits::{ZZNetConfig, ZZNetService};
+-   `ZZNetConfig`: Defines the application's configuration structure.
+-   `ZZNetService`: Implements the application's startup and runtime logic.
 
-// 1. Define the configuration for the service.
-#[derive(Deserialize)]
-pub struct MyServiceConfig {
-    pub listen_address: String,
-}
-
-// Mark it as a valid configuration object.
-impl ZZNetConfig for MyServiceConfig {}
-
-// 2. Define the service struct.
-pub struct MyService;
-
-// 3. Implement the service lifecycle.
-#[async_trait]
-impl ZZNetService for MyService {
-    type Config = MyServiceConfig;
-    type Error = anyhow::Error;
-
-    fn new(config: Self::Config) -> Result<Self> {
-        // Perform any setup based on the configuration.
-        println!("Initializing service with address: {}", config.listen_address);
-        Ok(MyService)
-    }
-
-    async fn run(self) -> Result<()> {
-        // Start long-running tasks, listeners, etc.
-        println!("Service is running...");
-        // The builder will wait for a shutdown signal externally.
-        Ok(())
-    }
-}
-
-// 4. Use the AppBuilder to run the service.
-fn main() -> Result<()> {
-    AppBuilder::new("My Awesome Service", "1.0.0")
-        .with_default_config("my_service.ron")
-        .run_service::<MyService>()
-}
-```
+By using these traits, an application can be launched with minimal code in `main.rs`, delegating all the setup and lifecycle management to the builder.

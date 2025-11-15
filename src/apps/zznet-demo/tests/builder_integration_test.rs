@@ -10,12 +10,12 @@ async fn test_builder_unauthorized_connection_is_rejected() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async move {
-            let (service_a, comp_a_addr) =
-                spawn_demo_service(DemoAppConfig::new("app1", None)).await;
-            let (service_b, comp_b_addr) =
-                spawn_demo_service(DemoAppConfig::new("app3", Some("app1".to_string()))).await;
+            let cfg_a = DemoAppConfig::new("app1", None);
+            let (service_a, comp_a_addr) = spawn_demo_service(cfg_a.clone()).await;
+            let cfg_b = DemoAppConfig::new("app3", Some("app1".to_string()));
+            let (service_b, comp_b_addr) = spawn_demo_service(cfg_b.clone()).await;
 
-            connect_services(&service_a, &service_b).await;
+            connect_services(&service_a, &cfg_a, &service_b, &cfg_b).await;
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
             comp_a_addr.do_send(SendPing {
@@ -35,12 +35,12 @@ async fn test_builder_multiple_components() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async move {
-            let (service_a, comp_a_addr) =
-                spawn_demo_service(DemoAppConfig::new("app1", None)).await;
-            let (service_b, _comp_b_addr) =
-                spawn_demo_service(DemoAppConfig::new("app2", Some("app1".to_string()))).await;
+            let cfg_a = DemoAppConfig::new("app1", None);
+            let (service_a, comp_a_addr) = spawn_demo_service(cfg_a.clone()).await;
+            let cfg_b = DemoAppConfig::new("app2", Some("app1".to_string()));
+            let (service_b, _comp_b_addr) = spawn_demo_service(cfg_b.clone()).await;
 
-            connect_services(&service_a, &service_b).await;
+            connect_services(&service_a, &cfg_a, &service_b, &cfg_b).await;
             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
             comp_a_addr.do_send(PublishToA {
@@ -66,12 +66,12 @@ async fn test_builder_component_b_sends_message_via_component_a() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async move {
-            let (service_a, comp_a_addr) =
-                spawn_demo_service(DemoAppConfig::new("app1", None)).await;
-            let (service_b, _comp_b_addr) =
-                spawn_demo_service(DemoAppConfig::new("app2", Some("app1".to_string()))).await;
+            let cfg_a = DemoAppConfig::new("app1", None);
+            let (service_a, comp_a_addr) = spawn_demo_service(cfg_a.clone()).await;
+            let cfg_b = DemoAppConfig::new("app2", Some("app1".to_string()));
+            let (service_b, _comp_b_addr) = spawn_demo_service(cfg_b.clone()).await;
 
-            connect_services(&service_a, &service_b).await;
+            connect_services(&service_a, &cfg_a, &service_b, &cfg_b).await;
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
             service_b
@@ -95,12 +95,12 @@ async fn test_builder_basic_connection() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async move {
-            let (service_a, comp_a_addr) =
-                spawn_demo_service(DemoAppConfig::new("app1", None)).await;
-            let (service_b, _comp_b_addr) =
-                spawn_demo_service(DemoAppConfig::new("app2", Some("app1".to_string()))).await;
+            let cfg_a = DemoAppConfig::new("app1", None);
+            let (service_a, comp_a_addr) = spawn_demo_service(cfg_a.clone()).await;
+            let cfg_b = DemoAppConfig::new("app2", Some("app1".to_string()));
+            let (service_b, _comp_b_addr) = spawn_demo_service(cfg_b.clone()).await;
 
-            connect_services(&service_a, &service_b).await;
+            connect_services(&service_a, &cfg_a, &service_b, &cfg_b).await;
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
             comp_a_addr.do_send(SendPing {

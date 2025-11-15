@@ -1,90 +1,56 @@
-//! Protocol frame definitions for HELLO protocol.
-//!
-//! This module defines the wire format for handshake and room communication.
-//! Frames are serialized using bincode and sent over the transport layer.
+//! Defines the wire format for the HELLO protocol.
 
 use serde::{Deserialize, Serialize};
 
-/// Top-level frame enum.
-///
-/// This distinguishes between handshake frames (used during connection setup)
-/// and room frames (used after handshake completes).
+/// The top-level frame that distinguishes between handshake and data messages.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Frame {
-    /// Handshake frame - used during connection establishment.
+pub(crate) enum Frame {
+    /// A frame used during the initial connection setup.
     Handshake(HandshakeFrame),
-    /// Room frame - used for actual room-to-room communication.
+    /// A frame used for data exchange after the handshake is complete.
     Room(RoomFrame),
 }
 
-/// Frames exchanged during the handshake phase.
-///
-/// The handshake follows this sequence:
-/// 1. Initiator sends HELLO
-/// 2. Responder sends HELLO
-/// 3. Both sides send OFFER with their available rooms
-/// 4. Both sides send ACK with selected rooms
-/// 5. Handshake complete
+/// Frames exchanged exclusively during the handshake phase.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HandshakeFrame {
-    /// Initial greeting with protocol version, role, and hostname.
+pub(crate) enum HandshakeFrame {
+    /// The initial greeting, containing the peer's version, role, and hostname.
     Hello {
-        /// Protocol version (currently "1.0").
         version: String,
-        /// The role identifier of this peer as a string (application CN).
         role_str: String,
-        /// Hostname/identifier of this peer.
         hostname: String,
     },
 
-    /// Offer available rooms to the peer.
-    ///
-    /// Each side sends the list of rooms they can communicate through.
-    Offer {
-        /// List of room names this peer offers.
-        rooms: Vec<String>,
-    },
+    /// A proposal of rooms the peer wishes to communicate through.
+    Offer { rooms: Vec<String> },
 
-    /// Handshake error - peer is rejecting the connection.
-    Error {
-        /// Human-readable error message.
-        message: String,
-    },
+    /// A message indicating that the handshake has failed.
+    Error { message: String },
 }
 
-/// Frames used after handshake for room communication.
-///
-/// These frames carry the actual application messages between rooms.
+/// Frames used for data exchange within a session after the handshake.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RoomFrame {
-    /// A message from one room to another.
+pub(crate) enum RoomFrame {
+    /// A message sent from a source room to a destination room.
     Message {
-        /// Source room name.
         from_room: String,
-        /// Destination room name.
         to_room: String,
-        /// Serialized message payload.
         payload: Vec<u8>,
     },
 
-    /// Graceful disconnect notification.
+    /// A notification for a graceful disconnect.
     Disconnect,
 }
 
 impl Frame {
-    /// Serialize this frame to bytes.
-    ///
-    /// Returns the serialized bytes suitable for sending over a transport.
-    pub fn serialize(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
+    /// Serializes the frame into a byte vector for transport.
+    pub(crate) fn serialize(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
         bincode::serde::encode_to_vec(self, bincode::config::standard())
     }
 
-    /// Deserialize a frame from bytes.
-    ///
-    /// Returns the deserialized frame or an error if the data is malformed.
-    pub fn deserialize(data: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        let (d, _) = bincode::serde::decode_from_slice(data, bincode::config::standard())?;
-        Ok(d)
+    /// Deserializes a frame from a byte slice.
+    pub(crate) fn deserialize(data: &[u8]) -> Result<Self, bincode::error::DecodeError> {
+        bincode::serde::decode_from_slice(data, bincode::config::standard()).map(|(d, _)| d)
     }
 }
 

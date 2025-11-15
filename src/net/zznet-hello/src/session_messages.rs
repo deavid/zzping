@@ -1,47 +1,20 @@
-//! Messages for HelloActor to communicate with SessionManager.
+//! Defines messages for communication between the `HelloActor` and the `ConnectionManager`.
 
 use actix::prelude::*;
 
-use crate::error::HelloError;
-
-/// Message sent TO HelloActor FROM SessionManager to send a room message.
+/// Sent by `HelloActor` to `ConnectionManager` after a successful handshake.
 ///
-/// After the HELLO handshake completes, SessionManager uses this message
-/// to route application messages through the transport.
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "Result<(), HelloError>")]
-pub struct SendRoomMessage {
-    /// Source room name.
-    pub from_room: String,
-    /// Destination room name.
-    pub to_room: String,
-    /// Serialized message payload.
-    pub payload: Vec<u8>,
-}
-
-/// Message sent FROM HelloActor TO SessionManager after successful handshake.
-///
-/// This notifies SessionManager that a new authenticated peer is ready
-/// and provides the HelloActor address for sending messages back.
+/// This message signals that a new peer has been authenticated and is ready to be
+/// integrated into the session layer.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
-pub struct HandshakeComplete {
-    /// Unique identifier for the peer.
+pub(crate) struct HandshakeComplete {
+    /// The unique identifier for the peer.
     pub peer_id: String,
-    /// Peer's authentication role as a string (from HELLO handshake).
+    /// The peer's role, as determined by the HELLO handshake.
     pub peer_role_str: String,
-    /// Rooms negotiated during handshake (intersection of offered rooms).
+    /// The list of rooms negotiated for this session.
     pub active_rooms: Vec<String>,
-    /// Address of this HelloActor for sending messages.
+    /// The address of the `HelloActor` managing this connection.
     pub hello_actor: Addr<super::actor::HelloActor>,
-}
-
-/// Message sent FROM HelloActor TO SessionManager when connection is lost.
-///
-/// This notifies SessionManager to clean up state for this peer.
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "()")]
-pub struct ConnectionLost {
-    /// Reason for disconnection.
-    pub reason: String,
 }

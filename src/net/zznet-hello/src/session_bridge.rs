@@ -1,30 +1,9 @@
-//! SessionBridge Actor - Encapsulates message forwarding between HelloActor and SessionManager
+//! An actor that bridges the `HelloActor` with the `RouterActor`.
 //!
-//! This actor is responsible for the complex bidirectional message routing that was previously
-//! embedded in ConnectionManager's HandshakeComplete handler. By extracting it into its own actor,
-//! we achieve:
-//!
-//! - **Single Responsibility:** Focused only on bridging transport ↔ session messages
-//! - **Testability:** Can be tested in isolation
-//! - **Clarity:** Data flow is explicit and easy to reason about
-//! - **Maintainability:** Complex async wiring is self-contained
-//!
-//! ## Architecture
-//!
-//! ```text
-//! SessionManager
-//!      ↕ (sends/receives messages)
-//!      ↑ outbound_rx: RoomMessages from SessionManager
-//!      ↓ conn_to_session_tx: RoomMessages to SessionManager
-//!
-//! SessionBridge (this actor)
-//!      ↕ (spawns forwarding tasks)
-//!
-//! HelloActor
-//!      ↕ (sends/receives protocol frames)
-//!      ↑ hello_to_conn_rx: Frames from HelloActor
-//!      ↓ inbound channel: Frames to HelloActor
-//! ```
+//! This actor's sole responsibility is to manage the bidirectional message
+//! forwarding between the transport-level `HelloActor` and the session-level
+//! `RouterActor`. It encapsulates the complexity of wiring together the
+//! various channels after a handshake is successfully completed.
 
 use actix::prelude::*;
 use tokio::sync::mpsc;
@@ -34,41 +13,18 @@ use zznet_api::types::RoomId;
 
 use crate::actor::HelloActor;
 
-/// SessionBridge actor - Manages bidirectional message forwarding
-///
-/// No longer generic - works directly with serialized bytes (Vec<u8>)
-/// since Room<T> handles serialization at the component level
-pub struct SessionBridge {
-    /// Peer identifier for logging
+/// An actor that manages the bidirectional message forwarding for a single session.
+pub(crate) struct SessionBridge {
     peer_id: String,
-
-    /// Reference to HelloActor for sending outbound messages
     hello_actor: Addr<HelloActor>,
-
-    /// Receiver for outbound messages from SessionManager
-    /// These messages are already serialized by Room<T>
     outbound_rx: Option<mpsc::Receiver<(RoomId, Vec<u8>)>>,
-
-    /// Sender for inbound messages to SessionManager
-    /// These messages are raw bytes that will be deserialized by Room<T>
     conn_to_session_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
-
-    /// Receiver for inbound messages from HelloActor
-    /// These are raw bytes that will be forwarded to SessionManager
     hello_to_conn_rx: Option<mpsc::Receiver<(String, Vec<u8>)>>,
 }
 
 impl SessionBridge {
-    /// Create a new SessionBridge
-    ///
-    /// # Arguments
-    ///
-    /// * `peer_id` - Identifier for this peer (for logging)
-    /// * `hello_actor` - Address of the HelloActor to send messages to
-    /// * `outbound_rx` - Channel from SessionManager with serialized outbound messages
-    /// * `conn_to_session_tx` - Channel to SessionManager for serialized inbound messages
-    /// * `hello_to_conn_rx` - Channel from HelloActor with raw messages
-    pub fn new(
+    /// Creates a new `SessionBridge`.
+    pub(crate) fn new(
         peer_id: String,
         hello_actor: Addr<HelloActor>,
         outbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
@@ -84,7 +40,7 @@ impl SessionBridge {
         }
     }
 
-    /// Spawn task: SessionManager outbound → HelloActor (already serialized)
+    /// Spawns a task to forward messages from the `RouterActor` to the `HelloActor`.
     fn start_outbound_forwarding(&mut self) {
         let hello_actor = self.hello_actor.clone();
         let peer_id = self.peer_id.clone();
@@ -97,14 +53,12 @@ impl SessionBridge {
                         room_id.as_str()
                     );
 
-                    // Messages are already serialized by Room<T>, just forward them
                     let send_msg = crate::actor::SendMessage {
                         from_room: room_id.as_str().to_string(),
                         to_room: room_id.as_str().to_string(),
                         payload,
                     };
 
-                    // Send to HelloActor
                     if let Err(e) = hello_actor.send(send_msg).await {
                         error!(
                             "Failed to send outbound message to HelloActor for peer {}: {:?}",
@@ -118,7 +72,7 @@ impl SessionBridge {
         }
     }
 
-    /// Spawn task: HelloActor inbound → SessionManager (no deserialization needed)
+    /// Spawns a task to forward messages from the `HelloActor` to the `RouterActor`.
     fn start_inbound_forwarding(&mut self) {
         let peer_id = self.peer_id.clone();
         let conn_to_session_tx = self.conn_to_session_tx.clone();
@@ -126,7 +80,6 @@ impl SessionBridge {
         if let Some(mut hello_to_conn_rx) = self.hello_to_conn_rx.take() {
             tokio::spawn(async move {
                 while let Some((room_name, payload)) = hello_to_conn_rx.recv().await {
-                    // Just forward the raw bytes - Room<T> will deserialize
                     let room_id = RoomId::from(room_name.as_str());
                     if let Err(e) = conn_to_session_tx.try_send((room_id.clone(), payload)) {
                         error!(
@@ -147,8 +100,6 @@ impl Actor for SessionBridge {
 
     fn started(&mut self, _ctx: &mut Self::Context) {
         debug!("SessionBridge started for peer {}", self.peer_id);
-
-        // Spawn both forwarding tasks when actor starts
         self.start_outbound_forwarding();
         self.start_inbound_forwarding();
     }

@@ -67,24 +67,6 @@ impl Handler<RegisterManager> for RouterActor {
     }
 }
 
-/// Get the offered rooms from the router
-#[derive(Message)]
-#[rtype(result = "Vec<RoomId>")]
-pub struct GetOfferedRooms;
-
-impl Handler<GetOfferedRooms> for RouterActor {
-    type Result = ResponseFuture<Vec<RoomId>>;
-
-    fn handle(&mut self, _msg: GetOfferedRooms, _ctx: &mut Context<Self>) -> Self::Result {
-        let router_arc = self.router.clone();
-
-        Box::pin(async move {
-            let router = router_arc.lock().await;
-            router.offered_rooms()
-        })
-    }
-}
-
 /// Handle peer connected event from PeerManager
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]

@@ -17,10 +17,6 @@ use zznet_room::room_manager::RoomManager;
 /// - Peer identity/roles
 /// - Lifecycle events
 pub(crate) struct Router {
-    /// Rooms this Router offers for negotiation
-    /// Used during PublishRooms to compute intersection with peers
-    offered_rooms: Vec<RoomId>,
-
     /// Data-plane channels registered for each peer
     peers: HashMap<PeerId, PeerChannels>,
 
@@ -34,15 +30,9 @@ impl Router {
         tracing::info!("Router created with {} offered rooms", offered_rooms.len(),);
 
         Self {
-            offered_rooms,
             peers: HashMap::new(),
             managers: HashMap::new(),
         }
-    }
-
-    /// Get the offered rooms
-    pub(crate) fn offered_rooms(&self) -> Vec<RoomId> {
-        self.offered_rooms.clone()
     }
 
     /// Register a room manager with the router.
@@ -97,24 +87,6 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[tokio::test]
-    async fn test_router_offered_rooms() {
-        let offered = vec![RoomId::from("room1"), RoomId::from("room2")];
-        let router = Router::new(offered.clone());
-
-        assert_eq!(router.offered_rooms.as_slice(), offered.as_slice());
-    }
-
-    #[tokio::test]
-    async fn test_set_offered_rooms() {
-        let mut router = Router::new(vec![]);
-
-        let new_rooms = vec![RoomId::from("roomA"), RoomId::from("roomB")];
-        router.offered_rooms = new_rooms.clone();
-
-        assert_eq!(router.offered_rooms.as_slice(), new_rooms.as_slice());
-    }
 
     #[tokio::test]
     async fn test_register_manager_collision() {
