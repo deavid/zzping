@@ -1,3 +1,10 @@
+//! Network server wiring for the database application.
+//!
+//! This module provides the transport server, connection manager, and
+//! HELLO handshake wiring to accept collector and client connections.
+//! The implementation focuses on supporting the vision architecture
+//! (Room<T> pattern) and connection lifecycle management.
+
 use crate::service::StartedComponents;
 use actix::Actor;
 use std::collections::HashSet;

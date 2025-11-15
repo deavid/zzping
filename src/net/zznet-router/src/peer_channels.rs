@@ -12,14 +12,14 @@ type SessionRooms = Arc<TokioMutex<HashMap<RoomId, Recipient<InboundRoomPayload>
 /// Builder for PeerChannels with immutable construction.
 ///
 /// Collects rooms before connecting transport channels.
-pub struct PeerChannelsBuilder {
+pub(crate) struct PeerChannelsBuilder {
     peer_id: PeerId,
     rooms: HashMap<RoomId, Recipient<InboundRoomPayload>>,
 }
 
 impl PeerChannelsBuilder {
     /// Create a new builder for a peer.
-    pub fn new(peer_id: PeerId) -> Self {
+    pub(crate) fn new(peer_id: PeerId) -> Self {
         Self {
             peer_id,
             rooms: HashMap::new(),
@@ -27,7 +27,7 @@ impl PeerChannelsBuilder {
     }
 
     /// Add a room to this peer.
-    pub fn add_room(
+    pub(crate) fn add_room(
         &mut self,
         room_id: RoomId,
         room: Recipient<InboundRoomPayload>,
@@ -45,7 +45,7 @@ impl PeerChannelsBuilder {
     /// Build the PeerChannels by connecting transport channels.
     ///
     /// Spawns the inbound routing task and sets up channels.
-    pub async fn build(
+    pub(crate) async fn build(
         self,
         inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
     ) -> Result<PeerChannels, SessionError> {
@@ -74,7 +74,7 @@ impl PeerChannelsBuilder {
 /// Data-plane channel set for a peer.
 ///
 /// Immutable after construction; owns transport channels and routing task.
-pub struct PeerChannels {
+pub(crate) struct PeerChannels {
     pub(crate) peer_id: PeerId,
     inbound_task: JoinHandle<()>,
 }
@@ -115,7 +115,7 @@ impl PeerChannels {
 
     /// Disconnect transport wiring and stop routing tasks.
     // TODO: This is called by RouterActor::OnPeerDisconnected. An integration test is needed.
-    pub fn disconnect(&self) {
+    pub(crate) fn disconnect(&self) {
         self.inbound_task.abort();
     }
 }

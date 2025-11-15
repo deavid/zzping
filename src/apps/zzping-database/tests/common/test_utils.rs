@@ -30,7 +30,7 @@ use tracing_subscriber::EnvFilter;
 /// }
 /// ```
 #[allow(dead_code)] // Function is actually used in one test but clippy flags it. The reason is that each test is a different compilation target.
-pub fn init_test_tracing() -> tracing::subscriber::DefaultGuard {
+pub(crate) fn init_test_tracing() -> tracing::subscriber::DefaultGuard {
     let subscriber = tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::from_default_env()
@@ -77,7 +77,7 @@ pub fn init_test_tracing() -> tracing::subscriber::DefaultGuard {
 ///     // Now actors have processed 150ms of events
 /// }
 /// ```
-pub async fn advance_time_and_yield(duration: Duration) {
+pub(crate) async fn advance_time_and_yield(duration: Duration) {
     tokio::time::advance(duration).await;
     tokio::task::yield_now().await;
     tokio::time::sleep(Duration::from_millis(10)).await;
@@ -106,7 +106,7 @@ pub async fn advance_time_and_yield(duration: Duration) {
 ///     ).await;
 /// }
 /// ```
-pub async fn wait_for<F>(condition: F, timeout: Duration, description: &str)
+pub(crate) async fn wait_for<F>(condition: F, timeout: Duration, description: &str)
 where
     F: Fn() -> bool,
 {
@@ -156,7 +156,7 @@ where
 ///     ).await;
 /// }
 /// ```
-pub async fn wait_for_immediate<F>(condition: F, timeout: Duration, description: &str)
+pub(crate) async fn wait_for_immediate<F>(condition: F, timeout: Duration, description: &str)
 where
     F: Fn() -> bool,
 {

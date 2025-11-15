@@ -1,3 +1,10 @@
+//! Service orchestration and component lifecycle for the database app.
+//!
+//! This module creates, configures, and runs the database components and
+//! wires them into the network. It centralizes testable orchestration and
+//! provides convenience helpers for starting components in tests or
+//! embedding the database logic into different runtimes.
+
 use crate::config::{DatabaseConfig, DatabaseTlsConfig};
 use crate::error::DatabaseError;
 use actix::{Actor, Addr};
@@ -62,16 +69,32 @@ pub struct StartedComponents {
 // Per-connection handler for collector connections
 // ConnectionHandler and HELLO/TLS framing helper functions removed per refactor plan.
 
+/// Orchestrates all database components and network lifecycle.
+///
+/// Acts as the service entrypoint for the database application: validating
+/// configuration, preparing component builders, starting components and
+/// wiring the network server. This struct allows composition for tests
+/// and embedding in higher-level deployers.
 pub struct DatabaseService {
     config: DatabaseConfig,
 }
 
 impl DatabaseService {
+    /// Create a new `DatabaseService` after validating configuration.
+    ///
+    /// Validates `config` and returns an instance ready to prepare or start
+    /// components. Failure indicates misconfiguration or missing required
+    /// resources.
     pub fn new(config: DatabaseConfig) -> Result<Self, DatabaseError> {
         config.validate()?;
         Ok(Self { config })
     }
 
+    /// Internal implementation of the service run loop.
+    ///
+    /// Starts and wires components together, sets up TLS and network bindings,
+    /// then runs the transport server until shutdown. Separated from the
+    /// public `run()` for clearer testing and error mapping.
     pub async fn run_impl(self) -> Result<(), DatabaseError> {
         tracing::info!("Database service starting");
 

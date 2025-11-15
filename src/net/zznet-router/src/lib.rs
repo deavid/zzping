@@ -23,4 +23,3 @@ mod router;
 pub use actor::{
     GetOfferedRooms, OnPeerConnected, OnPeerDisconnected, RegisterManager, RouterActor,
 };
-pub use peer_channels::PeerChannels;

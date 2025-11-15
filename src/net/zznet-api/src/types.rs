@@ -1,9 +1,6 @@
 //! Shared types used across the transport layer.
-
-// NOTE: The concrete role enum was removed from zznet-api to keep the API
-// auth-agnostic. Applications provide their own role types by implementing
-// zznet_auth::ApplicationRole. Transport and session layers refer to roles
-// via trait bounds or strings (e.g., certificate CN).
+use std::fmt;
+use thiserror::Error;
 
 /// Represents the verified identity of a peer in the ZZPing network.
 ///
@@ -22,27 +19,24 @@ pub struct PeerTLSIdentity {
     pub peer_addr: String,
 }
 
-/// Precomputed permission snapshot for a peer, derived from role at connection time.
-///
-/// **DEPRECATED**: Use `Role` directly instead. This struct added unnecessary complexity
-/// by bundling peer_id, identity, and capabilities when only the role string is needed.
-/// Components should receive `Role` and perform their own role-based authorization.
-///
-/// Components receive this at room creation and never query roles at runtime.
-/// Contains peer_id, identity summary, and precomputed capability flags.
-#[deprecated(
-    since = "0.3.0",
-    note = "Use Role directly instead. Permission adds unnecessary complexity."
-)]
-#[derive(Debug, Clone)]
-pub struct Permission {
-    /// Unique identifier for the peer.
-    pub peer_id: PeerId,
-    /// Summary of peer identity (role and username).
-    pub identity: PeerTLSIdentity,
-    /// Precomputed capability flags (e.g., can_read, can_write, is_admin).
-    /// Components define their own flag meanings.
-    pub capabilities: u32,
+impl PeerTLSIdentity {
+    /// Returns true if this identity represents a service (not a user).
+    ///
+    /// Services have "root" as their SAN username.
+    pub fn is_service(&self) -> bool {
+        self.san_username == "root"
+    }
+
+    /// Returns the full identity string for logging and authorization.
+    ///
+    /// Format: "username@role" for users, "role" for services.
+    pub fn full_identity(&self) -> String {
+        if self.is_service() {
+            self.common_name.clone()
+        } else {
+            format!("{}@{}", self.san_username, self.common_name)
+        }
+    }
 }
 
 /// Canonical Role representation used at the zznet boundary.
@@ -76,35 +70,6 @@ impl From<String> for Role {
         Role(s)
     }
 }
-
-impl PeerTLSIdentity {
-    /// Returns true if this identity represents a service (not a user).
-    ///
-    /// Services have "root" as their SAN username.
-    pub fn is_service(&self) -> bool {
-        self.san_username == "root"
-    }
-
-    /// Returns the full identity string for logging and authorization.
-    ///
-    /// Format: "username@role" for users, "role" for services.
-    pub fn full_identity(&self) -> String {
-        if self.is_service() {
-            self.common_name.clone()
-        } else {
-            format!("{}@{}", self.san_username, self.common_name)
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Canonical network primitives (migrated from zznet-session::types)
-// These are intentionally placed in `zznet-api` so all crates depend on
-// a stable, minimal set of shared types instead of the old `zznet-session` crate.
-// ---------------------------------------------------------------------------
-
-use std::fmt;
-use thiserror::Error;
 
 /// Unique identifier for a peer
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -162,15 +127,6 @@ impl From<&str> for RoomId {
     }
 }
 
-/// Connection state for a peer
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ConnectionState {
-    /// Peer exists but is not connected
-    Disconnected,
-    /// Peer is connected and active
-    Connected,
-}
-
 /// Errors that can occur in session/peer management
 #[derive(Debug, Error)]
 pub enum SessionError {
@@ -182,30 +138,6 @@ pub enum SessionError {
     /// A peer with the same id was already registered.
     PeerAlreadyExists(PeerId),
 
-    #[error("Peer limit exceeded: max {max}")]
-    /// The configured maximum number of peers has been reached.
-    PeerLimitExceeded {
-        /// Maximum allowed peers.
-        max: usize,
-    },
-
-    #[error("Peer already connected: {0}")]
-    /// Peer is already connected.
-    PeerAlreadyConnected(PeerId),
-
-    #[error("Peer not connected: {0}")]
-    /// Peer exists but is not currently connected.
-    PeerNotConnected(PeerId),
-
-    #[error("Room not found: {room_id} for peer {peer_id}")]
-    /// The requested room was not found for the peer.
-    RoomNotFound {
-        /// The peer id for which the room was looked up.
-        peer_id: PeerId,
-        /// The room id that was not found for the peer.
-        room_id: RoomId,
-    },
-
     #[error("Room already exists: {room_id} for peer {peer_id}")]
     /// A room with the same id already exists for the peer.
     RoomAlreadyExists {
@@ -214,47 +146,6 @@ pub enum SessionError {
         /// The conflicting room id.
         room_id: RoomId,
     },
-
-    #[error("Too many rooms for peer {peer_id}: max {max}")]
-    /// The peer has more rooms than the configured per-peer limit.
-    RoomLimitExceeded {
-        /// The peer with too many rooms.
-        peer_id: PeerId,
-        /// Maximum allowed rooms per peer.
-        max: usize,
-    },
-
-    #[error("Room handler not registered: {room_id}")]
-    /// No handler was registered for the room.
-    RoomHandlerNotRegistered {
-        /// The room id lacking a registered handler.
-        room_id: RoomId,
-    },
-
-    #[error("Room receiver already spawned for {room_id} on peer {peer_id}")]
-    /// The receiver task for the room is already running.
-    RoomReceiverAlreadySpawned {
-        /// The peer id on which the receiver was spawned.
-        peer_id: PeerId,
-        /// The room id whose receiver is already running.
-        room_id: RoomId,
-    },
-
-    #[error("Failed to send message")]
-    /// Failed due to an underlying channel/send error.
-    SendFailed,
-
-    #[error("Wrong message type for room (failed conversion)")]
-    /// The message could not be converted to the room's expected type.
-    WrongMessageType,
-
-    #[error("Room not joined: {0}")]
-    /// The requested room is not joined by the peer.
-    RoomNotJoined(RoomId),
-
-    #[error("Empty room intersection: no common rooms between local and peer")]
-    /// There are no common rooms between local and peer to communicate.
-    EmptyIntersection,
 }
 
 /// Authentication context passed to the authorizer.
@@ -317,33 +208,6 @@ pub enum PeerLifecycleEvent {
 // ---------------------------------------------------------------------------
 // Control-plane and data-plane abstraction traits
 // ---------------------------------------------------------------------------
-
-/// Read-only view of control-plane state associated with a peer.
-pub trait PeerStateView: Send + Sync {
-    /// Unique identifier for the peer.
-    fn peer_id(&self) -> &PeerId;
-
-    /// Connection lifecycle state for the peer.
-    fn connection_state(&self) -> ConnectionState;
-
-    /// Authenticated role, if authorization completed.
-    fn role(&self) -> Option<&Role>;
-
-    /// Authenticated identity, if TLS validation completed.
-    fn identity(&self) -> Option<&PeerTLSIdentity>;
-}
-
-/// Mutable access to control-plane state for a peer.
-pub trait PeerStateMut: PeerStateView {
-    /// Update connection lifecycle state.
-    fn set_connection_state(&mut self, state: ConnectionState);
-
-    /// Update the authenticated role (or clear when unknown).
-    fn set_role(&mut self, role: Option<Role>);
-
-    /// Update the authenticated identity (or clear when unknown).
-    fn set_identity(&mut self, identity: Option<PeerTLSIdentity>);
-}
 
 #[cfg(test)]
 mod tests {

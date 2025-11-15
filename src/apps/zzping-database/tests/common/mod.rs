@@ -1,3 +1,3 @@
 //! Common test infrastructure
 
-pub mod test_utils;
+pub(crate) mod test_utils;

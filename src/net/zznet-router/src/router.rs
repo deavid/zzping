@@ -16,7 +16,7 @@ use zznet_room::room_manager::RoomManager;
 /// - Peer state management
 /// - Peer identity/roles
 /// - Lifecycle events
-pub struct Router {
+pub(crate) struct Router {
     /// Rooms this Router offers for negotiation
     /// Used during PublishRooms to compute intersection with peers
     offered_rooms: Vec<RoomId>,
@@ -30,7 +30,7 @@ pub struct Router {
 
 impl Router {
     /// Create a new Router
-    pub fn new(offered_rooms: Vec<RoomId>) -> Self {
+    pub(crate) fn new(offered_rooms: Vec<RoomId>) -> Self {
         tracing::info!("Router created with {} offered rooms", offered_rooms.len(),);
 
         Self {
@@ -41,7 +41,7 @@ impl Router {
     }
 
     /// Get the offered rooms
-    pub fn offered_rooms(&self) -> Vec<RoomId> {
+    pub(crate) fn offered_rooms(&self) -> Vec<RoomId> {
         self.offered_rooms.clone()
     }
 
@@ -52,7 +52,7 @@ impl Router {
     ///
     /// # Errors
     /// - `SessionError::RoomAlreadyExists` if any managed room is already registered
-    pub fn register_manager(
+    pub(crate) fn register_manager(
         &mut self,
         manager: std::sync::Arc<dyn RoomManager + Send + Sync>,
     ) -> Result<(), SessionError> {
@@ -72,7 +72,7 @@ impl Router {
     }
 
     /// Register a peer's channel set with the router.
-    pub fn register_peer(&mut self, channels: PeerChannels) -> Result<(), SessionError> {
+    pub(crate) fn register_peer(&mut self, channels: PeerChannels) -> Result<(), SessionError> {
         let peer_id = channels.peer_id.clone();
 
         if self.peers.contains_key(&peer_id) {
@@ -84,8 +84,7 @@ impl Router {
     }
 
     /// Disconnect but retain the peer's registered channels.
-    // TODO: This is called by RouterActor::OnPeerDisconnected. An integration test is needed.
-    pub fn disconnect_peer(&mut self, peer_id: &PeerId) -> Result<(), SessionError> {
+    pub(crate) fn disconnect_peer(&mut self, peer_id: &PeerId) -> Result<(), SessionError> {
         let peer = self
             .peers
             .get_mut(peer_id)

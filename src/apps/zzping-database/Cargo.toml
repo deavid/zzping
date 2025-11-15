@@ -61,3 +61,6 @@ chrono.workspace = true
 tempfile.workspace = true
 tokio-test.workspace = true
 zzping-collector = { path = "../zzping-collector" }
+
+[lints]
+workspace = true

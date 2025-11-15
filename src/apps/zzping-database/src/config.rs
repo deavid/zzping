@@ -4,9 +4,14 @@ use serde::{Deserialize, Serialize};
 
 /// Database application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Top-level configuration for the database service.
+///
+/// Holds network, TLS and component tuning parameters. Designed to be
+/// deserialized from a RON file and validated prior to service startup.
 pub struct DatabaseConfig {
     /// Network binding settings
     pub bind_host: String,
+    /// Port used to listen for incoming peer connections (0 for OS-assigned in tests).
     pub bind_port: u16,
 
     /// TLS configuration for mTLS server (optional for TCP-only mode)
@@ -31,6 +36,10 @@ fn default_handshake_timeout_secs() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// TLS material for a mutual-TLS server configuration.
+///
+/// Contains paths to CA(s) for client verification and the server's
+/// certificate and key used to identify this database instance.
 pub struct DatabaseTlsConfig {
     /// CA certificates for verifying client certificates (from collectors)
     /// Multiple paths supported to allow certificate rotation (dual-CA)
@@ -42,6 +51,11 @@ pub struct DatabaseTlsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Tunable timeouts and limits for component behavior and resource protection.
+///
+/// These settings control collector state lifetimes, concurrency limits and
+/// per-connection frame timeouts to protect the service under load. Adjust
+/// for testing or production as required.
 pub struct ComponentConfig {
     /// Heartbeat timeout in seconds for collector state tracking
     pub stale_timeout_secs: u64,
