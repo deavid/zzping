@@ -10,28 +10,10 @@ use clap::Parser;
 /// All ZZNet applications should accept these standard arguments to provide
 /// a consistent user experience. Applications can extend these arguments
 /// by embedding this struct in a larger CLI structure.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use clap::Parser;
-/// use zznet_builder::cli::StandardCliArgs;
-///
-/// #[derive(Parser)]
-/// struct MyAppArgs {
-///     #[command(flatten)]
-///     standard: StandardCliArgs,
-///
-///     // Add application-specific args here
-///     #[arg(long)]
-///     custom_option: Option<String>,
-/// }
-///
-/// let args = MyAppArgs::parse();
-/// println!("Config file: {}", args.standard.config);
-/// ```
 #[derive(Parser, Debug, Clone)]
 pub struct StandardCliArgs {
+    // FIXME: A "StandardCliArgs" is a very bad idea. This should be removed and we should expect some kind of struct or a way for others to
+    // convert their CLI Args into ours. But doing StandardCliArgs::parse() just forces the usage of this as-is without ability to customize.
     /// Path to configuration file
     #[arg(short, long, default_value = "config.ron")]
     pub config: String,

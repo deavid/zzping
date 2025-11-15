@@ -2,79 +2,11 @@
 //!
 //! This module provides utilities for loading application configuration from RON files
 //! and resolving relative paths relative to the configuration file location.
-//!
-//! # Examples
-//!
-//! ## Loading RON Configuration
-//!
-//! ```rust,ignore
-//! use zznet_builder::config::load_ron_config;
-//! use serde::Deserialize;
-//!
-//! #[derive(Deserialize)]
-//! struct AppConfig {
-//!     host: String,
-//!     port: u16,
-//! }
-//!
-//! let config: AppConfig = load_ron_config("app.ron")?;
-//! ```
-//!
-//! ## Resolving Relative Paths
-//!
-//! ```rust,ignore
-//! use zznet_builder::config::resolve_path_relative_to_config;
-//!
-//! let config_path = "/etc/myapp/config.ron";
-//! let relative_cert_path = "../certs/server.pem";
-//!
-//! // Resolves to /etc/certs/server.pem
-//! let absolute_path = resolve_path_relative_to_config(config_path, relative_cert_path);
-//! ```
 
 use crate::error::{Error, Result};
 use serde::de::DeserializeOwned;
 use std::path::{Path, PathBuf};
 
-/// Load a configuration from a RON file.
-///
-/// This function reads and parses a RON (Rusty Object Notation) configuration file.
-/// The configuration type must implement `serde::Deserialize`.
-///
-/// # Type Parameters
-///
-/// * `T` - The configuration type to deserialize into
-///
-/// # Arguments
-///
-/// * `path` - Path to the RON configuration file
-///
-/// # Returns
-///
-/// Returns the deserialized configuration.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - The file cannot be read
-/// - The RON syntax is invalid
-/// - The content doesn't match the expected type
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use serde::Deserialize;
-/// use zznet_builder::config::load_ron_config;
-///
-/// #[derive(Deserialize)]
-/// struct MyConfig {
-///     host: String,
-///     port: u16,
-/// }
-///
-/// let config: MyConfig = load_ron_config("config.ron")?;
-/// println!("Host: {}:{}", config.host, config.port);
-/// ```
 pub fn load_ron_config<T: DeserializeOwned>(path: &str) -> Result<T> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| Error::Config(format!("Failed to read config file {}: {}", path, e)))?;
