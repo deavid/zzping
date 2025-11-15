@@ -1,22 +1,7 @@
-//! Mock transport implementation for testing.
+//! In-memory transport for deterministic tests.
 //!
-//! This module provides a production-quality mock transport that enables
-//! testing the entire network stack without any real network I/O.
-//!
-//! ## Design Philosophy
-//!
-//! The mock transport is NOT a toy or placeholder - it's a first-class
-//! implementation that must be:
-//! - Feature-complete (all transport features work)
-//! - Fast (microsecond latency, no actual I/O)
-//! - Deterministic (no timing-based flakiness)
-//! - Flexible (error injection, controllable behavior)
-//!
-//! ## Architecture Validation
-//!
-//! If the network stack works perfectly with mock transport but fails with
-//! real transport, the abstraction has leaked. Mock transport serves as
-//! continuous validation that the layers are properly separated.
+//! Provides bidirectional mock connections, error injection, and simple
+//! client/server helpers without network I/O.
 
 use crate::error::TransportError;
 use crate::transport::{TransportClient, TransportConnection, TransportServer};
@@ -24,68 +9,33 @@ use crate::types::PeerTLSIdentity;
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::io;
-use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 
-/// A mock transport connection using in-memory channels.
+/// In-memory transport connection used for tests.
 ///
-/// Each connection has a send and receive channel. Messages sent on one
-/// connection are received on its peer connection.
-///
-/// ## Lifecycle
-///
-/// - Created via `create_mock_pair()` which returns two connected instances
-/// - `recv()` returns `None` when the peer drops their connection
-/// - Dropping closes the connection gracefully
+/// Sends and receives framed `Bytes` via channels.
 pub struct MockConnection {
-    /// Channel to send frames to the peer.
     tx: mpsc::Sender<Bytes>,
-    /// Channel to receive frames from the peer.
-    rx: Mutex<mpsc::Receiver<Bytes>>,
-    /// Identifier for this connection (for logging/debugging).
+    rx: mpsc::Receiver<Bytes>,
+    /// Connection identifier (for debugging/assertions).
     peer_id: String,
-    /// Optional error to inject on next operation.
-    inject_error: Arc<Mutex<Option<TransportError>>>,
-    /// The peer identity for this connection (None for plain TCP, Some for TLS).
+    inject_error: Option<TransportError>,
+    /// Optional TLS-based peer identity.
     peer_identity: Option<PeerTLSIdentity>,
 }
 
 impl MockConnection {
-    /// Returns the peer ID for this connection.
-    ///
-    /// Useful for debugging and test assertions.
+    /// Return the peer ID string.
     pub fn peer_id(&self) -> &str {
         &self.peer_id
     }
 
-    /// Injects an error that will be returned on the next send or recv operation.
-    ///
-    /// This allows testing error handling paths without complex mock setup.
-    /// The error is consumed after being returned once.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use zznet_api::mock::create_mock_pair;
-    /// # use zznet_api::error::TransportError;
-    /// # use zznet_api::transport::TransportConnection;
-    /// # use bytes::Bytes;
-    /// # let rt = tokio::runtime::Runtime::new().unwrap();
-    /// # rt.block_on(async {
-    /// let (mut conn_a, mut conn_b) = create_mock_pair("test");
-    /// conn_a.inject_error(TransportError::Timeout).await;
-    /// let result = conn_a.recv().await;
-    /// assert!(matches!(result, Err(TransportError::Timeout)));
-    /// # });
-    /// ```
-    pub async fn inject_error(&self, error: TransportError) {
-        *self.inject_error.lock().await = Some(error);
+    /// Inject a single-use error returned by the next `send`/`recv`.
+    pub fn inject_error(&mut self, error: TransportError) {
+        self.inject_error = Some(error);
     }
 
-    /// Sets the peer identity for this connection.
-    ///
-    /// This allows tests to configure specific identities for ACL testing.
-    /// By default, mock connections may have None (plain TCP) or Some identity (TLS).
+    /// Set the optional TLS peer identity used by the connection.
     pub fn with_peer_identity(mut self, identity: Option<PeerTLSIdentity>) -> Self {
         self.peer_identity = identity;
         self
@@ -95,12 +45,10 @@ impl MockConnection {
 #[async_trait]
 impl TransportConnection for MockConnection {
     async fn send(&mut self, frame: Bytes) -> Result<(), TransportError> {
-        // Check for injected error first
-        if let Some(error) = self.inject_error.lock().await.take() {
+        if let Some(error) = self.inject_error.take() {
             return Err(error);
         }
 
-        // Send to peer (channel closed = connection closed)
         self.tx
             .send(frame)
             .await
@@ -108,14 +56,11 @@ impl TransportConnection for MockConnection {
     }
 
     async fn recv(&mut self) -> Result<Option<Bytes>, TransportError> {
-        // Check for injected error first
-        if let Some(error) = self.inject_error.lock().await.take() {
+        if let Some(error) = self.inject_error.take() {
             return Err(error);
         }
 
-        // Receive from peer (None = graceful close)
-        let mut rx = self.rx.lock().await;
-        Ok(rx.recv().await)
+        Ok(self.rx.recv().await)
     }
 
     fn peer_addr(&self) -> Option<String> {
@@ -127,78 +72,47 @@ impl TransportConnection for MockConnection {
     }
 }
 
-/// Creates a pair of connected mock connections.
-///
-/// The two connections are wired together: messages sent on connection A
-/// are received on connection B, and vice versa.
-///
-/// This is the primary way to create mock connections for testing.
-///
-/// # Example
-///
-/// ```
-/// # use zznet_api::mock::create_mock_pair;
-/// # use zznet_api::transport::TransportConnection;
-/// # use bytes::Bytes;
-/// # let rt = tokio::runtime::Runtime::new().unwrap();
-/// # rt.block_on(async {
-/// let (mut conn_a, mut conn_b) = create_mock_pair("test");
-///
-/// // Send from A to B
-/// conn_a.send(Bytes::from("hello")).await.unwrap();
-/// let msg = conn_b.recv().await.unwrap();
-/// assert_eq!(msg, Some(Bytes::from("hello")));
-/// # });
-/// ```
+/// Create a connected pair of `MockConnection` instances.
 pub fn create_mock_pair(base_id: &str) -> (MockConnection, MockConnection) {
     let (tx_a, rx_a) = mpsc::channel(32);
     let (tx_b, rx_b) = mpsc::channel(32);
 
     let conn_a = MockConnection {
         tx: tx_b,
-        rx: Mutex::new(rx_a),
+        rx: rx_a,
         peer_id: format!("{}_a", base_id),
-        inject_error: Arc::new(Mutex::new(None)),
-        peer_identity: None, // Plain TCP by default
+        inject_error: None,
+        peer_identity: None,
     };
 
     let conn_b = MockConnection {
         tx: tx_a,
-        rx: Mutex::new(rx_b),
+        rx: rx_b,
         peer_id: format!("{}_b", base_id),
-        inject_error: Arc::new(Mutex::new(None)),
-        peer_identity: None, // Plain TCP by default
+        inject_error: None,
+        peer_identity: None,
     };
 
     (conn_a, conn_b)
 }
 
-/// A mock transport server that yields pre-configured connections.
-///
-/// Instead of actually listening on a network socket, this server returns
-/// connections from a queue that you provide. This allows complete control
-/// over what connections are "accepted" during tests.
+/// Server that returns provided connections on `accept()`.
 pub struct MockServer {
     /// Queue of connections to return from accept().
-    connections: Arc<Mutex<Vec<Box<dyn TransportConnection>>>>,
+    connections: Vec<Box<dyn TransportConnection>>,
 }
 
 impl MockServer {
-    /// Creates a new mock server with the given connections.
-    ///
-    /// Connections will be returned in the order provided.
+    /// Construct a new `MockServer` returning the supplied connections.
     pub fn new(connections: Vec<Box<dyn TransportConnection>>) -> Self {
-        Self {
-            connections: Arc::new(Mutex::new(connections)),
-        }
+        Self { connections }
     }
 }
 
 #[async_trait]
 impl TransportServer for MockServer {
     async fn accept(&mut self) -> Result<Box<dyn TransportConnection>, TransportError> {
-        let mut conns = self.connections.lock().await;
-        match conns.pop() {
+        match self.connections.pop() {
             Some(conn) => Ok(conn),
             None => Err(TransportError::ConnectionClosed(std::io::Error::other(
                 "No more connections to accept",
@@ -209,27 +123,24 @@ impl TransportServer for MockServer {
 
 type ConnectionResult = Result<Box<dyn TransportConnection>, TransportError>;
 
-/// A mock transport client that returns pre-configured connections.
-///
-/// Similar to `MockServer`, but for outgoing connections. You configure
-/// what connection should be returned when `connect()` is called.
+/// Client that returns a preconfigured connection or error on `connect()`.
 pub struct MockClient {
     /// Connection to return from connect() (or error to return).
-    connection: Arc<Mutex<Option<ConnectionResult>>>,
+    connection: Mutex<Option<ConnectionResult>>,
 }
 
 impl MockClient {
-    /// Creates a new mock client that returns the given connection.
+    /// Create a client that yields `connection` once from `connect()`.
     pub fn with_connection(connection: Box<dyn TransportConnection>) -> Self {
         Self {
-            connection: Arc::new(Mutex::new(Some(Ok(connection)))),
+            connection: Mutex::new(Some(Ok(connection))),
         }
     }
 
-    /// Creates a new mock client that returns an error.
+    /// Create a client that yields `error` once from `connect()`.
     pub fn with_error(error: TransportError) -> Self {
         Self {
-            connection: Arc::new(Mutex::new(Some(Err(error)))),
+            connection: Mutex::new(Some(Err(error))),
         }
     }
 }
@@ -253,119 +164,82 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_mock_pair_bidirectional_communication() {
-        let (mut conn_a, mut conn_b) = create_mock_pair("test");
+    async fn test_mock_pair_basic_behavior() {
+        let (mut conn_a, mut conn_b) = create_mock_pair("test_basic");
 
-        // A sends to B
+        // peer_addr
+        assert_eq!(conn_a.peer_addr(), Some("mock:test_basic_a".to_string()));
+
+        // bidirectional
         conn_a.send(Bytes::from("hello")).await.unwrap();
-        let msg = conn_b.recv().await.unwrap();
-        assert_eq!(msg, Some(Bytes::from("hello")));
-
-        // B sends to A
+        assert_eq!(conn_b.recv().await.unwrap(), Some(Bytes::from("hello")));
         conn_b.send(Bytes::from("world")).await.unwrap();
-        let msg = conn_a.recv().await.unwrap();
-        assert_eq!(msg, Some(Bytes::from("world")));
+        assert_eq!(conn_a.recv().await.unwrap(), Some(Bytes::from("world")));
+
+        // multiple messages
+        for i in 0..5 {
+            let msg = format!("msg{}", i);
+            conn_a.send(Bytes::from(msg.clone())).await.unwrap();
+            assert_eq!(conn_b.recv().await.unwrap().unwrap(), Bytes::from(msg));
+        }
+
+        // zero-length
+        conn_a.send(Bytes::new()).await.unwrap();
+        assert_eq!(conn_b.recv().await.unwrap(), Some(Bytes::new()));
     }
 
     #[tokio::test]
-    async fn test_mock_pair_graceful_close() {
-        let (conn_a, mut conn_b) = create_mock_pair("test");
-
-        // Drop A, B should see graceful close
+    async fn test_mock_pair_close_and_send_after_drop() {
+        let (conn_a, mut conn_b) = create_mock_pair("test_close");
         drop(conn_a);
-        let msg = conn_b.recv().await.unwrap();
-        assert_eq!(msg, None);
+        assert_eq!(conn_b.recv().await.unwrap(), None);
+
+        let (mut conn_a2, conn_b2) = create_mock_pair("test_send_after_close");
+        drop(conn_b2);
+        assert!(matches!(
+            conn_a2.send(Bytes::from("x")).await,
+            Err(TransportError::ConnectionClosed(_))
+        ));
     }
 
     #[tokio::test]
-    async fn test_mock_pair_send_after_close() {
-        let (mut conn_a, conn_b) = create_mock_pair("test");
+    async fn test_mock_error_injection_is_single_use() {
+        let (mut conn_a, _conn_b) = create_mock_pair("test_err");
 
-        // Drop B
-        drop(conn_b);
+        // send side
+        conn_a.inject_error(TransportError::Timeout(io::Error::other("e1")));
+        assert!(matches!(
+            conn_a.send(Bytes::from("x")).await,
+            Err(TransportError::Timeout(_))
+        ));
+        conn_a.send(Bytes::from("ok")).await.unwrap();
 
-        // A should get error when trying to send
-        let result = conn_a.send(Bytes::from("test")).await;
-        assert!(matches!(result, Err(TransportError::ConnectionClosed(_))));
+        // recv side (inject into self before waiting)
+        conn_a.inject_error(TransportError::Timeout(io::Error::other("e2")));
+        assert!(matches!(
+            conn_a.recv().await,
+            Err(TransportError::Timeout(_))
+        ));
     }
 
     #[tokio::test]
-    async fn test_mock_connection_error_injection() {
-        let (mut conn_a, _conn_b) = create_mock_pair("test");
-
-        // Inject timeout error
-        conn_a
-            .inject_error(TransportError::Timeout(io::Error::other("injected error")))
-            .await;
-
-        // Next operation should return the injected error
-        let result = conn_a.send(Bytes::from("test")).await;
-        assert!(matches!(result, Err(TransportError::Timeout(_))));
-
-        // Subsequent operations should work normally
-        let result = conn_a.send(Bytes::from("test")).await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_mock_connection_peer_addr() {
-        let (conn_a, _conn_b) = create_mock_pair("test");
-
-        assert_eq!(conn_a.peer_addr(), Some("mock:test_a".to_string()));
-    }
-
-    #[tokio::test]
-    async fn test_mock_server_accepts_connections() {
-        let (conn_a, _conn_b) = create_mock_pair("test");
+    async fn test_mock_client_and_server_behaviors() {
+        let (conn_a, _conn_b) = create_mock_pair("test_cs");
         let mut server = MockServer::new(vec![Box::new(conn_a)]);
-
         let conn = server.accept().await.unwrap();
         assert!(conn.peer_addr().is_some());
+        assert!(server.accept().await.is_err());
 
-        // Second accept should fail (no more connections)
-        let _ = server.accept().await;
-    }
-
-    #[tokio::test]
-    async fn test_mock_client_connects() {
-        let (conn_a, _conn_b) = create_mock_pair("test");
-        let client = MockClient::with_connection(Box::new(conn_a));
-
+        let (conn_c, _conn_d) = create_mock_pair("test_client");
+        let client = MockClient::with_connection(Box::new(conn_c));
         let conn = client.connect().await.unwrap();
         assert!(conn.peer_addr().is_some());
+        assert!(client.connect().await.is_err());
 
-        // Second connect should fail (connection consumed)
-        let _ = client.connect().await;
-    }
-
-    #[tokio::test]
-    async fn test_mock_client_with_error() {
-        let client = MockClient::with_error(TransportError::Timeout(io::Error::other("error")));
-
-        let result = client.connect().await;
-        assert!(matches!(result, Err(TransportError::Timeout(_))));
-    }
-
-    #[tokio::test]
-    async fn test_mock_pair_multiple_messages() {
-        let (mut conn_a, mut conn_b) = create_mock_pair("test");
-
-        // Send multiple messages in sequence
-        for i in 0..10 {
-            let msg = format!("message_{}", i);
-            conn_a.send(Bytes::from(msg.clone())).await.unwrap();
-            let received = conn_b.recv().await.unwrap().unwrap();
-            assert_eq!(received, Bytes::from(msg));
-        }
-    }
-
-    #[tokio::test]
-    async fn test_mock_pair_zero_length_frame() {
-        let (mut conn_a, mut conn_b) = create_mock_pair("test");
-
-        // Zero-length frames are valid (can be used for heartbeats)
-        conn_a.send(Bytes::new()).await.unwrap();
-        let msg = conn_b.recv().await.unwrap();
-        assert_eq!(msg, Some(Bytes::new()));
+        let err_client = MockClient::with_error(TransportError::Timeout(io::Error::other("err")));
+        assert!(matches!(
+            err_client.connect().await,
+            Err(TransportError::Timeout(_))
+        ));
     }
 }
