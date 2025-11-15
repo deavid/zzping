@@ -126,34 +126,7 @@ impl DatabaseConfig {
         }
     }
 
-    /// Load configuration from a RON file.
-    ///
-    /// Reads and parses the RON configuration file. Fails if the file
-    /// cannot be read or contains invalid RON syntax.
-    pub fn load(path: &str) -> crate::error::Result<Self> {
-        use zznet_builder::config::{load_ron_config, resolve_path_relative_to_config};
 
-        // Load the config using the utility
-        let config: Self = load_ron_config(path).map_err(|e| {
-            crate::error::DatabaseError::Config(format!("Failed to load config: {}", e))
-        })?;
-
-        // Helper to resolve a single path string relative to the config file
-        let resolve = |p: &str| resolve_path_relative_to_config(path, p);
-
-        // Resolve CA certs and server cert/key paths (if TLS enabled)
-        let mut resolved = config.clone();
-        if let Some(tls) = &mut resolved.tls {
-            tls.ca_cert_paths = tls.ca_cert_paths.iter().map(|p| resolve(p)).collect();
-            tls.server_cert_path = resolve(&tls.server_cert_path);
-            tls.server_key_path = resolve(&tls.server_key_path);
-        }
-
-        // Resolve data_dir (mandatory) relative to the config file directory
-        resolved.data_dir = resolve(&resolved.data_dir);
-
-        Ok(resolved)
-    }
 
     /// Validate configuration values.
     ///
@@ -240,9 +213,7 @@ impl zznet_builder::traits::ZZNetConfig for DatabaseConfig {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
     use std::path::Path;
-    use tempfile::NamedTempFile;
 
     /// Helper to create a valid test configuration.
     fn create_valid_config() -> DatabaseConfig {
@@ -320,64 +291,5 @@ mod tests {
         assert!(result.unwrap_err().to_string().contains("max_collectors"));
     }
 
-    #[test]
-    fn test_load_valid_config_file() {
-        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let certs_dir = workspace_root.join("test_certs");
-        let config_content = format!(
-            r#"
-    DatabaseConfig(
-        bind_host: "0.0.0.0",
-        bind_port: 8443,
-        tls: Some(DatabaseTlsConfig(
-            ca_cert_paths: ["{}"],
-            server_cert_path: "{}",
-            server_key_path: "{}",
-        )),
-        data_dir: ".",
-        components: ComponentConfig(
-            stale_timeout_secs: 30,
-            max_collectors: 100,
-        ),
-    )
-    "#,
-            certs_dir.join("ca.pem").to_str().unwrap(),
-            certs_dir.join("database.pem").to_str().unwrap(),
-            certs_dir.join("database.key").to_str().unwrap()
-        );
 
-        let mut temp_file = NamedTempFile::new().unwrap();
-        temp_file.write_all(config_content.as_bytes()).unwrap();
-        let path = temp_file.path().to_str().unwrap();
-
-        let config = DatabaseConfig::load(path).expect("Failed to load config");
-        assert_eq!(config.bind_host, "0.0.0.0");
-        assert_eq!(config.bind_port, 8443);
-    }
-
-    #[test]
-    fn test_load_nonexistent_file_fails() {
-        let result = DatabaseConfig::load("/nonexistent/path/config.ron");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Failed to read"));
-    }
-
-    #[test]
-    fn test_load_invalid_ron_fails() {
-        let invalid_content = "this is not valid RON {{{";
-
-        let mut temp_file = NamedTempFile::new().unwrap();
-        temp_file.write_all(invalid_content.as_bytes()).unwrap();
-        let path = temp_file.path().to_str().unwrap();
-
-        let result = DatabaseConfig::load(path);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Failed to parse"));
-    }
 }
