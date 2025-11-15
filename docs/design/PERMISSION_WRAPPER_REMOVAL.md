@@ -9,25 +9,25 @@ This document explains the historical purpose of `PermissionWrapper<T>` in the `
 Background / Original intent
 ----------------------------
 - The project uses a two-layer authorization model:
-  1. Connection-level `AuthRole` (global, defined in `zzping-auth`) used during TLS/connection authentication.
+  1. Connection-level `Role` (canonical string/newtype) used during TLS/connection authentication.
   2. Component-level permission enums (e.g. `IntentConfigPermission`) used by individual components to decide whether a peer may perform actions or receive messages.
 
 - `PermissionWrapper<T>` was introduced as a small adapter/newtype around a component's permission enum `T` so components could:
   - Use a single concrete type as the generic `TRole` parameter for `SessionManager<TRole>` and related actor interfaces.
-  - Keep component-level role types separate from global `AuthRole`.
-  - Provide a single place to add conversions (e.g., mapping `AuthRole` -> component permission) in future.
+  - Keep component-level role types separate from the core `Role` string; perform mapping at application boundaries.
+  - Provide a single place to add conversions (e.g., mapping `Role` -> component permission) in future.
 
 What the code actually did
 -------------------------
-- The implementation of `PermissionWrapper<T>` was minimal: it simply wrapped the inner `T` and delegated all `ApplicationRole` behavior to `T`.
+- The implementation of `PermissionWrapper<T>` was minimal: it simply wrapped the inner `T` and delegated all role behavior to `T` (previously via `ApplicationRole`). With the `TRole` trait removed, the wrapper can delegate to application-owned inherent methods or mapping helpers.
 - The wrapper derived `Clone`, `Copy`, `Hash`, `Serialize` and provided a `Deserialize` impl that forwarded to `T`.
-- There was no conversion logic from `AuthRole` to `PermissionWrapper<T>` implemented in the wrapper itself; that mapping was performed elsewhere (or left unaligned).
+- There was no conversion logic from `Role` to `PermissionWrapper<T>` implemented in the wrapper itself; that mapping was performed elsewhere (or left unaligned).
 
 Why it was removed
 ------------------
 - During the recent cleanup the wrapper was removed because it provided zero runtime behavior beyond delegation; the inner types already implemented the same traits and semantics.
 - The wrapper had become a placeholder with no functional advantage in the code paths exercised by the running system and tests.
-- Removing it simplifies the code: fewer layers of indirection and fewer types to reason about while the two-layer model remains achievable via existing `AuthRoleMapper` conversions in components.
+- Removing it simplifies the code: fewer layers of indirection and fewer types to reason about while the two-layer model remains achievable via explicit `Role -> permission` conversions in components.
 
 What changed in code & docs
 --------------------------
@@ -40,15 +40,15 @@ Migration notes & recommendations
 If you (the maintainer) want to keep the original two-layer conceptual model, but with useful, explicit mapping points, consider one of these approaches:
 
 1) Reintroduce a purposeful adapter (recommended if you want a dedicated conversion point)
-   - Implement a small, explicit adapter that encapsulates mapping logic from `AuthRole` to component permission.
+  - Implement a small, explicit adapter that encapsulates mapping logic from `Role` to component permission.
    - Example API:
-     - `impl TryFrom<AuthRole> for ComponentPermission` (via `AuthRoleMapper` trait implementations)
+    - `impl TryFrom<Role> for ComponentPermission` (via application mapper trait implementations)
      - `impl From<ComponentPermission> for ComponentPermissionWrapper` (if wrapper type is desired)
    - Benefit: a single targeted place to implement mapping and custom per-component rules.
 
 2) Use component permission enums directly (current approach)
    - Keep `SessionManager<T>` parameterized by the concrete component permission type `T` (e.g. `IntentConfigPermission`).
-   - Implement `AuthRoleMapper` for `T` so the connection/auth layer can map incoming peer `AuthRole` to a `T` value at connection time. This keeps mapping explicit while avoiding an extra wrapper type.
+  - Implement a `Role -> T` mapping for `T` so the connection/auth layer can map incoming peer `Role` to a `T` value at connection time. This keeps mapping explicit while avoiding an extra wrapper type.
 
 3) Keep the wrapper as a purely documented convention (not recommended)
    - Leave it as a type alias or removed type but document the intent in component templates. This is only sensible if you intentionally want minimal surface area and prefer direct `T` usage.
@@ -56,10 +56,10 @@ If you (the maintainer) want to keep the original two-layer conceptual model, bu
 Code changes checklist for a safe migration
 -----------------------------------------
 - [ ] Update component actor generics and builder types to use `T` (component permission enum) instead of `PermissionWrapper<T>`.
-- [ ] Ensure `AuthRoleMapper` is implemented for `T` so you can map the connection-level `AuthRole` into component permissions on connection/handshake.
+ - [ ] Ensure a `Role -> T` mapping is implemented for `T` so you can map the connection-level `Role` into component permissions on connection/handshake.
 - [ ] Audit `SessionManager` startup wiring: if you create `SessionManager` as `Addr<SessionManager<AuthRole>>` but components expect `SessionManager<T>`, either:
     - Start the `SessionManager` polymorphically per-component (hard), or
-    - Perform mapping at message/send time by converting `AuthRole` -> `T` when answering GetPeerRole/GetPeersWithRole queries.
+    - Perform mapping at message/send time by converting `Role` -> `T` when answering `GetPeerRole`/`GetPeersWithRole` queries.
 - [ ] Update docs/design templates (`docs/design/COMPONENT_TEMPLATE_GUIDE.md` and component templates) to remove references to `PermissionWrapper<T>` or replace them with the chosen pattern.
 
 Testing & verification
@@ -76,16 +76,16 @@ cargo nextest run
 grep -R "PermissionWrapper" -n . || true
 ```
 
-- If you reintroduce an adapter, add unit tests for the mapping logic (AuthRole -> component permission) and round-trip serde tests if applicable.
+- If you reintroduce an adapter, add unit tests for the mapping logic (`Role` -> component permission) and round-trip serde tests if applicable.
 
 Follow-ups
 ----------
-- If you want a clean replacement that implements the original vision (two-layer model with an explicit mapping point), I can open a PR that adds a small, well-documented adapter type with `TryFrom<AuthRole>`/`AuthRoleMapper` usages and the matching unit tests.
+- If you want a clean replacement that implements the original vision (two-layer model with an explicit mapping point), I can open a PR that adds a small, well-documented adapter type with `TryFrom<Role>`/mapping usages and the matching unit tests.
 - If you want to fully remove any remaining references and update templates/docs, I can prepare a short PR that changes component templates and the design docs.
 
 Questions/Notes
 ---------------
-- The wrapper removal simplifies the code but does not prevent implementing explicit mapping; the `AuthRoleMapper` trait remains the correct place to map connection-level roles to component-level permissions.
+- The wrapper removal simplifies the code but does not prevent implementing explicit mapping; the `Role`→component mapping helper remains the correct place to map connection-level roles to component-level permissions.
 - If you removed the type to reduce cognitive load, we should also update the design docs that still mention `PermissionWrapper<T>` to avoid confusion.
 
 References

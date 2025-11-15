@@ -153,7 +153,7 @@ The HELLO protocol message contains a `role` field:
 ```rust
 HandshakeFrame::Hello {
     version: String,
-    role: AuthRole,      // ⚠️ Claimed role, not verified
+    role: String,        // ⚠️ Claimed role in HELLO, not verified; certificate CN is authoritative
     hostname: String,
 }
 ```
@@ -175,8 +175,8 @@ HandshakeFrame::Hello {
 
 ### 4.1 Responsibility Boundary
 
-**Applications (zzping-database, zzping-collector, etc.) are responsible for:**
-1. Defining application-specific roles (e.g., `AuthRole` enum)
+1. Defining application-specific roles or permissions (optionally by using typed enums)
+1. Defining application-specific roles or permissions (e.g., typed `AuthRole` enums) — application-local concerns. The framework's canonical role identifier is the `Role` newtype (string).
 2. Maintaining allow-lists of permitted identities
 3. Resolving `PeerIdentity` → application role
 4. Enforcing connection-level ACLs (who can connect)
@@ -187,7 +187,7 @@ HandshakeFrame::Hello {
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. Transport Layer (zznet-transport-tcp)                    │
+4. Enforcing connection-level ACLs (who can connect)
 │    - mTLS handshake completes                                │
 │    - Extract PeerIdentity { cn, san_username }               │
 └────────────────────┬────────────────────────────────────────┘
@@ -206,7 +206,7 @@ HandshakeFrame::Hello {
 │ 3. Application Layer (zzping main.rs / SessionManager)      │
 │    - Receives HandshakeComplete with PeerIdentity            │
 │    - Looks up identity in local ACL config                   │
-│    - Resolves PeerIdentity → AuthRole                        │
+│    - Resolves PeerIdentity → `Role` (string/newtype)         │
 │    - Enforces connection policy                              │
 │    - Creates PeerSession with resolved role & permissions    │
 └─────────────────────────────────────────────────────────────┘
@@ -383,7 +383,7 @@ impl AuthRole {
 
 ### 4.7 Component-Level Permissions (Trait-Based Model)
 
-While connection and room-level authorization are handled by coarse-grained checks on the `AuthRole` enum, fine-grained permissions required by reusable components must be handled differently to prevent tight coupling between a component and the application's specific roles.
+While connection and room-level authorization are normally enforced via coarse-grained checks (often implemented by application-level enums or mapped permissions), fine-grained permissions required by reusable components must be handled differently to prevent tight coupling between a component and the application's specific roles.
 
 The standard pattern for this is to define a trait that represents the set of permissions a component requires. This makes the permissions **type-safe and compile-time checked**.
 
@@ -404,7 +404,7 @@ pub trait IntentPermissions {
 
 **2. Implement the Trait for the Application's Role Enum:**
 
-The application (`zzping`) is responsible for implementing this trait for its concrete `AuthRole` enum, mapping its roles to the required permissions.
+The application (`zzping`) is responsible for performing `Role` → `Permissions` mapping and for implementing application-local helpers (e.g., typed enums or mappers). Core frameworks should be agnostic and only provide the `Role` identifier.
 
 ```rust
 // In the zzping application's auth logic

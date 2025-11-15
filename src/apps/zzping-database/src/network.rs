@@ -15,7 +15,6 @@ use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::config::TlsConfig;
 use zznet_transport_tcp::server::TcpTransportServer;
-use zzping_auth::AuthRole;
 
 /// DatabaseNetwork manages server-side connections following the vision architecture.
 ///
@@ -71,11 +70,11 @@ impl DatabaseNetwork {
         // accepts a HashSet<zznet_api::types::Role> and builds an internal
         // authorizer which validates TLS CN (if present) and checks the
         // allowed roles. Database accepts connections from collectors and
-        // clients (read-only/admin) per AuthRole::can_connect_to policy.
+        // clients (read-only/admin) per configured allowed roles.
         let mut allowed_roles = HashSet::new();
-        allowed_roles.insert(Role::new(&AuthRole::Collector.to_string()));
-        allowed_roles.insert(Role::new(&AuthRole::ClientRo.to_string()));
-        allowed_roles.insert(Role::new(&AuthRole::ClientAdmin.to_string()));
+        allowed_roles.insert(Role::new("collector"));
+        allowed_roles.insert(Role::new("client-ro"));
+        allowed_roles.insert(Role::new("client-admin"));
 
         // Step 3: Components are ready (peer_manager no longer needed by ConnectionManager)
 

@@ -412,7 +412,7 @@ impl MemDBRole {
 **Purpose**: Generic authentication/authorization traits
 
 **Provides**:
-- `ApplicationRole` trait (apps implement this)
+- Typed roles may exist as application-domain enums, but the core networking code uses a compact `Role` newtype (string) representation for routing/filtering.
 - `PermissionCheck` trait (components use this)
 - Generic ACL utilities
 
@@ -484,44 +484,16 @@ pub struct PeerIdentity {
 
 **Applications (zzping-database, zzping-collector) define and enforce authorization.**
 
-```rust
-// In zzping application code:
-enum AuthRole {
-    Collector,
-    Database,
-    ClientAdmin,
-    ClientReadOnly,
-}
+```text
+// Application-level typed enums (e.g., `AuthRole`) may exist for internal
+// permission schemas, but they are *not* required by the core network layer.
+// The network core uses the `Role` newtype (a compact string) on the wire
+// and in actor messages. Applications should perform explicit mapping from
+// `Role` → their local typed enums or permission structs when necessary.
 
-impl ApplicationRole for AuthRole {
-    fn from_cn(cn: &str) -> Result<Self, AuthError> {
-        match cn {
-            "collector" => Ok(AuthRole::Collector),
-            "database" => Ok(AuthRole::Database),
-            "client-admin" => Ok(AuthRole::ClientAdmin),
-            "client-ro" => Ok(AuthRole::ClientReadOnly),
-            _ => Err(AuthError::UnknownRole(cn.to_string())),
-        }
-    }
-
-    fn can_connect_to(&self, target: &Self) -> bool {
-        match (self, target) {
-            (AuthRole::Collector, AuthRole::Database) => true,
-            (AuthRole::ClientAdmin, AuthRole::Database) => true,
-            _ => false,
-        }
-    }
-
-    fn can_access_room(&self, room: &str) -> bool {
-        match (self, room) {
-            (AuthRole::Collector, "memdb") => true,
-            (AuthRole::Collector, "intent-config") => true,
-            (AuthRole::ClientAdmin, _) => true,  // Admin can access all rooms
-            (AuthRole::ClientReadOnly, "memdb") => true,  // Read-only: only query
-            _ => false,
-        }
-    }
-}
+// Example (high-level guidance):
+// - Core message: `GetPeerRole` returns `Option<Role>`
+// - Application mapping: `fn map_role_to_permissions(role: &Role) -> Permissions`
 ```
 
 ### Security Model
@@ -575,7 +547,7 @@ Components receive:
 ```rust
 SessionEvent::Active {
     peer_id: PeerId,          // e.g., "collector-01"
-    role: AuthRole,            // Application-specific role
+    role: Role,                 // Canonical runtime role (string/newtype).
     rooms: Vec<RoomId>,        // Successfully negotiated rooms
 }
 ```
@@ -724,7 +696,7 @@ pub struct DatabaseActor<T> {
     connections: HashMap<PeerId, ConnectionState>,
 }
 
-impl<T: ApplicationRole> Handler<SessionEvent> for DatabaseActor<T> {
+impl<T> Handler<SessionEvent> for DatabaseActor<T> {
     fn handle(&mut self, event: SessionEvent, _ctx: &mut Context<Self>) {
         match event {
             SessionEvent::Active { peer_id, .. } => {

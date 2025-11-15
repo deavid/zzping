@@ -13,7 +13,6 @@ path = "src/lib.rs"
 
 [dependencies]
 tokio.workspace = true
-zznet-auth.workspace = true
 zznet-api.workspace = true
 zznet-room.workspace = true
 

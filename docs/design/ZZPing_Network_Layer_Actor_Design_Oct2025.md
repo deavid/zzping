@@ -250,7 +250,7 @@ pub enum SessionEvent {
 
         // Guaranteed to be present - came from Hello frame
         peer_hostname: String,
-        peer_role: AuthRole,
+        peer_role: Role,
         peer_version: String,
     },
     // ...
@@ -476,14 +476,14 @@ struct HelloFrame {
     protocol_family: String,        // "zznet"
     protocol_version: String,        // "1.0"
     hostname: String,
-    role: AuthRole,                  // Collector, Database, CLI, etc.
+    role: Role,                       // Canonical runtime role (collector, database, client-admin, etc.)
 }
 
 #[derive(Serialize, Deserialize)]
 struct HelloAckFrame {
     accepted: bool,
     hostname: String,
-    role: AuthRole,
+    role: Role,
 }
 ```
 
@@ -1588,7 +1588,7 @@ enum HelloFrame {
         protocol_family: String,  // "zznet"
         version: String,           // "1.0"
         hostname: String,
-        role: AuthRole,
+        role: Role,
     },
     HelloAck {
         accepted: bool,

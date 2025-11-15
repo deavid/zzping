@@ -8,12 +8,7 @@ This document explains the rationale for representing peer roles as a compact st
 
 Context & background
 --------------------
-- Current state: `PeerSession<TRole>` and `SessionManager<TRole>` are generic over `TRole: ApplicationRole`. Many messages in `zznet-session` are generic as well (e.g., `GetPeerRole<TRole>`, `GetPeersWithRole<TRole>`, `BroadcastToRole<TRole>`).
-- Motivation: roles are text on the wire (TLS cert CN, HELLO payloads, etc.). The `ApplicationRole` trait is an application-side compile-time abstraction that encodes parsing and policy. The core network layer (zznet) only needs a compact, stable representation of a peer's role for routing/filters/logging.
-
-Proposal overview
------------------
-- Introduce a compact `Role` newtype (or type alias) in `zznet_api::types` representing the canonical role identifier used at the network boundary. Example:
+ Mapping responsibility: application code continues to implement role->component mapping helpers (previously represented by `AuthRoleMapper`) / typed role enums (e.g., `AuthRole`) for convenience. Components convert the compact wire `Role` → component enum using mapping logic when typed semantics are needed.
 
 ```rust
 // zznet_api::types
@@ -36,7 +31,7 @@ impl From<&str> for Role {
   - `BroadcastToRole` → accepts `Role`
   - `AddPeer` keeps `PeerSession<Role>` or `PeerSession` with Role internals
 
-- Mapping responsibility: application code (zzping components) continues to implement `AuthRoleMapper` / `ApplicationRole` enums. Components convert `Role` → component enum (e.g., `IntentConfigPermission`) using their mapping logic when they need typed semantics.
+- Mapping responsibility: application code continues to implement role->component mapping helpers (previously represented by `AuthRoleMapper`) / typed role enums (e.g., `AuthRole`) for convenience. Components convert the compact wire `Role` → component enum using mapping logic when typed semantics are needed.
 
 Why this is better
 -------------------
@@ -97,9 +92,12 @@ Phase 2 - SessionManager actor message migration (medium→higher risk)
 - Update components and call sites to use new messages.
 - Iterate until all code uses the new messages; remove old generic messages.
 
-Phase 3 - App-level mapping & docs (low risk)
-- Add mapping helpers for components: `fn map_role_to_component<R: AuthRoleMapper>(role: &Role) -> Option<R>` and/or small utilities per component.
-- Update docs and templates to show how to map `Role` to component enums.
+ Phase 3 - App-level mapping & docs (low risk)
+ - Add mapping helpers for components: per-component utilities such as
+   - `fn map_role_to_intent_config_permissions(role: &Role) -> Option<IntentConfigPermissions>`
+   - `fn map_role_to_component_permissions(role: &Role) -> Option<ComponentPermissions>`
+   or a generic application-provided map helper if desired. These helpers should be owned by the application (composition root) and unit-tested.
+ - Update docs and templates to show how to map `Role` to component enums or permission structs.
 
 Phase 4 - Clean-up
 - Remove leftover generic TRole type parameters across the core and component examples.
@@ -126,7 +124,7 @@ Risks & mitigations
 - Risk: large API churn causing many small compile fixes across components.
   - Mitigation: staged approach; prototype internals and tests first, then migrate actor messages, then apps.
 - Risk: runtime surprises when mapping invalid role strings.
-  - Mitigation: add tight conversion helpers and unit tests; require application-level `AuthRoleMapper` implementations to be explicit about accepted roles.
+  - Mitigation: add tight conversion helpers and unit tests; require application-level mapping helper implementations to be explicit about accepted roles and to error on unknown values.
 - Risk: docs mismatch and onboarding confusion.
   - Mitigation: update `docs/` templates and add an ADR-style note (this proposal) in `docs/trole-refactor/` (this file).
 

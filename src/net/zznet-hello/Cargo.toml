@@ -16,7 +16,6 @@ workspace = true
 
 [dependencies]
 zznet-api = { workspace = true }
-zznet-auth = { workspace = true }
 zznet-router = { workspace = true }
 zznet-room = { workspace = true }
 actix.workspace = true
@@ -29,5 +28,4 @@ bytes.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "sync", "macros"] }
-zznet-auth = { workspace = true, features = ["test-utils"] }
 zznet-transport-tcp = { workspace = true }

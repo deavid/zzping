@@ -24,11 +24,10 @@ bincode.workspace = true
 thiserror.workspace = true
 log.workspace = true
 async-trait.workspace = true
-zznet-auth.workspace = true
+
 zznet-api.workspace = true
 zznet-room.workspace = true
 zznet-router.workspace = true
-zzping-auth.workspace = true
 
 [dev-dependencies]
 ntest.workspace = true

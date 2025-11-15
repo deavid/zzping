@@ -43,4 +43,4 @@ intent_config_policy.insert(
 ## Notes
 
 - Roles not present in a policy map are denied by default (simple, explicit fail-closed behavior).
-- Components must not import app `AuthRole`; they only receive their local `Permissions` at NetworkActor construction time.
+- Components must not import application typed role enums; they should rely only on their local `Permissions` at NetworkActor construction time and perform any mapping from the canonical `Role` newtype internally.

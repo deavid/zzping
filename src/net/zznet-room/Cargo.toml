@@ -24,8 +24,7 @@ serde = { workspace = true, features = ["derive"] }
 bincode.workspace = true
 
 # Internal dependencies - NO zznet-session to avoid cycles
-zznet-api = { path = "../zznet-api" }
-zznet-auth = { path = "../zznet-auth" }
+zznet-api.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }

@@ -78,7 +78,7 @@
 │  ┌────────────────────────────────────────────────────────┐    │
 │  │  actor.rs (Component implementation)                   │    │
 │  │                                                         │    │
-│  │  struct MemDBActor<T: ApplicationRole> {               │    │
+│  │  struct MemDBActor<T> {                                │    │
 │  │      role: MemDBRole,                                  │    │
 │  │      data_store: HashMap<String, Vec<...>>,            │    │
 │  │      session_manager: Option<Rc<SessionManager<...>>>, │    │

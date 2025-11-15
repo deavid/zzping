@@ -19,10 +19,6 @@ This document turns the vision in `01_vision.md` into concrete, incremental chan
 
 ## Current state (quick baseline)
 
-- The handshake/peer identity path delivers a canonical `zznet_api::types::Role` into `zznet_router::RouterActor::OnPeerConnected`, which calls `RoomManager::create_for_peer(peer_id, role, room_id, ...)`.
-- Components implement `RoomManager` and may currently ignore the role (e.g., `zznet-demo` `ComponentANetworkManager`), or will soon need to enforce authorization.
-- `common/zzping-auth` defines an application-specific `AuthRole` and (deprecated) `AuthRoleMapper`. The deprecation note matches the vision: components should not know app roles.
-- Some components (e.g., `zzintent-config`) have a features placeholder for `permissions` but do not yet expose a concrete `permissions` module.
 
 Conclusion: The framework already passes Role to the manager at the right place. We need to add per-component Permissions, inject application policy into managers, and ensure NetworkActors use permissions only.
 
@@ -99,7 +95,7 @@ Deliverables:
    - Reuse existing mock transport and harness utilities.
 
 6. Align docs and remove confusing leftovers
-   - `common/zzping-auth`: keep `AuthRole` and helpers; leave `AuthRoleMapper` deprecated. Add a note pointing to this plan and the composition-root mapping pattern.
+  - `common/zzping-auth`: historically provided `AuthRole` helpers; the new approach uses `Role` newtype at core boundary and application mapping to `Permissions`. Update the note to indicate the migration path in this repo.
    - Ensure `zznet` crates stay auth-agnostic in public API and docs.
 
 Deliverables:

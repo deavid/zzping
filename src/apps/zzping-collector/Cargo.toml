@@ -13,16 +13,12 @@ zzpinger.workspace = true
 zzmem-db.workspace = true
 zzcollector-state.workspace = true
 
-# Common dependencies
-zzping-auth.workspace = true
-
 # Network layer dependencies
 zznet-api.workspace = true
 zznet-builder.workspace = true
-zznet-auth.workspace = true
 zznet-hello.workspace = true
-zznet-room.workspace = true          # Vision-aligned Room<T> pattern
-zznet-router.workspace = true        # Message routing
+zznet-room.workspace = true
+zznet-router.workspace = true
 zznet-transport-tcp.workspace = true
 
 # Runtime dependencies
@@ -46,7 +42,7 @@ tracing-subscriber.workspace = true
 # Error handling
 anyhow.workspace = true
 thiserror.workspace = true
-async-trait = "0.1"
+async-trait.workspace = true
 
 # TLS/crypto
 rustls.workspace = true

@@ -1366,7 +1366,7 @@ struct HelloFrame {
     protocol_family: String,  // "zznet"
     protocol_version: String, // "1.0"
     hostname: String,         // "collector-01" ← THE IDENTITY
-    role: AuthRole,           // Collector
+    role: Role,               // canonical runtime role (string/newtype)
 }
 ```
 
@@ -1385,7 +1385,7 @@ After HELLO completes, the HELLO Handler creates a `PeerIdentity`:
 ```rust
 struct PeerIdentity {
     hostname: String,  // From HelloFrame
-    role: AuthRole,    // From HelloFrame
+    role: Role,        // From HelloFrame (canonical string/newtype)
     // ... other fields ...
 }
 ```

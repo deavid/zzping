@@ -2,11 +2,11 @@
 
 Date: 2025-10-26
 
-This note collects concrete findings from the codebase that show why the current `TRole`-generic design in the network core (`zznet-session`) conflicts with the project's stated design goal: "components should not deal in roles, they should deal in permissions and let application-level code map roles→permissions."
+This note collects concrete findings from the codebase that show why the historical `TRole`-generic design in the network core (`zznet-session`) conflicted with the project's stated design goal: "components should not deal in roles, they should deal in permissions and let application-level code map roles→permissions." It also documents the migration implications and the current state: the core now uses a compact `Role` newtype (string) and non-generic actor messages.
 
 Summary (short)
 ----------------
-- The network core (`PeerSession<TRole>` and `SessionManager<TRole>`) stores and exposes typed `TRole` values and exposes actor messages that are generic over `TRole` (e.g., `GetPeerRole<TRole>`, `GetPeersWithRole<TRole>`).
+- Historically the network core (`PeerSession<TRole>` and `SessionManager<TRole>`) stored and exposed typed `TRole` values and actor messages that were generic over `TRole` (e.g., `GetPeerRole<TRole>`, `GetPeersWithRole<TRole>`). The migration favors non-generic actor messages and `Role` newtype (string) as the canonical role identifier in the core.
 - At least one component (zzintent-config) depends on these typed TRole APIs to perform authorization checks against a component permission enum (it calls `GetPeerRole` and `GetPeersWithRole` and expects to receive component-enum values).
 - Apps currently create `SessionManager<AuthRole>` at startup (connection-level roles) and pass that Addr into components — producing a type alignment problem when components expect a different role enum (component permission enum) or a wrapper type.
 - Practical consequence: the network core is tightly coupled to component enums via generics, which contradicts the goal of making the core auth-agnostic and forcing role→permission mapping into the application layer.
@@ -14,12 +14,12 @@ Summary (short)
 Concrete evidence (code pointers)
 ---------------------------------
 - Core storage and API
-  - `src/net/zznet-session/src/peer_session.rs`
-    - `pub struct PeerSession<TRole> { peer_role: Option<TRole>, ... }`
-    - `pub fn role(&self) -> Option<&TRole>` and `pub fn get_peer_role_cloned(&self) -> Option<TRole>`
-  - `src/net/zznet-session/src/session_manager.rs`
-    - `pub struct SessionManager<TRole> { peers: HashMap<PeerId, PeerSession<TRole>>, ... }`
-    - `Handler<GetPeerRole<TRole>>` / `Handler<GetPeersWithRole<TRole>>` / `Handler<BroadcastToRole<TRole>>` implemented for the actor.
+  - `src/net/zznet-session/src/peer_session.rs` (Historical API)
+    - `pub struct PeerSession { peer_role: Option<Role>, ... }` (Role newtype used in core)
+    - `pub fn role(&self) -> Option<&Role>` and `pub fn get_peer_role_cloned(&self) -> Option<Role>`
+  - `src/net/zznet-session/src/session_manager.rs` (Historical API)
+    - `pub struct SessionManager { peers: HashMap<PeerId, PeerSession>, ... }` (non-generic over role type)
+    - `Handler<GetPeerRole>` / `Handler<GetPeersWithRole>` / `Handler<BroadcastToRole>` implemented for the actor and use `Role` newtype/string where appropriate.
   - `src/net/zznet-session/src/messages.rs` defines many messages generic over `TRole`.
 
 - Component usage
@@ -53,7 +53,7 @@ The intended design repeatedly states that components should operate on componen
 
 3. Permission checks leak into component-network interactions
    - `zzintent-config` directly asks the SessionManager for peers with a particular *component permission enum* and for a peer's typed role — then makes authorization decisions inline.
-   - If the core exposed only a canonical role string or id, components would be forced to perform explicit mapping from that role id into their own permission enum via `AuthRoleMapper` or `from_cn` style logic — which is the intended separation of responsibilities.
+  - If the core exposed only a canonical role string or id, components would be forced to perform explicit mapping from that role id into their own permission enum via role->component mapping helpers or `from_cn` style logic — which is the intended separation of responsibilities.
 
 Consequences in practice
 ------------------------
@@ -70,7 +70,7 @@ Bottom line
 Minimal corrective principle (policy, not migration steps)
 --------------------------------------------------------
 - At runtime/zznet boundary, treat roles as a compact canonical identifier (string or small `Role` newtype). Keep the network core auth-agnostic.
-- Let application-level code (zzping-auth / component `AuthRoleMapper`) convert the canonical role id into component permissions where needed. Components should assert permissions only against their own permission enums.
+- Let application-level code (zzping-auth / role->component mapping helpers) convert the canonical role id into component permissions where needed. Components should assert permissions only against their own permission enums.
 
 If you want a prototype to prove the new boundary (Role newtype in zznet core + component mapping), I can implement Phase 0+1 (add `Role` and update `PeerSession` internals) and run tests. But this document focuses only on findings: where and why the code currently collides with the intended architecture.
 
@@ -97,9 +97,9 @@ What we would lose if core role access were removed with no replacement
 - Potential for subtle bugs during migration: if components or apps interpret the on-wire role differently (different canonical strings, case/normalization issues), authorization behavior could change unexpectedly unless the mapping is standardized and well-tested.
 
 Mitigations if we remove typed role access
-- Provide a canonical `Role` newtype and a string-based `GetPeersWithRole` and `GetPeerRole` API so components can explicitly map Role→permission using `AuthRoleMapper`.
+- Provide a canonical `Role` newtype and a string-based `GetPeersWithRole` and `GetPeerRole` API so components can explicitly map Role→permission using role->component mapping helpers.
 - Add helper utilities in each component crate to encapsulate Role→permission mapping and surface clear errors when mapping fails.
-- Add tests that assert mapping invariants (e.g., `AuthRoleMapper` implementations accept the same canonical strings that the connection layer emits).
+- Add tests that assert mapping invariants (e.g., role->component mapping helper implementations accept the same canonical strings that the connection layer emits).
 
 Net effect
 - Removing typed `TRole` access without replacement would force `zzintent-config` and any other components that expect typed roles to add explicit mapping logic and per-peer lookups. That is possible and arguably correct from an architecture standpoint, but it is a non-trivial change that affects runtime behavior, tests, and developer ergonomics. It should be performed as an explicit migration with supporting APIs and tests rather than by silently removing role-returning APIs.

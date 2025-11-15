@@ -76,14 +76,14 @@ This is how the pieces were originally envisioned to fit together during a conne
 3.  **Identity Plumbing:** The transport passes this verified `username` up to the `zznet-hello` layer's `HelloActor`.
     - **Revised**: Transport provides `peer_identity()` method. `HelloActor` passes `PeerIdentity` to application via `HandshakeComplete` message. **No auth decisions in zznet layers**.
 4.  **Policy Lookup:** The `HelloActor` consults a local **`PolicyManager`** component. It asks, "What are the permissions for the authenticated user `'<username>'`?"
-    - **Revised**: Application layer (e.g., `main.rs` or `SessionManager`) receives `HandshakeComplete` with `PeerIdentity`. Application's `AclManager` checks allow-list and resolves to `AuthRole`.
+    - **Revised**: Application layer (e.g., `main.rs` or `SessionManager`) receives `HandshakeComplete` with `PeerIdentity`. Application's `AclManager` checks allow-list and resolves to a canonical `Role` (string/newtype); mapping to app-specific enums is performed explicitly by applications.
 5.  **Permission Resolution:** The `PolicyManager` uses its loaded configuration to perform the two-step mapping:
     a. It finds the `username` in its `username -> Role` map.
     b. It finds that `Role` in its `Role -> [Permission]` map.
     c. It returns a `HashSet<String>` of all resolved permissions to the `HelloActor`.
-    - **Revised**: Single-step: `PeerIdentity` → check allow-list → resolve CN to `AuthRole`. No permission strings.
+    - **Revised**: Single-step: `PeerIdentity` → check allow-list → resolve CN to `Role` (string/newtype). No permission strings required at the core.
 6.  **Session Creation:** The `HelloActor` informs the `SessionManager` that the handshake is complete. The `PeerSession` is created and now stores the `HashSet` of permissions for this authenticated peer for the duration of the session.
-    - **Revised**: Application creates `PeerSession` with resolved `AuthRole`. Role methods enforce access control.
+    - **Revised**: Application creates `PeerSession` with resolved `Role` and optional application-side permission mapping. Role-based checks are enforced by application-specific logic.
 7.  **Permission Enforcement:** Later, when the peer attempts an action (e.g., sending a message to the `intentconfig` room to change configuration), the `PeerSession` checks if the peer's stored permission set contains the required permission (e.g., `"intentconfig:write"`). If it does, the action proceeds. If not, it is denied.
     - **Revised**: Components check `role.can_access_room(room_name)` or similar methods. Direct role-based checks, not string permissions.
 
@@ -115,7 +115,7 @@ Despite the strong foundation, the current implementation has critical deficienc
 - **Primary Deficiency: No Identity Plumbing:** ✅ **CONFIRMED - ACCURATE** The verified identity (`username`) from the mTLS certificate is not passed up from the transport layer. The `TransportConnection` trait is missing a method to expose this crucial information, effectively decoupling the secure transport from the application logic.
   - **Solution**: Add `peer_identity()` method to `TransportConnection` trait that returns `PeerIdentity { cn, san_username, peer_addr }`.
 
-- **Secondary Deficiency: No Policy Management:** ✅ **CONFIRMED - ACCURATE** The system completely lacks the concept of a `PolicyManager`. There is no mechanism to load, map, or query `username -> role -> permission` policies. Authorization is currently hardcoded into the `AuthRole` enum itself.
+- **Secondary Deficiency: No Policy Management:** ✅ **CONFIRMED - ACCURATE** The system completely lacks the concept of a `PolicyManager`. There is no mechanism to load, map, or query `username -> role -> permission` policies. Authorization was historically hardcoded into typed app enums (e.g., `AuthRole`) and needs a cleaner, centralized `AclManager` in application code.
   - **Solution**: Create `AclManager` in application layer (not zznet) that loads allow-lists from TOML config. Simpler than originally proposed - just allow-list checking, no permission strings.
 
 - **Tertiary Deficiency: Insecure Trust Model:** ✅ **CONFIRMED - ACCURATE** The `HelloActor` currently trusts the `AuthRole` that a peer declares in its `HELLO` message. This is fundamentally insecure for the mTLS workflow, as it allows a peer to lie about its role, but it coincidentally matches the requirements for the "insecure" fallback mode.
