@@ -136,12 +136,8 @@ impl CollectorNetwork {
         connection_manager_addr: &actix::Addr<ConnectionManager>,
     ) -> Result<(), String> {
         // Step 1: Create TCP transport client
-        let client = if let Some(tls_config) = &self.tls_config {
-            TcpTransportClient::new(self.remote_addr.clone(), Some(tls_config.clone()))
-                .map_err(|e| format!("Failed to create TLS client: {:?}", e))?
-        } else {
-            TcpTransportClient::plain(self.remote_addr.clone())
-        };
+        let client = TcpTransportClient::new(self.remote_addr.clone(), self.tls_config.clone())
+            .map_err(|e| format!("Failed to create client: {:?}", e))?;
 
         // Step 2: Connect to server
         let transport = client

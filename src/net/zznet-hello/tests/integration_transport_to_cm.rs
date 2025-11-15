@@ -15,7 +15,7 @@ async fn transport_accept_and_send_to_connection_manager() {
     local
         .run_until(async move {
             // Start a plain TCP transport server on ephemeral port
-            let mut server = TcpTransportServer::plain("127.0.0.1:0")
+            let mut server = TcpTransportServer::new("127.0.0.1:0", None)
                 .await
                 .expect("server start");
             let addr = server.local_addr().expect("local addr");
@@ -23,7 +23,9 @@ async fn transport_accept_and_send_to_connection_manager() {
             let timeout_ms = 10u64;
 
             // Run accept() and client.connect() concurrently within same task to avoid spawn_local
-            let client = zznet_transport_tcp::client::TcpTransportClient::plain(addr.to_string());
+            let client =
+                zznet_transport_tcp::client::TcpTransportClient::new(addr.to_string(), None)
+                    .unwrap();
 
             let combined = async { tokio::join!(server.accept(), client.connect()) };
 

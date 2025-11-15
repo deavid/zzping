@@ -66,15 +66,10 @@ impl TcpTransportServer {
     }
 
     /// Create a plain TCP server (no encryption).
+    #[deprecated(note = "use TcpTransportServer(addr, None) instead")]
     pub async fn plain(addr: &str) -> Result<Self, TransportError> {
         debug!("Creating plain TCP server (no encryption) on {}", addr);
         Self::new(addr, None).await
-    }
-
-    /// Create a TLS-enabled TCP server.
-    pub async fn with_tls(addr: &str, tls_config: TlsConfig) -> Result<Self, TransportError> {
-        info!("Creating TLS-enabled TCP server on {}", addr);
-        Self::new(addr, Some(tls_config)).await
     }
 
     /// Get the local address the server is bound to.
@@ -129,7 +124,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_plain_tcp_server_accept() {
-        let server = TcpTransportServer::plain("127.0.0.1:0").await.unwrap();
+        let server = TcpTransportServer::new("127.0.0.1:0", None).await.unwrap();
         let addr = server.local_addr().unwrap();
 
         let server_handle = tokio::spawn(async move {
@@ -140,7 +135,7 @@ mod tests {
             conn.send(msg).await.unwrap();
         });
 
-        let client = TcpTransportClient::plain(addr.to_string());
+        let client = TcpTransportClient::new(addr.to_string(), None).unwrap();
         let mut conn = client.connect().await.unwrap();
 
         conn.send(bytes::Bytes::from("hello server")).await.unwrap();
@@ -153,7 +148,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_connections() {
-        let server = TcpTransportServer::plain("127.0.0.1:0").await.unwrap();
+        let server = TcpTransportServer::new("127.0.0.1:0", None).await.unwrap();
         let addr = server.local_addr().unwrap();
         let addr_clone = addr;
 
@@ -174,7 +169,7 @@ mod tests {
             let addr_str = addr_clone.to_string();
 
             let handle = tokio::spawn(async move {
-                let client = TcpTransportClient::plain(addr_str);
+                let client = TcpTransportClient::new(addr_str, None).unwrap();
                 let mut conn = client.connect().await.unwrap();
 
                 let msg = format!("client {}", i);
@@ -196,13 +191,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_bind_address() {
-        let result = TcpTransportServer::plain("999.999.999.999:8080").await;
+        let result = TcpTransportServer::new("999.999.999.999:8080", None).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_server_local_addr() {
-        let server = TcpTransportServer::plain("127.0.0.1:0").await.unwrap();
+        let server = TcpTransportServer::new("127.0.0.1:0", None).await.unwrap();
         let addr = server.local_addr().unwrap();
 
         assert_eq!(addr.ip().to_string(), "127.0.0.1");

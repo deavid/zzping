@@ -54,24 +54,6 @@ impl TcpTransportClient {
             server_name,
         })
     }
-
-    /// Create a plain TCP client (no encryption).
-    ///
-    /// This is primarily for testing.
-    pub fn plain(addr: String) -> Self {
-        debug!("Creating plain TCP client (no encryption) for {}", addr);
-        Self {
-            addr,
-            tls_config: None,
-            server_name: None,
-        }
-    }
-
-    /// Create a TLS-enabled TCP client.
-    pub fn with_tls(addr: String, tls_config: TlsConfig) -> Result<Self, TransportError> {
-        info!("Creating TLS-enabled TCP client for {}", addr);
-        Self::new(addr, Some(tls_config))
-    }
 }
 
 #[async_trait]
@@ -159,7 +141,7 @@ mod tests {
         });
 
         // Create client and connect
-        let client = TcpTransportClient::plain(addr.to_string());
+        let client = TcpTransportClient::new(addr.to_string(), None).unwrap();
         let mut conn = client.connect().await.unwrap();
 
         // Send a message
@@ -175,7 +157,7 @@ mod tests {
     #[tokio::test]
     async fn test_connection_refused() {
         // Try to connect to a port that's not listening
-        let client = TcpTransportClient::plain("127.0.0.1:1".to_string());
+        let client = TcpTransportClient::new("127.0.0.1:1".to_string(), None).unwrap();
         let result = client.connect().await;
 
         assert!(result.is_err());
@@ -185,7 +167,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_invalid_address() {
-        let client = TcpTransportClient::plain("invalid:address".to_string());
+        let client = TcpTransportClient::new("invalid:address".to_string(), None).unwrap();
         let result = client.connect().await;
 
         assert!(result.is_err());

@@ -11,14 +11,14 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::trace;
 
 /// Maximum frame size (16 MB) - matches zznet-api mock transport limit.
-pub const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+pub(crate) const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 /// Reads a length-prefixed frame from an asynchronous byte stream.
 ///
 /// This function first reads a `u32` (4 bytes) to determine the length of the
 /// incoming frame, then reads that many bytes. This mechanism is crucial for
 /// delimiting messages in a continuous byte stream.
-pub async fn read_frame<R>(stream: &mut R) -> io::Result<Bytes>
+pub(crate) async fn read_frame<R>(stream: &mut R) -> io::Result<Bytes>
 where
     R: AsyncRead + Unpin,
 {
@@ -59,7 +59,7 @@ where
 /// This function first writes the length of the provided `data` as a `u32` (4 bytes),
 /// followed by the actual data bytes. This ensures that the receiving end can
 /// correctly interpret the boundaries of each message in the stream.
-pub async fn write_frame<W>(stream: &mut W, data: &[u8]) -> io::Result<()>
+pub(crate) async fn write_frame<W>(stream: &mut W, data: &[u8]) -> io::Result<()>
 where
     W: AsyncWrite + Unpin,
 {

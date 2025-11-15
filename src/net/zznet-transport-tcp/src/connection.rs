@@ -20,7 +20,7 @@ use crate::framing;
 ///
 /// This wraps either a plain TCP stream or a TLS-encrypted stream and
 /// implements the TransportConnection trait for use with zznet-hello.
-pub struct TcpTransport {
+pub(crate) struct TcpTransport {
     /// The actual stream (plain or TLS).
     stream: TcpTransportStream,
     /// Peer address for logging.
@@ -40,7 +40,7 @@ enum TcpTransportStream {
 
 impl TcpTransport {
     /// Create a plain TCP transport (no encryption).
-    pub fn plain(stream: TcpStream, peer_addr: SocketAddr) -> Self {
+    pub(crate) fn plain(stream: TcpStream, peer_addr: SocketAddr) -> Self {
         debug!("Created plain TCP transport for {}", peer_addr);
         // For plain TCP, create a dummy identity (will not be used since peer_identity() returns None)
         TcpTransport {
@@ -51,7 +51,7 @@ impl TcpTransport {
     }
 
     /// Create a TLS client transport.
-    pub fn tls_client(
+    pub(crate) fn tls_client(
         stream: tokio_rustls::client::TlsStream<TcpStream>,
         peer_addr: SocketAddr,
     ) -> Result<Self, zznet_api::error::TransportError> {
@@ -65,7 +65,7 @@ impl TcpTransport {
     }
 
     /// Create a TLS server transport.
-    pub fn tls_server(
+    pub(crate) fn tls_server(
         stream: tokio_rustls::server::TlsStream<TcpStream>,
         peer_addr: SocketAddr,
     ) -> Result<Self, zznet_api::error::TransportError> {
