@@ -2,12 +2,12 @@
 
 use crate::config::DemoAppConfig;
 use crate::service::DemoAppService;
-use zznet_hello::messages::GetRole;
 use actix::Addr;
 use zznet_api::mock::create_mock_pair;
 use zznet_builder::traits::ZZNetService;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::HandleTransport;
+use zznet_hello::messages::GetRole;
 use zznet_router::GetOfferedRooms;
 
 /// Spawns a `DemoAppService` and returns the service and the address of ComponentA.

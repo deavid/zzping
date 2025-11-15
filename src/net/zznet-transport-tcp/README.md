@@ -95,7 +95,7 @@ When mTLS is enabled, extract peer identity from certificates:
 - Network errors → TransportError::Io
 - TLS errors → TransportError::Tls
 - Frame errors → TransportError::FrameTooLarge
-- Graceful close → Ok(None), NOT an error
+- Graceful close → reported as TransportError::ConnectionClosed (not Ok(None))
 
 ### Identity Extraction (mTLS only)
 - CN and SAN extracted from peer certificate

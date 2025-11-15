@@ -243,7 +243,6 @@ impl Handshake {
             ))),
         }
     }
-
 }
 
 impl Default for Handshake {

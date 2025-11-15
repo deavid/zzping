@@ -40,11 +40,9 @@ impl TcpTransportClient {
         let server_name = tls_config.as_ref().map(|cfg| cfg.server_name.clone());
         let tls_config = match tls_config {
             Some(cfg) => {
-                let client_config = cfg.build_client_config().map_err(|e| {
-                    TransportError::IoError(std::io::Error::other(
-                        e.to_string(),
-                    ))
-                })?;
+                let client_config = cfg
+                    .build_client_config()
+                    .map_err(|e| TransportError::IoError(std::io::Error::other(e.to_string())))?;
                 Some(Arc::new(client_config))
             }
             None => None,
@@ -97,9 +95,7 @@ impl TransportClient for TcpTransportClient {
             TransportError::IoError(e)
         })?;
 
-        let peer_addr = tcp_stream
-            .peer_addr()
-            .map_err(TransportError::IoError)?;
+        let peer_addr = tcp_stream.peer_addr().map_err(TransportError::IoError)?;
 
         debug!("TCP connection established to {}", self.addr);
 
@@ -126,9 +122,10 @@ impl TransportClient for TcpTransportClient {
                 .await
                 .map_err(|e| {
                     error!("TLS handshake failed: {}", e);
-                    TransportError::IoError(std::io::Error::other(
-                        format!("TLS handshake failed: {}", e),
-                    ))
+                    TransportError::IoError(std::io::Error::other(format!(
+                        "TLS handshake failed: {}",
+                        e
+                    )))
                 })?;
 
             info!("TLS handshake completed for {}", self.addr);
@@ -157,7 +154,7 @@ mod tests {
             let mut transport = TcpTransport::plain(stream, peer_addr);
 
             // Echo back any message
-            let msg = transport.recv().await.unwrap().unwrap();
+            let msg = transport.recv().await.unwrap();
             transport.send(msg).await.unwrap();
         });
 
@@ -169,7 +166,7 @@ mod tests {
         conn.send(bytes::Bytes::from("test message")).await.unwrap();
 
         // Receive echo
-        let response = conn.recv().await.unwrap().unwrap();
+        let response = conn.recv().await.unwrap();
         assert_eq!(response.as_ref(), b"test message");
 
         server_handle.await.unwrap();

@@ -23,7 +23,7 @@ pub mod builder;
 pub mod config;
 pub mod internal_messages;
 pub mod messages;
+pub mod network_actor;
 pub mod network_manager;
 pub mod network_messages;
 pub mod storage;
-pub mod network_actor;

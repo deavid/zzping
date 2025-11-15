@@ -55,12 +55,17 @@ impl TransportConnection for MockConnection {
             .map_err(|e| TransportError::ConnectionClosed(io::Error::other(e.to_string())))
     }
 
-    async fn recv(&mut self) -> Result<Option<Bytes>, TransportError> {
+    async fn recv(&mut self) -> Result<Bytes, TransportError> {
         if let Some(error) = self.inject_error.take() {
             return Err(error);
         }
 
-        Ok(self.rx.recv().await)
+        match self.rx.recv().await {
+            Some(bytes) => Ok(bytes),
+            None => Err(TransportError::ConnectionClosed(io::Error::other(
+                "connection closed",
+            ))),
+        }
     }
 
     fn peer_addr(&self) -> Option<String> {
@@ -172,27 +177,30 @@ mod tests {
 
         // bidirectional
         conn_a.send(Bytes::from("hello")).await.unwrap();
-        assert_eq!(conn_b.recv().await.unwrap(), Some(Bytes::from("hello")));
+        assert_eq!(conn_b.recv().await.unwrap(), Bytes::from("hello"));
         conn_b.send(Bytes::from("world")).await.unwrap();
-        assert_eq!(conn_a.recv().await.unwrap(), Some(Bytes::from("world")));
+        assert_eq!(conn_a.recv().await.unwrap(), Bytes::from("world"));
 
         // multiple messages
         for i in 0..5 {
             let msg = format!("msg{}", i);
             conn_a.send(Bytes::from(msg.clone())).await.unwrap();
-            assert_eq!(conn_b.recv().await.unwrap().unwrap(), Bytes::from(msg));
+            assert_eq!(conn_b.recv().await.unwrap(), Bytes::from(msg));
         }
 
         // zero-length
         conn_a.send(Bytes::new()).await.unwrap();
-        assert_eq!(conn_b.recv().await.unwrap(), Some(Bytes::new()));
+        assert_eq!(conn_b.recv().await.unwrap(), Bytes::new());
     }
 
     #[tokio::test]
     async fn test_mock_pair_close_and_send_after_drop() {
         let (conn_a, mut conn_b) = create_mock_pair("test_close");
         drop(conn_a);
-        assert_eq!(conn_b.recv().await.unwrap(), None);
+        assert!(matches!(
+            conn_b.recv().await,
+            Err(TransportError::ConnectionClosed(_))
+        ));
 
         let (mut conn_a2, conn_b2) = create_mock_pair("test_send_after_close");
         drop(conn_b2);

@@ -43,18 +43,14 @@ impl TcpTransportServer {
             TransportError::IoError(e)
         })?;
 
-        let bound_addr = listener
-            .local_addr()
-            .map_err(TransportError::IoError)?;
+        let bound_addr = listener.local_addr().map_err(TransportError::IoError)?;
         info!("TCP server bound to {}", bound_addr);
 
         let tls_acceptor = match tls_config {
             Some(cfg) => {
-                let server_config = cfg.build_server_config().map_err(|e| {
-                    TransportError::IoError(std::io::Error::other(
-                        e.to_string(),
-                    ))
-                })?;
+                let server_config = cfg
+                    .build_server_config()
+                    .map_err(|e| TransportError::IoError(std::io::Error::other(e.to_string())))?;
                 Some(TlsAcceptor::from(Arc::new(server_config)))
             }
             None => {
@@ -83,9 +79,7 @@ impl TcpTransportServer {
 
     /// Get the local address the server is bound to.
     pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
-        self.listener
-            .local_addr()
-            .map_err(TransportError::IoError)
+        self.listener.local_addr().map_err(TransportError::IoError)
     }
 }
 
@@ -106,16 +100,18 @@ impl TransportServer for TcpTransportServer {
         if let Some(ref acceptor) = self.tls_acceptor {
             let tls_stream = acceptor.accept(tcp_stream).await.map_err(|e| {
                 error!("TLS handshake failed with {}: {}", peer_addr, e);
-                TransportError::IoError(std::io::Error::other(
-                    format!("TLS handshake failed: {}", e),
-                ))
+                TransportError::IoError(std::io::Error::other(format!(
+                    "TLS handshake failed: {}",
+                    e
+                )))
             })?;
 
             info!("TLS handshake completed with {}", peer_addr);
             let transport = TcpTransport::tls_server(tls_stream, peer_addr).map_err(|e| {
-                TransportError::IoError(std::io::Error::other(
-                    format!("Failed to extract peer identity: {}", e),
-                ))
+                TransportError::IoError(std::io::Error::other(format!(
+                    "Failed to extract peer identity: {}",
+                    e
+                )))
             })?;
             Ok(Box::new(transport))
         } else {
@@ -140,7 +136,7 @@ mod tests {
             let mut server = server;
             let mut conn = server.accept().await.unwrap();
 
-            let msg = conn.recv().await.unwrap().unwrap();
+            let msg = conn.recv().await.unwrap();
             conn.send(msg).await.unwrap();
         });
 
@@ -149,7 +145,7 @@ mod tests {
 
         conn.send(bytes::Bytes::from("hello server")).await.unwrap();
 
-        let response = conn.recv().await.unwrap().unwrap();
+        let response = conn.recv().await.unwrap();
         assert_eq!(response.as_ref(), b"hello server");
 
         server_handle.await.unwrap();
@@ -166,7 +162,7 @@ mod tests {
             for _i in 0..3 {
                 let mut conn = server.accept().await.unwrap();
                 tokio::spawn(async move {
-                    let msg = conn.recv().await.unwrap().unwrap();
+                    let msg = conn.recv().await.unwrap();
                     conn.send(msg).await.unwrap();
                 });
             }
@@ -184,7 +180,7 @@ mod tests {
                 let msg = format!("client {}", i);
                 conn.send(bytes::Bytes::from(msg.clone())).await.unwrap();
 
-                let response = conn.recv().await.unwrap().unwrap();
+                let response = conn.recv().await.unwrap();
                 assert_eq!(response.as_ref(), msg.as_bytes());
             });
 

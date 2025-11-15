@@ -45,4 +45,3 @@ pub struct ConnectionLost {
     /// Reason for disconnection.
     pub reason: String,
 }
-

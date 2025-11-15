@@ -66,7 +66,6 @@ impl RoomMessageTrait for PingerMessage {
             .map(|(msg, _)| msg)
             .map_err(|e| DeserializationError::BincodeError(e.to_string()))
     }
-
 }
 
 #[cfg(test)]

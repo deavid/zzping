@@ -230,7 +230,6 @@ impl RoomMessageTrait for IntentConfigNetworkMsg {
         }
         result
     }
-
 }
 
 #[cfg(test)]

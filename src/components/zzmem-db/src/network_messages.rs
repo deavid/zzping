@@ -101,7 +101,6 @@ impl RoomMessageTrait for MemDBMessage {
             .map(|(value, _)| value)
             .map_err(|e| DeserializationError::BincodeError(e.to_string()))
     }
-
 }
 
 #[cfg(test)]
@@ -248,5 +247,4 @@ mod tests {
             DeserializationError::BincodeError(_)
         ));
     }
-
 }

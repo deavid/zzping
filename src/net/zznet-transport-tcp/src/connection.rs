@@ -4,7 +4,6 @@
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use std::io;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
 use tracing::trace;
@@ -260,28 +259,31 @@ impl TransportConnection for TcpTransport {
         })
     }
 
-    async fn recv(&mut self) -> Result<Option<Bytes>, TransportError> {
+    async fn recv(&mut self) -> Result<Bytes, TransportError> {
         trace!("Waiting to receive frame from {}", self.peer_addr);
 
         let result = match &mut self.stream {
             TcpTransportStream::Plain(stream) => framing::read_frame(stream).await,
             TcpTransportStream::TlsClient(stream) => framing::read_frame(stream.as_mut()).await,
             TcpTransportStream::TlsServer(stream) => framing::read_frame(stream.as_mut()).await,
-        };
+        }
+        .map_err(Into::into);
 
         match result {
             Ok(bytes) => {
                 trace!("Received {} bytes from {}", bytes.len(), self.peer_addr);
-                Ok(Some(bytes))
+                Ok(bytes)
             }
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                debug!("Connection closed by peer {}", self.peer_addr);
-                Ok(None)
-            }
-            Err(e) => {
-                error!("Receive error from {}: {}", self.peer_addr, e);
-                Err(TransportError::IoError(e))
-            }
+            Err(e) => match e {
+                TransportError::ConnectionClosed(_) => {
+                    debug!("Connection closed by peer {}", self.peer_addr);
+                    Err(e)
+                }
+                _ => {
+                    error!("Receive error from {}: {}", self.peer_addr, e);
+                    Err(e)
+                }
+            },
         }
     }
 
@@ -313,7 +315,7 @@ mod tests {
             let mut transport = TcpTransport::plain(stream, peer_addr);
 
             // Receive a message
-            let msg = transport.recv().await.unwrap().unwrap();
+            let msg = transport.recv().await.unwrap();
             assert_eq!(msg.as_ref(), b"Hello from client");
 
             // Send a response
@@ -335,7 +337,7 @@ mod tests {
             .unwrap();
 
         // Receive response
-        let response = transport.recv().await.unwrap().unwrap();
+        let response = transport.recv().await.unwrap();
         assert_eq!(response.as_ref(), b"Hello from server");
 
         // Wait for server to finish
@@ -358,10 +360,10 @@ mod tests {
         let peer = stream.peer_addr().unwrap();
         let mut transport = TcpTransport::plain(stream, peer);
 
-        // Try to receive - should get None (connection closed)
+        // Try to receive - should be an error for connection closed
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-        let result = transport.recv().await.unwrap();
-        assert!(result.is_none());
+        let result = transport.recv().await;
+        assert!(matches!(result, Err(TransportError::ConnectionClosed(_))));
     }
 
     #[tokio::test]
@@ -375,7 +377,7 @@ mod tests {
 
             // Echo back 3 messages
             for _ in 0..3 {
-                let msg = transport.recv().await.unwrap().unwrap();
+                let msg = transport.recv().await.unwrap();
                 transport.send(msg).await.unwrap();
             }
         });
@@ -389,7 +391,7 @@ mod tests {
             let msg = format!("Message {}", i);
             transport.send(Bytes::from(msg.clone())).await.unwrap();
 
-            let response = transport.recv().await.unwrap().unwrap();
+            let response = transport.recv().await.unwrap();
             assert_eq!(response.as_ref(), msg.as_bytes());
         }
 

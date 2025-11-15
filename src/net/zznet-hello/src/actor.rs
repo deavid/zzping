@@ -421,23 +421,20 @@ impl HelloActor {
                     // Handle inbound frames (from transport to actor)
                     result = transport.recv() => {
                         match result {
-                            Ok(Some(bytes)) => {
+                            Ok(bytes) => {
                                 trace!("I/O task received {} bytes", bytes.len());
                                 actor_addr.do_send(ReceivedFrame {
                                     data: bytes.to_vec(),
                                 });
                             }
-                            Ok(None) => {
-                                info!("Transport closed by peer");
-                                actor_addr.do_send(IoError {
-                                    error: HelloError::Transport(TransportError::ConnectionClosed(std::io::Error::other("Gracefully closed"))),
-                                });
-                                break;
-                            }
                             Err(e) => {
-                                error!("Transport recv error: {}", e);
+                                if matches!(e, TransportError::ConnectionClosed(_)) {
+                                    info!("Transport closed by peer");
+                                } else {
+                                    error!("Transport recv error: {}", e);
+                                }
                                 actor_addr.do_send(IoError {
-                                    error: e.into(),
+                                    error: HelloError::Transport(e),
                                 });
                                 break;
                             }

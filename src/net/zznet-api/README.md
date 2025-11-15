@@ -34,7 +34,7 @@ Represents **one bidirectional connection** that sends/receives frames (delimite
 **Key Requirements**:
 - Send and receive framed messages (not raw bytes)
 - Report peer identity (from mTLS certificate or other auth)
-- Graceful close detection
+ - Graceful close detection (reported as TransportError::ConnectionClosed)
 - Transport errors propagate cleanly
 
 ### TransportServer
@@ -109,7 +109,7 @@ Transports deal in **frames** (delimited messages), not streams. The higher laye
 
 ### Error Transparency
 Transport errors must be distinguishable:
-- Connection closed gracefully (Ok(None) from recv)
+- Connection closed gracefully is reported as TransportError::ConnectionClosed from recv
 - Connection failed (Err with details)
 - Frame too large (specific error, not generic)
 

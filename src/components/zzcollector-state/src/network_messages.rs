@@ -98,7 +98,6 @@ impl RoomMessageTrait for CStateMessage {
         }
         ron::de::from_bytes(bytes).map_err(|e| DeserializationError::Failed(e.to_string()))
     }
-
 }
 
 #[cfg(test)]

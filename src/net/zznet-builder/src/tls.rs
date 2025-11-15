@@ -420,7 +420,8 @@ mod tests {
     #[test]
     fn test_validate_tls_paths_missing_cert() {
         let key = create_dummy_key();
-        let result = validate_tls_paths(None, "/nonexistent/cert.pem", key.path().to_str().unwrap());
+        let result =
+            validate_tls_paths(None, "/nonexistent/cert.pem", key.path().to_str().unwrap());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Certificate"));
     }

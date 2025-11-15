@@ -86,5 +86,4 @@ pub trait RoomMessageTrait: Clone + Send + Sync + Unpin + std::fmt::Debug + 'sta
     /// The room ID determines which variant to create, and the bytes are deserialized
     /// into the inner message type.
     fn deserialize_for_room(room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError>;
-
 }

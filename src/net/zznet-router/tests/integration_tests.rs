@@ -55,4 +55,3 @@ async fn test_router_actor_peer_lifecycle() {
     let result = router_actor.send(disconnect_msg).await;
     assert!(result.is_ok(), "Peer disconnection should succeed");
 }
-
