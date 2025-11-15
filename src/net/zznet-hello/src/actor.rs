@@ -430,7 +430,7 @@ impl HelloActor {
                             Ok(None) => {
                                 info!("Transport closed by peer");
                                 actor_addr.do_send(IoError {
-                                    error: HelloError::Transport(TransportError::ConnectionClosed),
+                                    error: HelloError::Transport(TransportError::ConnectionClosed(std::io::Error::other("Gracefully closed"))),
                                 });
                                 break;
                             }

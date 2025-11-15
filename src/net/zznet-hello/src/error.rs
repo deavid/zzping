@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn test_transport_error_conversion() {
-        let transport_err = TransportError::ConnectionClosed;
+        let transport_err = TransportError::ConnectionClosed(std::io::Error::other("test"));
         let hello_err: HelloError = transport_err.into();
         assert!(matches!(hello_err, HelloError::Transport(_)));
     }

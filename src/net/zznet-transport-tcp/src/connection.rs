@@ -90,9 +90,10 @@ impl TcpTransport {
         let peer_certs = match peer_certs_opt {
             Some(v) if !v.is_empty() => v,
             _ => {
-                return Err(TransportError::IoError(
-                    "TLS handshake completed but no peer certificate".to_string(),
-                ));
+                return Err(TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "TLS handshake completed but no peer certificate",
+                )));
             }
         };
 
@@ -100,9 +101,10 @@ impl TcpTransport {
         let cert_der = match peer_certs.first() {
             Some(c) => c.as_ref(),
             None => {
-                return Err(TransportError::IoError(
-                    "Peer certificate list is empty".to_string(),
-                ));
+                return Err(TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Peer certificate list is empty",
+                )));
             }
         };
 
@@ -121,15 +123,21 @@ impl TcpTransport {
         let peer_certs = match peer_certs_opt {
             Some(v) if !v.is_empty() => v,
             _ => {
-                return Err(TransportError::IoError(
-                    "TLS handshake completed but no peer certificate".to_string(),
-                ));
+                return Err(TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "TLS handshake completed but no peer certificate",
+                )));
             }
         };
 
         let cert_der = peer_certs
             .first()
-            .ok_or_else(|| TransportError::IoError("Peer certificate list is empty".to_string()))?
+            .ok_or_else(|| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Peer certificate list is empty",
+                ))
+            })?
             .as_ref();
 
         Self::parse_peer_cert_der(cert_der, peer_addr)
@@ -145,7 +153,10 @@ impl TcpTransport {
     ) -> Result<PeerTLSIdentity, TransportError> {
         // Parse the certificate
         let (_, cert) = X509Certificate::from_der(cert_der).map_err(|e| {
-            TransportError::IoError(format!("Failed to parse peer certificate: {:?}", e))
+            TransportError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Failed to parse peer certificate: {:?}", e),
+            ))
         })?;
 
         // Extract CN
@@ -153,9 +164,19 @@ impl TcpTransport {
             .subject()
             .iter_common_name()
             .next()
-            .ok_or_else(|| TransportError::IoError("Certificate missing CN".to_string()))?
+            .ok_or_else(|| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Certificate missing CN",
+                ))
+            })?
             .as_str()
-            .map_err(|_| TransportError::IoError("CN is not a string".to_string()))?
+            .map_err(|_| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "CN is not a string",
+                ))
+            })?
             .to_string();
 
         // Check certificate validity period using SystemTime
@@ -163,12 +184,16 @@ impl TcpTransport {
         let not_after = cert.validity().not_after.to_datetime();
         let now = std::time::SystemTime::now();
         if now < not_before {
-            return Err(TransportError::IoError(
-                "Certificate not yet valid".to_string(),
-            ));
+            return Err(TransportError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Certificate not yet valid",
+            )));
         }
         if now > not_after {
-            return Err(TransportError::IoError("Certificate expired".to_string()));
+            return Err(TransportError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Certificate expired",
+            )));
         }
 
         // Extract SAN extension and parse
@@ -177,12 +202,18 @@ impl TcpTransport {
             .iter()
             .find(|ext| ext.oid == x509_parser::oid_registry::OID_X509_EXT_SUBJECT_ALT_NAME)
             .ok_or_else(|| {
-                TransportError::IoError("Certificate missing SAN extension".to_string())
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Certificate missing SAN extension",
+                ))
             })?;
 
         let (_, san) = x509_parser::extensions::SubjectAlternativeName::from_der(san_ext.value)
             .map_err(|e| {
-                TransportError::IoError(format!("Failed to parse SAN extension: {:?}", e))
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Failed to parse SAN extension: {:?}", e),
+                ))
             })?;
 
         // Find the first DNS name
@@ -193,7 +224,12 @@ impl TcpTransport {
                 x509_parser::extensions::GeneralName::DNSName(dns) => Some(dns.to_string()),
                 _ => None,
             })
-            .ok_or_else(|| TransportError::IoError("SAN contains no DNS names".to_string()))?;
+            .ok_or_else(|| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "SAN contains no DNS names",
+                ))
+            })?;
 
         Ok(PeerTLSIdentity {
             common_name,
@@ -220,7 +256,7 @@ impl TransportConnection for TcpTransport {
 
         result.map_err(|e| {
             error!("Send error to {}: {}", self.peer_addr, e);
-            TransportError::IoError(e.to_string())
+            TransportError::IoError(e)
         })
     }
 
@@ -244,7 +280,7 @@ impl TransportConnection for TcpTransport {
             }
             Err(e) => {
                 error!("Receive error from {}: {}", self.peer_addr, e);
-                Err(TransportError::IoError(e.to_string()))
+                Err(TransportError::IoError(e))
             }
         }
     }

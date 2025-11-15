@@ -40,9 +40,11 @@ impl TcpTransportClient {
         let server_name = tls_config.as_ref().map(|cfg| cfg.server_name.clone());
         let tls_config = match tls_config {
             Some(cfg) => {
-                let client_config = cfg
-                    .build_client_config()
-                    .map_err(|e| TransportError::IoError(e.to_string()))?;
+                let client_config = cfg.build_client_config().map_err(|e| {
+                    TransportError::IoError(std::io::Error::other(
+                        e.to_string(),
+                    ))
+                })?;
                 Some(Arc::new(client_config))
             }
             None => None,
@@ -83,18 +85,21 @@ impl TransportClient for TcpTransportClient {
 
         // Parse the address
         let socket_addr: SocketAddr = self.addr.parse().map_err(|e| {
-            TransportError::IoError(format!("Invalid address {}: {}", self.addr, e))
+            TransportError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Invalid address {}: {}", self.addr, e),
+            ))
         })?;
 
         // Connect TCP stream
         let tcp_stream = TcpStream::connect(socket_addr).await.map_err(|e| {
             error!("Failed to connect to {}: {}", self.addr, e);
-            TransportError::IoError(e.to_string())
+            TransportError::IoError(e)
         })?;
 
         let peer_addr = tcp_stream
             .peer_addr()
-            .map_err(|e| TransportError::IoError(e.to_string()))?;
+            .map_err(TransportError::IoError)?;
 
         debug!("TCP connection established to {}", self.addr);
 
@@ -103,10 +108,17 @@ impl TransportClient for TcpTransportClient {
             // Use configured server_name for SNI (not the IP address)
             // This allows connecting via any IP while using a consistent SAN name
             let server_name_str = self.server_name.as_ref().ok_or_else(|| {
-                TransportError::IoError("TLS enabled but no server_name configured".to_string())
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    "TLS enabled but no server_name configured",
+                ))
             })?;
-            let server_name = ServerName::try_from(server_name_str.clone())
-                .map_err(|e| TransportError::IoError(format!("Invalid server name: {}", e)))?;
+            let server_name = ServerName::try_from(server_name_str.clone()).map_err(|e| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Invalid server name: {}", e),
+                ))
+            })?;
 
             let connector = TlsConnector::from(tls_config.clone());
             let tls_stream = connector
@@ -114,7 +126,9 @@ impl TransportClient for TcpTransportClient {
                 .await
                 .map_err(|e| {
                     error!("TLS handshake failed: {}", e);
-                    TransportError::IoError(format!("TLS handshake failed: {}", e))
+                    TransportError::IoError(std::io::Error::other(
+                        format!("TLS handshake failed: {}", e),
+                    ))
                 })?;
 
             info!("TLS handshake completed for {}", self.addr);
