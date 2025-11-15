@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::peer_channels::PeerChannels;
-use zznet_api::types::{PeerId, RoomId, SessionError};
+use crate::{error::SessionError, peer_channels::PeerChannels};
+use zznet_api::types::{PeerId, RoomId};
 use zznet_room::room_manager::RoomManager;
 
 /// Router - Data Plane for room management and message routing

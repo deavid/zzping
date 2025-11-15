@@ -17,6 +17,7 @@
 //! business/auth types such as `Role` or `PeerIdentity`.
 
 mod actor;
+mod error;
 mod peer_channels;
 mod router;
 

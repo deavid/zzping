@@ -1,6 +1,5 @@
 //! Shared types used across the transport layer.
 use std::fmt;
-use thiserror::Error;
 
 /// Represents the verified identity of a peer in the ZZPing network.
 ///
@@ -127,83 +126,6 @@ impl From<&str> for RoomId {
     }
 }
 
-/// Errors that can occur in session/peer management
-#[derive(Debug, Error)]
-pub enum SessionError {
-    #[error("Peer not found: {0}")]
-    /// No session exists for the requested peer id.
-    PeerNotFound(PeerId),
-
-    #[error("Peer already exists: {0}")]
-    /// A peer with the same id was already registered.
-    PeerAlreadyExists(PeerId),
-
-    #[error("Room already exists: {room_id} for peer {peer_id}")]
-    /// A room with the same id already exists for the peer.
-    RoomAlreadyExists {
-        /// The peer id where the room already exists.
-        peer_id: PeerId,
-        /// The conflicting room id.
-        room_id: RoomId,
-    },
-}
-
-/// Authentication context passed to the authorizer.
-///
-/// This contains both the HELLO protocol role (primary source) and optional
-/// TLS identity (for validation). The authorizer should:
-/// 1. Parse the HELLO role (always required - this is the source of truth)
-/// 2. If TLS identity exists, validate HELLO role matches certificate CN
-/// 3. If no TLS, check insecure mode flag before trusting HELLO
-#[derive(Debug, Clone)]
-pub struct AuthContext {
-    /// Role string from HELLO message - PRIMARY source of identity
-    pub hello_role_str: String,
-    /// Optional TLS peer identity for validation (None for plain TCP)
-    pub peer_identity: Option<PeerTLSIdentity>,
-}
-
-/// Framework-level peer lifecycle events published by the control plane.
-///
-/// These events are emitted by `zznet-peer-manager` whenever peers are added,
-/// connected, disconnected, removed, or when their identity information is
-/// refreshed after authentication. Components subscribe to this event stream
-/// to drive their network managers without depending on the concrete
-/// implementation crate.
-#[derive(Debug, Clone)]
-pub enum PeerLifecycleEvent {
-    /// A peer was registered with the manager (not connected yet).
-    PeerAdded {
-        /// Identifier of the peer that was registered.
-        peer_id: PeerId,
-    },
-
-    /// A peer transitioned to the connected state.
-    PeerConnected {
-        /// Identifier of the peer that connected.
-        peer_id: PeerId,
-    },
-
-    /// A peer transitioned out of the connected state.
-    PeerDisconnected {
-        /// Identifier of the peer that disconnected.
-        peer_id: PeerId,
-    },
-
-    /// A peer was completely removed from the manager.
-    PeerRemoved {
-        /// Identifier of the peer that was removed.
-        peer_id: PeerId,
-    },
-
-    /// A peer's authenticated identity information was updated.
-    PeerIdentityUpdated {
-        /// Identifier of the peer whose identity changed.
-        peer_id: PeerId,
-        /// The refreshed identity information for the peer.
-        identity: PeerTLSIdentity,
-    },
-}
 
 // ---------------------------------------------------------------------------
 // Control-plane and data-plane abstraction traits

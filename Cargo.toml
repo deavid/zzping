@@ -158,7 +158,7 @@ dead_code = "warn"
 unused_variables = "warn"
 missing_docs = "warn"
 unsafe_code = "warn"
-unreachable_pub = "deny"
+unreachable_pub = "warn"
 
 [workspace.lints.clippy]
 new_ret_no_self = "warn"

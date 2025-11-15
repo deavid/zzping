@@ -3,8 +3,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex as TokioMutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
-use zznet_api::types::{PeerId, RoomId, SessionError};
+use zznet_api::types::{PeerId, RoomId};
 use zznet_room::room_manager::InboundRoomPayload;
+
+use crate::error::SessionError;
 
 /// Shared room storage for a peer.
 type SessionRooms = Arc<TokioMutex<HashMap<RoomId, Recipient<InboundRoomPayload>>>>;

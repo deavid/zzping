@@ -1,12 +1,6 @@
 //! IntentConfig Network Manager Actor
 //!
-//! The Manager actor in the three-actor pattern. Responsibilities:
-//! - Subscribe to PeerLifecycleEvent bus from zznet-peer-manager
-//! - Spawn `IntentConfigNetworkActor` when peers join the "intent-config" room
-//! - Destroy per-peer actors when peers disconnect
-//! - Handle broadcast requests from MainActor (`BroadcastConfigUpdate`)
-//! - Forward inbound requests to MainActor (after authorization check)
-//! - Query PeerManager for role/permission checks
+//! The Manager actor in the three-actor pattern.
 
 use crate::internal_messages::{
     BroadcastConfigUpdate, InboundConfigChangeRequest, InboundGetConfigRequest,
@@ -19,9 +13,7 @@ use crate::permissions::IntentConfigPermissions;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
-
-// Phase 7.2: Use traits for interface segregation (control-plane vs data-plane)
-use zznet_api::types::{PeerId, PeerLifecycleEvent, RoomId};
+use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
 use zznet_room::room_manager::{CreateError, RoomInboundRecipient, RoomManager};
 use zznet_router::RouterActor;
@@ -91,7 +83,8 @@ impl IntentConfigNetworkManager {
     }
 
     /// Destroy per-peer actors when lifecycle events indicate removal.
-    fn destroy_peer_actors(&mut self, peer_id: &PeerId) {
+    fn _destroy_peer_actors(&mut self, peer_id: &PeerId) {
+        // FIXME: This code is dead. This is never executed which means we are missing tooling.
         let mut removed_translator = false;
         let mut removed_room_actor = false;
 
@@ -162,49 +155,6 @@ impl Actor for IntentConfigNetworkManager {
             translator_count,
             room_count
         );
-    }
-}
-
-// ============================================================================
-// Handler: PeerLifecycleEvent (wrapped for actix compatibility)
-// ============================================================================
-
-/// Wrapper to make PeerLifecycleEvent work with actix Handler
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "()")]
-pub struct PeerLifecycleEventWrapper(pub PeerLifecycleEvent);
-
-impl Handler<PeerLifecycleEventWrapper> for IntentConfigNetworkManager {
-    type Result = ();
-
-    fn handle(&mut self, msg: PeerLifecycleEventWrapper, _ctx: &mut Self::Context) -> Self::Result {
-        match msg.0 {
-            PeerLifecycleEvent::PeerAdded { peer_id } => {
-                log::debug!("PeerLifecycleEvent::PeerAdded: {}", peer_id);
-                // Actors are now created in create_for_peer when Router calls it
-            }
-            PeerLifecycleEvent::PeerConnected { peer_id } => {
-                log::debug!("PeerLifecycleEvent::PeerConnected: {}", peer_id);
-                // Translator actor already created on PeerAdded
-            }
-            PeerLifecycleEvent::PeerDisconnected { peer_id } => {
-                log::debug!("PeerLifecycleEvent::PeerDisconnected: {}", peer_id);
-                self.destroy_peer_actors(&peer_id);
-            }
-            PeerLifecycleEvent::PeerRemoved { peer_id } => {
-                log::debug!("PeerLifecycleEvent::PeerRemoved: {}", peer_id);
-                self.destroy_peer_actors(&peer_id);
-            }
-            PeerLifecycleEvent::PeerIdentityUpdated { peer_id, identity } => {
-                log::debug!(
-                    "PeerLifecycleEvent::PeerIdentityUpdated: {} - {:?}",
-                    peer_id,
-                    identity
-                );
-                // Identity updates don't affect IntentConfig translator actors
-                // Authorization is checked on each request, not cached
-            }
-        }
     }
 }
 

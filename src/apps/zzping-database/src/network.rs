@@ -10,7 +10,7 @@ use actix::Actor;
 use std::collections::HashSet;
 use std::time::Duration;
 use zznet_api::transport::TransportServer;
-use zznet_auth::role::ApplicationRole;
+use zznet_api::types::Role;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::config::TlsConfig;
@@ -73,9 +73,9 @@ impl DatabaseNetwork {
         // allowed roles. Database accepts connections from collectors and
         // clients (read-only/admin) per AuthRole::can_connect_to policy.
         let mut allowed_roles = HashSet::new();
-        allowed_roles.insert(zznet_api::types::Role::new(AuthRole::Collector.as_str()));
-        allowed_roles.insert(zznet_api::types::Role::new(AuthRole::ClientRo.as_str()));
-        allowed_roles.insert(zznet_api::types::Role::new(AuthRole::ClientAdmin.as_str()));
+        allowed_roles.insert(Role::new(&AuthRole::Collector.to_string()));
+        allowed_roles.insert(Role::new(&AuthRole::ClientRo.to_string()));
+        allowed_roles.insert(Role::new(&AuthRole::ClientAdmin.to_string()));
 
         // Step 3: Components are ready (peer_manager no longer needed by ConnectionManager)
 
