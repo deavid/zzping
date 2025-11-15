@@ -4,7 +4,7 @@ use thiserror::Error;
 
 /// Errors that can occur when using zznet-app-utils.
 #[derive(Error, Debug)]
-pub enum Error {
+pub(crate) enum BuilderError {
     /// Configuration error.
     #[error("Configuration error: {0}")]
     Config(String),
@@ -25,6 +25,3 @@ pub enum Error {
     #[error("Rustls error: {0}")]
     Rustls(String),
 }
-
-/// Result type alias for zznet-app-utils operations.
-pub type Result<T> = std::result::Result<T, Error>;

@@ -5,12 +5,10 @@
 //! configuration, TLS, runtime setup, and more.
 
 pub mod builder;
-pub mod cli;
-pub mod error;
-pub mod logging;
-pub mod runtime;
-pub mod signals;
-pub mod tls;
+mod cli;
+mod error;
+mod logging;
+mod runtime;
+mod signals;
+mod tls;
 pub mod traits;
-
-pub use error::{Error, Result};

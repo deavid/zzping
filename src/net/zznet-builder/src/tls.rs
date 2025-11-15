@@ -1,39 +1,6 @@
-//! TLS configuration and certificate loading utilities.
-//!
-//! This module provides utilities for loading TLS certificates and keys from PEM files,
-//! building rustls configurations for both client and server use cases.
-//!
-//! # Examples
-//!
-//! ## Client TLS Configuration
-//!
-//! ```rust,ignore
-//! use zznet_builder::tls::{load_client_tls, ClientTlsConfig};
-//!
-//! let tls_config = ClientTlsConfig {
-//!     ca_cert_path: "certs/ca.pem".to_string(),
-//!     client_cert_path: "certs/client.pem".to_string(),
-//!     client_key_path: "certs/client.key".to_string(),
-//! };
-//!
-//! let rustls_config = load_client_tls(&tls_config)?;
-//! ```
-//!
-//! ## Server TLS Configuration
-//!
-//! ```rust,ignore
-//! use zznet_builder::tls::{load_server_tls, ServerTlsConfig};
-//!
-//! let tls_config = ServerTlsConfig {
-//!     ca_cert_paths: vec!["certs/ca.pem".to_string()],
-//!     server_cert_path: "certs/server.pem".to_string(),
-//!     server_key_path: "certs/server.key".to_string(),
-//! };
-//!
-//! let rustls_config = load_server_tls(&tls_config)?;
-//! ```
+//! TLS helpers for client and server certificate handling.
 
-use crate::error::{Error, Result};
+use crate::error::BuilderError;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use rustls::{ClientConfig, RootCertStore, ServerConfig};
 use rustls_pemfile::{certs, pkcs8_private_keys};
@@ -42,55 +9,35 @@ use std::io::BufReader;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Client TLS configuration specifying paths to certificates and keys.
+/// Client TLS config: paths for mTLS client.
 #[derive(Debug, Clone)]
 pub struct ClientTlsConfig {
-    /// Path to CA certificate for verifying the server.
+    /// CA certificate path.
     pub ca_cert_path: String,
-    /// Path to client certificate (for mTLS).
+    /// Client certificate path.
     pub client_cert_path: String,
-    /// Path to client private key.
+    /// Client private key path.
     pub client_key_path: String,
 }
 
-/// Server TLS configuration specifying paths to certificates and keys.
+/// Server TLS config: certs, key, and CA paths.
 #[derive(Debug, Clone)]
 pub struct ServerTlsConfig {
-    /// Paths to CA certificates for verifying clients (supports multiple for rotation).
+    /// CA certificate paths (supports rotation).
     pub ca_cert_paths: Vec<String>,
-    /// Path to server certificate.
+    /// Server certificate path.
     pub server_cert_path: String,
-    /// Path to server private key.
+    /// Server private key path.
     pub server_key_path: String,
 }
 
-/// Load and build a rustls ClientConfig for mTLS client connections.
-///
-/// This function:
-/// 1. Loads the CA certificate to verify the server
-/// 2. Loads the client certificate for authentication
-/// 3. Loads the client private key
-/// 4. Builds a ClientConfig with client authentication enabled
-///
-/// # Arguments
-///
-/// * `config` - Client TLS configuration with paths to certificates and keys
-///
-/// # Returns
-///
-/// Returns an `Arc<ClientConfig>` ready to use with rustls/tokio-rustls.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - Any certificate or key file cannot be opened
-/// - PEM parsing fails
-/// - No valid certificates or keys are found
-/// - rustls configuration building fails
-pub fn load_client_tls(config: &ClientTlsConfig) -> Result<Arc<ClientConfig>> {
+type Result<T> = std::result::Result<T, BuilderError>;
+
+/// Build a rustls `ClientConfig` for mTLS using the provided `ClientTlsConfig`.
+pub(crate) fn load_client_tls(config: &ClientTlsConfig) -> Result<Arc<ClientConfig>> {
     // 1. Load CA certificate (to verify database server)
     let ca_file = File::open(&config.ca_cert_path).map_err(|e| {
-        Error::Tls(format!(
+        BuilderError::Tls(format!(
             "Failed to open CA file {}: {}",
             config.ca_cert_path, e
         ))
@@ -98,25 +45,25 @@ pub fn load_client_tls(config: &ClientTlsConfig) -> Result<Arc<ClientConfig>> {
     let mut ca_reader = BufReader::new(ca_file);
     let ca_certs: Vec<_> = certs(&mut ca_reader)
         .map(|r| {
-            r.map_err(|e| Error::Tls(format!("Failed to parse CA certs: {}", e)))
+            r.map_err(|e| BuilderError::Tls(format!("Failed to parse CA certs: {}", e)))
                 .map(|c| Box::leak(c.as_ref().to_vec().into_boxed_slice()))
         })
         .collect::<Result<_>>()?;
 
     if ca_certs.is_empty() {
-        return Err(Error::Tls("No CA certificates found".into()));
+        return Err(BuilderError::Tls("No CA certificates found".into()));
     }
 
     let mut root_store = RootCertStore::empty();
     for cert in &ca_certs {
         root_store
             .add(CertificateDer::from(&**cert))
-            .map_err(|e| Error::Tls(format!("Failed to add CA cert: {}", e)))?;
+            .map_err(|e| BuilderError::Tls(format!("Failed to add CA cert: {}", e)))?;
     }
 
     // 2. Load client certificate
     let cert_file = File::open(&config.client_cert_path).map_err(|e| {
-        Error::Tls(format!(
+        BuilderError::Tls(format!(
             "Failed to open client cert {}: {}",
             config.client_cert_path, e
         ))
@@ -124,29 +71,29 @@ pub fn load_client_tls(config: &ClientTlsConfig) -> Result<Arc<ClientConfig>> {
     let mut cert_reader = BufReader::new(cert_file);
     let cert_chain: Vec<_> = certs(&mut cert_reader)
         .map(|r| {
-            r.map_err(|e| Error::Tls(format!("Failed to parse client cert: {}", e)))
+            r.map_err(|e| BuilderError::Tls(format!("Failed to parse client cert: {}", e)))
                 .map(|c| Box::leak(c.as_ref().to_vec().into_boxed_slice()))
         })
         .collect::<Result<_>>()?;
 
     if cert_chain.is_empty() {
-        return Err(Error::Tls("No client certificate found".into()));
+        return Err(BuilderError::Tls("No client certificate found".into()));
     }
 
     // 3. Load client private key
     let key_file = File::open(&config.client_key_path).map_err(|e| {
-        Error::Tls(format!(
+        BuilderError::Tls(format!(
             "Failed to open client key {}: {}",
             config.client_key_path, e
         ))
     })?;
     let mut key_reader = BufReader::new(key_file);
     let keys: Vec<_> = pkcs8_private_keys(&mut key_reader)
-        .map(|r| r.map_err(|e| Error::Tls(format!("Failed to parse private key: {}", e))))
+        .map(|r| r.map_err(|e| BuilderError::Tls(format!("Failed to parse private key: {}", e))))
         .collect::<Result<_>>()?;
 
     if keys.is_empty() {
-        return Err(Error::Tls("No private key found".into()));
+        return Err(BuilderError::Tls("No private key found".into()));
     }
 
     // Convert to PrivateKeyDer directly from the owned key
@@ -161,45 +108,23 @@ pub fn load_client_tls(config: &ClientTlsConfig) -> Result<Arc<ClientConfig>> {
     let client_config = ClientConfig::builder()
         .with_root_certificates(root_store)
         .with_client_auth_cert(cert_chain_der, private_key)
-        .map_err(|e| Error::Tls(format!("Failed to build TLS config: {}", e)))?;
+        .map_err(|e| BuilderError::Tls(format!("Failed to build TLS config: {}", e)))?;
 
     Ok(Arc::new(client_config))
 }
 
-/// Load and build a rustls ServerConfig for mTLS server connections.
-///
-/// This function:
-/// 1. Loads CA certificates to verify clients (supports multiple for rotation)
-/// 2. Loads the server certificate
-/// 3. Loads the server private key
-/// 4. Builds a ServerConfig with client authentication required
-///
-/// # Arguments
-///
-/// * `config` - Server TLS configuration with paths to certificates and keys
-///
-/// # Returns
-///
-/// Returns an `Arc<ServerConfig>` ready to use with rustls/tokio-rustls.
-///
-/// # Errors
-///
-/// Returns an error if:
-/// - Any certificate or key file cannot be opened
-/// - PEM parsing fails
-/// - No valid certificates or keys are found
-/// - rustls configuration building fails
-pub fn load_server_tls(config: &ServerTlsConfig) -> Result<Arc<ServerConfig>> {
+/// Build a rustls `ServerConfig` for mTLS using the provided `ServerTlsConfig`.
+pub(crate) fn load_server_tls(config: &ServerTlsConfig) -> Result<Arc<ServerConfig>> {
     // 1. Load CA certificates (to verify clients)
     let mut root_store = RootCertStore::empty();
 
     for ca_path in &config.ca_cert_paths {
         let ca_file = File::open(ca_path)
-            .map_err(|e| Error::Tls(format!("Failed to open CA file: {}", e)))?;
+            .map_err(|e| BuilderError::Tls(format!("Failed to open CA file: {}", e)))?;
         let mut ca_reader = BufReader::new(ca_file);
         let ca_certs: Vec<_> = certs(&mut ca_reader)
             .map(|r| {
-                r.map_err(|e| Error::Tls(format!("Failed to parse CA certs: {}", e)))
+                r.map_err(|e| BuilderError::Tls(format!("Failed to parse CA certs: {}", e)))
                     .map(|c| Box::leak(c.as_ref().to_vec().into_boxed_slice()))
             })
             .collect::<Result<_>>()?;
@@ -212,17 +137,19 @@ pub fn load_server_tls(config: &ServerTlsConfig) -> Result<Arc<ServerConfig>> {
         for cert in &ca_certs {
             root_store
                 .add(CertificateDer::from(&**cert))
-                .map_err(|e| Error::Tls(format!("Failed to add CA cert: {}", e)))?;
+                .map_err(|e| BuilderError::Tls(format!("Failed to add CA cert: {}", e)))?;
         }
     }
 
     if root_store.is_empty() {
-        return Err(Error::Tls("No CA certificates loaded from any path".into()));
+        return Err(BuilderError::Tls(
+            "No CA certificates loaded from any path".into(),
+        ));
     }
 
     // 2. Load server certificate
     let cert_file = File::open(&config.server_cert_path).map_err(|e| {
-        Error::Tls(format!(
+        BuilderError::Tls(format!(
             "Failed to open server cert {}: {}",
             config.server_cert_path, e
         ))
@@ -230,29 +157,29 @@ pub fn load_server_tls(config: &ServerTlsConfig) -> Result<Arc<ServerConfig>> {
     let mut cert_reader = BufReader::new(cert_file);
     let cert_chain: Vec<_> = certs(&mut cert_reader)
         .map(|r| {
-            r.map_err(|e| Error::Tls(format!("Failed to parse server cert: {}", e)))
+            r.map_err(|e| BuilderError::Tls(format!("Failed to parse server cert: {}", e)))
                 .map(|c| Box::leak(c.as_ref().to_vec().into_boxed_slice()))
         })
         .collect::<Result<_>>()?;
 
     if cert_chain.is_empty() {
-        return Err(Error::Tls("No server certificate found".into()));
+        return Err(BuilderError::Tls("No server certificate found".into()));
     }
 
     // 3. Load server private key
     let key_file = File::open(&config.server_key_path).map_err(|e| {
-        Error::Tls(format!(
+        BuilderError::Tls(format!(
             "Failed to open server key {}: {}",
             config.server_key_path, e
         ))
     })?;
     let mut key_reader = BufReader::new(key_file);
     let keys: Vec<_> = pkcs8_private_keys(&mut key_reader)
-        .map(|r| r.map_err(|e| Error::Tls(format!("Failed to parse private key: {}", e))))
+        .map(|r| r.map_err(|e| BuilderError::Tls(format!("Failed to parse private key: {}", e))))
         .collect::<Result<_>>()?;
 
     if keys.is_empty() {
-        return Err(Error::Tls("No private key found".into()));
+        return Err(BuilderError::Tls("No private key found".into()));
     }
 
     let private_key = PrivateKeyDer::Pkcs8(keys.into_iter().next().unwrap());
@@ -266,31 +193,20 @@ pub fn load_server_tls(config: &ServerTlsConfig) -> Result<Arc<ServerConfig>> {
     // Create a client cert verifier from the root store
     let client_cert_verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
         .build()
-        .map_err(|e| Error::Rustls(format!("Failed to build client cert verifier: {}", e)))?;
+        .map_err(|e| {
+            BuilderError::Rustls(format!("Failed to build client cert verifier: {}", e))
+        })?;
 
     let server_config = ServerConfig::builder()
         .with_client_cert_verifier(client_cert_verifier)
         .with_single_cert(cert_chain_der, private_key)
-        .map_err(|e| Error::Tls(format!("Failed to build server TLS config: {}", e)))?;
+        .map_err(|e| BuilderError::Tls(format!("Failed to build server TLS config: {}", e)))?;
 
     Ok(Arc::new(server_config))
 }
 
-/// Validate that TLS certificate and key files exist at the specified paths.
-///
-/// This is a lightweight check that can be done during configuration validation
-/// before attempting to load the certificates.
-///
-/// # Arguments
-///
-/// * `ca_cert_path` - Optional path to CA certificate
-/// * `cert_path` - Path to certificate
-/// * `key_path` - Path to private key
-///
-/// # Returns
-///
-/// Returns `Ok(())` if all files exist, or an error describing which file is missing.
-pub fn validate_tls_paths(
+/// Check that TLS files exist at the provided paths.
+pub(crate) fn validate_tls_paths(
     ca_cert_path: Option<&str>,
     cert_path: &str,
     key_path: &str,
@@ -298,21 +214,21 @@ pub fn validate_tls_paths(
     if let Some(ca_path) = ca_cert_path
         && !Path::new(ca_path).exists()
     {
-        return Err(Error::Config(format!(
+        return Err(BuilderError::Config(format!(
             "CA certificate not found: {}",
             ca_path
         )));
     }
 
     if !Path::new(cert_path).exists() {
-        return Err(Error::Config(format!(
+        return Err(BuilderError::Config(format!(
             "Certificate not found: {}",
             cert_path
         )));
     }
 
     if !Path::new(key_path).exists() {
-        return Err(Error::Config(format!(
+        return Err(BuilderError::Config(format!(
             "Private key not found: {}",
             key_path
         )));
