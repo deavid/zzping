@@ -56,8 +56,12 @@ impl AppBuilder {
         tracing::info!("Loading configuration from: {}", args.config);
 
         // Load configuration
-        let config: S::Config = crate::config::load_ron_config(&args.config)
-            .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))
+        let content = std::fs::read_to_string(&args.config)
+            .map_err(|e| anyhow::anyhow!("Failed to read config file {}: {}", args.config, e))
+            .with_context(|| format!("Failed to load configuration from {}", args.config))?;
+
+        let config: S::Config = ron::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("Failed to parse config: {}", e))
             .with_context(|| format!("Failed to load configuration from {}", args.config))?;
 
         tracing::info!("Configuration loaded successfully");
