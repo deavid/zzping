@@ -1,10 +1,11 @@
 //! Configuration for the demo application.
 
 use serde::{Deserialize, Serialize};
+use std::clone::Clone;
 use zznet_builder::traits::ZZNetConfig;
 
 /// Configuration for the demo application.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DemoAppConfig {
     /// The role of this application instance.
     pub our_role: String,

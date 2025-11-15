@@ -18,7 +18,7 @@ However, two correctness risks look blocking before merge:
 - A single source of truth for peer lifecycle isn’t maintained in apps: Connection paths create a new `PeerManagerActor` while components read from a different `PeerManager` instance.
 - Router channel registration after HELLO seems missing or unverified (channels removed from `AddPeer` without a visible replacement). If not wired, routing will silently fail at runtime.
 
-Recommendation: Fix these two items and wire the CI check. Then merge the rest.
+Recommendation: Fix these two items and run the local check script to validate enforcement. Then merge the rest.
 
 ---
 
@@ -50,7 +50,7 @@ Recommendation: Fix these two items and wire the CI check. Then merge the rest.
 - Three-Actor isolation (10.2):
   - Main actors dropped infra deps and network types — PASS (in staged components).
   - NetworkManagers own the traits — PASS.
-  - CI enforcement — PARTIAL (script added; not wired to CI yet).
+  - Local enforcement — PARTIAL (script added; this is a local validation script; there is no CI wiring for this repository).
   - Tests with mocks — MISSING (no mock trait impls provided in the staged set).
 - Coordinator (10.3):
   - `SessionCoordinator` deprecated — PASS.
@@ -59,8 +59,8 @@ Recommendation: Fix these two items and wire the CI check. Then merge the rest.
   - Implementation respects scope; explicit module docs not added — PARTIAL.
 - Testability (10.5):
   - Mocks for traits and component unit tests without Actix — MISSING.
-- CI enforcement (10.6):
-  - Dependency checker script added — PASS (needs CI wiring).
+Local enforcement (10.6):
+  - Dependency checker script added — PASS (script added for local validation; no CI wiring required).
   - Grep for deprecated façade usage — MISSING.
 
 ---
@@ -85,13 +85,13 @@ Recommendation: Fix these two items and wire the CI check. Then merge the rest.
 - Risk: Silent runtime regressions where legacy callers still expect real channels.
 - Required: Mark as `#[deprecated]` and add an automated grep/deny check for non-test code.
 
-4) CI enforcement is not wired
-- The new `scripts/check-component-dependencies.sh` is not yet part of CI jobs.
-- Required: Add a CI step to run it on PRs targeting `main`/`dev`.
+4) Local enforcement is not automated
+-- The new `scripts/check-component-dependencies.sh` is not wired into any automated enforcement; run it locally as a pre-PR check.
+  - Required: Run this local script before creating a PR; there is no automated step for its execution.
 
 5) Router scope documentation (code-level) missing
 - The rules doc lays out the scope, but module-level docs in `zznet-router` would help enforce the boundary.
-- Required: Add module-level docs summarizing allowed vs. not-allowed responsibilities and a quick static import check in CI (grep for `Role`/`PeerIdentity`).
+- Required: Add module-level docs summarizing allowed vs. not-allowed responsibilities and a quick static import local grep/script (run locally) for `Role`/`PeerIdentity` checks.
 
 6) Trait impl naming hazards
 - In `zznet-peer-manager`, the `PeerRegistry` impl methods call similarly named inherent methods (e.g., `get_peer_role`). It likely resolves to the inherent methods, but it’s brittle.
@@ -109,11 +109,11 @@ Recommendation: Fix these two items and wire the CI check. Then merge the rest.
   - Create one `Arc<PeerManager>` per app and use it everywhere. If an Actix address is required, spawn a `PeerManagerActor` that delegates to the same manager.
 - Wire router registration explicitly:
   - On handshake completion, register `PeerChannels` with `Router.register_peer(...)`. On removal/disconnect, call `remove_peer`/`disconnect_peer` accordingly. Keep this in the composition root or an app-local adapter (preferred over a central coordinator).
-- Harden deprecations and CI:
+-- Harden deprecations and local enforcement:
   - Mark mixed-plane messages in `zznet-peer-manager::PeerManagerActor` as `#[deprecated]`.
-  - Add a CI grep step to fail on use of deprecated façade messages in non-test code.
-  - Add the dependency check script to CI.
-- Add `zznet-router` module-level docs for scope; optional CI grep to prevent importing `Role`/`PeerIdentity`.
+  - Add a local grep/script step to fail on use of deprecated façade messages in non-test code (document it in PR checklist).
+  - Add the dependency check script to the local pre-PR checks (no CI jobs are used).
+- Add `zznet-router` module-level docs for scope; optional local grep to prevent importing `Role`/`PeerIdentity`.
 
 ---
 
@@ -139,4 +139,4 @@ Recommendation: Fix these two items and wire the CI check. Then merge the rest.
 
 ## 8) Verdict
 
-Substantial progress toward SOLID and the Three-Actor pattern is evident in the staged changes. With two targeted fixes (single PeerManager instance per app, explicit Router channel registration), plus light CI wiring and deprecation clean-up, this will be safe to merge and materially improve the architecture. Without those fixes, runtime behavior is at high risk (missing events, missing routing).
+Substantial progress toward SOLID and the Three-Actor pattern is evident in the staged changes. With two targeted fixes (single PeerManager instance per app, explicit Router channel registration), plus light local enforcement and deprecation clean-up, this will be safe to merge and materially improve the architecture. Without those fixes, runtime behavior is at high risk (missing events, missing routing).

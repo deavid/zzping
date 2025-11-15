@@ -367,28 +367,33 @@ Then components depend on **traits**, not concrete actors.
 
 Data-plane queries should go to the `Router` (or through the `MessageRouter` trait), not the `PeerManager`.
 
-### 5.4. Enforce Dependency Rules with CI
+### 5.4. Enforce Dependency Rules with Local pre-PR checks
 
-```rust
-// In CI or build.rs
-fn check_main_actor_dependencies() {
-    let main_actor_crates = ["zzintent-config", "zzmem-db", "zzcollector-state"];
+The repository's policy is to avoid CI enforcement. Instead, contributors should run a local pre-PR check to validate crate dependencies before opening a pull request. The project includes a small script `scripts/check-component-dependencies.sh` for this purpose; run it locally and/or as a pre-push hook in your workflow.
 
-    for crate_name in main_actor_crates {
-        let cargo_toml = read_cargo_toml(crate_name);
+Example shell check (run locally or in a `pre-push` hook):
 
-        // ❌ FAIL if Main Actor depends on network infrastructure
-        assert!(!cargo_toml.contains("zznet-session"), "Main actor must not depend on zznet-session");
-        assert!(!cargo_toml.contains("zznet-peer-manager"), "Main actor must not depend on zznet-peer-manager");
-        assert!(!cargo_toml.contains("zznet-router"), "Main actor must not depend on zznet-router");
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
 
-        // ✅ PASS only if depending on abstractions
-        assert!(cargo_toml.contains("zznet-api"), "Main actor must depend on zznet-api");
-    }
-}
+main_actor_crates=("zzintent-config" "zzmem-db" "zzcollector-state")
+
+for crate in "${main_actor_crates[@]}"; do
+    cargo_toml="src/components/${crate}/Cargo.toml"
+    if [ -f "$cargo_toml" ]; then
+        if grep -q "zznet-session" "$cargo_toml" || grep -q "zznet-peer-manager" "$cargo_toml" || grep -q "zznet-router" "$cargo_toml"; then
+            echo "ERROR: $crate must not depend on network-infrastructure crates (zznet-session/zznet-peer-manager/zznet-router)." >&2
+            echo "Please depend only on zznet-api abstractions instead." >&2
+            exit 1
+        fi
+    fi
+done
+
+echo "Dependency checks passed."
 ```
 
-**No TODOs. No excuses. Enforce it.**
+**No TODOs. No excuses. Enforce it locally.**
 
 ### 5.5. Create Proper zznet-room Crate
 

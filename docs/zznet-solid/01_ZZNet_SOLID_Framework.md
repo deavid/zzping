@@ -200,7 +200,7 @@ Author: Copilot investigation (no code changes)
    - Phase A (types) is the safest and lowest risk. After that succeeded and the workspace still passed, the hard migrations (PeerSession, router internals, traits/adapters) weren’t executed immediately.
 
 7. No enforcement at the dependency graph level
-   - Components (Main actors) could still depend on zznet-session. Without dependency rules or CI checks to block this, the three-actor isolation and framework split could be bypassed.
+    - Components (Main actors) could still depend on zznet-session. Without dependency rules or local checks to block this, the three-actor isolation and framework split could be bypassed.
 
 ---
 

@@ -33,11 +33,10 @@ serde.workspace = true
 ron.workspace = true
 
 # CLI argument parsing
-clap.workspace = true
+# CLI argument parsing
 
 # Logging and tracing
 tracing.workspace = true
-tracing-subscriber.workspace = true
 
 # Error handling
 anyhow.workspace = true
@@ -55,6 +54,7 @@ chrono.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio-test.workspace = true
+tracing-subscriber.workspace = true
 zzping-collector = { path = "../zzping-collector" }
 
 [lints]

@@ -14,9 +14,49 @@ use zznet_router::GetOfferedRooms;
 pub async fn spawn_demo_service(
     config: DemoAppConfig,
 ) -> (DemoAppService, Addr<crate::component_a::ComponentAActor>) {
-    let service = DemoAppService::new(config).unwrap();
+    // Build the service using AppBuilder helper to exercise builder-based config handling
+    let builder = zznet_builder::builder::AppBuilder::new("zznet-demo", env!("CARGO_PKG_VERSION"));
+
+    let service = builder
+        .build_service_from_config::<DemoAppService>(config.clone())
+        .unwrap();
     let comp_a_addr = service.component_a.clone();
     (service, comp_a_addr)
+}
+
+/// Spawn the demo service using the `zznet-builder` API. This will run the
+/// full app lifecycle in a background thread using the builder's `run_service_with_config_and_stop`.
+/// Returns the spawned demo service handles and a stop channel sender that can be used to request shutdown.
+pub async fn spawn_demo_service_with_builder(
+    config: DemoAppConfig,
+) -> (
+    tokio::task::JoinHandle<()>,
+    DemoAppService,
+    Addr<crate::component_a::ComponentAActor>,
+    tokio::sync::oneshot::Sender<()>,
+) {
+    // Build command-line like args for initializing logging
+    let builder = zznet_builder::builder::AppBuilder::new("zznet-demo", env!("CARGO_PKG_VERSION"))
+        .with_default_config("demo.ron");
+
+    let service = DemoAppService::new(config.clone()).unwrap();
+    let comp_a_addr = service.component_a.clone();
+
+    // Create a programmatic stop channel
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+
+    // Move builder and config into the blocking task
+    let cfg_clone = config.clone();
+    let handle = tokio::task::spawn_blocking(move || {
+        // Run the builder in the blocking thread
+        builder
+            .run_service_with_config_and_stop::<DemoAppService, _>(cfg_clone, async move {
+                let _ = stop_rx.await;
+            })
+            .unwrap();
+    });
+
+    (handle, service, comp_a_addr, stop_tx)
 }
 
 /// Connects two `DemoAppService` instances using a mock transport.

@@ -110,21 +110,11 @@ impl CollectorService {
     pub fn convert_tls_config(
         tls: &CollectorTlsConfig,
     ) -> Result<zznet_transport_tcp::config::TlsConfig> {
-        use std::path::PathBuf;
-        use zznet_transport_tcp::config::{TlsCertAndKey, TlsConfig as TransportTlsConfig};
-
-        let cert = TlsCertAndKey {
-            pem_path: PathBuf::from(&tls.client_cert_path),
-            key_path: PathBuf::from(&tls.client_key_path),
-        };
-        let ca = Some(PathBuf::from(&tls.ca_cert_path));
-
-        Ok(TransportTlsConfig {
-            cert,
-            ca_cert_path: ca,
-            add_native_ca_certs: false,
-            server_name: "zzping".into(),
-        })
+        Ok(zznet_builder::tls::to_transport_tls_config(
+            &tls.client_cert_path,
+            &tls.client_key_path,
+            Some(&tls.ca_cert_path),
+        ))
     }
 }
 
@@ -172,10 +162,22 @@ impl ZZNetService for CollectorService {
 
         tracing::info!("Collector service connecting to database");
 
-        network
-            .connect(&started)
-            .await
-            .map_err(|e| CollectorError::Service(format!("Network error: {}", e)))?;
+        // Spawn network connect in a background task so `run()` returns quickly
+        // and the builder can report successful startup. The network connect loop
+        // will continue to run and log errors/retries; we do not await it here.
+        let connect_started = StartedComponents {
+            intent_config: started.intent_config.clone(),
+            pinger: started.pinger.clone(),
+            memdb_addr: started.memdb_addr.clone(),
+            router_actor: started.router_actor.clone(),
+        };
+
+        let network_clone = network;
+        tokio::spawn(async move {
+            if let Err(e) = network_clone.connect(&connect_started).await {
+                tracing::error!("Collector network task failed: {}", e);
+            }
+        });
 
         // The AppBuilder will hold the process open until a shutdown signal is received.
         // We just need to return Ok(()) here to indicate successful startup.

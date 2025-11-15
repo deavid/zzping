@@ -24,6 +24,9 @@ tracing-subscriber.workspace = true
 # CLI
 clap.workspace = true
 
+# Transport - provide helpers to construct transport TLS configs
+zznet-transport-tcp = { path = "../zznet-transport-tcp" }
+
 # Runtime
 actix-rt = "2"
 tokio = { workspace = true, features = ["signal", "rt", "sync"] }

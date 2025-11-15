@@ -140,23 +140,13 @@ impl DatabaseService {
     pub fn build_transport_tls_config(
         tls: &DatabaseTlsConfig,
     ) -> Result<Option<zznet_transport_tcp::config::TlsConfig>, DatabaseError> {
-        use std::path::PathBuf;
-        use zznet_transport_tcp::config::{TlsCertAndKey, TlsConfig};
-
-        let cert = TlsCertAndKey {
-            pem_path: PathBuf::from(&tls.server_cert_path),
-            key_path: PathBuf::from(&tls.server_key_path),
-        };
-        let ca = tls.ca_cert_paths.first().map(PathBuf::from);
-
-        let tcfg = TlsConfig {
-            cert,
-            ca_cert_path: ca,
-            add_native_ca_certs: false,
-            server_name: "zzping".into(),
-        };
-
-        Ok(Some(tcfg))
+        // Use builder helper to construct a transport TLS config from file paths
+        let ca = tls.ca_cert_paths.first().map(|s| s.as_str());
+        Ok(Some(zznet_builder::tls::to_transport_tls_config(
+            &tls.server_cert_path,
+            &tls.server_key_path,
+            ca,
+        )))
     }
 
     // ConnectionManager creation is now handled by the network module which

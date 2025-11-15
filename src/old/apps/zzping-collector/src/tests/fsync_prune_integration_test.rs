@@ -12,7 +12,7 @@ use ntest::timeout;
 use super::common;
 use common::{MockIngestionService, spawn_mock_server};
 
-// This integration test is currently flaky under CI/local timing and
+// This integration test is currently flaky under timing and
 // exercises the full async path (TargetWorker -> BatchSubmitter). Keep the
 // test for future rework but ignore it for now to keep the test suite
 // reliable. Re-enable after adding synchronization hooks or a more robust

@@ -41,94 +41,20 @@ This is a collection of tools to monitor home network latency and packet loss us
 
 1. Start the database:
    ```bash
-   ./target/release/zzping-database --config database.example.ron
+   ./target/release/zzping-database --config src/apps/zzping-database/database.example.ron
    ```
 
 2. Start a collector:
    ```bash
-   ./target/release/zzping-collector --config collector.example.ron
+   ./target/release/zzping-collector --config src/apps/zzping-collector/collector.example.ron
    ```
 
-## Testing
-
-### Unit Tests
-```bash
-cargo test
-```
-
-### Testing
-
-All tests are located in `src/` directories using `#[cfg(test)]` modules. The project follows a unit-test-first philosophy:
-
-**Unit Tests (Primary):**
-- Located alongside implementation code in `src/`
-- Use mocks and test doubles for dependencies
-- Fast, deterministic, no external resources needed
-- Run with `cargo test`
-
-**Integration Tests (By Exception):**
-- Complex end-to-end scenarios that cannot be mocked
-- Located in `src/apps/*/tests/` and `src/components/*/tests/` directories
-- Examples: `connectivity_integration_test.rs`, `e2e_lifecycle_test.rs`, `test_phase2_step4_dynamic_peer_registration`
-- Run with `cargo test` or specific test names
-
-**For more details on testing philosophy, see `AGENT_CODING_STANDARDS.md` Section 6.**
-
-### Running Tests
-
-All tests are unit tests and integration tests located within the source tree:
-- **Unit tests:** Run with `cargo test --lib` - Tests all `#[cfg(test)]` modules in src/
-- **Integration tests:** Run with `cargo test --test '*'` or `cargo test` - Includes both in-source and top-level tests
-- **Specific test:** Run with `cargo test test_name` - Runs matching tests
-
-**Current Status:**
-- 500+ tests passing (100% success rate)
-- All tests use `#[cfg(test)]` or Cargo's automatic test discovery
-- No broken tests or known issues
-
-**Test Organization:**
-- Unit tests co-located with source code in `src/` directories
-- Integration tests in component test modules (e.g., `src/components/zzintent-config/src/test_integration.rs`)
-- No top-level `tests/` directory (per coding standards)
-./scripts/load_test.sh 10 60
-
-# Chaos test (needs manual validation)
-./scripts/chaos_test.sh 3 120
-```
-
-### Certificate Management
-
-Generate certificates for multiple collectors:
-```bash
-./scripts/generate_multi_certs.sh 100
-```
-
-Test certificate rotation:
-```bash
-./scripts/generate_two_cas.sh
-cargo test --test cert_rotation_test
-```
-
-## Configuration
-
-See `database.example.ron` and `collector.example.ron` for configuration examples.
-
-## Troubleshooting
-
-### Common Issues
-
-- **TLS handshake failures**: Ensure certificates are valid and CN/SAN matches the host.
-- **Connection refused**: Check that the database is running and ports are open.
-- **Certificate rotation**: Use dual CA support for zero-downtime rotation.
-
-### Logs
-
-Enable debug logging:
-```bash
-RUST_LOG=debug ./target/release/zzping-database --config config.ron
-```
-
 ## Development
+
+The `zznet-builder` crate is the canonical way to build all applications in this workspace. It provides a framework that handles the entire application lifecycle, including configuration, logging, runtime, and graceful shutdown.
+
+For instructions on how to create a new application, see the documentation in the builder crate itself:
+- **[`src/net/zznet-builder/README.md`](./src/net/zznet-builder/README.md)**
 
 ### Building
 ```bash
@@ -138,11 +64,14 @@ cargo build --release
 
 ### Testing
 ```bash
-cargo test --workspace
+# Run all tests in the workspace
+cargo nextest run --workspace
+
+# Run all checks and lints
 cargo clippy --workspace -- -D warnings
 ```
 
-### Phase 6 MVP Status
+## Phase 6 MVP Status
 
 **Completed:**
 - ✅ Multi-CA certificate rotation support (database accepts multiple CA certs)
@@ -151,9 +80,9 @@ cargo clippy --workspace -- -D warnings
 - ✅ All unit tests pass
 - ✅ Clippy clean
 - ✅ Release builds work
+- ✅ `zznet-builder` integration (apps use the builder API instead of manual wiring)
 
 **In Progress / Needs Work:**
-- 🔄 zznet-builder integration (apps should use builder API instead of manual transport)
 - 🔄 zznet-room integration (apps should leverage Room abstraction)
 - ⚠️ TLS certificate generation may have compatibility issues
 - ⚠️ Load/chaos/stability tests exist but unverified

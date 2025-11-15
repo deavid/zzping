@@ -101,7 +101,7 @@ mod tests {
         let target = "127.0.0.1".parse().unwrap();
 
         // Note: This test may fail in environments without proper privileges
-        // In CI/test environments, surge-ping may not work due to raw socket requirements
+        // In some test environments, surge-ping may not work due to raw socket requirements
         let result = PingSurgeClient::new(target);
 
         match result {

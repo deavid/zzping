@@ -48,13 +48,13 @@ This phase addresses the critical testing gap identified in the analysis.
     -   This test will replace the old manual wiring and serve as the primary validation for the builder's API.
 
 -   **Test Coverage Goals:**
-    -   The new test suite must aim for >95% line coverage on the `zznet-builder` crate.
+    -   The new test suite must aim for >95% line coverage on the `zznet-builder` crate. These coverage goals are measured manually via local tooling; the project does not use CI to enforce coverage.
     -   It should validate the entire application lifecycle as managed by the builder, including successful startup and graceful shutdown.
     -   Negative test cases must be included: test for builder errors when provided with invalid configurations, non-existent certificate paths, etc.
 
 -   **Consider Ramifications & Edge Cases:**
     -   **Test Complexity:** The test will need to manage multiple application instances (e.g., a "database" and a "collector") built via the builder, and assert that they can connect and communicate.
-    -   **CI/CD:** The successful execution of these new integration tests will become a critical quality gate for any future changes to the `zznet` framework.
+    -   **Note:** The project does not use an automated CI/CD pipeline. Developers should run the integration tests and coverage checks locally and ensure they pass prior to review.
 
 ## 5. Phase 4: Documentation and Cleanup
 
@@ -73,3 +73,35 @@ This final phase ensures the work is maintainable and accessible to developers.
 -   **Consider Ramifications:**
     -   **Onboarding:** The new, simplified process should significantly lower the barrier for new developers to create `zznet` applications. The documentation must be clear enough to support this.
     -   **Future Development:** All future applications within the project must use the builder, enforcing a consistent architectural pattern across the codebase.
+
+## Progress Update
+
+✅ Implemented run_service_with_stop and run_service_with_config_and_stop to run builder-managed apps with a programmatic stop future (useful for tests).
+
+✅ Added unit tests in `zznet-builder` to validate building services from config and running them with a programmatic stop.
+
+✅ Added `spawn_demo_service_with_builder` and `builder_run_integration_test.rs` to `zznet-demo` to exercise the builder-run workflow in tests.
+
+✅ Centralized transport TLS config creation into `zznet-builder::tls::to_transport_tls_config` and refactored `zzping-collector` and `zzping-database` to use the helper.
+
+Remaining work includes: updating all application docs to favor builder usage, removing remaining duplicate TLS-loading code where safe, and ensuring integration tests are run locally as part of developer workflows; CI is not used for this repository.
+
+### How to run the builder-run tests locally
+
+Run the demo builder-run integration test specifically:
+
+```bash
+cargo test -p zznet-demo --test builder_run_integration_test
+```
+
+Run all builder-based tests across the workspace:
+
+```bash
+cargo test --workspace --all-features
+```
+
+### Next steps (short-term)
+
+- Remove remaining `cli.rs` application definitions if they are unused (we re-exported the builder `StandardCliArgs` to keep code compatible). Ensure `Cargo.toml` does not list `clap` unless the app requires custom CLI options.
+- Consider moving `load_client_tls`/`load_server_tls` into public API or a smaller `zznet-app-utils` crate if other components need direct `rustls` configs.
+- No automated workflows (e.g. GitHub Actions) are used in this repository; testing and coverage must be run locally by contributors.

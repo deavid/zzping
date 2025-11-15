@@ -101,7 +101,7 @@ Where I disagree or add nuance:
 
 - The façade stuck: `zznet-session` still provides a convenient, broad actor surface. Teams kept using it instead of adopting narrower interfaces, so the split didn’t reach the call sites.
 - No narrow traits at the boundary: Components have no `PeerRegistry` and `MessageRouter` traits to depend on—only the concrete actor.
-- No enforcement: Dependency rules for Main actors (no `zznet-*` infrastructure deps) are not enforced by CI.
+- No enforcement: Dependency rules for Main actors (no `zznet-*` infrastructure deps) are not enforced automatically; they rely on local checks and team review.
 - Orchestration layer not retired: A coordinator/facade continues to centralize responsibilities (rollback/events) that should live closer to composition root or be explicitly two-step operations.
 
 ---
@@ -117,7 +117,7 @@ Where I disagree or add nuance:
 
 2) Enforce Three-Actor isolation
 - Remove `PeerManagerActor` and `Room<...>` from Main actors. All network knowledge moves into the component’s NetworkManager actor.
-- Add CI checks that forbid Main-actor crates from depending on `zznet-session`, `zznet-peer-manager`, or `zznet-router`. Permit only `zznet-api` and component-local code.
+- Add local checks (scripts) that forbid Main-actor crates from depending on `zznet-session`, `zznet-peer-manager`, or `zznet-router`. Permit only `zznet-api` and component-local code.
 
 3) Tame or retire `SessionCoordinator`
 - Preferred: push orchestration into the application composition root (startup wiring), performing two explicit operations (register in peer-manager; register channels in router) with clear error handling. This removes the need for a central rollback layer.
@@ -139,7 +139,7 @@ Where I disagree or add nuance:
 
 - Interface split (traits + adapters): Low-to-moderate. Mostly new files and targeted refactors. High return: enforces ISP and improves DIP/testability.
 - Main-actor isolation: Moderate, affects a few components but can be incremental: move fields/calls to NetworkManager first, then flip dependencies.
-- CI enforcement: Low. A small script that scans Cargo.toml for forbidden dependencies in listed crates.
+- Local enforcement: Low. A small script exists that scans Cargo.toml for forbidden dependencies in listed crates; this script is intended for local use.
 - Coordinator retirement: Moderate. Move orchestration to composition root and update call sites; can run alongside traits/adapters refactor.
 
 ---
@@ -183,9 +183,9 @@ This section translates the recommendations into concrete, verifiable checklists
   - [ ] No `Room<...>` or room-channel fields in Main actor structs
 - [ ] Move all network wiring to each component’s NetworkManager
   - [ ] NetworkManager owns per-peer actors and uses the new traits
-- [ ] Enforce dependency rules via CI
-  - [ ] CI check that Main-actor crates do NOT depend on `zznet-session`, `zznet-peer-manager`, or `zznet-router`
-  - [ ] CI allows only `zznet-api` (plus component-local crates)
+- [ ] Enforce dependency rules via local checks
+  - [ ] (Local) check that Main-actor crates do NOT depend on `zznet-session`, `zznet-peer-manager`, or `zznet-router`
+  - [ ] Local checks ensure only `zznet-api` (plus component-local crates)
 - [ ] Add at least one unit test proving the Main actor compiles and runs with mocked trait implementations only
 - [ ] Quality gates
   - [ ] Build PASS
@@ -206,7 +206,7 @@ This section translates the recommendations into concrete, verifiable checklists
 - [ ] Add module-level docs in `zznet-router` clarifying allowed responsibilities:
   - [ ] Allowed: channel registration, room membership/negotiation, inbound broadcast, routing bytes to room handlers, outbound send
   - [ ] Not allowed: roles/auth/business logic
-- [ ] Static check: `zznet-router` must not import role/auth/business types (grep in CI)
+- [ ] Static check: `zznet-router` must not import role/auth/business types (run the local grep script)
 - [ ] Ensure tests for room negotiation and routing live with `zznet-router`
 - [ ] Quality gates: Build PASS, Tests PASS
 
@@ -217,13 +217,13 @@ This section translates the recommendations into concrete, verifiable checklists
 - [ ] Add an example test demonstrating trait-based injection for NetworkManager
 - [ ] Quality gates: Tests PASS (unit tests run without starting an actor system)
 
-### 10.6 CI enforcement
+### 10.6 Local enforcement
 
-- [ ] Add a CI job that fails when Main-actor crates depend on infrastructure crates
+- [ ] Add a local script that fails when Main-actor crates depend on infrastructure crates (no CI job is used)
   - [ ] Script scans Cargo.toml for forbidden dependencies in `zzintent-config`, `zzmem-db`, `zzcollector-state` (extend list as needed)
-- [ ] Add a CI job that fails when deprecated façade methods are used in non-test code
+- [ ] Document a local check that fails when deprecated façade methods are used in non-test code (no CI job is used)
 - [ ] Document the rules in `docs/zznet-solid/` and link from PR template
-- [ ] Quality gates: CI PASS with the new checks enabled
+- [ ] Quality gates: Local checks pass with the new checks enabled (no CI job is used)
 
 ---
 

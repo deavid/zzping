@@ -68,7 +68,7 @@ Phase C — finish Router extraction (DATA PLANE)
 4. DONE: `zznet-router::lib.rs` re-exports now point to `zznet-api::types`.
 
 Phase D — finalize and delete `zznet-session`
-1. Ensure no crate imports `zznet-session` types/traits directly. Grep/CI must report zero remaining uses.
+1. Ensure no crate imports `zznet-session` types/traits directly. Run the local grep/script to report zero remaining uses.
 2. Delete `zznet-session` or leave it as a tiny compatibility crate that re-exports from new crates with deprecation and a `FIXME` to delete later. Prefer deletion once everything passes.
 
 Phase E — cleanup and docs
@@ -114,9 +114,9 @@ Date: 2025-10-28
    - Removed `zznet-session` dependency from component crates (IntentConfig)
    - All network knowledge now lives in NetworkManager actors
 
-3. CI Enforcement
-   - Added `scripts/check-component-dependencies.sh`
-   - CI job documented for future CI setup
+3. Local Enforcement (no CI)
+   - Added `scripts/check-component-dependencies.sh` for local validation
+   - No CI job is configured or used in this repository; document the local checks and ensure they are run by authors prior to review
    - Documented rules in `ARCHITECTURE_RULES.md`
 
 4. SessionCoordinator

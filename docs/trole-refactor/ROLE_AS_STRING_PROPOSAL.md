@@ -75,7 +75,7 @@ Design details
 
 Migration plan (staged)
 -----------------------
-This is an incremental approach so CI keeps us honest.
+This is an incremental approach so local checks keep us honest.
 
 Phase 0 - Prep (low risk)
 - Add the `Role` newtype in `zznet_api::types` and helper conversions.
@@ -137,7 +137,7 @@ Estimated effort
 - Phase 0: minutes (add Role type + tests).
 - Phase 1: 1–3 hours (change PeerSession internals and update unit tests).
 - Phase 2: 3–8 hours (migrate actor messages and update call sites across components + tests).
-- Phase 3/4: 1–3 hours (docs + polishing + CI fixes).
+- Phase 3/4: 1–3 hours (docs + polishing + local enforcement fixes).
 
 Next actions (pick one)
 ----------------------

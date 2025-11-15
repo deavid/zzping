@@ -14,7 +14,7 @@
 - Hold an address to their own `NetworkManager` actor
 - Define component-specific message types
 
-**Enforcement:** CI script `scripts/check-component-dependencies.sh` fails if violated.
+**Enforcement:** This is validated by team review. A local script `scripts/check-component-dependencies.sh` exists for pre-merge validation, but there is no CI automation enforcing it.
 
 **Rationale:** Business logic must be isolated from network concerns for testability, clarity, and adherence to the Three-Actor pattern.
 

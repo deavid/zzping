@@ -5,7 +5,6 @@
 //! component integration without running the full binary.
 
 // Module declarations
-pub mod cli;
 pub mod config;
 pub mod error;
 pub mod network;

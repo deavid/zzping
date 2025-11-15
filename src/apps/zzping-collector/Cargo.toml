@@ -33,11 +33,8 @@ serde.workspace = true
 ron.workspace = true
 
 # CLI argument parsing
-clap.workspace = true
-
 # Logging and tracing
 tracing.workspace = true
-tracing-subscriber.workspace = true
 
 # Error handling
 anyhow.workspace = true
@@ -55,6 +52,7 @@ chrono.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 tokio-test.workspace = true
+tracing-subscriber.workspace = true
 
 # Workspace-wide linting: Since collaborators here (read, AI agents) are too happy to just allow a lint and move on, we
 # are adding here a workspace wide forbid on the lints that must not be overriden. Do not be even tempted to change this!

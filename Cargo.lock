@@ -2289,6 +2289,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "tracing-subscriber",
+ "zznet-transport-tcp",
 ]
 
 [[package]]
@@ -2390,7 +2391,6 @@ dependencies = [
  "async-trait",
  "bincode",
  "chrono",
- "clap",
  "log",
  "ron",
  "rustls",
@@ -2425,7 +2425,6 @@ dependencies = [
  "async-trait",
  "bincode",
  "chrono",
- "clap",
  "log",
  "ron",
  "rustls",

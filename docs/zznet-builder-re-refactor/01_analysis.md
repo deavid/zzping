@@ -70,3 +70,9 @@ This is precisely the duplication the builder was meant to prevent.
 The `zznet-builder` crate is a case of an ambitious and well-intentioned refactor that was left incomplete. It was never fully integrated, and the lack of a testing feedback loop meant its development stalled before it could fulfill its purpose.
 
 The chosen path forward is to **Finish the Refactor**. We will commit to the original vision and refactor `zzping-collector`, `zzping-database`, and the `zznet-demo` test suite to use the `zznet-builder` API. This will involve completing the builder's functionality and deleting the now-redundant code from the applications. This will finally achieve the goal of a DRY, simplified application creation process.
+
+## Execution Update
+
+I began executing this plan by implementing key builder APIs for testability and background execution (`run_service_with_config_and_stop` and `run_service_with_stop`), adding unit tests, adding a demo test harness helper to spawn builder-run services, and centralizing transport TLS config construction into `zznet-builder::tls`. Existing app services (`CollectorService` and `DatabaseService`) were refactored to use the builder's transport TLS helper.
+
+Next steps: expand test coverage to exercise more of the builder API, migrate any remaining application duplication to the builder where appropriate, and update documentation to prioritize builder integration tests — run these tests locally since this project does not use CI.

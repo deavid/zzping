@@ -48,7 +48,7 @@
 //! **Why is this important?**
 //! - Connectivity is a critical integration point
 //! - Manual testing is error-prone (easy to forget to run both)
-//! - CI/CD pipelines can't run manual tests reliably
+//! - Automated pipelines are not used in this repository; manual tests may be less reliable in some environments
 //! - This test ensures the system works end-to-end
 //!
 //! # When This Test Would Catch Bugs

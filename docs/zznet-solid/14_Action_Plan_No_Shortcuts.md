@@ -483,9 +483,9 @@ zznet-session = { workspace = true }
 
 ---
 
-## Phase 3: CI Enforcement (No Regressions)
+## Phase 3: Local Enforcement (No Regressions)
 
-**Goal:** Add automated checks that prevent future violations.
+**Goal:** Add local checks and scripts that prevent future violations. This repository does not use automated CI; developers should run these scripts locally as part of pre-PR validation.
 
 ### Task 3.1: Create Dependency Check Script
 
@@ -546,27 +546,21 @@ fi
 
 ---
 
-### Task 3.2: Add CI Job
+### Task 3.2: Document Local Enforcement Steps
 
-**Location:** `.github/workflows/ci.yml` (or wherever your CI config is)
+**Location:** Repository documentation and PR template
 
 **What to add:**
-```yaml
-  check-architecture:
-    name: Architecture Rules
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - name: Check component dependencies
-        run: ./scripts/check-component-dependencies.sh
-```
+1. Ensure `scripts/check-component-dependencies.sh` is present and executable for local use.
+2. Add a short developer checklist or PR template entry that instructs contributors to run local checks prior to opening a PR. Example checklist item:
+     - `./scripts/check-component-dependencies.sh` passed
+     - `cargo test --workspace` passed (locally)
+3. Do NOT add a CI job; the project policy is to run these checks locally.
 
 **Verification checklist:**
-- [ ] Job added to CI config
-- [ ] Commit and push to trigger CI
-- [ ] Wait for CI to complete
-- [ ] Paste CI output showing the job passed
-- [ ] If CI job doesn't exist yet, document why and provide alternative verification
+- [ ] Local enforcement steps documented in the repo (PR template or docs)
+- [ ] Running `./scripts/check-component-dependencies.sh` locally produces no violations
+- [ ] Developers run local checks before creating PRs (manual policy enforcement)
 
 ---
 
@@ -592,7 +586,7 @@ fi
 - Hold an address to their own `NetworkManager` actor
 - Define component-specific message types
 
-**Enforcement:** CI script `scripts/check-component-dependencies.sh` fails if violated.
+**Enforcement:** Local pre-PR script `scripts/check-component-dependencies.sh` fails if violated; run it before opening a PR.
 
 **Rationale:** Business logic must be isolated from network concerns for testability, clarity, and adherence to the Three-Actor pattern.
 
@@ -770,9 +764,9 @@ Date: 2025-10-28
    - Removed `zznet-session` dependency from component crates
    - All network knowledge now lives in NetworkManager actors
 
-3. CI Enforcement
-   - Added `scripts/check-component-dependencies.sh`
-   - CI job fails on architecture violations
+3. Local Enforcement
+    - Added `scripts/check-component-dependencies.sh`
+    - Local pre-PR script fails on architecture violations
    - Documented rules in `ARCHITECTURE_RULES.md`
 
 4. SessionCoordinator

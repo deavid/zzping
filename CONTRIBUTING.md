@@ -66,3 +66,13 @@ cargo run --bin some-server
 ```
 
 If the variables are not set, no limits are enforced (legacy behavior).
+
+## Validation & Local Checks
+
+This repository intentionally does NOT use any CI automation (e.g., GitHub Actions). Contributors must run tests and validation scripts locally before opening a PR:
+
+- Run unit and integration tests: `cargo test --workspace`
+- Run linting: `cargo clippy --workspace -- -D warnings`
+- Run the dependency-check script: `./scripts/check-component-dependencies.sh`
+
+Add the dependency check script to your local `pre-push` or `pre-commit` hook if desired to avoid accidental violations.
