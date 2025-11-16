@@ -21,10 +21,6 @@ pub enum CollectorError {
     #[error("Component error: {0}")]
     Component(String),
 
-    /// Pinger error.
-    #[error("Pinger error: {0}")]
-    Pinger(#[from] zzpinger::error::PingerError),
-
     /// Anyhow error wrapper
     #[error("Generic error: {0}")]
     Anyhow(#[from] anyhow::Error),

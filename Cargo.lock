@@ -2464,8 +2464,6 @@ name = "zzpinger"
 version = "0.3.0-dev"
 dependencies = [
  "actix",
- "async-trait",
- "bincode",
  "futures",
  "log",
  "ntest",
@@ -2476,7 +2474,4 @@ dependencies = [
  "tokio-test",
  "tracing",
  "zzmem-db",
- "zznet-api",
- "zznet-room",
- "zznet-router",
 ]

@@ -1,18 +1,10 @@
 //! # zzpinger Component
 //!
-//! Manages ICMP ping operations for multiple network targets with configurable rates and timeouts.
-//! Submits ping results to `zzmem-db` for storage and analysis, enabling network monitoring.
-//!
-//! The design emphasizes testability and reliability, ensuring no real network operations occur during testing.
-//! Uses Actix actors for concurrent target management and tokio tasks for rate-limited ping loops.
+//! Executes ICMP pings at precise system-clock-aligned intervals and reports events to MemDB.
+//! Uses a dedicated scheduler actor and a pool of backend actors for high-precision timing.
 
-pub mod actor;
 pub mod api;
+pub mod backend;
 pub mod builder;
-pub mod error;
 pub mod messages;
-pub mod network_actor;
-pub mod network_manager;
-pub mod network_messages;
-pub mod permissions;
-pub mod pinger;
+pub mod scheduler;

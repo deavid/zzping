@@ -1,59 +1,75 @@
-//! Message types for the Pinger component.
-//!
-//! Defines commands for target management, health monitoring, and configuration updates.
-//! Validation prevents invalid states that could cause hangs or resource leaks.
+//! Message types used by the zzpinger component.
 
-use actix::Message;
+use actix::{Message, Recipient};
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
+use std::time::{Duration, Instant, SystemTime};
 
-use crate::error::PingerError;
-
-/// Updates the list of targets to ping. Replaces all existing targets and cancels tasks for removed ones.
-/// Ensures only valid configurations are accepted to maintain system stability and prevent resource leaks.
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "Result<(), PingerError>")]
-pub struct UpdateTargets {
-    /// New list of targets to ping
-    pub targets: Vec<TargetConfig>,
-}
-
-/// Configuration for a single ping target. Defines timing and addressing for ping operations.
-/// Validation prevents zero rates or timeouts that could cause infinite loops or hangs.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, bincode::Encode, bincode::Decode)]
-pub struct TargetConfig {
-    /// Target hostname or IP address
-    pub target: String,
-    /// Rate in milliseconds between pings
-    pub rate_ms: u64,
-    /// Timeout in milliseconds for ping responses
-    pub timeout_ms: u64,
-}
-
-/// Enables or disables all ping operations. Allows pausing monitoring without reconfiguration.
-/// Useful for maintenance windows or when network conditions require temporary suspension.
-#[derive(Message, Debug)]
+/// Message to update the intent configuration for pinging targets.
+#[derive(Debug, Clone, Serialize, Deserialize, Message)]
 #[rtype(result = "()")]
-pub struct SetPingingEnabled {
-    /// Whether pinging should be enabled
-    pub enabled: bool,
+pub struct UpdateIntentConfig {
+    /// List of IP addresses to ping.
+    pub targets: Vec<IpAddr>,
+    /// Number of pings per second for each target.
+    pub pings_per_second: u16,
 }
 
-/// Retrieves current health status of the pinger. Provides operational metrics for monitoring.
-/// Enables external systems to track ping performance and target counts without side effects.
-#[derive(Message, Debug)]
-#[rtype(result = "PingerHealth")]
-pub struct GetHealth;
+/// Message to update the component state (enable/disable pinging).
+#[derive(Debug, Clone, Serialize, Deserialize, Message)]
+#[rtype(result = "()")]
+pub struct UpdateCState {
+    /// Whether pinging is enabled.
+    pub enable: bool,
+}
 
-/// Health snapshot of the pinger's current state. Includes counters and operational flags.
-/// Used for monitoring and alerting on ping operation health and performance.
+/// Event representing a ping operation result.
+#[derive(Debug, Clone, Serialize, Deserialize, Message)]
+#[rtype(result = "()")]
+pub struct PingEvent {
+    /// Target host that was pinged.
+    pub target_host: IpAddr,
+    /// Time when the ping was sent.
+    pub sent_time: SystemTime,
+    /// State of the ping result.
+    pub state: PingState,
+    /// Sequence number for this ping.
+    pub sequence: u64,
+}
+
+/// Possible states for a ping event.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PingerHealth {
-    /// Number of active targets being pinged
-    pub active_targets: usize,
-    /// Total number of pings sent since startup
-    pub total_pings_sent: u64,
-    /// Total number of ping responses received
-    pub total_responses: u64,
-    /// Whether pinging is currently enabled
-    pub enabled: bool,
+pub enum PingState {
+    /// Ping has been sent but not yet received.
+    InFlight,
+    /// Ping timed out.
+    TimedOut,
+    /// Network error occurred.
+    NetworkError,
+    /// Ping received with round-trip time.
+    ReceivedRTT(Duration),
+}
+
+/// Message to schedule pings for a batch of targets at a specific time.
+#[derive(Debug, Clone, Message)]
+#[rtype(result = "()")]
+pub struct SchedulePings {
+    /// Aligned system time for the ping.
+    pub aligned_time: SystemTime,
+    /// Instant for precise timing.
+    pub instant: Instant,
+    /// Duration to wait before firing.
+    pub fire_duration: Duration,
+    /// List of targets to ping.
+    pub targets: Vec<IpAddr>,
+    /// Sequence number for this ping batch.
+    pub sequence: u64,
+}
+
+/// Message allowing the scheduler to update its backend recipient at runtime.
+#[derive(Debug, Clone, Message)]
+#[rtype(result = "()")]
+pub struct UpdateBackendRecipient {
+    /// Recipient for scheduling commands toward the backend.
+    pub recipient: Recipient<SchedulePings>,
 }

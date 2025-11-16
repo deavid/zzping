@@ -1,173 +1,56 @@
-//! Builder pattern for creating PingerActor instances.
-//!
-//! Provides fluent API for configuring pingers with targets, backends, and MemDB integration.
-//! Enables testable construction by allowing backend injection.
+//! Builder module for constructing the zzpinger component.
 
-use crate::actor::PingerActor;
-use crate::api::PingerHandle;
-use crate::error::PingerError;
-use crate::messages::TargetConfig;
-use crate::permissions::PingerPermissions;
-use crate::pinger::PingBackend;
-use actix::{Actor, Addr};
-use std::collections::HashMap;
-use std::sync::Arc;
-use zzmem_db::actor::MemDBActor;
-use zznet_router::RouterActor;
+use actix::Recipient;
+use actix::prelude::*;
+use zzmem_db::messages::StorePingResult;
 
-/// A builder for configuring and starting a `PingerActor`.
-///
-/// This builder provides a fluent interface for setting up the pinger's initial state,
-/// including its targets, backend implementation, and integration with a results collector.
-/// It ensures that the actor is always created in a valid and consistent state.
+use crate::scheduler::PingerSchedulerActor;
+
+/// Builder for creating the Pinger component.
 pub struct PingerBuilder {
-    memdb_addr: Option<Addr<MemDBActor>>,
-    memdb_recipient: Option<actix::Recipient<zzmem_db::messages::StorePingResult>>,
-    initial_targets: Vec<TargetConfig>,
-    enabled: bool,
-    backend: Option<Arc<dyn PingBackend>>,
-    router_actor: Option<Addr<RouterActor>>,
-    permissions_map: Option<HashMap<String, PingerPermissions>>,
-}
-
-impl PingerBuilder {
-    /// Creates a new `PingerBuilder` with default settings.
-    ///
-    /// By default, the pinger starts with no targets and uses a `MockBackend`, making it safe
-    /// for testing environments out-of-the-box.
-    pub fn new() -> Self {
-        Self {
-            memdb_addr: None,
-            memdb_recipient: None,
-            initial_targets: Vec::new(),
-            enabled: true,
-            backend: None,
-            router_actor: None,
-            permissions_map: None,
-        }
-    }
-
-    /// Configures the address of a `MemDBActor` for result submission.
-    ///
-    /// This is the standard method for integrating with `zzmem-db` in a production environment.
-    pub fn memdb_addr(mut self, addr: Addr<MemDBActor>) -> Self {
-        self.memdb_addr = Some(addr);
-        self
-    }
-
-    /// Configures a `Recipient` for result submission, intended for testing.
-    ///
-    /// This allows tests to provide a mock actor to receive `StorePingResult` messages,
-    /// enabling verification of the result submission logic without a real `MemDBActor`.
-    pub fn memdb_recipient(
-        mut self,
-        recipient: actix::Recipient<zzmem_db::messages::StorePingResult>,
-    ) -> Self {
-        self.memdb_recipient = Some(recipient);
-        self
-    }
-
-    /// Injects a custom `PingBackend`.
-    ///
-    /// This is a key method for testing, allowing the injection of a `MockBackend` to prevent
-    /// real network operations and ensure deterministic test outcomes.
-    pub fn backend(mut self, backend: Arc<dyn PingBackend>) -> Self {
-        self.backend = Some(backend);
-        self
-    }
-
-    /// Sets the initial list of targets for the pinger to monitor.
-    ///
-    /// Each `TargetConfig` defines a host to be pinged, along with its specific rate and timeout.
-    pub fn targets(mut self, targets: Vec<TargetConfig>) -> Self {
-        self.initial_targets = targets;
-        self
-    }
-
-    /// Sets the initial enabled state of the pinger upon startup.
-    ///
-    /// If `true`, the pinger will start its monitoring tasks immediately. If `false`, it will
-    /// remain idle until explicitly enabled.
-    pub fn enabled(mut self, enabled: bool) -> Self {
-        self.enabled = enabled;
-        self
-    }
-
-    /// Configures the RouterActor for network communication.
-    ///
-    /// This enables the pinger to receive configuration updates over the network.
-    pub fn router_actor(mut self, router_actor: Addr<RouterActor>) -> Self {
-        self.router_actor = Some(router_actor);
-        self
-    }
-
-    /// Set the permissions map for role-to-permissions translation.
-    ///
-    /// This maps role strings to the specific permissions that peers with
-    /// those roles should have within this component. If not set, the
-    /// NetworkManager will deny all peer connections.
-    pub fn permissions_map(mut self, permissions_map: HashMap<String, PingerPermissions>) -> Self {
-        self.permissions_map = Some(permissions_map);
-        self
-    }
-
-    /// Get the permissions map (for testing)
-    pub fn get_permissions_map(&self) -> Option<&HashMap<String, PingerPermissions>> {
-        self.permissions_map.as_ref()
-    }
-
-    /// Consumes the builder to construct, start, and return a handle to the `PingerActor`.
-    ///
-    /// This method finalizes the configuration, starts the actor, and provides a `PingerHandle`
-    /// for interacting with the running actor instance.
-    pub fn start(self) -> Result<PingerHandle, PingerError> {
-        let mut actor = PingerActor::new();
-
-        if let Some(backend) = self.backend {
-            actor = actor.with_targets_with_backend(self.initial_targets, backend);
-        } else {
-            actor = actor.with_targets(self.initial_targets);
-        }
-
-        if let Some(memdb_addr) = self.memdb_addr {
-            actor = actor.with_memdb_addr(memdb_addr);
-        }
-        if let Some(recipient) = self.memdb_recipient {
-            actor = actor.with_memdb_recipient(recipient);
-        }
-
-        actor = actor.with_enabled(self.enabled);
-
-        let addr = Actor::start(actor);
-
-        // Create NetworkManager if we have RouterActor
-        if let Some(router_actor) = self.router_actor {
-            log::info!("Creating PingerNetworkManager for Router integration");
-
-            let permissions_map = self.permissions_map.unwrap_or_else(|| {
-                log::warn!("No permissions_map provided - all peer connections will be denied");
-                HashMap::new()
-            });
-
-            let network_manager = crate::network_manager::PingerNetworkManager::new(
-                addr.clone(),
-                router_actor,
-                permissions_map,
-            );
-
-            network_manager.start();
-
-            log::info!("✓ PingerNetworkManager created and registered with Router");
-        } else {
-            log::debug!("No RouterActor provided - NetworkManager not created");
-        }
-
-        Ok(PingerHandle::new(addr))
-    }
+    memdb_recipient: Option<Recipient<StorePingResult>>,
 }
 
 impl Default for PingerBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl PingerBuilder {
+    /// Creates a new builder.
+    pub fn new() -> Self {
+        Self {
+            memdb_recipient: None,
+        }
+    }
+
+    /// Sets the MemDB recipient.
+    pub fn with_memdb_recipient(mut self, recipient: Recipient<StorePingResult>) -> Self {
+        self.memdb_recipient = Some(recipient);
+        self
+    }
+
+    /// Builds the Pinger component.
+    pub fn build(self) -> Pinger {
+        let memdb_recipient = self.memdb_recipient.expect("MemDB recipient not set");
+        Pinger { memdb_recipient }
+    }
+}
+
+/// Handle to the Pinger component.
+pub struct Pinger {
+    memdb_recipient: Recipient<StorePingResult>,
+}
+
+impl Pinger {
+    /// Starts the pinger actors on a dedicated arbiter.
+    pub fn start(self) -> Addr<PingerSchedulerActor> {
+        let arbiter = Arbiter::new();
+        let memdb_recipient = self.memdb_recipient;
+
+        PingerSchedulerActor::start_in_arbiter(&arbiter.handle(), move |_| {
+            PingerSchedulerActor::new(None, memdb_recipient.clone())
+        })
     }
 }

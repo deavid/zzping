@@ -5,10 +5,9 @@
 
 use crate::config::{CollectorConfig, CollectorTlsConfig};
 use crate::error::CollectorError;
-use actix::{Actor, Addr};
+use actix::{Actor, Addr, SyncArbiter};
 use anyhow::Result;
 use async_trait::async_trait;
-use std::collections::HashMap;
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
 use zzintent_config::permissions::IntentConfigPermissions;
@@ -17,9 +16,9 @@ use zzmem_db::builder::MemDBBuilder;
 use zzmem_db::config::MemDBConfig;
 use zznet_builder::traits::ZZNetService;
 use zznet_router::RouterActor;
-use zzpinger::api::PingerHandle;
+use zzpinger::backend::PingerBackendActor;
 use zzpinger::builder::PingerBuilder;
-use zzpinger::permissions::PingerPermissions;
+use zzpinger::messages::{PingEvent, SchedulePings, UpdateBackendRecipient};
 
 /// Builders for all components (before wiring)
 pub struct ComponentBuilders {
@@ -35,8 +34,8 @@ pub struct ComponentBuilders {
 pub struct StartedComponents {
     /// Address of the running IntentConfig actor.
     pub intent_config: Addr<IntentConfigActor>,
-    /// Handle to the running Pinger actor.
-    pub pinger: PingerHandle,
+    /// Address of the running Pinger scheduler actor.
+    pub pinger: Addr<zzpinger::scheduler::PingerSchedulerActor>,
     /// Address of the running MemDB actor.
     pub memdb_addr: Addr<MemDBActor>,
     /// RouterActor for data-plane message routing.
@@ -53,7 +52,7 @@ impl CollectorService {
     /// Creates component builders for all collector components.
     pub fn create_builders(&self) -> Result<ComponentBuilders> {
         // Create permissions policy for intent-config (collector has read-only access)
-        let mut intent_config_permissions = HashMap::new();
+        let mut intent_config_permissions = std::collections::HashMap::new();
         intent_config_permissions.insert(
             "collector".to_string(),
             IntentConfigPermissions::new(true, false), // can read but not write
@@ -63,22 +62,12 @@ impl CollectorService {
             .config_for_collector()
             .permissions_map(intent_config_permissions);
 
-        // Create permissions policy for pinger (collector can update targets)
-        let mut pinger_permissions = HashMap::new();
-        pinger_permissions.insert(
-            "collector".to_string(),
-            PingerPermissions::new(true), // can update targets
-        );
-
-        let pinger = PingerBuilder::new()
-            .enabled(true)
-            .permissions_map(pinger_permissions);
-
         let memdb_addr = MemDBBuilder::new(MemDBConfig::for_collector(
             self.config.components.memdb_batch_size,
         ))
         .build();
-        let pinger = pinger.memdb_addr(memdb_addr.clone());
+
+        let pinger = PingerBuilder::new().with_memdb_recipient(memdb_addr.clone().recipient());
 
         Ok(ComponentBuilders {
             intent_config,
@@ -96,11 +85,23 @@ impl CollectorService {
             .start()
             .map_err(|e| CollectorError::Component(format!("IntentConfig start failed: {}", e)))?;
         let memdb_addr = builders.memdb_addr;
-        let pinger_handle = builders.pinger.router_actor(router_actor.clone()).start()?;
+        let pinger_addr = builders.pinger.build().start();
+
+        // Instantiate the real ICMP backend outside of the zzpinger component so it
+        // can be swapped or mocked by the application.
+        const BACKEND_THREADS: usize = 10;
+        let scheduler_event_recipient = pinger_addr.clone().recipient::<PingEvent>();
+        let backend_addr = SyncArbiter::start(BACKEND_THREADS, move || {
+            PingerBackendActor::new(scheduler_event_recipient.clone())
+        });
+        let backend_recipient = backend_addr.recipient::<SchedulePings>();
+        pinger_addr.do_send(UpdateBackendRecipient {
+            recipient: backend_recipient,
+        });
 
         Ok(StartedComponents {
             intent_config: intent_addr,
-            pinger: pinger_handle,
+            pinger: pinger_addr,
             memdb_addr,
             router_actor,
         })
