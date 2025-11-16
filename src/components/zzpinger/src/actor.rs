@@ -125,7 +125,7 @@ impl PingerActor {
 
     /// Ping loop for a single target
     // helper to perform one ping and optionally submit the result to MemDB
-    pub(crate) async fn ping_once_and_submit(
+    async fn ping_once_and_submit(
         pinger: TargetPinger,
         memdb_addr: Option<Recipient<StorePingResult>>,
         total_pings_sent: Arc<AtomicU64>,
