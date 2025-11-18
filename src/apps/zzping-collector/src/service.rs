@@ -5,9 +5,10 @@
 
 use crate::config::{CollectorConfig, CollectorTlsConfig};
 use crate::error::CollectorError;
-use actix::{Actor, Addr, SyncArbiter};
+use actix::{Actor, Addr};
 use anyhow::Result;
 use async_trait::async_trait;
+use surge_ping::{Client, ConfigBuilder};
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
 use zzintent_config::permissions::IntentConfigPermissions;
@@ -16,9 +17,8 @@ use zzmem_db::builder::MemDBBuilder;
 use zzmem_db::config::MemDBConfig;
 use zznet_builder::traits::ZZNetService;
 use zznet_router::RouterActor;
-use zzpinger::backend::PingerBackendActor;
 use zzpinger::builder::PingerBuilder;
-use zzpinger::messages::{PingEvent, SchedulePings, UpdateBackendRecipient};
+use zzpinger::mock::MockPingerClient;
 
 /// Builders for all components (before wiring)
 pub struct ComponentBuilders {
@@ -67,7 +67,11 @@ impl CollectorService {
         ))
         .build();
 
-        let pinger = PingerBuilder::new().with_memdb_recipient(memdb_addr.clone().recipient());
+        let pinger = PingerBuilder {
+            memdb_recipient: memdb_addr.clone().recipient(),
+            clock: None,
+            spawn_strategy: zzpinger::builder::SpawnStrategy::NewArbiter,
+        };
 
         Ok(ComponentBuilders {
             intent_config,
@@ -77,32 +81,38 @@ impl CollectorService {
     }
 
     /// Starts all collector components from their builders.
-    pub async fn start_components(builders: ComponentBuilders) -> Result<StartedComponents> {
+    pub async fn start_components(&self, builders: ComponentBuilders) -> Result<StartedComponents> {
         let router_actor = RouterActor::new(vec![]).start();
         let intent_addr = builders
             .intent_config
             .router(router_actor.clone())
             .start()
             .map_err(|e| CollectorError::Component(format!("IntentConfig start failed: {}", e)))?;
-        let memdb_addr = builders.memdb_addr;
-        let pinger_addr = builders.pinger.build().start();
+        let memdb_addr = builders.memdb_addr.clone();
 
-        // Instantiate the real ICMP backend outside of the zzpinger component so it
-        // can be swapped or mocked by the application.
-        const BACKEND_THREADS: usize = 10;
-        let scheduler_event_recipient = pinger_addr.clone().recipient::<PingEvent>();
-        let backend_addr = SyncArbiter::start(BACKEND_THREADS, move || {
-            PingerBackendActor::new(scheduler_event_recipient.clone())
-        });
-        let backend_recipient = backend_addr.recipient::<SchedulePings>();
-        pinger_addr.do_send(UpdateBackendRecipient {
-            recipient: backend_recipient,
-        });
+        // Create pinger client based on configuration
+        let pinger_addr = match self.config.components.pinger_backend {
+            crate::config::PingerBackend::Real => {
+                let config = ConfigBuilder::default().build();
+                log::info!("Creating surge_ping client...");
+                let client = Client::new(&config)
+                    .expect("Failed to create surge_ping client - check raw socket permissions");
+                log::info!("surge_ping client created successfully");
+                builders.pinger.start(client)
+            }
+            crate::config::PingerBackend::Mock => {
+                log::info!("Using mock pinger client for testing");
+                let client = MockPingerClient::default();
+                builders.pinger.start(client)
+            }
+        };
+
+        log::info!("Pinger component initialized");
 
         Ok(StartedComponents {
             intent_config: intent_addr,
             pinger: pinger_addr,
-            memdb_addr,
+            memdb_addr: memdb_addr.clone(),
             router_actor,
         })
     }
@@ -133,7 +143,7 @@ impl ZZNetService for CollectorService {
         tracing::info!("Collector service starting");
 
         let builders = self.create_builders()?;
-        let started = Self::start_components(builders).await?;
+        let started = self.start_components(builders).await?;
 
         tracing::info!("All components started successfully");
         tracing::info!("Starting network wiring");
@@ -227,6 +237,7 @@ mod tests {
             components: ComponentConfig {
                 heartbeat_interval_ms: 5000,
                 memdb_batch_size: 50,
+                pinger_backend: crate::config::PingerBackend::Mock,
             },
             reconnect_delay_ms: 5000,
         }

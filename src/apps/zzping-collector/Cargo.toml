@@ -21,6 +21,9 @@ zznet-room.workspace = true
 zznet-router.workspace = true
 zznet-transport-tcp.workspace = true
 
+# For ICMP ping
+surge-ping.workspace = true
+
 # Runtime dependencies
 tokio.workspace = true
 actix.workspace = true

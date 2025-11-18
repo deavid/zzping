@@ -41,6 +41,15 @@ pub struct CollectorTlsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+/// Type of pinger backend to use.
+pub enum PingerBackend {
+    /// Use real ICMP ping via surge_ping (requires raw socket permissions)
+    Real,
+    /// Use mock pinger for testing (no network operations)
+    Mock,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 /// Component-specific configuration.
 pub struct ComponentConfig {
     /// Heartbeat interval in milliseconds for collector state
@@ -48,6 +57,14 @@ pub struct ComponentConfig {
 
     /// Batch size for mem-db
     pub memdb_batch_size: usize,
+
+    /// Type of pinger backend to use
+    #[serde(default = "default_pinger_backend")]
+    pub pinger_backend: PingerBackend,
+}
+
+fn default_pinger_backend() -> PingerBackend {
+    PingerBackend::Real
 }
 
 impl ComponentConfig {
@@ -56,10 +73,12 @@ impl ComponentConfig {
     /// Uses shorter intervals than production defaults:
     /// - Heartbeat: 100ms instead of 5000ms
     /// - Batch size: 5 instead of 50
+    /// - Mock pinger backend for testing
     pub fn fast_timing() -> Self {
         Self {
             heartbeat_interval_ms: 100,
             memdb_batch_size: 5,
+            pinger_backend: PingerBackend::Mock,
         }
     }
 }

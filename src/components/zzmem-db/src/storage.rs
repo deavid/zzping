@@ -44,7 +44,6 @@ impl StorageBackend {
             target: result.target,
             timestamp_ms: result.timestamp_ms,
             rtt_us: result.rtt_us,
-            sequence: result.sequence,
             stored_at_ms: batch_timestamp_ms,
         };
 
@@ -139,17 +138,11 @@ impl StorageBackend {
 mod tests {
     use super::*;
 
-    fn create_test_result(
-        target: &str,
-        timestamp_ms: u64,
-        rtt_us: Option<u32>,
-        sequence: u32,
-    ) -> PingResult {
+    fn create_test_result(target: &str, timestamp_ms: u64, rtt_us: Option<u32>) -> PingResult {
         PingResult {
             target: target.to_string(),
             timestamp_ms,
             rtt_us,
-            sequence,
         }
     }
 
@@ -164,7 +157,7 @@ mod tests {
     #[test]
     fn test_insert_single() {
         let mut backend = StorageBackend::new(10);
-        let result = create_test_result("8.8.8.8", 1234567890, Some(15000), 42);
+        let result = create_test_result("8.8.8.8", 1234567890, Some(15000));
 
         backend.insert_single(result, 1234567900);
 
@@ -176,7 +169,6 @@ mod tests {
         assert_eq!(stored[0].target, "8.8.8.8");
         assert_eq!(stored[0].timestamp_ms, 1234567890);
         assert_eq!(stored[0].rtt_us, Some(15000));
-        assert_eq!(stored[0].sequence, 42);
         assert_eq!(stored[0].stored_at_ms, 1234567900);
     }
 
@@ -184,9 +176,9 @@ mod tests {
     fn test_insert_batch() {
         let mut backend = StorageBackend::new(10);
         let results = vec![
-            create_test_result("8.8.8.8", 1000, Some(10000), 1),
-            create_test_result("8.8.8.8", 2000, Some(12000), 2),
-            create_test_result("1.1.1.1", 1500, Some(8000), 1),
+            create_test_result("8.8.8.8", 1000, Some(10000)),
+            create_test_result("8.8.8.8", 2000, Some(12000)),
+            create_test_result("1.1.1.1", 1500, Some(8000)),
         ];
 
         backend.insert_batch(results, 3000);
@@ -207,7 +199,7 @@ mod tests {
 
         // Insert 3 results for the same target
         for i in 1..=3 {
-            let result = create_test_result("8.8.8.8", 1000 * i as u64, Some(10000 + i * 1000), i);
+            let result = create_test_result("8.8.8.8", 1000 * i as u64, Some(10000 + i * 1000));
             backend.insert_single(result, 1000 * i as u64 + 100);
         }
 
@@ -223,10 +215,10 @@ mod tests {
     fn test_query_target() {
         let mut backend = StorageBackend::new(10);
         let results = vec![
-            create_test_result("8.8.8.8", 1000, Some(10000), 1),
-            create_test_result("8.8.8.8", 2000, Some(12000), 2),
-            create_test_result("8.8.8.8", 3000, Some(8000), 3),
-            create_test_result("1.1.1.1", 2500, Some(9000), 1),
+            create_test_result("8.8.8.8", 1000, Some(10000)),
+            create_test_result("8.8.8.8", 2000, Some(12000)),
+            create_test_result("8.8.8.8", 3000, Some(8000)),
+            create_test_result("1.1.1.1", 2500, Some(9000)),
         ];
 
         backend.insert_batch(results, 4000);
@@ -252,9 +244,9 @@ mod tests {
     fn test_get_target_stats() {
         let mut backend = StorageBackend::new(10);
         let results = vec![
-            create_test_result("8.8.8.8", 1000, Some(10000), 1), // Success
-            create_test_result("8.8.8.8", 2000, None, 2),        // Loss
-            create_test_result("8.8.8.8", 3000, Some(12000), 3), // Success
+            create_test_result("8.8.8.8", 1000, Some(10000)), // Success
+            create_test_result("8.8.8.8", 2000, None),        // Loss
+            create_test_result("8.8.8.8", 3000, Some(12000)), // Success
         ];
 
         backend.insert_batch(results, 4000);
@@ -281,7 +273,7 @@ mod tests {
     #[test]
     fn test_clear() {
         let mut backend = StorageBackend::new(10);
-        let result = create_test_result("8.8.8.8", 1000, Some(10000), 1);
+        let result = create_test_result("8.8.8.8", 1000, Some(10000));
         backend.insert_single(result, 2000);
 
         assert_eq!(backend.total_results(), 1);

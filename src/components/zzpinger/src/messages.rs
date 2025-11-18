@@ -1,6 +1,6 @@
 //! Message types used by the zzpinger component.
 
-use actix::{Message, Recipient};
+use actix::Message;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
 use std::time::{Duration, Instant, SystemTime};
@@ -33,8 +33,6 @@ pub struct PingEvent {
     pub sent_time: SystemTime,
     /// State of the ping result.
     pub state: PingState,
-    /// Sequence number for this ping.
-    pub sequence: u64,
 }
 
 /// Possible states for a ping event.
@@ -58,18 +56,9 @@ pub struct SchedulePings {
     pub aligned_time: SystemTime,
     /// Instant for precise timing.
     pub instant: Instant,
-    /// Duration to wait before firing.
+    /// Duration to wait from `instant` before firing the pings.
+    /// Backend should sleep until: `Instant::from_std(instant) + fire_duration` for precise timing.
     pub fire_duration: Duration,
     /// List of targets to ping.
     pub targets: Vec<IpAddr>,
-    /// Sequence number for this ping batch.
-    pub sequence: u64,
-}
-
-/// Message allowing the scheduler to update its backend recipient at runtime.
-#[derive(Debug, Clone, Message)]
-#[rtype(result = "()")]
-pub struct UpdateBackendRecipient {
-    /// Recipient for scheduling commands toward the backend.
-    pub recipient: Recipient<SchedulePings>,
 }

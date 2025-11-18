@@ -58,8 +58,6 @@ pub struct PingResult {
     pub timestamp_ms: u64,
     /// Round-trip time in microseconds (None if packet lost)
     pub rtt_us: Option<u32>,
-    /// Sequence number for this ping
-    pub sequence: u32,
 }
 
 /// A stored ping result in the database.
@@ -71,8 +69,6 @@ pub struct StoredPingResult {
     pub timestamp_ms: u64,
     /// Round-trip time in microseconds (None if packet lost)
     pub rtt_us: Option<u32>,
-    /// Sequence number
-    pub sequence: u32,
     /// When this result was stored in database
     pub stored_at_ms: u64,
 }
@@ -113,7 +109,6 @@ mod tests {
             target: "8.8.8.8".to_string(),
             timestamp_ms: 1234567890,
             rtt_us: Some(15000),
-            sequence: 42,
         };
 
         let serialized = bincode::encode_to_vec(&result, bincode::config::standard()).unwrap();
@@ -125,7 +120,6 @@ mod tests {
         assert_eq!(result.target, deserialized.target);
         assert_eq!(result.timestamp_ms, deserialized.timestamp_ms);
         assert_eq!(result.rtt_us, deserialized.rtt_us);
-        assert_eq!(result.sequence, deserialized.sequence);
     }
 
     #[test]
@@ -137,7 +131,6 @@ mod tests {
                 target: "8.8.8.8".to_string(),
                 timestamp_ms: 1234567890,
                 rtt_us: Some(15000),
-                sequence: 42,
             }],
         };
 

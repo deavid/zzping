@@ -31,6 +31,8 @@ futures.workspace = true
 
 log.workspace = true
 
+async-trait.workspace = true
+
 [dev-dependencies]
 ntest.workspace = true
 tokio-test.workspace = true

@@ -2,55 +2,79 @@
 
 use actix::Recipient;
 use actix::prelude::*;
+use tokio::sync::{mpsc, watch};
 use zzmem_db::messages::StorePingResult;
 
+use crate::backend;
 use crate::scheduler::PingerSchedulerActor;
+use crate::traits::{Clock, PingerClient};
+use std::sync::Arc;
+
+/// Strategy for spawning the Pinger actor and backend.
+#[derive(Clone, Copy, Debug)]
+pub enum SpawnStrategy {
+    /// Spawn on a new Arbiter thread (production default).
+    NewArbiter,
+    /// Spawn on the current Arbiter thread (test mode, respects tokio::time::pause).
+    Current,
+}
 
 /// Builder for creating the Pinger component.
 pub struct PingerBuilder {
-    memdb_recipient: Option<Recipient<StorePingResult>>,
-}
-
-impl Default for PingerBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
+    /// Recipient where to send the ping results, usually a MemDB component.
+    pub memdb_recipient: Recipient<StorePingResult>,
+    /// Optional clock for testing.
+    pub clock: Option<Arc<dyn Clock>>,
+    /// Strategy for spawning the actor and backend.
+    pub spawn_strategy: SpawnStrategy,
 }
 
 impl PingerBuilder {
-    /// Creates a new builder.
-    pub fn new() -> Self {
-        Self {
-            memdb_recipient: None,
+    /// Builds and starts the Pinger component on the current Arbiter.
+    /// This is the default production method that creates a new Arbiter.
+    pub fn start(self, client: impl PingerClient) -> Addr<PingerSchedulerActor> {
+        match self.spawn_strategy {
+            SpawnStrategy::NewArbiter => {
+                let arbiter = Arbiter::new();
+                self.start_on_arbiter(arbiter.handle(), client)
+            }
+            SpawnStrategy::Current => {
+                let current_arbiter = Arbiter::current();
+                self.start_on_arbiter(current_arbiter, client)
+            }
         }
     }
 
-    /// Sets the MemDB recipient.
-    pub fn with_memdb_recipient(mut self, recipient: Recipient<StorePingResult>) -> Self {
-        self.memdb_recipient = Some(recipient);
-        self
-    }
+    /// Builds and starts the Pinger component on a specific Arbiter.
+    /// This allows explicit control over the execution context, useful for testing.
+    pub fn start_on_arbiter(
+        self,
+        arbiter: ArbiterHandle,
+        client: impl PingerClient,
+    ) -> Addr<PingerSchedulerActor> {
+        // Create Tokio channels for backend
+        let (work_tx, work_rx) = mpsc::channel(100);
+        let (state_tx, state_rx) = watch::channel(false);
 
-    /// Builds the Pinger component.
-    pub fn build(self) -> Pinger {
-        let memdb_recipient = self.memdb_recipient.expect("MemDB recipient not set");
-        Pinger { memdb_recipient }
-    }
-}
+        let memdb_recipient = self.memdb_recipient.clone();
+        let clock = self.clock.clone();
 
-/// Handle to the Pinger component.
-pub struct Pinger {
-    memdb_recipient: Recipient<StorePingResult>,
-}
+        // Start the scheduler actor on the provided arbiter
+        let pinger_addr = PingerSchedulerActor::start_in_arbiter(&arbiter, move |_| {
+            PingerSchedulerActor::new(work_tx, state_tx, memdb_recipient, clock)
+        });
 
-impl Pinger {
-    /// Starts the pinger actors on a dedicated arbiter.
-    pub fn start(self) -> Addr<PingerSchedulerActor> {
-        let arbiter = Arbiter::new();
-        let memdb_recipient = self.memdb_recipient;
+        let scheduler_addr = pinger_addr.clone();
+        let client_clone = client;
+        let clock = self.clock.clone();
 
-        PingerSchedulerActor::start_in_arbiter(&arbiter.handle(), move |_| {
-            PingerSchedulerActor::new(None, memdb_recipient.clone())
-        })
+        let backend_future = async move {
+            backend::run_backend(work_rx, state_rx, scheduler_addr, client_clone, clock).await;
+        };
+
+        // Spawn the backend on the same arbiter
+        arbiter.spawn(backend_future);
+
+        pinger_addr
     }
 }

@@ -25,7 +25,7 @@ pub struct GetStats {
 pub struct ClearBuffer;
 
 /// Store a ping result (internal use).
-#[derive(Message)]
+#[derive(Message, Clone)]
 #[rtype(result = "Result<(), MemDBError>")]
 pub struct StorePingResult {
     /// The ping result to store
@@ -113,7 +113,6 @@ mod tests {
                 target: "8.8.8.8".to_string(),
                 timestamp_ms: 1234567890,
                 rtt_us: Some(15000),
-                sequence: 42,
             },
         };
     }

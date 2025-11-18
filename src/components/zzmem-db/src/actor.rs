@@ -484,7 +484,6 @@ mod tests {
             target: "8.8.8.8".to_string(),
             timestamp_ms: 1234567890,
             rtt_us: Some(15000),
-            sequence: 42,
         });
 
         // Set an outstanding batch
@@ -504,7 +503,6 @@ mod tests {
             target: "8.8.8.8".to_string(),
             timestamp_ms: 1234567890,
             rtt_us: Some(15000),
-            sequence: 42,
         });
 
         // No session manager
@@ -550,7 +548,6 @@ mod tests {
             target: "8.8.8.8".to_string(),
             timestamp_ms: 1234567890,
             rtt_us: Some(15000),
-            sequence: 42,
         };
 
         let msg = StorePingResult { result };
@@ -568,7 +565,6 @@ mod tests {
             target: "8.8.8.8".to_string(),
             timestamp_ms: 1234567890,
             rtt_us: Some(15000),
-            sequence: 42,
         };
 
         let msg = StorePingResult {
@@ -598,7 +594,6 @@ mod tests {
             target: "test".to_string(),
             timestamp_ms: 1234567890,
             rtt_us: Some(1000),
-            sequence: 1,
         });
 
         let msg = ClearBuffer {};
@@ -640,7 +635,6 @@ mod tests {
             target: "8.8.8.8".to_string(),
             timestamp_ms: 1234567890,
             rtt_us: Some(15000),
-            sequence: 42,
         });
 
         let msg = GetStats {
@@ -721,13 +715,11 @@ mod tests {
                     target: "8.8.8.8".to_string(),
                     timestamp_ms: 1234567890,
                     rtt_us: Some(15000),
-                    sequence: 42,
                 },
                 PingResult {
                     target: "8.8.4.4".to_string(),
                     timestamp_ms: 1234567891,
                     rtt_us: Some(20000),
-                    sequence: 43,
                 },
             ],
         };
@@ -763,7 +755,6 @@ mod tests {
                 target: "8.8.8.8".to_string(),
                 timestamp_ms: 1234567890,
                 rtt_us: Some(15000),
-                sequence: 42,
             }],
         };
 

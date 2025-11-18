@@ -2396,6 +2396,7 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "serde",
+ "surge-ping",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -2464,6 +2465,7 @@ name = "zzpinger"
 version = "0.3.0-dev"
 dependencies = [
  "actix",
+ "async-trait",
  "futures",
  "log",
  "ntest",
