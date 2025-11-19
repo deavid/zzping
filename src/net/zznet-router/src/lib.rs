@@ -21,4 +21,4 @@ mod error;
 mod peer_channels;
 mod router;
 
-pub use actor::{OnPeerConnected, OnPeerDisconnected, RegisterManager, RouterActor};
+pub use actor::{OnPeerDisconnected, RegisterManager, RouterActor};

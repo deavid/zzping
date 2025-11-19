@@ -104,7 +104,7 @@ impl CollectorNetwork {
         // - See audit doc section 4.2 for details
 
         let connection_manager = ConnectionManager::new(
-            components.router_actor.clone(),
+            components.router_actor.clone().recipient(),
             "collector".to_string(),
             allowed_roles,
         );

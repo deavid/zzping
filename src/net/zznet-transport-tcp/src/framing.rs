@@ -5,7 +5,7 @@
 //! 1. 4-byte length prefix (u32, big-endian)
 //! 2. Frame payload (variable length)
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::trace;
@@ -45,13 +45,12 @@ where
         ));
     }
 
-    // Read frame data
-    let mut buffer = BytesMut::with_capacity(frame_len);
-    buffer.resize(frame_len, 0);
+    // Read frame data directly into a vec - read_exact will fill it completely
+    let mut buffer = vec![0u8; frame_len];
     stream.read_exact(&mut buffer).await?;
 
     trace!("Read frame: {} bytes", frame_len);
-    Ok(buffer.freeze())
+    Ok(Bytes::from(buffer))
 }
 
 /// Writes a length-prefixed frame to an asynchronous byte stream.

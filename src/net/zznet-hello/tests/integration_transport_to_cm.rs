@@ -1,12 +1,28 @@
 #![allow(missing_docs)]
 
+use actix::prelude::*;
 use std::time::Duration;
+use zznet_api::messages::OnPeerConnected;
 use zznet_api::transport::{TransportClient as _, TransportServer as _};
 use zznet_api::types::Role;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
-use zznet_router::RouterActor;
 use zznet_transport_tcp::server::TcpTransportServer;
+
+/// Mock actor for testing - receives OnPeerConnected but does nothing
+struct MockPeerHandler;
+
+impl Actor for MockPeerHandler {
+    type Context = Context<Self>;
+}
+
+impl Handler<OnPeerConnected> for MockPeerHandler {
+    type Result = Result<(), String>;
+
+    fn handle(&mut self, _msg: OnPeerConnected, _ctx: &mut Context<Self>) -> Self::Result {
+        Ok(())
+    }
+}
 
 #[tokio::test]
 async fn transport_accept_and_send_to_connection_manager() {
@@ -46,13 +62,13 @@ async fn transport_accept_and_send_to_connection_manager() {
             }
 
             // Start ConnectionManager actor
-            use actix::prelude::*;
-            // Create a RouterActor
-            let router_addr = RouterActor::new(vec![]).start();
+            // Create a mock peer handler
+            let mock_handler = MockPeerHandler.start();
+            let peer_recipient = mock_handler.recipient();
             // Build allowed roles set (accept admin)
             let mut allowed = std::collections::HashSet::new();
             allowed.insert(Role::new("admin"));
-            let mgr = ConnectionManager::new(router_addr, "test".to_string(), allowed).start();
+            let mgr = ConnectionManager::new(peer_recipient, "test".to_string(), allowed).start();
 
             // Send transport using HandleTransport, ensure try_send succeeds
             let config = HelloConfig::default();

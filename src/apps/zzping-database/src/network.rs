@@ -100,7 +100,7 @@ impl DatabaseNetwork {
 
         // Step 4: Create ConnectionManager (manages HelloActors)
         let connection_manager = ConnectionManager::new(
-            components.router_actor.clone(),
+            components.router_actor.clone().recipient(),
             "database".to_string(),
             allowed_roles,
         );

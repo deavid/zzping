@@ -3,13 +3,12 @@
 //! Provides actor-based interface for Router, enabling async messaging
 //! from components and PeerManager.
 
+use crate::router::Router;
 use actix::prelude::*;
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use zznet_api::types::{PeerId, Role, RoomId};
+use zznet_api::messages::OnPeerConnected;
+use zznet_api::types::{PeerId, RoomId};
 use zznet_room::room_manager::RoomManager;
-
-use crate::router::Router;
 
 /// RouterActor - Actix wrapper for Router
 ///
@@ -65,22 +64,6 @@ impl Handler<RegisterManager> for RouterActor {
                 .map_err(|e| format!("Failed to register manager: {:?}", e))
         })
     }
-}
-
-/// Handle peer connected event from PeerManager
-#[derive(Message)]
-#[rtype(result = "Result<(), String>")]
-pub struct OnPeerConnected {
-    /// The ID of the connected peer
-    pub peer_id: PeerId,
-    /// The role of the peer
-    pub role: Role,
-    /// The list of rooms successfully negotiated with the peer
-    pub negotiated_rooms: Vec<RoomId>,
-    /// Sender for outbound messages to the peer
-    pub outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
-    /// Receiver for inbound messages from the peer
-    pub inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
 }
 
 impl Handler<OnPeerConnected> for RouterActor {

@@ -26,14 +26,14 @@ pub(crate) enum HelloError {
     InvalidState(String),
 }
 
-impl From<bincode::error::EncodeError> for HelloError {
-    fn from(err: bincode::error::EncodeError) -> Self {
+impl From<rmp_serde::encode::Error> for HelloError {
+    fn from(err: rmp_serde::encode::Error) -> Self {
         HelloError::Serialization(err.to_string())
     }
 }
 
-impl From<bincode::error::DecodeError> for HelloError {
-    fn from(err: bincode::error::DecodeError) -> Self {
+impl From<rmp_serde::decode::Error> for HelloError {
+    fn from(err: rmp_serde::decode::Error) -> Self {
         HelloError::Serialization(err.to_string())
     }
 }
@@ -47,18 +47,5 @@ mod tests {
         let transport_err = TransportError::ConnectionClosed(std::io::Error::other("test"));
         let hello_err: HelloError = transport_err.into();
         assert!(matches!(hello_err, HelloError::Transport(_)));
-    }
-
-    #[test]
-    fn test_bincode_error_conversion() {
-        // Create a bincode error by trying to deserialize invalid data
-        let invalid_data = vec![0xFF, 0xFF, 0xFF, 0xFF];
-        let result: Result<String, bincode::error::DecodeError> =
-            bincode::serde::decode_from_slice(&invalid_data, bincode::config::standard())
-                .map(|(value, _)| value);
-        let bincode_err = result.unwrap_err();
-
-        let hello_err: HelloError = bincode_err.into();
-        assert!(matches!(hello_err, HelloError::Serialization(_)));
     }
 }

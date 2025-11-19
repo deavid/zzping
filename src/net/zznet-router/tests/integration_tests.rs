@@ -5,8 +5,9 @@
 
 use actix::prelude::*;
 use tokio::sync::mpsc;
+use zznet_api::messages::OnPeerConnected;
 use zznet_api::types::{PeerId, Role, RoomId};
-use zznet_router::{OnPeerConnected, OnPeerDisconnected, RouterActor};
+use zznet_router::{OnPeerDisconnected, RouterActor};
 
 /// Helper function to create a test Role
 fn create_test_role() -> Role {

@@ -26,16 +26,15 @@ impl RoomMessageTrait for ComponentAMessage {
     }
 
     fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
-        bincode::serde::encode_to_vec(self, bincode::config::standard())
-            .map_err(|e| SerializationError::BincodeError(e.to_string()))
+        rmp_serde::to_vec(self).map_err(|e| SerializationError::MsgPackError(e.to_string()))
     }
 
     fn deserialize_for_room(room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError> {
         if room_id.as_str() != "room-a" {
             return Err(DeserializationError::UnknownRoom(room_id.clone()));
         }
-        let (msg, _) = bincode::serde::decode_from_slice(bytes, bincode::config::standard())
-            .map_err(|e| DeserializationError::BincodeError(e.to_string()))?;
+        let msg = rmp_serde::from_slice(bytes)
+            .map_err(|e| DeserializationError::MsgPackError(e.to_string()))?;
         Ok(msg)
     }
 }

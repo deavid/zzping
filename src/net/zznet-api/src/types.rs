@@ -7,15 +7,12 @@ use std::fmt;
 /// HELLO messages in raw TCP mode. The identity model uses:
 /// - Common Name (CN): represents the role (collector, database, client-ro, etc.)
 /// - Subject Alternative Name (SAN): first DNS entry represents username ("root" for services, actual username for users)
-/// - Peer Address: network address for logging and debugging
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerTLSIdentity {
     /// The common name from the certificate (represents role).
     pub common_name: String,
     /// The first DNS entry from SAN (username or "root" for services).
     pub san_username: String,
-    /// Network address of the peer for logging.
-    pub peer_addr: String,
 }
 
 impl PeerTLSIdentity {
@@ -141,14 +138,12 @@ mod tests {
         let service = PeerTLSIdentity {
             common_name: "collector".to_string(),
             san_username: "root".to_string(),
-            peer_addr: "192.168.1.100:5555".to_string(),
         };
         assert!(service.is_service());
 
         let user = PeerTLSIdentity {
             common_name: "client-admin".to_string(),
             san_username: "alice".to_string(),
-            peer_addr: "192.168.1.101:5556".to_string(),
         };
         assert!(!user.is_service());
     }
@@ -158,14 +153,12 @@ mod tests {
         let service = PeerTLSIdentity {
             common_name: "collector".to_string(),
             san_username: "root".to_string(),
-            peer_addr: "192.168.1.100:5555".to_string(),
         };
         assert_eq!(service.full_identity(), "collector");
 
         let user = PeerTLSIdentity {
             common_name: "client-admin".to_string(),
             san_username: "alice".to_string(),
-            peer_addr: "192.168.1.101:5556".to_string(),
         };
         assert_eq!(user.full_identity(), "alice@client-admin");
     }

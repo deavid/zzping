@@ -11,9 +11,7 @@ use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, Ser
 pub const CSTATE_ROOM: &str = "cstate";
 
 /// Enum representing all possible messages for the collector state room.
-#[derive(
-    Clone, Debug, Message, Serialize, Deserialize, bincode::Encode, bincode::Decode, PartialEq,
-)]
+#[derive(Clone, Debug, Message, Serialize, Deserialize, PartialEq)]
 #[rtype(result = "()")]
 pub enum CStateMessage {
     /// Collector -> Database: Register and report health.
@@ -65,7 +63,7 @@ pub enum CStateMessage {
 }
 
 /// Information about a single collector, used in `CollectorList`.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct CollectorInfo {
     /// The unique ID of the collector.
     pub id: String,

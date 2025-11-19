@@ -7,6 +7,7 @@
 //!
 
 pub mod error;
+pub mod messages;
 pub mod mock;
 pub mod transport;
 pub mod types;

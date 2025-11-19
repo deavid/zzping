@@ -41,9 +41,6 @@ thiserror.workspace = true
 # Logging
 tracing.workspace = true
 
-# Serialization (for frame length prefix)
-bincode.workspace = true
-
 [dev-dependencies]
 tokio = { workspace = true, features = [
     "test-util",

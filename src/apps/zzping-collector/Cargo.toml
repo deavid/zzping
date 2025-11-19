@@ -28,7 +28,7 @@ surge-ping.workspace = true
 tokio.workspace = true
 actix.workspace = true
 actix-rt = "2"
-bincode.workspace = true
+rmp-serde.workspace = true
 log.workspace = true
 
 # Configuration and serialization

@@ -56,7 +56,7 @@ impl TcpTransport {
         peer_addr: SocketAddr,
     ) -> Result<Self, zznet_api::error::TransportError> {
         debug!("Created TLS client transport for {}", peer_addr);
-        let peer_identity = Some(Self::extract_identity_from_tls_client(&stream, peer_addr)?);
+        let peer_identity = Some(Self::extract_identity_from_tls_client(&stream)?);
         Ok(TcpTransport {
             stream: TcpTransportStream::TlsClient(Box::new(stream)),
             peer_addr,
@@ -70,7 +70,7 @@ impl TcpTransport {
         peer_addr: SocketAddr,
     ) -> Result<Self, zznet_api::error::TransportError> {
         debug!("Created TLS server transport for {}", peer_addr);
-        let peer_identity = Some(Self::extract_identity_from_tls_server(&stream, peer_addr)?);
+        let peer_identity = Some(Self::extract_identity_from_tls_server(&stream)?);
         Ok(TcpTransport {
             stream: TcpTransportStream::TlsServer(Box::new(stream)),
             peer_addr,
@@ -81,7 +81,6 @@ impl TcpTransport {
     /// Extracts peer identity from a TLS connection's certificate.
     fn extract_identity_from_tls_client(
         stream: &tokio_rustls::client::TlsStream<TcpStream>,
-        peer_addr: SocketAddr,
     ) -> Result<PeerTLSIdentity, TransportError> {
         // Get the peer certificates from the rustls session
         let (_, conn) = stream.get_ref();
@@ -108,13 +107,12 @@ impl TcpTransport {
         };
 
         // Delegate to shared parser
-        Self::parse_peer_cert_der(cert_der, peer_addr)
+        Self::parse_peer_cert_der(cert_der)
     }
 
     /// Extracts peer identity from a TLS server connection's certificate.
     fn extract_identity_from_tls_server(
         stream: &tokio_rustls::server::TlsStream<TcpStream>,
-        peer_addr: SocketAddr,
     ) -> Result<PeerTLSIdentity, TransportError> {
         // Similar to client, but for server stream
         let (_, conn) = stream.get_ref();
@@ -139,17 +137,14 @@ impl TcpTransport {
             })?
             .as_ref();
 
-        Self::parse_peer_cert_der(cert_der, peer_addr)
+        Self::parse_peer_cert_der(cert_der)
     }
 
     /// Parse a single DER-encoded certificate and extract the PeerIdentity.
     ///
     /// Exposed privately so unit tests can validate parsing behavior without
     /// constructing a full `TlsStream`.
-    fn parse_peer_cert_der(
-        cert_der: &[u8],
-        peer_addr: SocketAddr,
-    ) -> Result<PeerTLSIdentity, TransportError> {
+    fn parse_peer_cert_der(cert_der: &[u8]) -> Result<PeerTLSIdentity, TransportError> {
         // Parse the certificate
         let (_, cert) = X509Certificate::from_der(cert_der).map_err(|e| {
             TransportError::IoError(std::io::Error::new(
@@ -233,7 +228,6 @@ impl TcpTransport {
         Ok(PeerTLSIdentity {
             common_name,
             san_username,
-            peer_addr: peer_addr.to_string(),
         })
     }
 }
@@ -411,8 +405,7 @@ mod tests {
         let der = pem.contents.as_slice();
 
         // Use loopback addr as peer addr
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let id = TcpTransport::parse_peer_cert_der(der, addr).expect("failed to parse cert DER");
+        let id = TcpTransport::parse_peer_cert_der(der).expect("failed to parse cert DER");
 
         // Expect the CN to be 'database' and SAN to be 'zzping' (updated dev certs)
         assert_eq!(id.common_name, "database");
@@ -422,8 +415,7 @@ mod tests {
     #[test]
     fn test_parse_peer_cert_der_invalid_der() {
         let bad = b"not a der";
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let res = TcpTransport::parse_peer_cert_der(bad, addr);
+        let res = TcpTransport::parse_peer_cert_der(bad);
         assert!(res.is_err());
         if let Err(e) = res {
             match e {
@@ -451,8 +443,7 @@ mod tests {
             .expect("failed to create rcgen cert");
         let der = cert.der().to_vec();
 
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let res = TcpTransport::parse_peer_cert_der(&der, addr);
+        let res = TcpTransport::parse_peer_cert_der(&der);
         assert!(res.is_err(), "expected expired cert to be rejected");
     }
 
@@ -474,8 +465,7 @@ mod tests {
             .expect("failed to build cert");
         let der = cert.der().to_vec();
 
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let res = TcpTransport::parse_peer_cert_der(der.as_slice(), addr);
+        let res = TcpTransport::parse_peer_cert_der(der.as_slice());
         assert!(res.is_err());
         if let Err(e) = res {
             match e {
@@ -500,8 +490,7 @@ mod tests {
             .expect("failed to build cert");
         let der = cert.der().to_vec();
 
-        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
-        let res = TcpTransport::parse_peer_cert_der(der.as_slice(), addr);
+        let res = TcpTransport::parse_peer_cert_der(der.as_slice());
         assert!(res.is_err());
         if let Err(e) = res {
             match e {
@@ -527,13 +516,11 @@ mod tests {
         let pem_data = std::fs::read(&cert_path).expect("Failed to read collector.pem");
         let (_rem, pem) = parse_x509_pem(&pem_data).expect("Failed to parse PEM");
         let cert_der = pem.contents.as_slice();
-        let addr: SocketAddr = "127.0.0.1:5555".parse().unwrap();
 
-        let identity = TcpTransport::parse_peer_cert_der(cert_der, addr)
-            .expect("Failed to parse collector cert");
+        let identity =
+            TcpTransport::parse_peer_cert_der(cert_der).expect("Failed to parse collector cert");
 
         assert_eq!(identity.common_name, "collector");
         assert_eq!(identity.san_username, "zzping");
-        assert_eq!(identity.peer_addr, "127.0.0.1:5555");
     }
 }

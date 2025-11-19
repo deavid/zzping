@@ -52,9 +52,7 @@ use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, Ser
 ///
 /// All messages are strongly typed and transport-agnostic - they never
 /// touch bytes or serialization at this layer.
-#[derive(
-    Clone, Debug, Message, Serialize, Deserialize, bincode::Encode, bincode::Decode, PartialEq,
-)]
+#[derive(Clone, Debug, Message, Serialize, Deserialize, PartialEq)]
 #[rtype(result = "()")]
 pub enum IntentConfigNetworkMsg {
     /// Administrative request to change configuration
@@ -198,11 +196,11 @@ impl RoomMessageTrait for IntentConfigNetworkMsg {
     }
 
     fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
-        // For now, use bincode for serialization
+        // For now, use MessagePack for serialization
         // In production, this might use a more efficient format
         log::debug!("[INTENT-CONFIG SEND] Serializing message: {:?}", self);
-        let result = bincode::encode_to_vec(self, bincode::config::standard())
-            .map_err(|e| SerializationError::BincodeError(e.to_string()));
+        let result =
+            rmp_serde::to_vec(self).map_err(|e| SerializationError::MsgPackError(e.to_string()));
         if let Ok(ref bytes) = result {
             log::debug!("[INTENT-CONFIG SEND] Serialized to {} bytes", bytes.len());
         }
@@ -220,9 +218,8 @@ impl RoomMessageTrait for IntentConfigNetworkMsg {
             bytes.len(),
             room_id
         );
-        let result = bincode::decode_from_slice(bytes, bincode::config::standard())
-            .map(|(value, _)| value)
-            .map_err(|e| DeserializationError::BincodeError(e.to_string()));
+        let result = rmp_serde::from_slice(bytes)
+            .map_err(|e| DeserializationError::MsgPackError(e.to_string()));
         if let Ok(ref msg) = result {
             log::debug!("[INTENT-CONFIG RECV] Deserialized message: {:?}", msg);
         } else {

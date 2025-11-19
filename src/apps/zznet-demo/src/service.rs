@@ -44,8 +44,12 @@ impl ZZNetService for DemoAppService {
         let allowed_roles: HashSet<Role> =
             config.allowed_roles.iter().map(|r| Role::new(r)).collect();
 
-        let connection_manager =
-            ConnectionManager::new(router.clone(), config.our_role.clone(), allowed_roles).start();
+        let connection_manager = ConnectionManager::new(
+            router.clone().recipient(),
+            config.our_role.clone(),
+            allowed_roles,
+        )
+        .start();
 
         let component_a = ComponentAActor::new().start();
 

@@ -66,13 +66,11 @@ fn create_e2e_mock_pair(
     let conn_a = conn_a.with_peer_identity(Some(PeerTLSIdentity {
         common_name: "collector".to_string(),
         san_username: format!("{}_collector_1", base_id),
-        peer_addr: format!("mock:{}_collector_1", base_id),
     }));
 
     let conn_b = conn_b.with_peer_identity(Some(PeerTLSIdentity {
         common_name: "collector".to_string(),
         san_username: format!("{}_collector_2", base_id),
-        peer_addr: format!("mock:{}_collector_2", base_id),
     }));
 
     (Box::new(conn_a), Box::new(conn_b))

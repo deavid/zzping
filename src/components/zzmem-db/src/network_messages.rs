@@ -9,7 +9,7 @@ use zznet_api::types::RoomId;
 use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
 
 /// Messages exchanged between MemDB components over the network.
-#[derive(Serialize, Deserialize, Debug, Clone, bincode::Encode, bincode::Decode, Message)]
+#[derive(Serialize, Deserialize, Debug, Clone, Message)]
 #[rtype(result = "()")]
 pub enum MemDBMessage {
     /// Collector → Database: Submit a batch of ping results
@@ -50,7 +50,7 @@ pub enum MemDBMessage {
 }
 
 /// A single ping result from the collector.
-#[derive(Serialize, Deserialize, Debug, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PingResult {
     /// Target host that was pinged
     pub target: String,
@@ -61,7 +61,7 @@ pub struct PingResult {
 }
 
 /// A stored ping result in the database.
-#[derive(Serialize, Deserialize, Debug, Clone, bincode::Encode, bincode::Decode)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct StoredPingResult {
     /// Target host
     pub target: String,
@@ -81,10 +81,9 @@ impl RoomMessageTrait for MemDBMessage {
     }
 
     fn serialize_inner(&self) -> Result<Vec<u8>, SerializationError> {
-        // For now, use bincode for serialization
+        // For now, use MessagePack for serialization
         // In production, this might use a more efficient format
-        bincode::encode_to_vec(self, bincode::config::standard())
-            .map_err(|e| SerializationError::BincodeError(e.to_string()))
+        rmp_serde::to_vec(self).map_err(|e| SerializationError::MsgPackError(e.to_string()))
     }
 
     fn deserialize_for_room(room_id: &RoomId, bytes: &[u8]) -> Result<Self, DeserializationError> {
@@ -93,9 +92,7 @@ impl RoomMessageTrait for MemDBMessage {
             return Err(DeserializationError::UnknownRoom(room_id.clone()));
         }
 
-        bincode::decode_from_slice(bytes, bincode::config::standard())
-            .map(|(value, _)| value)
-            .map_err(|e| DeserializationError::BincodeError(e.to_string()))
+        rmp_serde::from_slice(bytes).map_err(|e| DeserializationError::MsgPackError(e.to_string()))
     }
 }
 
@@ -111,11 +108,8 @@ mod tests {
             rtt_us: Some(15000),
         };
 
-        let serialized = bincode::encode_to_vec(&result, bincode::config::standard()).unwrap();
-        let deserialized: PingResult =
-            bincode::decode_from_slice(&serialized, bincode::config::standard())
-                .unwrap()
-                .0;
+        let serialized = rmp_serde::to_vec(&result).unwrap();
+        let deserialized: PingResult = rmp_serde::from_slice(&serialized).unwrap();
 
         assert_eq!(result.target, deserialized.target);
         assert_eq!(result.timestamp_ms, deserialized.timestamp_ms);
@@ -134,11 +128,8 @@ mod tests {
             }],
         };
 
-        let serialized = bincode::encode_to_vec(&message, bincode::config::standard()).unwrap();
-        let deserialized: MemDBMessage =
-            bincode::decode_from_slice(&serialized, bincode::config::standard())
-                .unwrap()
-                .0;
+        let serialized = rmp_serde::to_vec(&message).unwrap();
+        let deserialized: MemDBMessage = rmp_serde::from_slice(&serialized).unwrap();
 
         match deserialized {
             MemDBMessage::SubmitBatch {
@@ -237,7 +228,7 @@ mod tests {
         assert!(result.is_err());
         assert!(matches!(
             result.unwrap_err(),
-            DeserializationError::BincodeError(_)
+            DeserializationError::MsgPackError(_)
         ));
     }
 }

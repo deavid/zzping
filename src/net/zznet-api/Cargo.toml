@@ -20,9 +20,7 @@ bytes = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
-
-# Keep legacy for compatibility during migration
-anyhow = { workspace = true }
+actix = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "sync"] }

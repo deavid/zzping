@@ -107,7 +107,6 @@ mod hello_session_integration {
         client_transport = client_transport.with_peer_identity(Some(PeerTLSIdentity {
             common_name: "attacker".to_string(), // Mismatch!
             san_username: "attacker_user".to_string(),
-            peer_addr: "192.168.1.100:12345".to_string(),
         }));
 
         // Create channel to verify HandshakeComplete was NOT received
@@ -174,13 +173,11 @@ mod hello_session_integration {
         client_transport = client_transport.with_peer_identity(Some(PeerTLSIdentity {
             common_name: "database".to_string(), // Server's cert as seen by client
             san_username: "database_user".to_string(),
-            peer_addr: "192.168.1.101:12345".to_string(),
         }));
 
         server_transport = server_transport.with_peer_identity(Some(PeerTLSIdentity {
             common_name: "collector".to_string(), // Client's cert as seen by server
             san_username: "collector_user".to_string(),
-            peer_addr: "192.168.1.100:12345".to_string(),
         }));
 
         // Create channel to verify HandshakeComplete was received

@@ -529,15 +529,16 @@ pub(crate) fn start_hello_actor_with_session_manager(
 ) -> Addr<HelloActor> {
     let (io_tx, io_rx) = mpsc::unbounded_channel();
 
+    let peer_addr = transport.peer_addr();
     // Extract TLS peer identity from transport (if available)
     let tls_peer_identity = transport.peer_tls_identity();
     if let Some(ref identity) = tls_peer_identity {
         debug!(
-            "TLS connection detected: CN='{}', SAN='{}', addr='{}'",
-            identity.common_name, identity.san_username, identity.peer_addr
+            "TLS connection detected: CN='{}', SAN='{}', addr='{:?}'",
+            identity.common_name, identity.san_username, peer_addr
         );
     } else {
-        debug!("Connection with no TLS identity");
+        debug!("Connection with no TLS identity, addr='{peer_addr:?}'");
     }
 
     let mut actor = HelloActor::new(config, tls_peer_identity, io_tx);

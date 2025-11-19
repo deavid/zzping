@@ -12,15 +12,15 @@ use zznet_api::types::RoomId;
 pub enum SerializationError {
     /// Serialization failed
     Failed(String),
-    /// Bincode serialization error (for test convenience)
-    BincodeError(String),
+    /// MessagePack serialization error
+    MsgPackError(String),
 }
 
 impl fmt::Display for SerializationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             SerializationError::Failed(msg) => write!(f, "Serialization failed: {}", msg),
-            SerializationError::BincodeError(msg) => write!(f, "Bincode error: {}", msg),
+            SerializationError::MsgPackError(msg) => write!(f, "MessagePack error: {}", msg),
         }
     }
 }
@@ -34,8 +34,8 @@ pub enum DeserializationError {
     UnknownRoom(RoomId),
     /// Deserialization failed
     Failed(String),
-    /// Bincode deserialization error (for test convenience)
-    BincodeError(String),
+    /// MessagePack deserialization error
+    MsgPackError(String),
     /// Custom error (for test convenience)
     Custom(String),
 }
@@ -49,8 +49,8 @@ impl fmt::Display for DeserializationError {
             DeserializationError::Failed(msg) => {
                 write!(f, "Deserialization failed: {}", msg)
             }
-            DeserializationError::BincodeError(msg) => {
-                write!(f, "Bincode error: {}", msg)
+            DeserializationError::MsgPackError(msg) => {
+                write!(f, "MessagePack error: {}", msg)
             }
             DeserializationError::Custom(msg) => {
                 write!(f, "Custom error: {}", msg)

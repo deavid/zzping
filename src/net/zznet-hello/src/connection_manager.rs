@@ -9,9 +9,9 @@ use crate::session_bridge::SessionBridge;
 use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
+use zznet_api::messages::OnPeerConnected;
 use zznet_api::transport::TransportConnection;
 use zznet_api::types::{PeerId, Role, RoomId};
-use zznet_router::RouterActor;
 
 /// Coordinates `HelloActor`s and authorizes peers.
 ///
@@ -19,9 +19,8 @@ use zznet_router::RouterActor;
 /// connections. It ensures that every peer is authenticated and authorized
 /// before being passed to the `RouterActor`.
 pub struct ConnectionManager {
-    /// The `RouterActor` for the data plane.
-    router_actor: Addr<RouterActor>,
-
+    /// The target actor for OnPeerConnected messages
+    on_peer_connected: Recipient<OnPeerConnected>,
     /// A map of `PeerId` to `HelloActor` address.
     hello_actors: HashMap<PeerId, Addr<HelloActor>>,
     /// The role of this service.
@@ -33,12 +32,12 @@ pub struct ConnectionManager {
 impl ConnectionManager {
     /// Creates a new `ConnectionManager`.
     pub fn new(
-        router_actor: Addr<RouterActor>,
+        on_peer_connected: Recipient<OnPeerConnected>,
         our_role: String,
         allowed_roles: HashSet<Role>,
     ) -> Self {
         Self {
-            router_actor,
+            on_peer_connected,
             hello_actors: HashMap::new(),
             our_role,
             allowed_roles,
@@ -140,7 +139,7 @@ impl Handler<HandshakeComplete> for ConnectionManager {
         );
 
         // Prepare data to send connection directly to RouterActor
-        let router_addr = self.router_actor.clone();
+        let router_addr = self.on_peer_connected.clone();
         let hello_actor = msg.hello_actor.clone();
 
         // Create channels for SessionBridge
@@ -157,7 +156,7 @@ impl Handler<HandshakeComplete> for ConnectionManager {
 
             // Send OnPeerConnected directly to RouterActor with Role
             let connect_result = router_addr
-                .send(zznet_router::OnPeerConnected {
+                .send(OnPeerConnected {
                     peer_id: peer_id_api.clone(),
                     role: role.clone(),
                     negotiated_rooms: msg
@@ -211,60 +210,5 @@ impl Handler<HandshakeComplete> for ConnectionManager {
 
             tracing::info!("Connected to peer {} as {:?}", peer_id, role);
         });
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use zznet_api::types::RoomId;
-
-    // Simple test message enum for ConnectionManager tests
-    #[derive(Debug, Clone)]
-    enum TestMessages {
-        IntentConfig,
-        MemDB,
-        Health,
-    }
-
-    impl zznet_room::room_message_trait::RoomMessageTrait for TestMessages {
-        fn room_id(&self) -> RoomId {
-            match self {
-                TestMessages::IntentConfig => RoomId::from("intentconfig"),
-                TestMessages::MemDB => RoomId::from("memdb"),
-                TestMessages::Health => RoomId::from("health"),
-            }
-        }
-
-        fn serialize_inner(
-            &self,
-        ) -> Result<Vec<u8>, zznet_room::room_message_trait::SerializationError> {
-            Ok(vec![]) // Stub for testing
-        }
-
-        fn deserialize_for_room(
-            _room_id: &RoomId,
-            _bytes: &[u8],
-        ) -> Result<Self, zznet_room::room_message_trait::DeserializationError> {
-            Ok(TestMessages::IntentConfig) // Stub for testing
-        }
-    }
-
-    #[actix::test]
-    async fn test_connection_manager_creation() {
-        // Construct each variant to satisfy dead-code checks for tests.
-        let _a = TestMessages::IntentConfig;
-        let _b = TestMessages::MemDB;
-        let _c = TestMessages::Health;
-
-        // Create RouterActor
-        let router_actor = zznet_router::RouterActor::new(vec![]).start();
-
-        // Build allowed roles set for test (accept any admin role)
-        let mut allowed = HashSet::new();
-        allowed.insert(Role::new("admin"));
-
-        let _manager = ConnectionManager::new(router_actor, "test".to_string(), allowed);
-        // Just test it compiles and constructs
     }
 }

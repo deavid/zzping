@@ -44,13 +44,13 @@ pub(crate) enum RoomFrame {
 
 impl Frame {
     /// Serializes the frame into a byte vector for transport.
-    pub(crate) fn serialize(&self) -> Result<Vec<u8>, bincode::error::EncodeError> {
-        bincode::serde::encode_to_vec(self, bincode::config::standard())
+    pub(crate) fn serialize(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
+        rmp_serde::to_vec(self)
     }
 
     /// Deserializes a frame from a byte slice.
-    pub(crate) fn deserialize(data: &[u8]) -> Result<Self, bincode::error::DecodeError> {
-        bincode::serde::decode_from_slice(data, bincode::config::standard()).map(|(d, _)| d)
+    pub(crate) fn deserialize(data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
+        rmp_serde::from_slice(data)
     }
 }
 
