@@ -40,11 +40,9 @@ impl MockConnection {
         self.peer_identity = identity;
         self
     }
-}
 
-#[async_trait]
-impl TransportConnection for MockConnection {
-    async fn send(&mut self, frame: Bytes) -> Result<(), TransportError> {
+    /// Send method for testing (not part of trait).
+    pub async fn send(&mut self, frame: Bytes) -> Result<(), TransportError> {
         if let Some(error) = self.inject_error.take() {
             return Err(error);
         }
@@ -55,7 +53,8 @@ impl TransportConnection for MockConnection {
             .map_err(|e| TransportError::ConnectionClosed(io::Error::other(e.to_string())))
     }
 
-    async fn recv(&mut self) -> Result<Bytes, TransportError> {
+    /// Recv method for testing (not part of trait).
+    pub async fn recv(&mut self) -> Result<Bytes, TransportError> {
         if let Some(error) = self.inject_error.take() {
             return Err(error);
         }
@@ -66,6 +65,40 @@ impl TransportConnection for MockConnection {
                 "connection closed",
             ))),
         }
+    }
+}
+
+#[async_trait]
+impl TransportConnection for MockConnection {
+    fn start(
+        self: Box<Self>,
+    ) -> (
+        mpsc::Sender<Bytes>,
+        mpsc::Receiver<Result<Bytes, TransportError>>,
+    ) {
+        let MockConnection {
+            tx,
+            rx,
+            inject_error,
+            ..
+        } = *self;
+        let (result_tx, result_rx) = mpsc::channel(32);
+
+        // Spawn a task to convert Bytes to Result<Bytes, TransportError>
+        tokio::spawn(async move {
+            let mut rx = rx;
+            if let Some(error) = inject_error {
+                let _ = result_tx.send(Err(error)).await;
+                return;
+            }
+            while let Some(bytes) = rx.recv().await {
+                if result_tx.send(Ok(bytes)).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        (tx, result_rx)
     }
 
     fn peer_addr(&self) -> Option<String> {

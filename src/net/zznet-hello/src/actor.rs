@@ -8,8 +8,9 @@ use actix::prelude::*;
 use bytes::Bytes;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
+use tokio_stream::wrappers::ReceiverStream;
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportConnection;
 
@@ -109,12 +110,14 @@ pub(crate) struct HelloActor {
     /// TLS peer identity from transport (None for plain TCP).
     /// Used to validate that HELLO role matches certificate CN when TLS is enabled.
     tls_peer_identity: Option<zznet_api::types::PeerTLSIdentity>,
-    /// Sender to I/O task for outbound frames.
-    io_tx: mpsc::UnboundedSender<Bytes>,
+    /// Sender to transport for outbound frames.
+    transport_tx: mpsc::Sender<Bytes>,
     /// Optional SessionManager recipient (for integration with higher layer). - FIXME: Why is this optional? it doesn't make sense
     session_manager: Option<Recipient<HandshakeComplete>>,
     /// Channel to forward inbound messages to ConnectionManager. - TODO: Investigate if the Option is really needed, if it makes real sense.
     inbound_tx: Option<tokio::sync::mpsc::Sender<(String, Vec<u8>)>>,
+    /// Receiver for inbound frames from transport.
+    transport_rx: Option<mpsc::Receiver<Result<Bytes, TransportError>>>,
 }
 
 impl HelloActor {
@@ -122,7 +125,8 @@ impl HelloActor {
     fn new(
         config: HelloConfig,
         tls_peer_identity: Option<zznet_api::types::PeerTLSIdentity>,
-        io_tx: mpsc::UnboundedSender<Bytes>,
+        transport_tx: mpsc::Sender<Bytes>,
+        transport_rx: mpsc::Receiver<Result<Bytes, TransportError>>,
     ) -> Self {
         Self {
             config,
@@ -131,9 +135,10 @@ impl HelloActor {
             active_rooms: Vec::new(),
             peer_role: None,
             tls_peer_identity,
-            io_tx,
+            transport_tx,
             session_manager: None,
             inbound_tx: None,
+            transport_rx: Some(transport_rx),
         }
     }
 
@@ -157,12 +162,12 @@ impl HelloActor {
             self.config.hostname.clone(),
         ) {
             Ok(hello_data) => {
-                self.send_frame_to_io(hello_data, ctx);
+                self.send_frame_to_transport(hello_data, ctx);
 
                 // Immediately send OFFER frame
                 match self.handshake.create_offer_frame() {
                     Ok(offer_data) => {
-                        self.send_frame_to_io(offer_data, ctx);
+                        self.send_frame_to_transport(offer_data, ctx);
 
                         // Schedule handshake timeout
                         ctx.run_later(self.config.handshake_timeout, |act, ctx| {
@@ -188,11 +193,10 @@ impl HelloActor {
         }
     }
 
-    /// Sends a raw frame to the I/O task.
-    fn send_frame_to_io(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
-        if let Err(e) = self.io_tx.send(Bytes::from(data)) {
-            error!("I/O channel closed: {}", e);
-            // FIXME: Actor must call ctx.stop() inside send_frame_to_io on failure.
+    /// Sends a raw frame to the transport.
+    fn send_frame_to_transport(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
+        if let Err(e) = self.transport_tx.try_send(Bytes::from(data)) {
+            error!("Transport channel closed: {}", e);
             ctx.stop();
         }
     }
@@ -228,7 +232,7 @@ impl HelloActor {
                 // Send response if state machine generated one
                 if let Some(response_data) = response {
                     debug!("Sending handshake response");
-                    self.send_frame_to_io(response_data, ctx);
+                    self.send_frame_to_transport(response_data, ctx);
                 }
 
                 // Check if handshake is complete
@@ -363,66 +367,13 @@ impl HelloActor {
         })
         .serialize()
         {
-            self.send_frame_to_io(error_frame, ctx);
+            self.send_frame_to_transport(error_frame, ctx);
         }
 
         // Give time for error frame to send, then stop
         ctx.run_later(Duration::from_millis(100), |_, ctx| {
             ctx.stop();
         });
-    }
-
-    /// Spawns the I/O task that handles transport operations.
-    // TODO: Add a negative test using `inject_error` on the mock transport to verify that transport send/recv errors cause the `HelloActor` to terminate.
-    fn spawn_io_task(
-        mut transport: Box<dyn TransportConnection>,
-        mut io_rx: mpsc::UnboundedReceiver<Bytes>,
-        actor_addr: Addr<Self>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            debug!("I/O task started");
-
-            loop {
-                tokio::select! {
-                    // Handle outbound frames (from actor to transport)
-                    Some(frame) = io_rx.recv() => {
-                        trace!("I/O task sending {} bytes", frame.len());
-                        if let Err(e) = transport.send(frame).await {
-                            error!("Transport send error: {}", e);
-                            actor_addr.do_send(IoError {
-                                error: e.into(),
-                            });
-                            break;
-                        }
-                    }
-
-                    // Handle inbound frames (from transport to actor)
-                    result = transport.recv() => {
-                        match result {
-                            Ok(bytes) => {
-                                trace!("I/O task received {} bytes", bytes.len());
-                                actor_addr.do_send(ReceivedFrame {
-                                    data: bytes.to_vec(),
-                                });
-                            }
-                            Err(e) => {
-                                if matches!(e, TransportError::ConnectionClosed(_)) {
-                                    info!("Transport closed by peer");
-                                } else {
-                                    error!("Transport recv error: {}", e);
-                                }
-                                actor_addr.do_send(IoError {
-                                    error: HelloError::Transport(e),
-                                });
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            debug!("I/O task exiting");
-        })
     }
 }
 
@@ -431,12 +382,16 @@ impl Actor for HelloActor {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("HelloActor started");
+        // Add the transport stream if available
+        if let Some(rx) = self.transport_rx.take() {
+            ctx.add_stream(ReceiverStream::new(rx));
+        }
         self.start_handshake(ctx);
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         info!("HelloActor stopped");
-        // I/O task will exit when actor drops (channel closed)
+        // Transport tasks will exit when channels are closed
     }
 }
 
@@ -453,6 +408,27 @@ impl Handler<IoError> for HelloActor {
 
     fn handle(&mut self, msg: IoError, ctx: &mut Context<Self>) -> Self::Result {
         self.handle_error(msg.error, ctx);
+    }
+}
+
+impl StreamHandler<Result<Bytes, TransportError>> for HelloActor {
+    fn handle(&mut self, item: Result<Bytes, TransportError>, ctx: &mut Context<Self>) {
+        match item {
+            Ok(data) => self.handle_received_frame(data.to_vec(), ctx),
+            Err(e) => {
+                if matches!(e, TransportError::ConnectionClosed(_)) {
+                    info!("Transport closed by peer");
+                } else {
+                    error!("Transport recv error: {}", e);
+                }
+                self.handle_error(e.into(), ctx);
+            }
+        }
+    }
+
+    fn finished(&mut self, ctx: &mut Self::Context) {
+        info!("Transport stream finished");
+        ctx.stop();
     }
 }
 
@@ -484,7 +460,7 @@ impl Handler<SendMessage> for HelloActor {
 
         let frame_data = room_frame.serialize()?;
         debug!("Sending room message: {} -> {}", msg.from_room, msg.to_room);
-        self.send_frame_to_io(frame_data, ctx);
+        self.send_frame_to_transport(frame_data, ctx);
 
         Ok(())
     }
@@ -499,7 +475,7 @@ impl Handler<Disconnect> for HelloActor {
         // Send disconnect frame
         let frame = Frame::Room(RoomFrame::Disconnect);
         if let Ok(frame_data) = frame.serialize() {
-            self.send_frame_to_io(frame_data, ctx);
+            self.send_frame_to_transport(frame_data, ctx);
         }
 
         // Give time for disconnect frame to send
@@ -527,8 +503,6 @@ pub(crate) fn start_hello_actor_with_session_manager(
     config: HelloConfig,
     session_manager: Option<Recipient<HandshakeComplete>>,
 ) -> Addr<HelloActor> {
-    let (io_tx, io_rx) = mpsc::unbounded_channel();
-
     let peer_addr = transport.peer_addr();
     // Extract TLS peer identity from transport (if available)
     let tls_peer_identity = transport.peer_tls_identity();
@@ -541,17 +515,15 @@ pub(crate) fn start_hello_actor_with_session_manager(
         debug!("Connection with no TLS identity, addr='{peer_addr:?}'");
     }
 
-    let mut actor = HelloActor::new(config, tls_peer_identity, io_tx);
+    // Start the transport and get channels
+    let (transport_tx, transport_rx) = transport.start();
+
+    let mut actor = HelloActor::new(config, tls_peer_identity, transport_tx, transport_rx);
     if let Some(sm) = session_manager {
         actor = actor.with_session_manager(sm);
     }
 
-    let addr = actor.start();
-
-    // Spawn I/O task with weak reference to avoid circular ownership
-    HelloActor::spawn_io_task(transport, io_rx, addr.clone());
-
-    addr
+    actor.start()
 }
 
 #[cfg(test)]

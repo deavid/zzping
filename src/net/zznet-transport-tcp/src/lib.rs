@@ -14,15 +14,11 @@
 //!
 //! ```rust,no_run
 //! use zznet_transport_tcp::client::TcpTransportClient;
-//! use zznet_transport_tcp::config::TlsConfig;
 //! use zznet_api::transport::TransportClient;
 //!
 //! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! // Create TLS configuration
-//! let tls_config = TlsConfig::from_role_name("collector", None)?;
-//!
-//! // Create client
-//! let client = TcpTransportClient::new("127.0.0.1:8080".to_string(), Some(tls_config))?;
+//! // Create client (plain TCP)
+//! let client = TcpTransportClient::new("127.0.0.1:8080".to_string(), None)?;
 //!
 //! // Connect and get a transport connection
 //! let transport = client.connect().await?;

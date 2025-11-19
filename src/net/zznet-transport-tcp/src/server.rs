@@ -129,18 +129,20 @@ mod tests {
 
         let server_handle = tokio::spawn(async move {
             let mut server = server;
-            let mut conn = server.accept().await.unwrap();
+            let conn = server.accept().await.unwrap();
+            let (tx, mut rx) = conn.start();
 
-            let msg = conn.recv().await.unwrap();
-            conn.send(msg).await.unwrap();
+            let msg = rx.recv().await.unwrap().unwrap();
+            tx.send(msg).await.unwrap();
         });
 
         let client = TcpTransportClient::new(addr.to_string(), None).unwrap();
-        let mut conn = client.connect().await.unwrap();
+        let conn = client.connect().await.unwrap();
+        let (tx, mut rx) = conn.start();
 
-        conn.send(bytes::Bytes::from("hello server")).await.unwrap();
+        tx.send(bytes::Bytes::from("hello server")).await.unwrap();
 
-        let response = conn.recv().await.unwrap();
+        let response = rx.recv().await.unwrap().unwrap();
         assert_eq!(response.as_ref(), b"hello server");
 
         server_handle.await.unwrap();
@@ -155,10 +157,11 @@ mod tests {
         let server_handle = tokio::spawn(async move {
             let mut server = server;
             for _i in 0..3 {
-                let mut conn = server.accept().await.unwrap();
+                let conn = server.accept().await.unwrap();
                 tokio::spawn(async move {
-                    let msg = conn.recv().await.unwrap();
-                    conn.send(msg).await.unwrap();
+                    let (tx, mut rx) = conn.start();
+                    let msg = rx.recv().await.unwrap().unwrap();
+                    tx.send(msg).await.unwrap();
                 });
             }
         });
@@ -170,12 +173,13 @@ mod tests {
 
             let handle = tokio::spawn(async move {
                 let client = TcpTransportClient::new(addr_str, None).unwrap();
-                let mut conn = client.connect().await.unwrap();
+                let conn = client.connect().await.unwrap();
+                let (tx, mut rx) = conn.start();
 
                 let msg = format!("client {}", i);
-                conn.send(bytes::Bytes::from(msg.clone())).await.unwrap();
+                tx.send(bytes::Bytes::from(msg.clone())).await.unwrap();
 
-                let response = conn.recv().await.unwrap();
+                let response = rx.recv().await.unwrap().unwrap();
                 assert_eq!(response.as_ref(), msg.as_bytes());
             });
 

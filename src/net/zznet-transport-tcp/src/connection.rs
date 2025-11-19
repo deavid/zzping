@@ -5,8 +5,9 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use std::net::SocketAddr;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tracing::trace;
+use tokio::sync::mpsc;
 use tracing::{debug, error};
 use x509_parser::prelude::*;
 
@@ -232,53 +233,71 @@ impl TcpTransport {
     }
 }
 
+/// Generic helper function to spawn transport tasks for any stream type.
+///
+/// This consolidates the identical task-spawning logic used for Plain, TlsClient, and TlsServer streams.
+fn spawn_transport_tasks<S>(
+    stream: S,
+    mut rx: mpsc::Receiver<Bytes>,
+    result_tx: mpsc::Sender<Result<Bytes, TransportError>>,
+) where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut read_half, mut write_half) = tokio::io::split(stream);
+
+    // Spawn writer task
+    tokio::spawn(async move {
+        while let Some(bytes) = rx.recv().await {
+            if let Err(e) = framing::write_frame(&mut write_half, &bytes).await {
+                error!("Write error: {}", e);
+                break;
+            }
+        }
+    });
+
+    // Spawn reader task
+    tokio::spawn(async move {
+        loop {
+            match framing::read_frame(&mut read_half).await {
+                Ok(bytes) => {
+                    if result_tx.send(Ok(bytes)).await.is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = result_tx.send(Err(e.into())).await;
+                    break;
+                }
+            }
+        }
+    });
+}
+
 #[async_trait]
 impl TransportConnection for TcpTransport {
-    async fn send(&mut self, data: Bytes) -> Result<(), TransportError> {
-        trace!("Sending {} bytes to {}", data.len(), self.peer_addr);
+    fn start(
+        self: Box<Self>,
+    ) -> (
+        mpsc::Sender<Bytes>,
+        mpsc::Receiver<Result<Bytes, TransportError>>,
+    ) {
+        let (tx, rx): (mpsc::Sender<Bytes>, mpsc::Receiver<Bytes>) = mpsc::channel(32);
+        let (result_tx, result_rx) = mpsc::channel(32);
 
-        let result = match &mut self.stream {
-            TcpTransportStream::Plain(stream) => framing::write_frame(stream, &data).await,
+        // Split the stream into read and write halves
+        match self.stream {
+            TcpTransportStream::Plain(stream) => {
+                spawn_transport_tasks(stream, rx, result_tx);
+            }
             TcpTransportStream::TlsClient(stream) => {
-                framing::write_frame(stream.as_mut(), &data).await
+                spawn_transport_tasks(*stream, rx, result_tx);
             }
             TcpTransportStream::TlsServer(stream) => {
-                framing::write_frame(stream.as_mut(), &data).await
+                spawn_transport_tasks(*stream, rx, result_tx);
             }
-        };
-
-        result.map_err(|e| {
-            error!("Send error to {}: {}", self.peer_addr, e);
-            TransportError::IoError(e)
-        })
-    }
-
-    async fn recv(&mut self) -> Result<Bytes, TransportError> {
-        trace!("Waiting to receive frame from {}", self.peer_addr);
-
-        let result = match &mut self.stream {
-            TcpTransportStream::Plain(stream) => framing::read_frame(stream).await,
-            TcpTransportStream::TlsClient(stream) => framing::read_frame(stream.as_mut()).await,
-            TcpTransportStream::TlsServer(stream) => framing::read_frame(stream.as_mut()).await,
         }
-        .map_err(Into::into);
 
-        match result {
-            Ok(bytes) => {
-                trace!("Received {} bytes from {}", bytes.len(), self.peer_addr);
-                Ok(bytes)
-            }
-            Err(e) => match e {
-                TransportError::ConnectionClosed(_) => {
-                    debug!("Connection closed by peer {}", self.peer_addr);
-                    Err(e)
-                }
-                _ => {
-                    error!("Receive error from {}: {}", self.peer_addr, e);
-                    Err(e)
-                }
-            },
-        }
+        (tx, result_rx)
     }
 
     fn peer_addr(&self) -> Option<String> {
@@ -306,32 +325,28 @@ mod tests {
         // Spawn server task
         let server_handle = tokio::spawn(async move {
             let (stream, peer_addr) = listener.accept().await.unwrap();
-            let mut transport = TcpTransport::plain(stream, peer_addr);
+            let transport = TcpTransport::plain(stream, peer_addr);
+            let (tx, mut rx) = Box::new(transport).start();
 
             // Receive a message
-            let msg = transport.recv().await.unwrap();
+            let msg = rx.recv().await.unwrap().unwrap();
             assert_eq!(msg.as_ref(), b"Hello from client");
 
             // Send a response
-            transport
-                .send(Bytes::from("Hello from server"))
-                .await
-                .unwrap();
+            tx.send(Bytes::from("Hello from server")).await.unwrap();
         });
 
         // Client connects
         let stream = TcpStream::connect(addr).await.unwrap();
         let peer = stream.peer_addr().unwrap();
-        let mut transport = TcpTransport::plain(stream, peer);
+        let transport = TcpTransport::plain(stream, peer);
+        let (tx, mut rx) = Box::new(transport).start();
 
         // Send a message
-        transport
-            .send(Bytes::from("Hello from client"))
-            .await
-            .unwrap();
+        tx.send(Bytes::from("Hello from client")).await.unwrap();
 
         // Receive response
-        let response = transport.recv().await.unwrap();
+        let response = rx.recv().await.unwrap().unwrap();
         assert_eq!(response.as_ref(), b"Hello from server");
 
         // Wait for server to finish
@@ -352,12 +367,17 @@ mod tests {
         // Client connects
         let stream = TcpStream::connect(addr).await.unwrap();
         let peer = stream.peer_addr().unwrap();
-        let mut transport = TcpTransport::plain(stream, peer);
+        let transport = TcpTransport::plain(stream, peer);
+        let (_tx, mut rx) = Box::new(transport).start();
 
         // Try to receive - should be an error for connection closed
         tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-        let result = transport.recv().await;
-        assert!(matches!(result, Err(TransportError::ConnectionClosed(_))));
+        let result = rx.recv().await;
+        assert!(result.is_some());
+        assert!(matches!(
+            result.unwrap(),
+            Err(TransportError::ConnectionClosed(_))
+        ));
     }
 
     #[tokio::test]
@@ -367,25 +387,27 @@ mod tests {
 
         let server_handle = tokio::spawn(async move {
             let (stream, peer_addr) = listener.accept().await.unwrap();
-            let mut transport = TcpTransport::plain(stream, peer_addr);
+            let transport = TcpTransport::plain(stream, peer_addr);
+            let (tx, mut rx) = Box::new(transport).start();
 
             // Echo back 3 messages
             for _ in 0..3 {
-                let msg = transport.recv().await.unwrap();
-                transport.send(msg).await.unwrap();
+                let msg = rx.recv().await.unwrap().unwrap();
+                tx.send(msg).await.unwrap();
             }
         });
 
         let stream = TcpStream::connect(addr).await.unwrap();
         let peer = stream.peer_addr().unwrap();
-        let mut transport = TcpTransport::plain(stream, peer);
+        let transport = TcpTransport::plain(stream, peer);
+        let (tx, mut rx) = Box::new(transport).start();
 
         // Send and receive 3 messages
         for i in 1..=3 {
             let msg = format!("Message {}", i);
-            transport.send(Bytes::from(msg.clone())).await.unwrap();
+            tx.send(Bytes::from(msg.clone())).await.unwrap();
 
-            let response = transport.recv().await.unwrap();
+            let response = rx.recv().await.unwrap().unwrap();
             assert_eq!(response.as_ref(), msg.as_bytes());
         }
 

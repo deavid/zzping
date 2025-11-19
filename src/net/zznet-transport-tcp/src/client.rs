@@ -133,22 +133,24 @@ mod tests {
 
         let server_handle = tokio::spawn(async move {
             let (stream, peer_addr) = listener.accept().await.unwrap();
-            let mut transport = TcpTransport::plain(stream, peer_addr);
+            let transport = TcpTransport::plain(stream, peer_addr);
+            let (tx, mut rx) = Box::new(transport).start();
 
             // Echo back any message
-            let msg = transport.recv().await.unwrap();
-            transport.send(msg).await.unwrap();
+            let msg = rx.recv().await.unwrap().unwrap();
+            tx.send(msg).await.unwrap();
         });
 
         // Create client and connect
         let client = TcpTransportClient::new(addr.to_string(), None).unwrap();
-        let mut conn = client.connect().await.unwrap();
+        let conn = client.connect().await.unwrap();
+        let (tx, mut rx) = conn.start();
 
         // Send a message
-        conn.send(bytes::Bytes::from("test message")).await.unwrap();
+        tx.send(bytes::Bytes::from("test message")).await.unwrap();
 
         // Receive echo
-        let response = conn.recv().await.unwrap();
+        let response = rx.recv().await.unwrap().unwrap();
         assert_eq!(response.as_ref(), b"test message");
 
         server_handle.await.unwrap();

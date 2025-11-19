@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use std::net::IpAddr;
 use std::time::Duration;
 
-use crate::traits::{PingerClient, PingError};
+use crate::traits::{PingError, PingerClient};
 
 /// Mock pinger client that simulates ping responses for testing.
 #[derive(Debug, Clone)]

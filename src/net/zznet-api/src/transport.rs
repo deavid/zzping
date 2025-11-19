@@ -6,6 +6,7 @@
 use crate::error::TransportError;
 use async_trait::async_trait;
 use bytes::Bytes;
+use tokio::sync::mpsc;
 
 /// Low-level bidirectional transport connection.
 ///
@@ -19,11 +20,19 @@ use bytes::Bytes;
 /// validation for application-level trust decisions.
 #[async_trait]
 pub trait TransportConnection: Send {
-    /// Send a framed `Bytes` over the connection.
-    async fn send(&mut self, frame: Bytes) -> Result<(), TransportError>;
-
-    /// Receive a framed `Bytes`.
-    async fn recv(&mut self) -> Result<Bytes, TransportError>;
+    /// Starts the transport's active I/O tasks and returns channels for communication.
+    ///
+    /// This method consumes the connection and spawns background tasks for reading
+    /// and writing. The returned sender is used to send outbound frames, and the
+    /// receiver yields inbound frames or errors.
+    ///
+    /// The lifecycle is: Configure -> Inspect Identity -> Start IO.
+    fn start(
+        self: Box<Self>,
+    ) -> (
+        mpsc::Sender<Bytes>,
+        mpsc::Receiver<Result<Bytes, TransportError>>,
+    );
 
     /// Peer address for logging/metrics, if available.
     fn peer_addr(&self) -> Option<String>;

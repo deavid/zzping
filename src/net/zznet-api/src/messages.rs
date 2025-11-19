@@ -1,8 +1,8 @@
 //! Actix mesages for zznet
 
+use crate::types::{PeerId, Role, RoomId};
 use actix::prelude::*;
 use tokio::sync::mpsc;
-use crate::types::{PeerId, Role, RoomId};
 
 /// Handle peer connected event from PeerManager
 #[derive(Message)]
