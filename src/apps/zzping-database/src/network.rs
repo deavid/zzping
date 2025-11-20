@@ -8,12 +8,25 @@
 use actix::Actor;
 use std::collections::HashSet;
 use std::time::Duration;
+use zznet_api::error::TransportError;
 use zznet_api::transport::TransportServer;
 use zznet_api::types::Role;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::config::TlsConfig;
 use zznet_transport_tcp::server::TcpTransportServer;
+
+/// Errors that can occur during network initialization and operation.
+#[derive(Debug, thiserror::Error)]
+pub enum NetworkError {
+    /// Failed to create the TCP transport server.
+    #[error("Failed to create TCP transport server: {0}")]
+    ServerCreation(#[from] TransportError),
+
+    /// Error occurred in connection manager.
+    #[error("Connection manager error: {0}")]
+    ConnectionManager(String),
+}
 
 /// DatabaseNetwork manages server-side connections following the vision architecture.
 ///
@@ -23,81 +36,45 @@ use zznet_transport_tcp::server::TcpTransportServer;
 /// - Components auto-register via Room<T> pattern
 /// - NO room_handler_wirer callbacks needed!
 pub struct DatabaseNetwork {
-    bind_addr: String,
-    tls_config: Option<TlsConfig>,
+    server: TcpTransportServer,
     handshake_timeout: Duration,
 }
 
 impl DatabaseNetwork {
-    /// Create a new DatabaseNetwork
+    /// Create a new DatabaseNetwork and bind to the address
     ///
     /// # Arguments
     /// * `bind_addr` - the address to bind to (e.g., "0.0.0.0:9001")
     /// * `tls` - optional TLS configuration
     /// * `handshake_timeout` - timeout for the HELLO handshake protocol
-    pub fn new(bind_addr: &str, tls: Option<TlsConfig>, handshake_timeout: Duration) -> Self {
-        Self {
-            bind_addr: bind_addr.to_string(),
-            tls_config: tls,
+    pub async fn bind(
+        bind_addr: &str,
+        tls: Option<TlsConfig>,
+        handshake_timeout: Duration,
+    ) -> Result<Self, NetworkError> {
+        tracing::info!("Starting database network on {}", bind_addr);
+
+        // Step 1: Create TCP transport server (binds to port)
+        let server = TcpTransportServer::new(bind_addr, tls).await?;
+
+        tracing::info!("TCP server listening on {}", bind_addr);
+
+        Ok(Self {
+            server,
             handshake_timeout,
-        }
+        })
     }
 
-    /// Start the server and accept connections
-    ///
-    /// This is the vision-aligned implementation:
-    /// 1. Create TcpTransportServer
-    /// 2. Create ConnectionManager with PeerManagerActor
-    /// 3. Accept loop: spawn HelloActor for each connection
-    /// 4. HelloActor handles HELLO handshake
-    /// 5. Messages flow via Room<T> channels (auto-registered by components)
-    ///
-    /// # Arguments
-    /// * `router_actor` - The RouterActor address for connection management
-    pub async fn run(&self, router_actor: &actix::Addr<zznet_router::RouterActor>) -> Result<(), String> {
-        tracing::info!("Starting database network on {}", self.bind_addr);
-
-        // Step 1: Create TCP transport server
-        let mut server = TcpTransportServer::new(&self.bind_addr, self.tls_config.clone())
-            .await
-            .map_err(|e| format!("Failed to create TCP server: {:?}", e))?;
-
-        tracing::info!("TCP server listening on {}", self.bind_addr);
-
-        // Step 2: Create allowed-roles set for HELLO authentication
-        // The ConnectionManager provides a convenience constructor that
-        // accepts a HashSet<zznet_api::types::Role> and builds an internal
-        // authorizer which validates TLS CN (if present) and checks the
-        // allowed roles. Database accepts connections from collectors and
-        // clients (read-only/admin) per configured allowed roles.
+    /// Start the accept loop
+    pub async fn run(
+        mut self,
+        router_actor: &actix::Addr<zznet_router::RouterActor>,
+    ) -> Result<(), NetworkError> {
         let mut allowed_roles = HashSet::new();
         allowed_roles.insert(Role::new("collector"));
         allowed_roles.insert(Role::new("client-ro"));
         allowed_roles.insert(Role::new("client-admin"));
 
-        // Step 3: Components are ready (peer_manager no longer needed by ConnectionManager)
-
-        // FIXME(audit-blocker-2): Router.register_peer() not wired after HELLO handshake
-        // - ConnectionManager.room_handler_wirer signature was changed to accept PeerChannels
-        // - This allows registration of peer channels with Router after handshake completes
-        // - However, no Router instance is available here to register with
-        // - Required: Create a shared Router in service.rs, pass it here, wire registration
-        // - Implementation would look like:
-        //   ```
-        //   let app_router = router.clone();
-        //   let wirer = Arc::new(move |_pm, channels| {
-        //       Box::pin(async move {
-        //           app_router.register_peer(channels).await
-        //               .map_err(|e| format!("register_peer failed: {:?}", e))
-        //       })
-        //   });
-        //   connection_manager.with_room_handler_wirer(wirer);
-        //   ```
-        // - Note: Current code uses Room<T> pattern which bypasses Router, so this may not be
-        //   critical for functionality, but audit identifies it as a blocker for consistency
-        // - See audit doc section 4.2 for details
-
-        // Step 4: Create ConnectionManager (manages HelloActors)
         let connection_manager = ConnectionManager::new(
             router_actor.clone().recipient(),
             "database".to_string(),
@@ -108,9 +85,8 @@ impl DatabaseNetwork {
 
         tracing::info!("ConnectionManager started, ready to accept connections");
 
-        // Step 5: Accept loop - hand connections to ConnectionManager
         loop {
-            match server.accept().await {
+            match self.server.accept().await {
                 Ok(transport) => {
                     tracing::info!("Accepted connection from {:?}", transport.peer_addr());
 
@@ -156,7 +132,3 @@ impl DatabaseNetwork {
         }
     }
 }
-
-// Previously there was a create_database_authorizer helper here; authorization
-// is now configured by passing a HashSet<zznet_api::types::Role> into
-// ConnectionManager::new_with_allowed_roles above.

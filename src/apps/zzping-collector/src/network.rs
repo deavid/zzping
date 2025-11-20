@@ -17,11 +17,28 @@
 use crate::service::StartedComponents;
 use actix::Actor;
 use std::time::Duration;
+use zznet_api::error::TransportError;
 use zznet_api::transport::TransportClient;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
+
+/// Errors that can occur during network initialization and operation.
+#[derive(Debug, thiserror::Error)]
+pub enum NetworkError {
+    /// Failed to create the TCP transport client.
+    #[error("Failed to create TCP transport client: {0}")]
+    TransportCreation(#[from] TransportError),
+
+    /// Failed to establish connection to server.
+    #[error("Failed to connect to server: {0}")]
+    ConnectionFailed(TransportError),
+
+    /// Error occurred in connection manager.
+    #[error("Connection manager error: {0}")]
+    ConnectionManager(String),
+}
 
 /// CollectorNetwork manages client-side connections following the vision architecture.
 ///
@@ -31,14 +48,15 @@ use zznet_transport_tcp::config::TlsConfig;
 /// - Components auto-register via Room<T> pattern
 /// - NO room_handler_wirer callbacks needed!
 pub struct CollectorNetwork {
-    remote_addr: String,
-    tls_config: Option<TlsConfig>,
+    client: TcpTransportClient,
     reconnect_delay: Duration,
     handshake_timeout: Duration,
 }
 
 impl CollectorNetwork {
     /// Create a new CollectorNetwork
+    ///
+    /// Validates TLS configuration immediately.
     ///
     /// # Arguments
     /// * `addr` - the remote server address to connect to (e.g., "127.0.0.1:9001")
@@ -50,31 +68,33 @@ impl CollectorNetwork {
         tls: Option<TlsConfig>,
         reconnect_delay: Duration,
         handshake_timeout: Duration,
-    ) -> Self {
-        Self {
-            remote_addr: addr.to_string(),
-            tls_config: tls,
+    ) -> Result<Self, NetworkError> {
+        // Step 1: Create TCP transport client immediately
+        // This validates TLS configuration (certs existence, etc.)
+        let client = TcpTransportClient::new(addr.to_string(), tls)?;
+
+        Ok(Self {
+            client,
             reconnect_delay,
             handshake_timeout,
-        }
+        })
     }
 
     /// Connect to the database server
     ///
     /// This is the vision-aligned implementation:
-    /// 1. Create TcpTransportClient
-    /// 2. Create ConnectionManager with PeerManagerActor
-    /// 3. Connect to server
-    /// 4. Hand transport to ConnectionManager via HandleTransport message
-    /// 5. ConnectionManager spawns HelloActor for HELLO handshake
-    /// 6. Messages flow via Room<T> channels (auto-registered by components)
+    /// 1. Create ConnectionManager with PeerManagerActor
+    /// 2. Connect to server
+    /// 3. Hand transport to ConnectionManager via HandleTransport message
+    /// 4. ConnectionManager spawns HelloActor for HELLO handshake
+    /// 5. Messages flow via Room<T> channels (auto-registered by components)
     ///
     /// Automatically reconnects on failure.
     ///
     /// # Arguments
     /// * `components` - Started component actors (contains PeerManagerActor)
-    pub async fn connect(&self, components: &StartedComponents) -> Result<(), String> {
-        tracing::info!("Connecting to {}", self.remote_addr);
+    pub async fn connect(&self, components: &StartedComponents) -> Result<(), NetworkError> {
+        tracing::info!("Connecting to {}", self.client.addr());
 
         // Step 1: Build allowed roles set for HELLO authentication
         let mut allowed_roles = std::collections::HashSet::new();
@@ -134,20 +154,17 @@ impl CollectorNetwork {
     async fn try_connect(
         &self,
         connection_manager_addr: &actix::Addr<ConnectionManager>,
-    ) -> Result<(), String> {
-        // Step 1: Create TCP transport client
-        let client = TcpTransportClient::new(self.remote_addr.clone(), self.tls_config.clone())
-            .map_err(|e| format!("Failed to create client: {:?}", e))?;
-
-        // Step 2: Connect to server
-        let transport = client
+    ) -> Result<(), NetworkError> {
+        // Step 1: Connect to server using pre-validated client
+        let transport = self
+            .client
             .connect()
             .await
-            .map_err(|e| format!("Failed to connect: {:?}", e))?;
+            .map_err(NetworkError::ConnectionFailed)?;
 
-        tracing::info!("TCP connection established to {}", self.remote_addr);
+        tracing::info!("TCP connection established to {}", self.client.addr());
 
-        // Step 3: Create HELLO configuration
+        // Step 2: Create HELLO configuration
         let hello_config = HelloConfig {
             hostname: "collector".to_string(),
             our_role: "collector".to_string(),
@@ -155,7 +172,7 @@ impl CollectorNetwork {
             handshake_timeout: self.handshake_timeout,
         };
 
-        // Step 4: Hand transport to ConnectionManager
+        // Step 3: Hand transport to ConnectionManager
         // ConnectionManager will:
         // 1. Spawn HelloActor for this transport
         // 2. Run HELLO handshake
@@ -169,10 +186,13 @@ impl CollectorNetwork {
         let result = connection_manager_addr
             .send(handle_msg)
             .await
-            .map_err(|e| format!("Failed to send transport to ConnectionManager: {:?}", e))?;
+            .map_err(|e| {
+                NetworkError::ConnectionManager(format!("Failed to send transport: {:?}", e))
+            })?;
 
         // Check if ConnectionManager accepted the transport
-        result.map_err(|e| format!("ConnectionManager rejected transport: {}", e))?;
+        result
+            .map_err(|e| NetworkError::ConnectionManager(format!("Transport rejected: {}", e)))?;
 
         // TODO: Wait for connection to close or error
         // For now, return immediately and let reconnection loop handle it

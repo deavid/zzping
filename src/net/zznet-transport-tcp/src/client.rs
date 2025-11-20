@@ -30,6 +30,11 @@ pub struct TcpTransportClient {
 }
 
 impl TcpTransportClient {
+    /// Get the target address this client connects to.
+    pub fn addr(&self) -> &str {
+        &self.addr
+    }
+
     /// Create a new TCP client with TLS support.
     ///
     /// # Arguments

@@ -163,12 +163,16 @@ impl ZZNetApplication for CollectorApp {
         );
         let reconnect_delay = std::time::Duration::from_millis(self.config.reconnect_delay_ms);
         let handshake_timeout = std::time::Duration::from_secs(10);
+
+        // Create network client (validates TLS config immediately)
+        // This ensures we fail fast if certificates are missing or invalid.
         let network = crate::network::CollectorNetwork::new(
             &addr,
             tls_cfg,
             reconnect_delay,
             handshake_timeout,
-        );
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to initialize network: {}", e))?;
 
         let started_components = StartedComponents {
             intent_config: self.intent_addr.clone().unwrap(),
@@ -328,6 +332,13 @@ mod tests {
 
     #[actix::test]
     async fn test_collector_network_creation() {
+        // Install crypto provider for tests (required for TcpTransportClient::new)
+        // Use Once to handle parallel test execution safely
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let _ = rustls::crypto::ring::default_provider().install_default();
+        });
+
         use std::time::Duration;
 
         // Test network creation without TLS
@@ -336,7 +347,8 @@ mod tests {
             None,
             Duration::from_secs(5),
             Duration::from_secs(10),
-        );
+        )
+        .expect("Failed to create network");
 
         // Test network creation with TLS
         if let Some(tls) = &create_test_config().tls {
@@ -346,7 +358,8 @@ mod tests {
                 Some(tls_config),
                 Duration::from_secs(5),
                 Duration::from_secs(10),
-            );
+            )
+            .expect("Failed to create network with TLS");
         }
     }
 }

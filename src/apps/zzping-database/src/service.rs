@@ -140,13 +140,13 @@ impl ZZNetApplication for DatabaseApp {
 
         let bind_addr = format!("{}:{}", self.config.bind_host, self.config.bind_port);
         let handshake_timeout = Duration::from_secs(self.config.handshake_timeout_secs);
-        let network = crate::network::DatabaseNetwork::new(&bind_addr, tls_cfg, handshake_timeout);
 
-        // TODO(network-startup): Currently if network.run() fails (e.g., port in use),
-        // the error is only logged and startup() still returns Ok. This could leave the app
-        // in a "zombie" state where it appears running but network is non-functional.
-        // Future improvement: Use a oneshot channel to wait for "Listening" confirmation
-        // before returning from startup(), so bind failures are propagated immediately.
+        // Bind to the port synchronously (well, awaited)
+        // This ensures we fail fast if the port is in use or permission is denied.
+        let network = crate::network::DatabaseNetwork::bind(&bind_addr, tls_cfg, handshake_timeout)
+            .await
+            .map_err(|e| anyhow!("Failed to bind network: {}", e))?;
+
         let router_for_network = router_actor.clone();
         let handle = tokio::spawn(async move {
             if let Err(e) = network.run(&router_for_network).await {
@@ -249,9 +249,13 @@ mod tests {
     #[test]
     fn test_tls_config_loads_valid_certs() {
         // Initialize Rustls default CryptoProvider
-        let _ = rustls::crypto::CryptoProvider::install_default(
-            rustls::crypto::ring::default_provider(),
-        );
+        // Use Once to handle parallel test execution safely
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let _ = rustls::crypto::CryptoProvider::install_default(
+                rustls::crypto::ring::default_provider(),
+            );
+        });
 
         let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -316,7 +320,9 @@ mod tests {
         // Test network creation without TLS (TLS config creation is complex and tested elsewhere)
         // Use port 0 to let OS assign an available port
         let _network =
-            crate::network::DatabaseNetwork::new("127.0.0.1:0", None, Duration::from_secs(10));
+            crate::network::DatabaseNetwork::bind("127.0.0.1:0", None, Duration::from_secs(10))
+                .await
+                .expect("Failed to bind network");
         // Network is now created successfully if we get here
         // We don't run() it as that would block indefinitely
     }
