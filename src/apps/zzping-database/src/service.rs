@@ -90,6 +90,7 @@ pub fn build_transport_tls_config(
         &tls.server_cert_path,
         &tls.server_key_path,
         ca,
+        "zzping-mesh".into(),
     )))
 }
 

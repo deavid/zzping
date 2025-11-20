@@ -144,15 +144,8 @@ impl TcpTransport {
     /// Parse a single DER-encoded certificate and extract the PeerIdentity.
     ///
     /// Uses the Directory Model to extract identity from Subject DN:
-    /// - O (Organization): Must be "zzping" (system scope validation)
     /// - OU (OrganizationalUnit): Maps to role
     /// - CN (CommonName): Maps to username
-    ///
-    /// The SAN field is expected to contain "DNS:zzping-mesh" for topology
-    /// but is NOT used for identity extraction.
-    ///
-    /// Exposed privately so unit tests can validate parsing behavior without
-    /// constructing a full `TlsStream`.
     fn parse_peer_cert_der(cert_der: &[u8]) -> Result<PeerTLSIdentity, TransportError> {
         // Parse the certificate
         let (_, cert) = X509Certificate::from_der(cert_der).map_err(|e| {
@@ -176,35 +169,6 @@ impl TcpTransport {
             return Err(TransportError::IoError(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
                 "Certificate expired",
-            )));
-        }
-
-        // Extract and validate Organization (O) - System Scope Check
-        let organization = cert
-            .subject()
-            .iter_organization()
-            .next()
-            .ok_or_else(|| {
-                TransportError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Certificate missing O (Organization) field",
-                ))
-            })?
-            .as_str()
-            .map_err(|_| {
-                TransportError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "O field is not a string",
-                ))
-            })?;
-
-        if organization != "zzping" {
-            return Err(TransportError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "Certificate O field must be 'zzping', got '{}'",
-                    organization
-                ),
             )));
         }
 
@@ -247,40 +211,6 @@ impl TcpTransport {
                 ))
             })?
             .to_string();
-
-        // Validate SAN contains zzping-mesh (topology token)
-        // This is verified by rustls during handshake, but we can double-check here
-        let san_ext = cert
-            .extensions()
-            .iter()
-            .find(|ext| ext.oid == x509_parser::oid_registry::OID_X509_EXT_SUBJECT_ALT_NAME)
-            .ok_or_else(|| {
-                TransportError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Certificate missing SAN extension",
-                ))
-            })?;
-
-        let (_, san) = x509_parser::extensions::SubjectAlternativeName::from_der(san_ext.value)
-            .map_err(|e| {
-                TransportError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Failed to parse SAN extension: {:?}", e),
-                ))
-            })?;
-
-        // Verify SAN contains zzping-mesh
-        let has_mesh_san = san.general_names.iter().any(|name| match name {
-            x509_parser::extensions::GeneralName::DNSName(dns) => *dns == "zzping-mesh",
-            _ => false,
-        });
-
-        if !has_mesh_san {
-            return Err(TransportError::IoError(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Certificate SAN must contain DNS:zzping-mesh",
-            )));
-        }
 
         Ok(PeerTLSIdentity { role, username })
     }
@@ -482,7 +412,6 @@ mod tests {
         // Use loopback addr as peer addr
         let id = TcpTransport::parse_peer_cert_der(der).expect("failed to parse cert DER");
 
-        // Expect Directory Model: O=zzping, OU=database, CN=root, SAN=zzping-mesh
         assert_eq!(id.role, "database");
         assert_eq!(id.username, "root");
     }
@@ -595,7 +524,6 @@ mod tests {
         let identity =
             TcpTransport::parse_peer_cert_der(cert_der).expect("Failed to parse collector cert");
 
-        // Expect Directory Model: O=zzping, OU=collector, CN=root, SAN=zzping-mesh
         assert_eq!(identity.role, "collector");
         assert_eq!(identity.username, "root");
     }

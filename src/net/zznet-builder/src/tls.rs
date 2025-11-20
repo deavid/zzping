@@ -5,6 +5,7 @@ pub fn to_transport_tls_config(
     cert_path: &str,
     key_path: &str,
     ca_cert_path: Option<&str>,
+    server_name: String,
 ) -> zznet_transport_tcp::config::TlsConfig {
     use std::path::PathBuf;
     use zznet_transport_tcp::config::{TlsCertAndKey, TlsConfig as TransportTlsConfig};
@@ -19,6 +20,6 @@ pub fn to_transport_tls_config(
         cert,
         ca_cert_path: ca,
         add_native_ca_certs: false,
-        server_name: "zzping-mesh".into(),
+        server_name,
     }
 }

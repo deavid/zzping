@@ -35,7 +35,7 @@ pub(crate) enum TlsError {
 /// Certificate and private key paths for a specific component role.
 ///
 /// Simplifies certificate management by using role-based naming conventions,
-/// ensuring each zzping component uses its designated security credentials.
+/// ensuring each component uses its designated security credentials.
 #[derive(Debug, Clone)]
 pub struct TlsCertAndKey {
     /// Path to the certificate PEM file.
@@ -61,7 +61,7 @@ impl TlsCertAndKey {
 /// Complete TLS configuration for rustls connections.
 ///
 /// Centralizes all TLS parameters to ensure consistent, secure communication
-/// across all zzping components with mutual TLS authentication.
+/// across all components with mutual TLS authentication.
 #[derive(Debug, Clone)]
 pub struct TlsConfig {
     /// Certificate and key used by this endpoint.

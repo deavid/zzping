@@ -1,13 +1,11 @@
 //! Shared types used across the transport layer.
 use std::fmt;
 
-/// Represents the verified identity of a peer in the ZZPing network.
+/// Represents the verified identity of a peer
 ///
 /// Identity is extracted from X.509 certificates using the Directory Model:
-/// - O (Organization): "zzping" (system scope, always constant)
-/// - OU (OrganizationalUnit): role (collector, database, client-ro, client-admin, etc.)
+/// - OU (OrganizationalUnit): role
 /// - CN (CommonName): username ("root" for services, actual username for users)
-/// - SAN: "DNS:zzping-mesh" (topology token, not used for identity)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerTLSIdentity {
     /// The role from the certificate's OU field (OrganizationalUnit).

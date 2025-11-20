@@ -93,6 +93,7 @@ pub fn convert_tls_config(
         &tls.client_cert_path,
         &tls.client_key_path,
         Some(&tls.ca_cert_path),
+        "zzping-mesh".into(),
     ))
 }
 
