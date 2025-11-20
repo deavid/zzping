@@ -21,7 +21,7 @@ impl ZZNetService for FailDemoService {
         Err(anyhow::anyhow!("intentional failure in new"))
     }
 
-    async fn run(self) -> Result<(), Self::Error> {
+    async fn startup(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 }

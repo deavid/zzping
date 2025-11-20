@@ -25,7 +25,12 @@ pub trait ZZNetService: Sized + Send + 'static {
     fn new(config: Self::Config) -> Result<Self, Self::Error>;
 
     /// Contains the service's primary logic, such as starting actors or listeners.
-    async fn run(self) -> Result<(), Self::Error>;
+    async fn startup(&mut self) -> Result<(), Self::Error>;
+
+    /// Graceful shutdown hook for cleaning up resources.
+    async fn shutdown(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     /// Provides a stable, human-readable identifier for logging.
     fn service_name() -> &'static str {

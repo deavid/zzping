@@ -102,13 +102,13 @@ impl AppBuilder {
         // Run in Actix runtime
         run_actix(|| async move {
             // Create service
-            let service = S::new(config)
+            let mut service = S::new(config)
                 .map_err(|e| anyhow::anyhow!(e))
                 .with_context(|| format!("Failed to create {} service", S::service_name()))?;
 
             // Run service
             service
-                .run()
+                .startup()
                 .await
                 .map_err(|e| anyhow::anyhow!(e))
                 .with_context(|| format!("{} service failed", S::service_name()))?;
@@ -123,6 +123,13 @@ impl AppBuilder {
             tokio::select! {
                 _ = signals.wait() => { /* OS signal received */ }
                 _ = stop => { /* programmatic stop requested */ }
+            }
+
+            tracing::info!("Signal received. Initiating graceful shutdown...");
+
+            // Call service shutdown hook
+            if let Err(e) = service.shutdown().await {
+                tracing::error!("Graceful shutdown failed: {}", e.into());
             }
 
             tracing::info!("{} shutdown complete", S::service_name());
@@ -160,13 +167,13 @@ impl AppBuilder {
         // Run in Actix runtime
         run_actix(|| async move {
             // Build service from provided config
-            let service = S::new(config)
+            let mut service = S::new(config)
                 .map_err(|e| anyhow::anyhow!(e))
                 .with_context(|| format!("Failed to create {} service", S::service_name()))?;
 
             // Run service, which may start actors/tasks and return immediately
             service
-                .run()
+                .startup()
                 .await
                 .map_err(|e| anyhow::anyhow!(e))
                 .with_context(|| format!("{} service failed", S::service_name()))?;
@@ -181,6 +188,13 @@ impl AppBuilder {
             tokio::select! {
                 _ = signals.wait() => { /* os signal */ }
                 _ = stop => { /* programmatic stop */ }
+            }
+
+            tracing::info!("Signal received. Initiating graceful shutdown...");
+
+            // Call service shutdown hook
+            if let Err(e) = service.shutdown().await {
+                tracing::error!("Graceful shutdown failed: {}", e.into());
             }
 
             tracing::info!("{} shutdown complete", S::service_name());
@@ -259,7 +273,7 @@ mod tests {
             Ok(Self { _cfg: config })
         }
 
-        async fn run(self) -> Result<(), Self::Error> {
+        async fn startup(&mut self) -> Result<(), Self::Error> {
             // Simulate a short-lived startup and then return Ok
             tracing::info!("DummyService started");
             Ok(())
@@ -319,7 +333,7 @@ mod tests {
                 Err(anyhow::anyhow!("explicit failure in new"))
             }
 
-            async fn run(self) -> Result<(), Self::Error> {
+            async fn startup(&mut self) -> Result<(), Self::Error> {
                 Ok(())
             }
         }

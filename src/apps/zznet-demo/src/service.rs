@@ -96,7 +96,7 @@ impl ZZNetService for DemoAppService {
         })
     }
 
-    async fn run(self) -> Result<(), Self::Error> {
+    async fn startup(&mut self) -> Result<(), Self::Error> {
         tracing::info!("DemoAppService is running");
         Ok(())
     }

@@ -95,7 +95,7 @@ impl DatabaseService {
     /// Starts and wires components together, sets up TLS and network bindings,
     /// then runs the transport server until shutdown. Separated from the
     /// public `run()` for clearer testing and error mapping.
-    pub async fn run_impl(self) -> Result<(), DatabaseError> {
+    pub async fn run_impl(&mut self) -> Result<(), DatabaseError> {
         tracing::info!("Database service starting");
 
         // Step 1: Create builders (including PeerManagerActor)
@@ -132,7 +132,7 @@ impl DatabaseService {
     }
 
     /// Public run method that delegates to the internal implementation
-    pub async fn run(self) -> Result<(), DatabaseError> {
+    pub async fn run(&mut self) -> Result<(), DatabaseError> {
         self.run_impl().await
     }
 
@@ -283,7 +283,7 @@ impl zznet_builder::traits::ZZNetService for DatabaseService {
         Ok(Self { config })
     }
 
-    async fn run(self) -> Result<(), Self::Error> {
+    async fn startup(&mut self) -> Result<(), Self::Error> {
         self.run_impl()
             .await
             .map_err(|e| DatabaseError::Service(format!("Service error: {}", e)))

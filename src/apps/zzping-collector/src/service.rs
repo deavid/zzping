@@ -139,7 +139,7 @@ impl ZZNetService for CollectorService {
         Ok(Self { config })
     }
 
-    async fn run(self) -> Result<(), Self::Error> {
+    async fn startup(&mut self) -> Result<(), Self::Error> {
         tracing::info!("Collector service starting");
 
         let builders = self.create_builders()?;
