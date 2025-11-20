@@ -88,7 +88,7 @@ impl Router {
 mod tests {
     use super::*;
     use actix::prelude::*;
-    use zznet_room::room_manager::{CreateError, CreateRoomForPeer, RoomInboundRecipient};
+    use zznet_room::room_manager::{CreateRoomForPeer, RoomInboundRecipient};
 
     // Mock actor for testing
     struct MockManager;
@@ -98,7 +98,7 @@ mod tests {
     }
 
     impl Handler<CreateRoomForPeer> for MockManager {
-        type Result = Result<Option<RoomInboundRecipient>, CreateError>;
+        type Result = Result<Option<RoomInboundRecipient>, ()>;
 
         fn handle(&mut self, _msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
             Ok(None)

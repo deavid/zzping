@@ -21,26 +21,11 @@ pub struct InboundRoomPayload {
 /// Alias for the recipient type used by Router ↔ RoomActor wiring.
 pub type RoomInboundRecipient = Recipient<InboundRoomPayload>;
 
-/// Error type for room creation failures.
-#[derive(Debug, thiserror::Error)]
-pub enum CreateError {
-    /// Room creation failed with the given reason.
-    #[error("Room creation failed: {0}")]
-    CreationFailed(String),
-
-    /// The provided permission is invalid for creating this room.
-    #[error("Invalid permission for room {room_id}")]
-    InvalidPermission {
-        /// The room ID that couldn't be created due to permission issues.
-        room_id: RoomId,
-    },
-}
-
 /// Actor message for creating a room (if using Actix wrapper).
 ///
 /// Components can implement RoomManagerActor if they prefer actor-based factories.
 #[derive(actix::Message)]
-#[rtype(result = "Result<Option<RoomInboundRecipient>, CreateError>")]
+#[rtype(result = "Result<Option<RoomInboundRecipient>, ()>")]
 pub struct CreateRoomForPeer {
     /// The peer ID for which to create the room.
     pub peer_id: PeerId,

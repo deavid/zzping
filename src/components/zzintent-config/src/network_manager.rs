@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateError, CreateRoomForPeer, RoomInboundRecipient};
+use zznet_room::room_manager::{CreateRoomForPeer, RoomInboundRecipient};
 use zznet_router::RouterActor;
 
 /// IntentConfigNetworkManager orchestrates the per-peer translator layer.
@@ -133,7 +133,12 @@ impl Actor for IntentConfigNetworkManager {
         self.self_addr = Some(addr);
 
         // Register ourselves as a RoomManager with the Router
-        let manager = self.self_addr.as_ref().unwrap().clone().recipient::<CreateRoomForPeer>();
+        let manager = self
+            .self_addr
+            .as_ref()
+            .unwrap()
+            .clone()
+            .recipient::<CreateRoomForPeer>();
         let rooms = vec![RoomId::from("intent-config")];
         let register_msg = zznet_router::RegisterManager { manager, rooms };
         self.router_actor.do_send(register_msg);
@@ -281,7 +286,7 @@ impl Handler<InboundGetConfigRequest> for IntentConfigNetworkManager {
 
 #[async_trait::async_trait]
 impl Handler<CreateRoomForPeer> for IntentConfigNetworkManager {
-    type Result = Result<Option<RoomInboundRecipient>, CreateError>;
+    type Result = Result<Option<RoomInboundRecipient>, ()>;
 
     fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
         // Only handle the "intent-config" room
@@ -290,12 +295,11 @@ impl Handler<CreateRoomForPeer> for IntentConfigNetworkManager {
         }
 
         // Translate the global Role to component-specific Permissions
-        let permissions = self.permissions_map
+        let permissions = self
+            .permissions_map
             .get(msg.role.as_str())
             .cloned()
-            .ok_or_else(|| CreateError::InvalidPermission {
-                room_id: msg.room_id.clone(),
-            })?;
+            .unwrap_or_default();
 
         // Create the translator actor with the peer's permissions (not role)
         let translator = IntentConfigNetworkActor::new(

@@ -13,7 +13,7 @@ pub mod permissions {
     /// This struct defines what a peer can do within ComponentA's room.
     /// Permissions are granted by the application based on the peer's global Role,
     /// but the component itself is role-agnostic and only enforces these local permissions.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     pub struct ComponentAPermissions {
         /// Whether the peer can send ping messages
         pub can_ping: bool,
@@ -58,7 +58,7 @@ use std::sync::{Arc, RwLock};
 use tracing::info;
 use zznet_api::types::PeerId;
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateError, CreateRoomForPeer, RoomInboundRecipient};
+use zznet_room::room_manager::{CreateRoomForPeer, RoomInboundRecipient};
 use zznet_router::RegisterManager;
 
 /// MainActor for ComponentA - handles business logic and local subscriptions.
@@ -270,7 +270,7 @@ impl Actor for ComponentANetworkManager {
 }
 
 impl Handler<CreateRoomForPeer> for ComponentANetworkManager {
-    type Result = Result<Option<RoomInboundRecipient>, CreateError>;
+    type Result = Result<Option<RoomInboundRecipient>, ()>;
 
     fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
         tracing::debug!(
@@ -284,9 +284,7 @@ impl Handler<CreateRoomForPeer> for ComponentANetworkManager {
                 .permissions_map
                 .get(msg.role.as_str())
                 .cloned()
-                .ok_or_else(|| CreateError::InvalidPermission {
-                    room_id: msg.room_id.clone(),
-                })?;
+                .unwrap_or_default();
 
             // Create NetworkActor for this peer
             let network_actor = ComponentANetworkActor::new(

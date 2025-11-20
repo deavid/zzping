@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateError, CreateRoomForPeer, RoomInboundRecipient};
+use zznet_room::room_manager::{CreateRoomForPeer, RoomInboundRecipient};
 use zznet_router::RouterActor;
 
 use crate::actor::MemDBActor;
@@ -252,7 +252,7 @@ impl Handler<SendSubmitBatch> for MemDBNetworkManager {
 }
 
 impl Handler<CreateRoomForPeer> for MemDBNetworkManager {
-    type Result = Result<Option<RoomInboundRecipient>, CreateError>;
+    type Result = Result<Option<RoomInboundRecipient>, ()>;
 
     fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
         // Only handle the "memdb" room

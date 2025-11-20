@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// These permissions control what operations a peer can perform within
 /// the collector state management system.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CStatePermissions {
     /// Permission to send heartbeats (register as a collector).
     ///

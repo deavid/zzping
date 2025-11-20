@@ -19,26 +19,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateError, CreateRoomForPeer, RoomInboundRecipient};
+use zznet_room::room_manager::{CreateRoomForPeer, RoomInboundRecipient};
 use zznet_router::RouterActor;
-
-// Phase 6.2: Placeholder messages for backward compatibility during migration
-// TODO Phase 7.3: Remove after full PeerLifecycleEvent integration
-/// Placeholder for PeerAdded event - will be replaced with actual PeerLifecycleEvent
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct PeerAdded {
-    /// The peer ID that was added.
-    pub peer_id: PeerId,
-}
-
-/// Placeholder for PeerRemoved event - will be replaced with actual PeerLifecycleEvent
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct PeerRemoved {
-    /// The peer ID that was removed.
-    pub peer_id: PeerId,
-}
 
 /// The NetworkManager orchestrates peer lifecycle and manages NetworkActors.
 ///
@@ -115,7 +97,12 @@ impl Actor for CStateNetworkManager {
         self.self_addr = Some(addr);
 
         // Register ourselves as a RoomManager with the Router
-        let manager = self.self_addr.as_ref().unwrap().clone().recipient::<CreateRoomForPeer>();
+        let manager = self
+            .self_addr
+            .as_ref()
+            .unwrap()
+            .clone()
+            .recipient::<CreateRoomForPeer>();
         let rooms = vec![RoomId::from("cstate")];
         let register_msg = zznet_router::RegisterManager { manager, rooms };
         self.router.do_send(register_msg);
@@ -134,49 +121,6 @@ impl Actor for CStateNetworkManager {
             self.room_actors.read().unwrap().len()
         );
         // Actors will be automatically stopped when dropped
-    }
-}
-
-// ============================================================================
-// Peer Lifecycle Event Handlers
-// ============================================================================
-
-impl Handler<PeerAdded> for CStateNetworkManager {
-    type Result = ();
-
-    fn handle(&mut self, msg: PeerAdded, _ctx: &mut Context<Self>) -> Self::Result {
-        debug!("Peer added: {:?}", msg.peer_id);
-        // Actors are now created in create_for_peer when Router calls it
-    }
-}
-
-impl Handler<PeerRemoved> for CStateNetworkManager {
-    type Result = ();
-
-    fn handle(&mut self, msg: PeerRemoved, _ctx: &mut Context<Self>) -> Self::Result {
-        debug!("Peer removed: {:?}", msg.peer_id);
-
-        let mut removed_translator = false;
-        let mut removed_room_actor = false;
-
-        if let Some(_actor) = self.translator_actors.write().unwrap().remove(&msg.peer_id) {
-            removed_translator = true;
-        }
-
-        if let Some(_actor) = self.room_actors.write().unwrap().remove(&msg.peer_id) {
-            removed_room_actor = true;
-        }
-
-        if removed_translator || removed_room_actor {
-            debug!(
-                "Removed actors for peer {}, remaining translators: {}, room actors: {}",
-                msg.peer_id,
-                self.translator_actors.read().unwrap().len(),
-                self.room_actors.read().unwrap().len()
-            );
-        } else {
-            warn!("Peer {} not found in actor maps", msg.peer_id);
-        }
     }
 }
 
@@ -284,7 +228,7 @@ impl Handler<BroadcastHeartbeat> for CStateNetworkManager {
 
 #[async_trait::async_trait]
 impl Handler<CreateRoomForPeer> for CStateNetworkManager {
-    type Result = Result<Option<RoomInboundRecipient>, CreateError>;
+    type Result = Result<Option<RoomInboundRecipient>, ()>;
 
     fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
         // Only handle the "cstate" room
@@ -293,19 +237,11 @@ impl Handler<CreateRoomForPeer> for CStateNetworkManager {
         }
 
         // Translate Role to Permissions using the policy map
-        let permissions = self.permissions_map
+        let permissions = self
+            .permissions_map
             .get(msg.role.as_str())
             .cloned()
-            .ok_or_else(|| {
-                warn!(
-                    "Role '{}' not found in permissions map for peer {}",
-                    msg.role.as_str(),
-                    msg.peer_id
-                );
-                CreateError::InvalidPermission {
-                    room_id: msg.room_id.clone(),
-                }
-            })?;
+            .unwrap_or_default();
 
         debug!(
             "Creating NetworkActor for peer {} with role '{}': permissions = {:?}",

@@ -9,7 +9,7 @@
 /// This struct defines what a peer can do within the intent-config room.
 /// Permissions are granted by the application based on the peer's global Role,
 /// but the component itself is role-agnostic and only enforces these local permissions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct IntentConfigPermissions {
     /// Whether the peer can read the current configuration
     pub can_read_config: bool,
