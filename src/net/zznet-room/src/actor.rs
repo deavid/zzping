@@ -76,14 +76,14 @@ where
 
 impl<T> Handler<T> for RoomActor<T>
 where
-    T: RoomMessageTrait + actix::Message<Result = ()> + Send + 'static,
+    T: RoomMessageTrait + actix::Message<Result = ()>,
 {
     type Result = ();
 
-    fn handle(&mut self, msg: T, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: T, ctx: &mut Context<Self>) -> Self::Result {
         let msg_room_id = msg.room_id();
         if msg_room_id != self.room_id {
-            tracing::warn!(
+            tracing::error!(
                 "RoomActor outbound message room mismatch: expected {}, got {}",
                 self.room_id,
                 msg_room_id
@@ -94,18 +94,21 @@ where
             Ok(bytes) => {
                 let outbound_tx = self.outbound_tx.clone();
                 let room_id = self.room_id.clone();
-                actix::spawn(async move {
-                    if let Err(error) = outbound_tx.send((room_id, bytes)).await {
-                        tracing::warn!("RoomActor outbound send failed: {:?}", error);
-                    }
-                });
+
+                if let Err(error) = outbound_tx.try_send((room_id, bytes)) {
+                    tracing::error!("RoomActor outbound send failed: {:?}", error);
+                    ctx.stop();
+                    // FIXME: In reality, stopping the actor has to guarantee that the connection is
+                    // entirely teared down. Currently we have not checked this.
+                }
             }
             Err(error) => {
-                tracing::warn!(
+                tracing::error!(
                     "RoomActor outbound encode failed for room {}: {}",
                     self.room_id,
                     error
                 );
+                ctx.stop();
             }
         }
     }

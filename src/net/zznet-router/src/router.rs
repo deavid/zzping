@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{error::SessionError, peer_channels::PeerChannels};
 use zznet_api::types::{PeerId, RoomId};
-use zznet_room::room_manager::RoomManager;
+use zznet_room::room_manager::CreateRoomForPeer;
 
 /// Router - Data Plane for room management and message routing
 ///
@@ -21,7 +21,7 @@ pub(crate) struct Router {
     peers: HashMap<PeerId, PeerChannels>,
 
     /// Registered room managers: RoomId -> Manager (strict 1:1 mapping enforced)
-    pub(crate) managers: HashMap<RoomId, std::sync::Arc<dyn RoomManager + Send + Sync>>,
+    pub(crate) managers: HashMap<RoomId, actix::Recipient<CreateRoomForPeer>>,
 }
 
 impl Router {
@@ -44,10 +44,10 @@ impl Router {
     /// - `SessionError::RoomAlreadyExists` if any managed room is already registered
     pub(crate) fn register_manager(
         &mut self,
-        manager: std::sync::Arc<dyn RoomManager + Send + Sync>,
+        manager: actix::Recipient<CreateRoomForPeer>,
+        rooms: Vec<RoomId>,
     ) -> Result<(), SessionError> {
-        let managed_rooms = manager.managed_rooms();
-        for room_id in &managed_rooms {
+        for room_id in &rooms {
             if self.managers.contains_key(room_id) {
                 return Err(SessionError::RoomAlreadyExists {
                     peer_id: PeerId::from("router"), // dummy, since it's global
@@ -55,7 +55,7 @@ impl Router {
                 });
             }
         }
-        for room_id in managed_rooms {
+        for room_id in rooms {
             self.managers.insert(room_id, manager.clone());
         }
         Ok(())
@@ -87,90 +87,57 @@ impl Router {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix::prelude::*;
+    use zznet_room::room_manager::{CreateError, CreateRoomForPeer, RoomInboundRecipient};
 
-    #[tokio::test]
+    // Mock actor for testing
+    struct MockManager;
+
+    impl Actor for MockManager {
+        type Context = Context<Self>;
+    }
+
+    impl Handler<CreateRoomForPeer> for MockManager {
+        type Result = ResponseFuture<Result<Option<RoomInboundRecipient>, CreateError>>;
+
+        fn handle(&mut self, _msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
+            Box::pin(async { Ok(None) })
+        }
+    }
+
+    #[actix::test]
     async fn test_register_manager_collision() {
-        use std::collections::HashSet;
-        use zznet_api::types::{PeerId, Role, RoomId};
-        use zznet_room::room_manager::{CreateError, RoomManager};
-
-        struct MockManager {
-            rooms: HashSet<RoomId>,
-        }
-
-        #[async_trait::async_trait]
-        impl RoomManager for MockManager {
-            fn managed_rooms(&self) -> HashSet<RoomId> {
-                self.rooms.clone()
-            }
-
-            async fn create_for_peer(
-                &self,
-                _peer_id: PeerId,
-                _role: Role,
-                _room_id: &RoomId,
-                _outbound_to_peer: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
-            ) -> Result<
-                Option<actix::Recipient<zznet_room::room_manager::InboundRoomPayload>>,
-                CreateError,
-            > {
-                Ok(None)
-            }
-        }
-
         let mut router = Router::new(vec![]);
 
-        let manager1 = std::sync::Arc::new(MockManager {
-            rooms: HashSet::from([RoomId::from("room1")]),
-        });
-        assert!(router.register_manager(manager1).is_ok());
+        // Start a mock manager actor
+        let mock_addr = MockManager.start();
 
-        let manager2 = std::sync::Arc::new(MockManager {
-            rooms: HashSet::from([RoomId::from("room1")]), // collision
-        });
-        let result = router.register_manager(manager2);
+        let rooms1 = vec![RoomId::from("room1")];
+        assert!(
+            router
+                .register_manager(mock_addr.clone().recipient(), rooms1)
+                .is_ok()
+        );
+
+        let rooms2 = vec![RoomId::from("room1")]; // collision
+        let result = router.register_manager(mock_addr.recipient(), rooms2);
         assert!(matches!(
             result,
             Err(SessionError::RoomAlreadyExists { .. })
         ));
     }
 
-    #[tokio::test]
+    #[actix::test]
     async fn test_registered_rooms() {
-        use std::collections::HashSet;
-        use zznet_api::types::{PeerId, Role, RoomId};
-        use zznet_room::room_manager::{CreateError, RoomManager};
-
-        struct MockManager {
-            rooms: HashSet<RoomId>,
-        }
-
-        #[async_trait::async_trait]
-        impl RoomManager for MockManager {
-            fn managed_rooms(&self) -> HashSet<RoomId> {
-                self.rooms.clone()
-            }
-
-            async fn create_for_peer(
-                &self,
-                _peer_id: PeerId,
-                _role: Role,
-                _room_id: &RoomId,
-                _outbound_to_peer: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
-            ) -> Result<
-                Option<actix::Recipient<zznet_room::room_manager::InboundRoomPayload>>,
-                CreateError,
-            > {
-                Ok(None)
-            }
-        }
-
         let mut router = Router::new(vec![]);
 
-        let manager1 = std::sync::Arc::new(MockManager {
-            rooms: HashSet::from([RoomId::from("room1"), RoomId::from("room2")]),
-        });
-        router.register_manager(manager1).unwrap();
+        // Start a mock manager actor
+        let mock_addr = MockManager.start();
+
+        let rooms = vec![RoomId::from("room1"), RoomId::from("room2")];
+        router
+            .register_manager(mock_addr.recipient(), rooms)
+            .unwrap();
 
         let registered: Vec<RoomId> = router.managers.keys().cloned().collect();
         assert_eq!(registered.len(), 2);

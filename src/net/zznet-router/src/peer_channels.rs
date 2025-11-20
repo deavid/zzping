@@ -1,7 +1,6 @@
 use actix::Recipient;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{Mutex as TokioMutex, broadcast, mpsc};
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::room_manager::InboundRoomPayload;
@@ -9,7 +8,7 @@ use zznet_room::room_manager::InboundRoomPayload;
 use crate::error::SessionError;
 
 /// Shared room storage for a peer.
-type SessionRooms = Arc<TokioMutex<HashMap<RoomId, Recipient<InboundRoomPayload>>>>;
+type SessionRooms = HashMap<RoomId, Recipient<InboundRoomPayload>>;
 
 /// Builder for PeerChannels with immutable construction.
 ///
@@ -51,20 +50,11 @@ impl PeerChannelsBuilder {
         self,
         inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
     ) -> Result<PeerChannels, SessionError> {
-        let (broadcast_tx, _) = broadcast::channel(100);
-
         let rooms_map = self.rooms;
 
-        // Wrap in Arc<Mutex<>> for sharing
-        let rooms = Arc::new(TokioMutex::new(rooms_map));
+        let rooms = rooms_map;
         let peer_id = self.peer_id.clone();
-        let broadcast_tx_clone = broadcast_tx.clone();
-        let task = tokio::spawn(PeerChannels::inbound_task_loop(
-            Arc::clone(&rooms),
-            peer_id,
-            inbound_rx,
-            broadcast_tx_clone,
-        ));
+        let task = tokio::spawn(PeerChannels::inbound_task_loop(rooms, peer_id, inbound_rx));
 
         Ok(PeerChannels {
             peer_id: self.peer_id,
@@ -89,8 +79,7 @@ impl PeerChannels {
         room_id: RoomId,
         bytes: Vec<u8>,
     ) {
-        let rooms_lock = rooms.lock().await;
-        if let Some(room_recipient) = rooms_lock.get(&room_id) {
+        if let Some(room_recipient) = rooms.get(&room_id) {
             let message = InboundRoomPayload { payload: bytes };
             room_recipient.do_send(message);
         } else {
@@ -106,10 +95,8 @@ impl PeerChannels {
         rooms: SessionRooms,
         peer_id: PeerId,
         mut inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
-        broadcast_tx: broadcast::Sender<(RoomId, Vec<u8>)>,
     ) {
         while let Some((room_id, bytes)) = inbound_rx.recv().await {
-            let _ = broadcast_tx.send((room_id.clone(), bytes.clone()));
             Self::route_inbound_message(&rooms, &peer_id, room_id, bytes).await;
         }
         tracing::debug!("Peer {} inbound task stopped", peer_id);

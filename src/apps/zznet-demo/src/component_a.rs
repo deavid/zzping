@@ -52,13 +52,13 @@ pub use permissions::ComponentAPermissions;
 use crate::messages::{
     ComponentAMessage, GetCounter, PublishToA, SendPing, SetNetworkManager, StateUpdate, Subscribe,
 };
-use actix::{Actor, Addr, Context, Handler, Recipient};
-use std::collections::{HashMap, HashSet};
+use actix::prelude::*;
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::info;
-use zznet_api::types::{PeerId, Role, RoomId};
+use zznet_api::types::PeerId;
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateError, RoomInboundRecipient, RoomManager};
+use zznet_room::room_manager::{CreateError, CreateRoomForPeer, RoomInboundRecipient};
 use zznet_router::RegisterManager;
 
 /// MainActor for ComponentA - handles business logic and local subscriptions.
@@ -254,13 +254,13 @@ impl ComponentANetworkManager {
 impl Actor for ComponentANetworkManager {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
+    fn started(&mut self, ctx: &mut Self::Context) {
         tracing::debug!("ComponentANetworkManager started");
 
         // Register with router
-        let manager =
-            std::sync::Arc::new(self.clone()) as std::sync::Arc<dyn RoomManager + Send + Sync>;
-        let register_msg = RegisterManager { manager };
+        let manager = ctx.address().recipient::<CreateRoomForPeer>();
+        let rooms = vec![zznet_api::types::RoomId::from("room-a")];
+        let register_msg = RegisterManager { manager, rooms };
         self.router.do_send(register_msg);
     }
 
@@ -269,70 +269,69 @@ impl Actor for ComponentANetworkManager {
     }
 }
 
-#[async_trait::async_trait]
-impl RoomManager for ComponentANetworkManager {
-    fn managed_rooms(&self) -> HashSet<zznet_api::types::RoomId> {
-        let mut rooms = HashSet::new();
-        rooms.insert(zznet_api::types::RoomId::from("room-a"));
-        rooms
-    }
+impl Handler<CreateRoomForPeer> for ComponentANetworkManager {
+    type Result = ResponseFuture<Result<Option<RoomInboundRecipient>, CreateError>>;
 
-    async fn create_for_peer(
-        &self,
-        peer_id: PeerId,
-        role: Role,
-        room_id: &RoomId,
-        outbound_to_peer: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
-    ) -> Result<Option<RoomInboundRecipient>, CreateError> {
-        tracing::debug!(
-            "ComponentANetworkManager: create_for_peer called for peer {} in room {}",
-            peer_id,
-            room_id
-        );
-        if room_id.as_str() == "room-a" {
-            // Translate the global Role to component-specific Permissions
-            let permissions = self
-                .permissions_map
-                .get(role.as_str())
-                .cloned()
-                .ok_or_else(|| CreateError::InvalidPermission {
-                    room_id: room_id.clone(),
+    fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
+        let peer_id = msg.peer_id;
+        let role = msg.role;
+        let room_id = msg.room_id;
+        let outbound_to_peer = msg.outbound_to_peer;
+
+        let main_actor = self.main_actor.clone();
+        let network_actors = self.network_actors.clone();
+        let room_actors = self.room_actors.clone();
+        let permissions_map = self.permissions_map.clone();
+
+        Box::pin(async move {
+            tracing::debug!(
+                "ComponentANetworkManager: create_for_peer called for peer {} in room {}",
+                peer_id,
+                room_id
+            );
+            if room_id.as_str() == "room-a" {
+                // Translate the global Role to component-specific Permissions
+                let permissions = permissions_map.get(role.as_str()).cloned().ok_or_else(|| {
+                    CreateError::InvalidPermission {
+                        room_id: room_id.clone(),
+                    }
                 })?;
 
-            // Create NetworkActor for this peer
-            let network_actor =
-                ComponentANetworkActor::new(peer_id.clone(), permissions, self.main_actor.clone());
-            let network_actor_addr = network_actor.start();
+                // Create NetworkActor for this peer
+                let network_actor =
+                    ComponentANetworkActor::new(peer_id.clone(), permissions, main_actor);
+                let network_actor_addr = network_actor.start();
 
-            // Store the network actor
-            if let Ok(mut actors) = self.network_actors.write() {
-                actors.insert(peer_id.clone(), network_actor_addr.clone());
-            }
+                // Store the network actor
+                if let Ok(mut actors) = network_actors.write() {
+                    actors.insert(peer_id.clone(), network_actor_addr.clone());
+                }
 
-            // Create RoomActor that handles serialization/deserialization
-            let room_actor = RoomActor::new(
-                room_id.clone(),
-                outbound_to_peer,
-                network_actor_addr.recipient::<ComponentAMessage>(),
-            );
-            let room_actor_addr = room_actor.start();
-
-            // Store the room actor for outbound messaging
-            if let Ok(mut actors) = self.room_actors.write() {
-                actors.insert(peer_id.clone(), room_actor_addr.clone());
-                tracing::debug!(
-                    "ComponentANetworkManager: Stored room actor for peer {}",
-                    peer_id
+                // Create RoomActor that handles serialization/deserialization
+                let room_actor = RoomActor::new(
+                    room_id.clone(),
+                    outbound_to_peer,
+                    network_actor_addr.recipient::<ComponentAMessage>(),
                 );
-            }
+                let room_actor_addr = room_actor.start();
 
-            // Return the recipient that RoomActor exposes for inbound messages
-            Ok(Some(RoomActor::<ComponentAMessage>::inbound_recipient(
-                &room_actor_addr,
-            )))
-        } else {
-            Ok(None)
-        }
+                // Store the room actor for outbound messaging
+                if let Ok(mut actors) = room_actors.write() {
+                    actors.insert(peer_id.clone(), room_actor_addr.clone());
+                    tracing::debug!(
+                        "ComponentANetworkManager: Stored room actor for peer {}",
+                        peer_id
+                    );
+                }
+
+                // Return the recipient that RoomActor exposes for inbound messages
+                Ok(Some(RoomActor::<ComponentAMessage>::inbound_recipient(
+                    &room_actor_addr,
+                )))
+            } else {
+                Ok(None)
+            }
+        })
     }
 }
 

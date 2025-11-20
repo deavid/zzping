@@ -8,7 +8,6 @@ use actix::prelude::*;
 use std::sync::Arc;
 use zznet_api::messages::OnPeerConnected;
 use zznet_api::types::{PeerId, RoomId};
-use zznet_room::room_manager::RoomManager;
 
 /// RouterActor - Actix wrapper for Router
 ///
@@ -46,8 +45,10 @@ impl Actor for RouterActor {
 #[derive(Message)]
 #[rtype(result = "Result<(), String>")]
 pub struct RegisterManager {
-    /// The room manager to register
-    pub manager: Arc<dyn RoomManager + Send + Sync>,
+    /// The room manager recipient to register
+    pub manager: actix::Recipient<zznet_room::room_manager::CreateRoomForPeer>,
+    /// The rooms this manager handles
+    pub rooms: Vec<RoomId>,
 }
 
 impl Handler<RegisterManager> for RouterActor {
@@ -56,11 +57,12 @@ impl Handler<RegisterManager> for RouterActor {
     fn handle(&mut self, msg: RegisterManager, _ctx: &mut Context<Self>) -> Self::Result {
         let router_arc = self.router.clone();
         let manager = msg.manager;
+        let rooms = msg.rooms;
 
         Box::pin(async move {
             let mut router = router_arc.lock().await;
             router
-                .register_manager(manager)
+                .register_manager(manager, rooms)
                 .map_err(|e| format!("Failed to register manager: {:?}", e))
         })
     }
@@ -78,28 +80,32 @@ impl Handler<OnPeerConnected> for RouterActor {
         let inbound_rx = msg.inbound_rx;
 
         Box::pin(async move {
-            // Gather rooms from managers, but ONLY for negotiated rooms
-            let mut builder = crate::peer_channels::PeerChannelsBuilder::new(peer_id.clone());
-            {
+            // 1. LOCK & LOOKUP
+            let managers_to_call = {
                 let router = router_arc.lock().await;
-                // Iterate over the SUCCESSFULLY negotiated rooms
+                let mut list = Vec::new();
                 for room_id in negotiated_rooms {
-                    // Find the manager responsible for this room
-                    if let Some(manager) = router
-                        .managers
-                        .values()
-                        .find(|m| m.managed_rooms().contains(&room_id))
-                    {
-                        if let Ok(Some(room)) = manager
-                            .create_for_peer(
-                                peer_id.clone(),
-                                role.clone(),
-                                &room_id,
-                                outbound_tx.clone(),
-                            )
-                            .await
-                            && let Err(e) = builder.add_room(room_id.clone(), room)
-                        {
+                    if let Some(recipient) = router.managers.get(&room_id) {
+                        list.push((room_id, recipient.clone()));
+                    } else {
+                        tracing::warn!("No manager found for negotiated room {}", room_id);
+                    }
+                }
+                list
+            }; // Lock dropped here
+
+            // 2. EXECUTE IN PARALLEL (No lock held!)
+            let mut builder = crate::peer_channels::PeerChannelsBuilder::new(peer_id.clone());
+            for (room_id, recipient) in managers_to_call {
+                let msg = zznet_room::room_manager::CreateRoomForPeer {
+                    peer_id: peer_id.clone(),
+                    role: role.clone(),
+                    room_id: room_id.clone(),
+                    outbound_to_peer: outbound_tx.clone(),
+                };
+                match recipient.send(msg).await {
+                    Ok(Ok(Some(room))) => {
+                        if let Err(e) = builder.add_room(room_id.clone(), room) {
                             tracing::warn!(
                                 "Failed to add room {} for peer {}: {:?}",
                                 room_id,
@@ -107,20 +113,40 @@ impl Handler<OnPeerConnected> for RouterActor {
                                 e
                             );
                         }
-                    } else {
-                        tracing::warn!("No manager found for negotiated room {}", room_id);
+                    }
+                    Ok(Ok(None)) => {
+                        tracing::warn!(
+                            "Manager returned None for room {} for peer {}",
+                            room_id,
+                            peer_id
+                        );
+                    }
+                    Ok(Err(e)) => {
+                        tracing::warn!(
+                            "Failed to create room {} for peer {}: {:?}",
+                            room_id,
+                            peer_id,
+                            e
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to send CreateRoomForPeer for room {} to peer {}: {:?}",
+                            room_id,
+                            peer_id,
+                            e
+                        );
                     }
                 }
             }
 
-            // Build PeerChannels
-            let peer_channels = match builder.build(inbound_rx).await {
-                Ok(pc) => pc,
-                Err(e) => return Err(format!("Failed to build PeerChannels: {:?}", e)),
-            };
-
-            // Register with Router
+            // 3. LOCK & REGISTER
             {
+                let peer_channels = match builder.build(inbound_rx).await {
+                    Ok(pc) => pc,
+                    Err(e) => return Err(format!("Failed to build PeerChannels: {:?}", e)),
+                };
+
                 let mut router = router_arc.lock().await;
                 if let Err(e) = router.register_peer(peer_channels) {
                     return Err(format!("Failed to register peer: {:?}", e));

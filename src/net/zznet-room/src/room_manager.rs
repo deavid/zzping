@@ -37,44 +37,6 @@ pub enum CreateError {
     },
 }
 
-/// Component-provided factory for creating Room<T> instances per peer.
-///
-/// Components register a RoomManager with the Router at startup.
-/// Router calls create_for_peer() when a peer connects, passing the peer's Role.
-/// Components perform their own role-based authorization as needed.
-#[async_trait::async_trait]
-pub trait RoomManager: Send + Sync {
-    /// Returns the set of room IDs this manager can provide.
-    ///
-    /// Used for collision detection at registration time.
-    /// Must be static and unchanging after registration.
-    fn managed_rooms(&self) -> HashSet<RoomId>;
-
-    /// Create a room instance for a specific peer.
-    ///
-    /// Called by Router when a peer connects and offers rooms that intersect with managed_rooms().
-    /// Returns Some(room) if this manager owns the room_id, None otherwise.
-    /// Errors prevent room creation for this peer (logged and skipped).
-    ///
-    /// # Arguments
-    /// * `peer_id` - Unique peer identifier
-    /// * `role` - The peer's role for authorization decisions
-    /// * `room_id` - The room to create (must be in managed_rooms())
-    /// * `outbound_to_peer` - Channel for sending outbound messages to the peer
-    ///
-    /// # Returns
-    /// * `Ok(Some(room))` - Room created successfully
-    /// * `Ok(None)` - This manager doesn't own this room_id
-    /// * `Err(CreateError)` - Creation failed (room skipped for this peer)
-    async fn create_for_peer(
-        &self,
-        peer_id: PeerId,
-        role: Role,
-        room_id: &RoomId,
-        outbound_to_peer: mpsc::Sender<(RoomId, Vec<u8>)>,
-    ) -> Result<Option<RoomInboundRecipient>, CreateError>;
-}
-
 /// Actor message for creating a room (if using Actix wrapper).
 ///
 /// Components can implement RoomManagerActor if they prefer actor-based factories.

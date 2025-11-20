@@ -11,11 +11,11 @@ use crate::network_actor::IntentConfigNetworkActor;
 use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permissions::IntentConfigPermissions;
 use actix::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateError, RoomInboundRecipient, RoomManager};
+use zznet_room::room_manager::{CreateError, CreateRoomForPeer, RoomInboundRecipient};
 use zznet_router::RouterActor;
 
 /// IntentConfigNetworkManager orchestrates the per-peer translator layer.
@@ -133,9 +133,9 @@ impl Actor for IntentConfigNetworkManager {
         self.self_addr = Some(addr);
 
         // Register ourselves as a RoomManager with the Router
-        let manager =
-            std::sync::Arc::new(self.clone()) as std::sync::Arc<dyn RoomManager + Send + Sync>;
-        let register_msg = zznet_router::RegisterManager { manager };
+        let manager = self.self_addr.as_ref().unwrap().clone().recipient::<CreateRoomForPeer>();
+        let rooms = vec![RoomId::from("intent-config")];
+        let register_msg = zznet_router::RegisterManager { manager, rooms };
         self.router_actor.do_send(register_msg);
 
         // Keep actor alive
@@ -280,69 +280,70 @@ impl Handler<InboundGetConfigRequest> for IntentConfigNetworkManager {
 }
 
 #[async_trait::async_trait]
-impl RoomManager for IntentConfigNetworkManager {
-    fn managed_rooms(&self) -> HashSet<RoomId> {
-        let mut rooms = HashSet::new();
-        rooms.insert(RoomId::from("intent-config"));
-        rooms
-    }
+impl Handler<CreateRoomForPeer> for IntentConfigNetworkManager {
+    type Result = ResponseFuture<Result<Option<RoomInboundRecipient>, CreateError>>;
 
-    async fn create_for_peer(
-        &self,
-        peer_id: PeerId,
-        role: zznet_api::types::Role,
-        room_id: &RoomId,
-        outbound_to_peer: tokio::sync::mpsc::Sender<(zznet_api::types::RoomId, Vec<u8>)>,
-    ) -> Result<Option<RoomInboundRecipient>, CreateError> {
-        // Only handle the "intent-config" room
-        if room_id != &RoomId::from("intent-config") {
-            return Ok(None);
-        }
+    fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
+        let peer_id = msg.peer_id;
+        let role = msg.role;
+        let room_id = msg.room_id;
+        let outbound_to_peer = msg.outbound_to_peer;
 
-        // Translate the global Role to component-specific Permissions
-        let permissions = self
-            .permissions_map
-            .get(role.as_str())
-            .cloned()
-            .ok_or_else(|| CreateError::InvalidPermission {
-                room_id: room_id.clone(),
-            })?;
+        let permissions_map = self.permissions_map.clone();
+        let self_addr = self.self_addr.as_ref().unwrap().clone();
+        let translator_actors = self.translator_actors.clone();
+        let room_actors = self.room_actors.clone();
 
-        // Create the translator actor with the peer's permissions (not role)
-        let translator = IntentConfigNetworkActor::new(
-            peer_id.clone(),
-            permissions,
-            self.self_addr.as_ref().unwrap().clone(),
-        );
+        Box::pin(async move {
+            // Only handle the "intent-config" room
+            if room_id != RoomId::from("intent-config") {
+                return Ok(None);
+            }
 
-        // Start the translator actor
-        let translator_addr = translator.start();
+            // Translate the global Role to component-specific Permissions
+            let permissions = permissions_map
+                .get(role.as_str())
+                .cloned()
+                .ok_or_else(|| CreateError::InvalidPermission {
+                    room_id: room_id.clone(),
+                })?;
 
-        // Create the RoomActor<IntentConfigNetworkMsg>
-        let room_actor = RoomActor::new(
-            RoomId::from("intent-config"),
-            outbound_to_peer,
-            translator_addr
-                .clone()
-                .recipient::<IntentConfigNetworkMsg>(),
-        );
+            // Create the translator actor with the peer's permissions (not role)
+            let translator = IntentConfigNetworkActor::new(
+                peer_id.clone(),
+                permissions,
+                self_addr,
+            );
 
-        // Start the RoomActor
-        let room_actor_addr = room_actor.start();
+            // Start the translator actor
+            let translator_addr = translator.start();
 
-        // Store the addresses in the maps
-        {
-            let mut translators = self.translator_actors.write().unwrap();
-            translators.insert(peer_id.clone(), translator_addr);
+            // Create the RoomActor<IntentConfigNetworkMsg>
+            let room_actor = RoomActor::new(
+                RoomId::from("intent-config"),
+                outbound_to_peer,
+                translator_addr
+                    .clone()
+                    .recipient::<IntentConfigNetworkMsg>(),
+            );
 
-            let mut room_actors = self.room_actors.write().unwrap();
-            room_actors.insert(peer_id, room_actor_addr.clone());
-        }
+            // Start the RoomActor
+            let room_actor_addr = room_actor.start();
 
-        // Return the RoomActor's raw inbound recipient
-        let recipient = RoomActor::inbound_recipient(&room_actor_addr);
+            // Store the addresses in the maps
+            {
+                let mut translators = translator_actors.write().unwrap();
+                translators.insert(peer_id.clone(), translator_addr);
 
-        Ok(Some(recipient))
+                let mut room_actors = room_actors.write().unwrap();
+                room_actors.insert(peer_id, room_actor_addr.clone());
+            }
+
+            // Return the RoomActor's raw inbound recipient
+            let recipient = RoomActor::inbound_recipient(&room_actor_addr);
+
+            Ok(Some(recipient))
+        })
     }
 }
 

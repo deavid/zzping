@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateError, RoomInboundRecipient, RoomManager};
+use zznet_room::room_manager::{CreateError, CreateRoomForPeer, RoomInboundRecipient};
 use zznet_router::RouterActor;
 
 use crate::actor::MemDBActor;
@@ -110,9 +110,9 @@ impl Actor for MemDBNetworkManager {
         self.self_addr = Some(addr);
 
         // Register ourselves as a RoomManager with the Router
-        let manager =
-            std::sync::Arc::new(self.clone()) as std::sync::Arc<dyn RoomManager + Send + Sync>;
-        let register_msg = zznet_router::RegisterManager { manager };
+        let manager = self.self_addr.as_ref().unwrap().clone().recipient::<CreateRoomForPeer>();
+        let rooms = vec![RoomId::from("memdb")];
+        let register_msg = zznet_router::RegisterManager { manager, rooms };
         self.router_actor.do_send(register_msg);
     }
 
@@ -247,63 +247,65 @@ impl Handler<SendSubmitBatch> for MemDBNetworkManager {
 }
 
 #[async_trait::async_trait]
-impl RoomManager for MemDBNetworkManager {
-    fn managed_rooms(&self) -> std::collections::HashSet<RoomId> {
-        let mut rooms = std::collections::HashSet::new();
-        rooms.insert(RoomId::from("memdb"));
-        rooms
-    }
+impl Handler<CreateRoomForPeer> for MemDBNetworkManager {
+    type Result = ResponseFuture<Result<Option<RoomInboundRecipient>, CreateError>>;
 
-    async fn create_for_peer(
-        &self,
-        peer_id: PeerId,
-        role: zznet_api::types::Role,
-        room_id: &RoomId,
-        outbound_to_peer: tokio::sync::mpsc::Sender<(zznet_api::types::RoomId, Vec<u8>)>,
-    ) -> Result<Option<RoomInboundRecipient>, CreateError> {
-        // Only handle the "memdb" room
-        if room_id != &RoomId::from("memdb") {
-            return Ok(None);
-        }
+    fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
+        let peer_id = msg.peer_id;
+        let role = msg.role;
+        let room_id = msg.room_id;
+        let outbound_to_peer = msg.outbound_to_peer;
 
-        tracing::debug!(
-            "Creating MemDBNetworkActor and RoomActor for peer: {:?}",
-            peer_id
-        );
+        let main_actor = self.main_actor.clone();
+        let self_addr = self.self_addr.as_ref().unwrap().clone();
+        let translators = self.translators.clone();
+        let room_actors = self.room_actors.clone();
 
-        // Create the translator actor with the peer's role
-        let translator = MemDBNetworkActor::new(
-            peer_id.clone(),
-            role,
-            self.main_actor.clone(),
-            self.self_addr.as_ref().unwrap().clone(),
-        );
+        Box::pin(async move {
+            // Only handle the "memdb" room
+            if room_id != RoomId::from("memdb") {
+                return Ok(None);
+            }
 
-        // Start the translator actor
-        let translator_addr = translator.start();
+            tracing::debug!(
+                "Creating MemDBNetworkActor and RoomActor for peer: {:?}",
+                peer_id
+            );
 
-        // Create the RoomActor<MemDBMessage>
-        let room_actor = RoomActor::new(
-            RoomId::from("memdb"),
-            outbound_to_peer,
-            translator_addr.clone().recipient::<MemDBMessage>(),
-        );
+            // Create the translator actor with the peer's role
+            let translator = MemDBNetworkActor::new(
+                peer_id.clone(),
+                role,
+                main_actor,
+                self_addr,
+            );
 
-        // Start the RoomActor
-        let room_actor_addr = room_actor.start();
+            // Start the translator actor
+            let translator_addr = translator.start();
 
-        // Store the addresses in the maps
-        {
-            let mut translators = self.translators.write().unwrap();
-            translators.insert(peer_id.clone(), translator_addr);
+            // Create the RoomActor<MemDBMessage>
+            let room_actor = RoomActor::new(
+                RoomId::from("memdb"),
+                outbound_to_peer,
+                translator_addr.clone().recipient::<MemDBMessage>(),
+            );
 
-            let mut room_actors = self.room_actors.write().unwrap();
-            room_actors.insert(peer_id, room_actor_addr.clone());
-        }
+            // Start the RoomActor
+            let room_actor_addr = room_actor.start();
 
-        // Return the RoomActor's raw inbound recipient
-        let recipient = RoomActor::inbound_recipient(&room_actor_addr);
+            // Store the addresses in the maps
+            {
+                let mut translators = translators.write().unwrap();
+                translators.insert(peer_id.clone(), translator_addr);
 
-        Ok(Some(recipient))
+                let mut room_actors = room_actors.write().unwrap();
+                room_actors.insert(peer_id, room_actor_addr.clone());
+            }
+
+            // Return the RoomActor's raw inbound recipient
+            let recipient = RoomActor::inbound_recipient(&room_actor_addr);
+
+            Ok(Some(recipient))
+        })
     }
 }
