@@ -110,7 +110,12 @@ impl Actor for MemDBNetworkManager {
         self.self_addr = Some(addr);
 
         // Register ourselves as a RoomManager with the Router
-        let manager = self.self_addr.as_ref().unwrap().clone().recipient::<CreateRoomForPeer>();
+        let manager = self
+            .self_addr
+            .as_ref()
+            .unwrap()
+            .clone()
+            .recipient::<CreateRoomForPeer>();
         let rooms = vec![RoomId::from("memdb")];
         let register_msg = zznet_router::RegisterManager { manager, rooms };
         self.router_actor.do_send(register_msg);
@@ -246,66 +251,53 @@ impl Handler<SendSubmitBatch> for MemDBNetworkManager {
     }
 }
 
-#[async_trait::async_trait]
 impl Handler<CreateRoomForPeer> for MemDBNetworkManager {
-    type Result = ResponseFuture<Result<Option<RoomInboundRecipient>, CreateError>>;
+    type Result = Result<Option<RoomInboundRecipient>, CreateError>;
 
     fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
-        let peer_id = msg.peer_id;
-        let role = msg.role;
-        let room_id = msg.room_id;
-        let outbound_to_peer = msg.outbound_to_peer;
+        // Only handle the "memdb" room
+        if msg.room_id != RoomId::from("memdb") {
+            return Ok(None);
+        }
 
-        let main_actor = self.main_actor.clone();
-        let self_addr = self.self_addr.as_ref().unwrap().clone();
-        let translators = self.translators.clone();
-        let room_actors = self.room_actors.clone();
+        tracing::debug!(
+            "Creating MemDBNetworkActor and RoomActor for peer: {:?}",
+            msg.peer_id
+        );
 
-        Box::pin(async move {
-            // Only handle the "memdb" room
-            if room_id != RoomId::from("memdb") {
-                return Ok(None);
-            }
+        // Create the translator actor with the peer's role
+        let translator = MemDBNetworkActor::new(
+            msg.peer_id.clone(),
+            msg.role,
+            self.main_actor.clone(),
+            self.self_addr.as_ref().unwrap().clone(),
+        );
 
-            tracing::debug!(
-                "Creating MemDBNetworkActor and RoomActor for peer: {:?}",
-                peer_id
-            );
+        // Start the translator actor
+        let translator_addr = translator.start();
 
-            // Create the translator actor with the peer's role
-            let translator = MemDBNetworkActor::new(
-                peer_id.clone(),
-                role,
-                main_actor,
-                self_addr,
-            );
+        // Create the RoomActor<MemDBMessage>
+        let room_actor = RoomActor::new(
+            RoomId::from("memdb"),
+            msg.outbound_to_peer,
+            translator_addr.clone().recipient::<MemDBMessage>(),
+        );
 
-            // Start the translator actor
-            let translator_addr = translator.start();
+        // Start the RoomActor
+        let room_actor_addr = room_actor.start();
 
-            // Create the RoomActor<MemDBMessage>
-            let room_actor = RoomActor::new(
-                RoomId::from("memdb"),
-                outbound_to_peer,
-                translator_addr.clone().recipient::<MemDBMessage>(),
-            );
+        // Store the addresses in the maps
+        {
+            let mut translators = self.translators.write().unwrap();
+            translators.insert(msg.peer_id.clone(), translator_addr);
 
-            // Start the RoomActor
-            let room_actor_addr = room_actor.start();
+            let mut room_actors = self.room_actors.write().unwrap();
+            room_actors.insert(msg.peer_id.clone(), room_actor_addr.clone());
+        }
 
-            // Store the addresses in the maps
-            {
-                let mut translators = translators.write().unwrap();
-                translators.insert(peer_id.clone(), translator_addr);
+        // Return the RoomActor's raw inbound recipient
+        let recipient = RoomActor::inbound_recipient(&room_actor_addr);
 
-                let mut room_actors = room_actors.write().unwrap();
-                room_actors.insert(peer_id, room_actor_addr.clone());
-            }
-
-            // Return the RoomActor's raw inbound recipient
-            let recipient = RoomActor::inbound_recipient(&room_actor_addr);
-
-            Ok(Some(recipient))
-        })
+        Ok(Some(recipient))
     }
 }

@@ -281,69 +281,57 @@ impl Handler<InboundGetConfigRequest> for IntentConfigNetworkManager {
 
 #[async_trait::async_trait]
 impl Handler<CreateRoomForPeer> for IntentConfigNetworkManager {
-    type Result = ResponseFuture<Result<Option<RoomInboundRecipient>, CreateError>>;
+    type Result = Result<Option<RoomInboundRecipient>, CreateError>;
 
     fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
-        let peer_id = msg.peer_id;
-        let role = msg.role;
-        let room_id = msg.room_id;
-        let outbound_to_peer = msg.outbound_to_peer;
+        // Only handle the "intent-config" room
+        if msg.room_id != RoomId::from("intent-config") {
+            return Ok(None);
+        }
 
-        let permissions_map = self.permissions_map.clone();
-        let self_addr = self.self_addr.as_ref().unwrap().clone();
-        let translator_actors = self.translator_actors.clone();
-        let room_actors = self.room_actors.clone();
+        // Translate the global Role to component-specific Permissions
+        let permissions = self.permissions_map
+            .get(msg.role.as_str())
+            .cloned()
+            .ok_or_else(|| CreateError::InvalidPermission {
+                room_id: msg.room_id.clone(),
+            })?;
 
-        Box::pin(async move {
-            // Only handle the "intent-config" room
-            if room_id != RoomId::from("intent-config") {
-                return Ok(None);
-            }
+        // Create the translator actor with the peer's permissions (not role)
+        let translator = IntentConfigNetworkActor::new(
+            msg.peer_id.clone(),
+            permissions,
+            self.self_addr.as_ref().unwrap().clone(),
+        );
 
-            // Translate the global Role to component-specific Permissions
-            let permissions = permissions_map
-                .get(role.as_str())
-                .cloned()
-                .ok_or_else(|| CreateError::InvalidPermission {
-                    room_id: room_id.clone(),
-                })?;
+        // Start the translator actor
+        let translator_addr = translator.start();
 
-            // Create the translator actor with the peer's permissions (not role)
-            let translator = IntentConfigNetworkActor::new(
-                peer_id.clone(),
-                permissions,
-                self_addr,
-            );
+        // Create the RoomActor<IntentConfigNetworkMsg>
+        let room_actor = RoomActor::new(
+            RoomId::from("intent-config"),
+            msg.outbound_to_peer,
+            translator_addr
+                .clone()
+                .recipient::<IntentConfigNetworkMsg>(),
+        );
 
-            // Start the translator actor
-            let translator_addr = translator.start();
+        // Start the RoomActor
+        let room_actor_addr = room_actor.start();
 
-            // Create the RoomActor<IntentConfigNetworkMsg>
-            let room_actor = RoomActor::new(
-                RoomId::from("intent-config"),
-                outbound_to_peer,
-                translator_addr
-                    .clone()
-                    .recipient::<IntentConfigNetworkMsg>(),
-            );
+        // Store the addresses in the maps
+        {
+            let mut translators = self.translator_actors.write().unwrap();
+            translators.insert(msg.peer_id.clone(), translator_addr);
 
-            // Start the RoomActor
-            let room_actor_addr = room_actor.start();
+            let mut room_actors = self.room_actors.write().unwrap();
+            room_actors.insert(msg.peer_id.clone(), room_actor_addr.clone());
+        }
 
-            // Store the addresses in the maps
-            {
-                let mut translators = translator_actors.write().unwrap();
-                translators.insert(peer_id.clone(), translator_addr);
+        // Return the RoomActor's raw inbound recipient
+        let recipient = RoomActor::inbound_recipient(&room_actor_addr);
 
-                let mut room_actors = room_actors.write().unwrap();
-                room_actors.insert(peer_id, room_actor_addr.clone());
-            }
-
-            // Return the RoomActor's raw inbound recipient
-            let recipient = RoomActor::inbound_recipient(&room_actor_addr);
-
-            Ok(Some(recipient))
-        })
+        Ok(Some(recipient))
     }
 }
 

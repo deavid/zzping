@@ -4,7 +4,6 @@
 //! Router orchestrates creation and enforces strict 1:1 room↔component mapping.
 
 use actix::Recipient;
-use std::collections::HashSet;
 use tokio::sync::mpsc;
 use zznet_api::types::{PeerId, Role, RoomId};
 
@@ -51,15 +50,4 @@ pub struct CreateRoomForPeer {
     pub room_id: RoomId,
     /// The outbound sender to the peer.
     pub outbound_to_peer: mpsc::Sender<(RoomId, Vec<u8>)>,
-}
-
-/// Actix actor wrapper for RoomManager (optional convenience).
-///
-/// Components can implement this instead of RoomManager trait directly.
-#[async_trait::async_trait]
-pub trait RoomManagerActor:
-    actix::Actor<Context = actix::Context<Self>> + actix::Handler<CreateRoomForPeer>
-{
-    /// Returns the set of room IDs this actor manages.
-    fn managed_rooms(&self) -> HashSet<RoomId>;
 }

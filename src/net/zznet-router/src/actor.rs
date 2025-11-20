@@ -78,9 +78,9 @@ impl Handler<OnPeerConnected> for RouterActor {
         let negotiated_rooms = msg.negotiated_rooms;
         let outbound_tx = msg.outbound_tx;
         let inbound_rx = msg.inbound_rx;
+        let mut builder = crate::peer_channels::PeerChannelsBuilder::new(peer_id.clone());
 
         Box::pin(async move {
-            // 1. LOCK & LOOKUP
             let managers_to_call = {
                 let router = router_arc.lock().await;
                 let mut list = Vec::new();
@@ -92,10 +92,8 @@ impl Handler<OnPeerConnected> for RouterActor {
                     }
                 }
                 list
-            }; // Lock dropped here
+            };
 
-            // 2. EXECUTE IN PARALLEL (No lock held!)
-            let mut builder = crate::peer_channels::PeerChannelsBuilder::new(peer_id.clone());
             for (room_id, recipient) in managers_to_call {
                 let msg = zznet_room::room_manager::CreateRoomForPeer {
                     peer_id: peer_id.clone(),
@@ -140,13 +138,8 @@ impl Handler<OnPeerConnected> for RouterActor {
                 }
             }
 
-            // 3. LOCK & REGISTER
             {
-                let peer_channels = match builder.build(inbound_rx).await {
-                    Ok(pc) => pc,
-                    Err(e) => return Err(format!("Failed to build PeerChannels: {:?}", e)),
-                };
-
+                let peer_channels = builder.build(inbound_rx);
                 let mut router = router_arc.lock().await;
                 if let Err(e) = router.register_peer(peer_channels) {
                     return Err(format!("Failed to register peer: {:?}", e));

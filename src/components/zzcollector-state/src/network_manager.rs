@@ -284,83 +284,70 @@ impl Handler<BroadcastHeartbeat> for CStateNetworkManager {
 
 #[async_trait::async_trait]
 impl Handler<CreateRoomForPeer> for CStateNetworkManager {
-    type Result = ResponseFuture<Result<Option<RoomInboundRecipient>, CreateError>>;
+    type Result = Result<Option<RoomInboundRecipient>, CreateError>;
 
     fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
-        let peer_id = msg.peer_id;
-        let role = msg.role;
-        let room_id = msg.room_id;
-        let outbound_to_peer = msg.outbound_to_peer;
+        // Only handle the "cstate" room
+        if msg.room_id != RoomId::from("cstate") {
+            return Ok(None);
+        }
 
-        let permissions_map = self.permissions_map.clone();
-        let main_actor = self.main_actor.clone();
-        let self_addr = self.self_addr.as_ref().unwrap().clone();
-        let translator_actors = self.translator_actors.clone();
-        let room_actors = self.room_actors.clone();
+        // Translate Role to Permissions using the policy map
+        let permissions = self.permissions_map
+            .get(msg.role.as_str())
+            .cloned()
+            .ok_or_else(|| {
+                warn!(
+                    "Role '{}' not found in permissions map for peer {}",
+                    msg.role.as_str(),
+                    msg.peer_id
+                );
+                CreateError::InvalidPermission {
+                    room_id: msg.room_id.clone(),
+                }
+            })?;
 
-        Box::pin(async move {
-            // Only handle the "cstate" room
-            if room_id != RoomId::from("cstate") {
-                return Ok(None);
-            }
+        debug!(
+            "Creating NetworkActor for peer {} with role '{}': permissions = {:?}",
+            msg.peer_id,
+            msg.role.as_str(),
+            permissions
+        );
 
-            // Translate Role to Permissions using the policy map
-            let permissions = permissions_map
-                .get(role.as_str())
-                .cloned()
-                .ok_or_else(|| {
-                    warn!(
-                        "Role '{}' not found in permissions map for peer {}",
-                        role.as_str(),
-                        peer_id
-                    );
-                    CreateError::InvalidPermission {
-                        room_id: room_id.clone(),
-                    }
-                })?;
+        // Create the translator actor with the peer's permissions (not role)
+        let translator = CStateNetworkActor::new(
+            msg.peer_id.clone(),
+            permissions,
+            self.main_actor.clone(),
+            self.self_addr.as_ref().unwrap().clone(),
+        );
 
-            debug!(
-                "Creating NetworkActor for peer {} with role '{}': permissions = {:?}",
-                peer_id,
-                role.as_str(),
-                permissions
-            );
+        // Start the translator actor
+        let translator_addr = translator.start();
 
-            // Create the translator actor with the peer's permissions (not role)
-            let translator = CStateNetworkActor::new(
-                peer_id.clone(),
-                permissions,
-                main_actor,
-                self_addr,
-            );
+        // Create the RoomActor<CStateMessage>
+        let room_actor = RoomActor::new(
+            RoomId::from("cstate"),
+            msg.outbound_to_peer,
+            translator_addr.clone().recipient::<CStateMessage>(),
+        );
 
-            // Start the translator actor
-            let translator_addr = translator.start();
+        // Start the RoomActor
+        let room_actor_addr = room_actor.start();
 
-            // Create the RoomActor<CStateMessage>
-            let room_actor = RoomActor::new(
-                RoomId::from("cstate"),
-                outbound_to_peer,
-                translator_addr.clone().recipient::<CStateMessage>(),
-            );
+        // Store the addresses in the maps
+        {
+            let mut translators = self.translator_actors.write().unwrap();
+            translators.insert(msg.peer_id.clone(), translator_addr);
 
-            // Start the RoomActor
-            let room_actor_addr = room_actor.start();
+            let mut room_actors = self.room_actors.write().unwrap();
+            room_actors.insert(msg.peer_id.clone(), room_actor_addr.clone());
+        }
 
-            // Store the addresses in the maps
-            {
-                let mut translators = translator_actors.write().unwrap();
-                translators.insert(peer_id.clone(), translator_addr);
+        // Return the RoomActor's raw inbound recipient
+        let recipient = RoomActor::inbound_recipient(&room_actor_addr);
 
-                let mut room_actors = room_actors.write().unwrap();
-                room_actors.insert(peer_id, room_actor_addr.clone());
-            }
-
-            // Return the RoomActor's raw inbound recipient
-            let recipient = RoomActor::inbound_recipient(&room_actor_addr);
-
-            Ok(Some(recipient))
-        })
+        Ok(Some(recipient))
     }
 }
 

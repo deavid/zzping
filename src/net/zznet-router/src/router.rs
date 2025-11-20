@@ -98,10 +98,10 @@ mod tests {
     }
 
     impl Handler<CreateRoomForPeer> for MockManager {
-        type Result = ResponseFuture<Result<Option<RoomInboundRecipient>, CreateError>>;
+        type Result = Result<Option<RoomInboundRecipient>, CreateError>;
 
         fn handle(&mut self, _msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
-            Box::pin(async { Ok(None) })
+            Ok(None)
         }
     }
 

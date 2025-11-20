@@ -46,20 +46,17 @@ impl PeerChannelsBuilder {
     /// Build the PeerChannels by connecting transport channels.
     ///
     /// Spawns the inbound routing task and sets up channels.
-    pub(crate) async fn build(
-        self,
-        inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>,
-    ) -> Result<PeerChannels, SessionError> {
+    pub(crate) fn build(self, inbound_rx: mpsc::Receiver<(RoomId, Vec<u8>)>) -> PeerChannels {
         let rooms_map = self.rooms;
 
         let rooms = rooms_map;
         let peer_id = self.peer_id.clone();
         let task = tokio::spawn(PeerChannels::inbound_task_loop(rooms, peer_id, inbound_rx));
 
-        Ok(PeerChannels {
+        PeerChannels {
             peer_id: self.peer_id,
             inbound_task: task,
-        })
+        }
     }
 }
 
