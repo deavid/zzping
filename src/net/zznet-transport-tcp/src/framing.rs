@@ -10,7 +10,7 @@ use std::io;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tracing::trace;
 
-/// Maximum frame size (16 MB) - matches zznet-api mock transport limit.
+/// Maximum frame size (16 MB)
 pub(crate) const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 /// Reads a length-prefixed frame from an asynchronous byte stream.
@@ -45,9 +45,19 @@ where
         ));
     }
 
-    // Read frame data directly into a vec - read_exact will fill it completely
-    let mut buffer = vec![0u8; frame_len];
-    stream.read_exact(&mut buffer).await?;
+    // Read frame data incrementally to avoid memory exhaustion.
+    // We use a limited initial capacity to prevent allocating 16MB immediately.
+    let mut buffer = Vec::with_capacity(std::cmp::min(frame_len, 8192));
+
+    let mut take = stream.take(frame_len as u64);
+    take.read_to_end(&mut buffer).await?;
+
+    if buffer.len() != frame_len {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "Connection closed before full frame",
+        ));
+    }
 
     trace!("Read frame: {} bytes", frame_len);
     Ok(Bytes::from(buffer))
