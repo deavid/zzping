@@ -1,4 +1,4 @@
-//! Builder-based integration tests for the zznet-demo application.
+//! Harness-based integration tests for the zznet-demo application.
 use zznet_demo::{
     config::DemoAppConfig,
     messages::{GetCounter, PublishToA, SendPing, SendPingFromB},
@@ -6,7 +6,7 @@ use zznet_demo::{
 };
 
 #[tokio::test]
-async fn test_builder_unauthorized_connection_is_rejected() {
+async fn test_harness_unauthorized_connection_is_rejected() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async move {

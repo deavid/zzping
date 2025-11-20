@@ -188,12 +188,15 @@ async fn epic_1_clockwork_orange() {
     let mock_memdb = MockMemDB::new(blocked).start();
 
     let builder = PingerBuilder {
-        memdb_recipient: mock_memdb.clone().recipient(),
         clock: Some(clock.clone()),
         spawn_strategy: crate::builder::SpawnStrategy::Current,
     };
 
-    let scheduler = builder.start_on_arbiter(Arbiter::current(), mock_client.clone());
+    let scheduler = builder.start_on_arbiter(
+        Arbiter::current(),
+        mock_client.clone(),
+        mock_memdb.clone().recipient(),
+    );
 
     // Configure
     scheduler
@@ -274,12 +277,15 @@ async fn epic_2_unreliable_narrator() {
     let mock_memdb = MockMemDB::new(blocked).start();
 
     let builder = PingerBuilder {
-        memdb_recipient: mock_memdb.clone().recipient(),
         clock: Some(clock.clone()),
         spawn_strategy: crate::builder::SpawnStrategy::Current,
     };
 
-    let scheduler = builder.start_on_arbiter(Arbiter::current(), mock_client.clone());
+    let scheduler = builder.start_on_arbiter(
+        Arbiter::current(),
+        mock_client.clone(),
+        mock_memdb.clone().recipient(),
+    );
 
     // Configure
     scheduler
@@ -373,12 +379,15 @@ async fn epic_3_clogged_drain() {
     });
 
     let builder = PingerBuilder {
-        memdb_recipient: mock_memdb.clone().recipient(),
         clock: Some(clock.clone()),
         spawn_strategy: crate::builder::SpawnStrategy::Current,
     };
 
-    let scheduler = builder.start_on_arbiter(Arbiter::current(), mock_client.clone());
+    let scheduler = builder.start_on_arbiter(
+        Arbiter::current(),
+        mock_client.clone(),
+        mock_memdb.clone().recipient(),
+    );
 
     // Configure high rate to fill buffer quickly
     scheduler

@@ -2,7 +2,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::clone::Clone;
-use zznet_builder::traits::ZZNetConfig;
 
 /// Configuration for the demo application.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -31,5 +30,3 @@ impl DemoAppConfig {
         }
     }
 }
-
-impl ZZNetConfig for DemoAppConfig {}

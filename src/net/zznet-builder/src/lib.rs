@@ -1,11 +1,8 @@
-//! ZZNet Application Builder - Complete Application Scaffolding Framework
+//! ZZNet Runtime Framework
 //!
-//! This crate provides a complete application framework for building ZZNet applications
-//! with minimal boilerplate. It handles all the standard concerns: CLI parsing, logging,
-//! configuration, TLS, runtime setup, and more.
-
-pub mod builder;
-mod cli;
+//! This crate provides runtime helpers—logging, signals, TLS, harness integration—for
+//! building ZZNet applications with minimal boilerplate.
+pub mod harness;
 mod logging;
 mod runtime;
 mod signals;

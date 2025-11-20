@@ -20,9 +20,8 @@ pub enum SpawnStrategy {
 }
 
 /// Builder for creating the Pinger component.
+#[derive(Clone)]
 pub struct PingerBuilder {
-    /// Recipient where to send the ping results, usually a MemDB component.
-    pub memdb_recipient: Recipient<StorePingResult>,
     /// Optional clock for testing.
     pub clock: Option<Arc<dyn Clock>>,
     /// Strategy for spawning the actor and backend.
@@ -32,15 +31,19 @@ pub struct PingerBuilder {
 impl PingerBuilder {
     /// Builds and starts the Pinger component on the current Arbiter.
     /// This is the default production method that creates a new Arbiter.
-    pub fn start(self, client: impl PingerClient) -> Addr<PingerSchedulerActor> {
+    pub fn start(
+        self,
+        client: impl PingerClient,
+        memdb_recipient: Recipient<StorePingResult>,
+    ) -> Addr<PingerSchedulerActor> {
         match self.spawn_strategy {
             SpawnStrategy::NewArbiter => {
                 let arbiter = Arbiter::new();
-                self.start_on_arbiter(arbiter.handle(), client)
+                self.start_on_arbiter(arbiter.handle(), client, memdb_recipient)
             }
             SpawnStrategy::Current => {
                 let current_arbiter = Arbiter::current();
-                self.start_on_arbiter(current_arbiter, client)
+                self.start_on_arbiter(current_arbiter, client, memdb_recipient)
             }
         }
     }
@@ -51,12 +54,13 @@ impl PingerBuilder {
         self,
         arbiter: ArbiterHandle,
         client: impl PingerClient,
+        memdb_recipient: Recipient<StorePingResult>,
     ) -> Addr<PingerSchedulerActor> {
         // Create Tokio channels for backend
         let (work_tx, work_rx) = mpsc::channel(100);
         let (state_tx, state_rx) = watch::channel(false);
 
-        let memdb_recipient = self.memdb_recipient.clone();
+        let memdb_recipient = memdb_recipient.clone();
         let clock = self.clock.clone();
 
         // Start the scheduler actor on the provided arbiter

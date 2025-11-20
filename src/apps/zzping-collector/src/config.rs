@@ -1,7 +1,6 @@
 //! Configuration structures and loading.
 
 use serde::{Deserialize, Serialize};
-use zznet_builder::traits::ZZNetConfig;
 
 /// Collector application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -102,6 +101,3 @@ impl CollectorConfig {
         }
     }
 }
-
-/// Implement ZZNetConfig trait for CollectorConfig
-impl ZZNetConfig for CollectorConfig {}

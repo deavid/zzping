@@ -1,39 +1,27 @@
-//! Core traits for the ZZNet application builder framework.
+//! Core traits for the ZZNet runtime harness.
 //!
-//! Decouples services from the `AppBuilder` by defining a standard contract
-//! for lifecycle management and configuration.
+//! Defines the lifecycle contract that applications must implement so the
+//! `AppHarness` can manage startup, shutdown, and logging.
 
+use anyhow::Result;
 use async_trait::async_trait;
-use serde::de::DeserializeOwned;
 
-/// A marker trait that allows a struct to be used as a service's
-/// deserializable configuration.
-pub trait ZZNetConfig: DeserializeOwned + Send + Sync + 'static {}
-
-/// Defines a service's lifecycle, allowing the `AppBuilder` to manage
-/// its construction, execution, and identity.
+/// Represents a fully constructed application ready to run.
+///
+/// Implementors of this trait should hold their dependencies (Builders) in `Option` fields.
+/// During `startup()`, they should take those builders, start them, and store the resulting
+/// Actor Addresses in other `Option` fields.
 #[async_trait]
-pub trait ZZNetService: Sized + Send + 'static {
-    /// The type-safe, deserializable configuration for the service.
-    type Config: ZZNetConfig;
+pub trait ZZNetApplication: Send + 'static {
+    /// Initialize and start all internal actors/tasks.
+    /// This is called AFTER the Tokio/Actix runtime is active.
+    async fn startup(&mut self) -> Result<()>;
 
-    /// A service-specific error type that can be unified by the `AppBuilder`.
-    type Error: Into<anyhow::Error> + Send + Sync + 'static;
+    /// Graceful shutdown hook.
+    /// Called when a shutdown signal (Ctrl+C) is received.
+    /// Use this to flush buffers and stop actors using stored Addresses.
+    async fn shutdown(&mut self) -> Result<()>;
 
-    /// Constructs the service, separating configuration-based setup
-    /// from the execution logic in `run`.
-    fn new(config: Self::Config) -> Result<Self, Self::Error>;
-
-    /// Contains the service's primary logic, such as starting actors or listeners.
-    async fn startup(&mut self) -> Result<(), Self::Error>;
-
-    /// Graceful shutdown hook for cleaning up resources.
-    async fn shutdown(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    /// Provides a stable, human-readable identifier for logging.
-    fn service_name() -> &'static str {
-        std::any::type_name::<Self>()
-    }
+    /// Application name for logging purposes.
+    fn service_name(&self) -> &str;
 }

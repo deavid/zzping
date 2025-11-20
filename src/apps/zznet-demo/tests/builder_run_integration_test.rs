@@ -1,8 +1,8 @@
-//! Run demo services via `zznet-builder` in background and verify connectivity.
+//! Run demo services via `zznet-builder` harness in background and verify connectivity.
 use zznet_demo::{config::DemoAppConfig, test_harness::spawn_demo_service_with_builder};
 
 #[tokio::test]
-async fn test_builder_run_services_connect_and_message() {
+async fn test_harness_run_services_connect_and_message() {
     let local = tokio::task::LocalSet::new();
     local
         .run_until(async move {

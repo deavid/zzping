@@ -4,7 +4,7 @@ use crate::config::DemoAppConfig;
 use crate::service::DemoAppService;
 use actix::Addr;
 use zznet_api::mock::create_mock_pair;
-use zznet_builder::traits::ZZNetService;
+use zznet_builder::harness::AppHarness;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::HandleTransport;
 
@@ -12,12 +12,8 @@ use zznet_hello::connection_manager::HandleTransport;
 pub async fn spawn_demo_service(
     config: DemoAppConfig,
 ) -> (DemoAppService, Addr<crate::component_a::ComponentAActor>) {
-    // Build the service using AppBuilder helper to exercise builder-based config handling
-    let builder = zznet_builder::builder::AppBuilder::new("zznet-demo", env!("CARGO_PKG_VERSION"));
-
-    let service = builder
-        .build_service_from_config::<DemoAppService>(config.clone())
-        .unwrap();
+    // Create the service directly (no builder needed)
+    let service = DemoAppService::new(config.clone()).unwrap();
     let comp_a_addr = service.component_a.clone();
     (service, comp_a_addr)
 }
@@ -33,25 +29,21 @@ pub async fn spawn_demo_service_with_builder(
     Addr<crate::component_a::ComponentAActor>,
     tokio::sync::oneshot::Sender<()>,
 ) {
-    // Build command-line like args for initializing logging
-    let builder = zznet_builder::builder::AppBuilder::new("zznet-demo", env!("CARGO_PKG_VERSION"))
-        .with_default_config("demo.ron");
-
+    // Create the service directly
     let service = DemoAppService::new(config.clone()).unwrap();
     let comp_a_addr = service.component_a.clone();
 
     // Create a programmatic stop channel
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let (stop_tx, _stop_rx) = tokio::sync::oneshot::channel::<()>();
 
-    // Move builder and config into the blocking task
+    // Spawn a task that runs the service with harness
     let cfg_clone = config.clone();
-    let handle = tokio::task::spawn_blocking(move || {
-        // Run the builder in the blocking thread
-        builder
-            .run_service_with_config_and_stop::<DemoAppService, _>(cfg_clone, async move {
-                let _ = stop_rx.await;
-            })
-            .unwrap();
+    let handle = tokio::task::spawn(async move {
+        let harness = AppHarness::new().log_level("info");
+        harness.init_logging();
+
+        let app = DemoAppService::new(cfg_clone).unwrap();
+        let _ = harness.run(app);
     });
 
     (handle, service, comp_a_addr, stop_tx)

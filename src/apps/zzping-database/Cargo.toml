@@ -33,7 +33,7 @@ serde.workspace = true
 ron.workspace = true
 
 # CLI argument parsing
-# CLI argument parsing
+clap.workspace = true
 
 # Logging and tracing
 tracing.workspace = true

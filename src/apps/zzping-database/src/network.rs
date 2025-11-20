@@ -5,7 +5,6 @@
 //! The implementation focuses on supporting the vision architecture
 //! (Room<T> pattern) and connection lifecycle management.
 
-use crate::service::StartedComponents;
 use actix::Actor;
 use std::collections::HashSet;
 use std::time::Duration;
@@ -54,8 +53,8 @@ impl DatabaseNetwork {
     /// 5. Messages flow via Room<T> channels (auto-registered by components)
     ///
     /// # Arguments
-    /// * `components` - Started component actors (contains PeerManagerActor)
-    pub async fn run(&self, components: &StartedComponents) -> Result<(), String> {
+    /// * `router_actor` - The RouterActor address for connection management
+    pub async fn run(&self, router_actor: &actix::Addr<zznet_router::RouterActor>) -> Result<(), String> {
         tracing::info!("Starting database network on {}", self.bind_addr);
 
         // Step 1: Create TCP transport server
@@ -100,7 +99,7 @@ impl DatabaseNetwork {
 
         // Step 4: Create ConnectionManager (manages HelloActors)
         let connection_manager = ConnectionManager::new(
-            components.router_actor.clone().recipient(),
+            router_actor.clone().recipient(),
             "database".to_string(),
             allowed_roles,
         );

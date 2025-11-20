@@ -205,9 +205,6 @@ impl DatabaseConfig {
     }
 }
 
-/// Implement ZZNetConfig trait for DatabaseConfig
-impl zznet_builder::traits::ZZNetConfig for DatabaseConfig {}
-
 #[cfg(test)]
 mod tests {
     use super::*;

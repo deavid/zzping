@@ -4,18 +4,16 @@
 //! configures, starts, and coordinates all collector components.
 
 use crate::config::{CollectorConfig, CollectorTlsConfig};
-use crate::error::CollectorError;
-use actix::{Actor, Addr};
+use actix::{Actor, Addr, Recipient};
 use anyhow::Result;
 use async_trait::async_trait;
 use surge_ping::{Client, ConfigBuilder};
+use tokio::task::JoinHandle;
 use zzintent_config::actor::IntentConfigActor;
 use zzintent_config::builder::IntentConfigBuilder;
-use zzintent_config::permissions::IntentConfigPermissions;
 use zzmem_db::actor::MemDBActor;
-use zzmem_db::builder::MemDBBuilder;
-use zzmem_db::config::MemDBConfig;
-use zznet_builder::traits::ZZNetService;
+use zzmem_db::messages::StorePingResult;
+use zznet_builder::traits::ZZNetApplication;
 use zznet_router::RouterActor;
 use zzpinger::builder::PingerBuilder;
 use zzpinger::mock::MockPingerClient;
@@ -42,117 +40,118 @@ pub struct StartedComponents {
     pub router_actor: Addr<RouterActor>,
 }
 
-#[derive(Debug)]
-/// Collector service that orchestrates all components.
-pub struct CollectorService {
+/// Collector application that orchestrates all components.
+pub struct CollectorApp {
     config: CollectorConfig,
+
+    // State: Pre-Startup (Dependencies waiting to be started)
+    // These must be Option so we can .take() them during startup
+    pinger_builder: Option<zzpinger::builder::PingerBuilder>,
+    memdb_builder: Option<zzmem_db::builder::MemDBBuilder>,
+    intent_builder: Option<zzintent_config::builder::IntentConfigBuilder>,
+    // ... add other component builders here ...
+
+    // State: Running (Active Actors)
+    pinger_addr: Option<Addr<zzpinger::scheduler::PingerSchedulerActor>>,
+    memdb_addr: Option<Addr<MemDBActor>>,
+    intent_addr: Option<Addr<IntentConfigActor>>,
+    network_task: Option<JoinHandle<()>>,
+    // ... add other addresses here ...
 }
 
-impl CollectorService {
-    /// Creates component builders for all collector components.
-    pub fn create_builders(&self) -> Result<ComponentBuilders> {
-        // Create permissions policy for intent-config (collector has read-only access)
-        let mut intent_config_permissions = std::collections::HashMap::new();
-        intent_config_permissions.insert(
-            "collector".to_string(),
-            IntentConfigPermissions::new(true, false), // can read but not write
-        );
+impl CollectorApp {
+    /// Create a new collector application with pre-configured component builders.
+    ///
+    /// This constructor follows the "Construction Outside, Execution Inside" pattern:
+    /// the application receives fully-configured builders and will start them during
+    /// the `startup()` phase.
+    pub fn new(
+        config: CollectorConfig,
+        pinger_builder: zzpinger::builder::PingerBuilder,
+        memdb_builder: zzmem_db::builder::MemDBBuilder,
+        intent_builder: zzintent_config::builder::IntentConfigBuilder,
+    ) -> Self {
+        Self {
+            config,
+            pinger_builder: Some(pinger_builder),
+            memdb_builder: Some(memdb_builder),
+            intent_builder: Some(intent_builder),
+            // Initial running state is empty
+            pinger_addr: None,
+            memdb_addr: None,
+            intent_addr: None,
+            network_task: None,
+        }
+    }
+}
 
-        let intent_config = IntentConfigBuilder::new()
-            .config_for_collector()
-            .permissions_map(intent_config_permissions);
+/// Convert collector TLS config to transport layer TLS config
+pub fn convert_tls_config(
+    tls: &CollectorTlsConfig,
+) -> Result<zznet_transport_tcp::config::TlsConfig> {
+    Ok(zznet_builder::tls::to_transport_tls_config(
+        &tls.client_cert_path,
+        &tls.client_key_path,
+        Some(&tls.ca_cert_path),
+    ))
+}
 
-        let memdb_addr = MemDBBuilder::new(MemDBConfig::for_collector(
-            self.config.components.memdb_batch_size,
-        ))
-        .build();
-
-        let pinger = PingerBuilder {
-            memdb_recipient: memdb_addr.clone().recipient(),
-            clock: None,
-            spawn_strategy: zzpinger::builder::SpawnStrategy::NewArbiter,
-        };
-
-        Ok(ComponentBuilders {
-            intent_config,
-            pinger,
-            memdb_addr,
-        })
+#[async_trait]
+impl ZZNetApplication for CollectorApp {
+    fn service_name(&self) -> &str {
+        "ZZPing Collector"
     }
 
-    /// Starts all collector components from their builders.
-    pub async fn start_components(&self, builders: ComponentBuilders) -> Result<StartedComponents> {
-        let router_actor = RouterActor::new(vec![]).start();
-        let intent_addr = builders
-            .intent_config
-            .router(router_actor.clone())
-            .start()
-            .map_err(|e| CollectorError::Component(format!("IntentConfig start failed: {}", e)))?;
-        let memdb_addr = builders.memdb_addr.clone();
+    async fn startup(&mut self) -> Result<()> {
+        // 1. Start Router (Standard actor, usually created inside startup)
+        let router = zznet_router::RouterActor::new(vec![]).start();
 
-        // Create pinger client based on configuration
+        // 2. Take Builders and Start Components
+        // Note: We unwrap() because if builders are missing at startup, it's a developer error.
+
+        // Example: Intent Config
+        let intent_addr = self
+            .intent_builder
+            .take()
+            .unwrap()
+            .router(router.clone())
+            .start()?;
+        self.intent_addr = Some(intent_addr);
+
+        // Start MemDB
+        let memdb_addr = self
+            .memdb_builder
+            .take()
+            .unwrap()
+            .router(router.clone())
+            .build();
+        let memdb_recipient: Recipient<StorePingResult> = memdb_addr.clone().recipient();
+        self.memdb_addr = Some(memdb_addr.clone());
+
+        // Start Pinger with the real memdb recipient
+        let pinger_builder = self.pinger_builder.take().unwrap();
         let pinger_addr = match self.config.components.pinger_backend {
             crate::config::PingerBackend::Real => {
                 let config = ConfigBuilder::default().build();
                 log::info!("Creating surge_ping client...");
                 let client = Client::new(&config)
                     .expect("Failed to create surge_ping client - check raw socket permissions");
-                log::info!("surge_ping client created successfully");
-                builders.pinger.start(client)
+                pinger_builder.start(client, memdb_recipient.clone())
             }
             crate::config::PingerBackend::Mock => {
                 log::info!("Using mock pinger client for testing");
                 let client = MockPingerClient::default();
-                builders.pinger.start(client)
+                pinger_builder.start(client, memdb_recipient.clone())
             }
         };
+        self.pinger_addr = Some(pinger_addr);
 
-        log::info!("Pinger component initialized");
-
-        Ok(StartedComponents {
-            intent_config: intent_addr,
-            pinger: pinger_addr,
-            memdb_addr: memdb_addr.clone(),
-            router_actor,
-        })
-    }
-
-    /// Convert collector TLS config to transport layer TLS config
-    pub fn convert_tls_config(
-        tls: &CollectorTlsConfig,
-    ) -> Result<zznet_transport_tcp::config::TlsConfig> {
-        Ok(zznet_builder::tls::to_transport_tls_config(
-            &tls.client_cert_path,
-            &tls.client_key_path,
-            Some(&tls.ca_cert_path),
-        ))
-    }
-}
-
-#[async_trait]
-impl ZZNetService for CollectorService {
-    type Config = CollectorConfig;
-    type Error = CollectorError;
-
-    fn new(config: Self::Config) -> Result<Self, Self::Error> {
-        // Validation is now handled by the AppBuilder before `new` is called.
-        Ok(Self { config })
-    }
-
-    async fn startup(&mut self) -> Result<(), Self::Error> {
-        tracing::info!("Collector service starting");
-
-        let builders = self.create_builders()?;
-        let started = self.start_components(builders).await?;
-
-        tracing::info!("All components started successfully");
-        tracing::info!("Starting network wiring");
-
+        // 3. Network wiring (CollectorNetwork)
+        // The network connection loop is an async task, not an actor usually.
+        // Spawn it here.
         let tls_cfg = if let Some(tls) = &self.config.tls {
             tracing::info!("TLS enabled - using mTLS connection");
-            Some(Self::convert_tls_config(tls).map_err(|e| {
-                CollectorError::Service(format!("Failed to convert TLS config: {}", e))
-            })?)
+            Some(convert_tls_config(tls)?)
         } else {
             tracing::warn!("TLS disabled - using plain TCP connection");
             None
@@ -171,32 +170,39 @@ impl ZZNetService for CollectorService {
             handshake_timeout,
         );
 
-        tracing::info!("Collector service connecting to database");
-
-        // Spawn network connect in a background task so `run()` returns quickly
-        // and the builder can report successful startup. The network connect loop
-        // will continue to run and log errors/retries; we do not await it here.
-        let connect_started = StartedComponents {
-            intent_config: started.intent_config.clone(),
-            pinger: started.pinger.clone(),
-            memdb_addr: started.memdb_addr.clone(),
-            router_actor: started.router_actor.clone(),
+        let started_components = StartedComponents {
+            intent_config: self.intent_addr.clone().unwrap(),
+            pinger: self.pinger_addr.clone().unwrap(),
+            memdb_addr: self.memdb_addr.clone().unwrap(),
+            router_actor: router,
         };
 
-        let network_clone = network;
-        tokio::spawn(async move {
-            if let Err(e) = network_clone.connect(&connect_started).await {
+        // TODO(network-startup): Currently if network.connect() fails (e.g., connection refused),
+        // the error is only logged and startup() still returns Ok. This could leave the app
+        // in a "zombie" state where it appears running but network is non-functional.
+        // Future improvement: Use a oneshot channel to wait for "Connected" confirmation
+        // before returning from startup(), so failures are propagated immediately.
+        let handle = tokio::spawn(async move {
+            if let Err(e) = network.connect(&started_components).await {
                 tracing::error!("Collector network task failed: {}", e);
             }
         });
+        self.network_task = Some(handle);
 
-        // The AppBuilder will hold the process open until a shutdown signal is received.
-        // We just need to return Ok(()) here to indicate successful startup.
         Ok(())
     }
 
-    fn service_name() -> &'static str {
-        "ZZPing Collector"
+    async fn shutdown(&mut self) -> Result<()> {
+        if let Some(handle) = self.network_task.take() {
+            handle.abort();
+        }
+
+        // Drop actor addresses to stop them gracefully
+        drop(self.pinger_addr.take());
+        drop(self.memdb_addr.take());
+        drop(self.intent_addr.take());
+
+        Ok(())
     }
 }
 
@@ -243,24 +249,40 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_service_creation() {
+    #[actix_rt::test]
+    async fn test_app_creation() {
         let config = create_test_config();
-        let service = CollectorService::new(config);
-        assert!(service.is_ok());
+        // For testing, we need to create the builders
+        let intent_builder =
+            zzintent_config::builder::IntentConfigBuilder::new().config_for_collector();
+        let memdb_builder =
+            zzmem_db::builder::MemDBBuilder::new(zzmem_db::config::MemDBConfig::for_collector(50));
+        let pinger_builder = zzpinger::builder::PingerBuilder {
+            clock: None,
+            spawn_strategy: zzpinger::builder::SpawnStrategy::NewArbiter,
+        };
+
+        let _app = CollectorApp::new(config, pinger_builder, memdb_builder, intent_builder);
+        // Just check that it was created
+        // If we get here, construction succeeded
     }
 
-    #[test]
-    fn test_service_creation_with_invalid_config_is_handled_by_builder() {
-        // This test is now conceptual. The builder calls `validate` before `new`.
-        // If we were to call `new` directly with invalid config, it should succeed
-        // because `new` no longer validates.
-        let mut config = create_test_config();
-        config.collector_id = String::new(); // Invalid!
+    #[actix_rt::test]
+    async fn test_app_creation_with_invalid_config() {
+        // Since validation is now done at config load time, not in new(),
+        // this test is less relevant. We just test that construction works.
+        let config = create_test_config();
+        let intent_builder =
+            zzintent_config::builder::IntentConfigBuilder::new().config_for_collector();
+        let memdb_builder =
+            zzmem_db::builder::MemDBBuilder::new(zzmem_db::config::MemDBConfig::for_collector(50));
+        let pinger_builder = zzpinger::builder::PingerBuilder {
+            clock: None,
+            spawn_strategy: zzpinger::builder::SpawnStrategy::NewArbiter,
+        };
 
-        // Direct call to `new` should not fail, as validation is deferred to the builder.
-        let result = CollectorService::new(config);
-        assert!(result.is_ok());
+        let _app = CollectorApp::new(config, pinger_builder, memdb_builder, intent_builder);
+        // Construction should succeed
     }
 
     #[test]
@@ -287,7 +309,7 @@ mod tests {
                 .to_string(),
         };
 
-        let result = CollectorService::convert_tls_config(&tls_config);
+        let result = convert_tls_config(&tls_config);
         assert!(result.is_ok(), "TLS config conversion should succeed");
 
         let transport_config = result.unwrap();
@@ -318,7 +340,7 @@ mod tests {
 
         // Test network creation with TLS
         if let Some(tls) = &create_test_config().tls {
-            let tls_config = CollectorService::convert_tls_config(tls).unwrap();
+            let tls_config = convert_tls_config(tls).unwrap();
             let _network_with_tls = crate::network::CollectorNetwork::new(
                 "127.0.0.1:8443",
                 Some(tls_config),

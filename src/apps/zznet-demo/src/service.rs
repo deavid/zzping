@@ -1,4 +1,4 @@
-//! `ZZNetService` implementation for the demo application.
+//! `ZZNetApplication` implementation for the demo application.
 use crate::{
     component_a::{ComponentAActor, ComponentANetworkManager, ComponentAPermissions},
     component_b::ComponentBActor,
@@ -10,11 +10,11 @@ use anyhow::Result;
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use zznet_api::types::{Role, RoomId};
-use zznet_builder::traits::ZZNetService;
+use zznet_builder::traits::ZZNetApplication;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_router::RouterActor;
 
-/// Demo service that implements `ZZNetService`.
+/// Demo service that implements `ZZNetApplication`.
 pub struct DemoAppService {
     /// The router actor.
     pub router: Addr<RouterActor>,
@@ -26,12 +26,9 @@ pub struct DemoAppService {
     pub component_b: Option<Addr<ComponentBActor>>,
 }
 
-#[async_trait]
-impl ZZNetService for DemoAppService {
-    type Config = DemoAppConfig;
-    type Error = anyhow::Error;
-
-    fn new(config: Self::Config) -> Result<Self> {
+impl DemoAppService {
+    /// Create a new demo service from configuration.
+    pub fn new(config: DemoAppConfig) -> Result<Self> {
         let router = RouterActor::new(
             config
                 .offered_rooms
@@ -95,9 +92,21 @@ impl ZZNetService for DemoAppService {
             component_b,
         })
     }
+}
 
-    async fn startup(&mut self) -> Result<(), Self::Error> {
+#[async_trait]
+impl ZZNetApplication for DemoAppService {
+    fn service_name(&self) -> &str {
+        "ZZNet Demo"
+    }
+
+    async fn startup(&mut self) -> Result<(), anyhow::Error> {
         tracing::info!("DemoAppService is running");
+        Ok(())
+    }
+
+    async fn shutdown(&mut self) -> Result<(), anyhow::Error> {
+        // Clean up resources if needed
         Ok(())
     }
 }
