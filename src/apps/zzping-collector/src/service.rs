@@ -232,14 +232,14 @@ mod tests {
             database_host: "127.0.0.1".into(),
             database_port: 8443,
             tls: Some(CollectorTlsConfig {
-                ca_cert_path: certs_dir.join("ca.pem").to_str().unwrap().to_string(),
+                ca_cert_path: certs_dir.join("ca/ca.pem").to_str().unwrap().to_string(),
                 client_cert_path: certs_dir
-                    .join("collector.pem")
+                    .join("dist/collector.pem")
                     .to_str()
                     .unwrap()
                     .to_string(),
                 client_key_path: certs_dir
-                    .join("collector.key")
+                    .join("secrets/collector.key")
                     .to_str()
                     .unwrap()
                     .to_string(),
@@ -317,7 +317,7 @@ mod tests {
         assert!(result.is_ok(), "TLS config conversion should succeed");
 
         let transport_config = result.unwrap();
-        assert_eq!(transport_config.server_name, "zzping");
+        assert_eq!(transport_config.server_name, "zzping-mesh");
         assert!(!transport_config.add_native_ca_certs);
         assert!(transport_config.ca_cert_path.is_some());
         assert_eq!(

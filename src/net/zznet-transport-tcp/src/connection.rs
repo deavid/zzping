@@ -143,6 +143,14 @@ impl TcpTransport {
 
     /// Parse a single DER-encoded certificate and extract the PeerIdentity.
     ///
+    /// Uses the Directory Model to extract identity from Subject DN:
+    /// - O (Organization): Must be "zzping" (system scope validation)
+    /// - OU (OrganizationalUnit): Maps to role
+    /// - CN (CommonName): Maps to username
+    ///
+    /// The SAN field is expected to contain "DNS:zzping-mesh" for topology
+    /// but is NOT used for identity extraction.
+    ///
     /// Exposed privately so unit tests can validate parsing behavior without
     /// constructing a full `TlsStream`.
     fn parse_peer_cert_der(cert_der: &[u8]) -> Result<PeerTLSIdentity, TransportError> {
@@ -153,26 +161,6 @@ impl TcpTransport {
                 format!("Failed to parse peer certificate: {:?}", e),
             ))
         })?;
-
-        // Extract CN
-        let common_name = cert
-            .subject()
-            .iter_common_name()
-            .next()
-            .ok_or_else(|| {
-                TransportError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Certificate missing CN",
-                ))
-            })?
-            .as_str()
-            .map_err(|_| {
-                TransportError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "CN is not a string",
-                ))
-            })?
-            .to_string();
 
         // Check certificate validity period using SystemTime
         let not_before = cert.validity().not_before.to_datetime();
@@ -191,7 +179,77 @@ impl TcpTransport {
             )));
         }
 
-        // Extract SAN extension and parse
+        // Extract and validate Organization (O) - System Scope Check
+        let organization = cert
+            .subject()
+            .iter_organization()
+            .next()
+            .ok_or_else(|| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Certificate missing O (Organization) field",
+                ))
+            })?
+            .as_str()
+            .map_err(|_| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "O field is not a string",
+                ))
+            })?;
+
+        if organization != "zzping" {
+            return Err(TransportError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Certificate O field must be 'zzping', got '{}'",
+                    organization
+                ),
+            )));
+        }
+
+        // Extract OU (OrganizationalUnit) -> role
+        let role = cert
+            .subject()
+            .iter_organizational_unit()
+            .next()
+            .ok_or_else(|| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Certificate missing OU (OrganizationalUnit) field",
+                ))
+            })?
+            .as_str()
+            .map_err(|_| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "OU field is not a string",
+                ))
+            })?
+            .to_string();
+
+        // Extract CN (CommonName) -> username
+        let username = cert
+            .subject()
+            .iter_common_name()
+            .next()
+            .ok_or_else(|| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "Certificate missing CN (CommonName) field",
+                ))
+            })?
+            .as_str()
+            .map_err(|_| {
+                TransportError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "CN field is not a string",
+                ))
+            })?
+            .to_string();
+
+        // Validate SAN contains zzping-mesh (topology token)
+        // This is verified by rustls during handshake, but we can double-check here
         let san_ext = cert
             .extensions()
             .iter()
@@ -211,25 +269,20 @@ impl TcpTransport {
                 ))
             })?;
 
-        // Find the first DNS name
-        let san_username = san
-            .general_names
-            .iter()
-            .find_map(|name| match name {
-                x509_parser::extensions::GeneralName::DNSName(dns) => Some(dns.to_string()),
-                _ => None,
-            })
-            .ok_or_else(|| {
-                TransportError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "SAN contains no DNS names",
-                ))
-            })?;
+        // Verify SAN contains zzping-mesh
+        let has_mesh_san = san.general_names.iter().any(|name| match name {
+            x509_parser::extensions::GeneralName::DNSName(dns) => *dns == "zzping-mesh",
+            _ => false,
+        });
 
-        Ok(PeerTLSIdentity {
-            common_name,
-            san_username,
-        })
+        if !has_mesh_san {
+            return Err(TransportError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Certificate SAN must contain DNS:zzping-mesh",
+            )));
+        }
+
+        Ok(PeerTLSIdentity { role, username })
     }
 }
 
@@ -420,7 +473,7 @@ mod tests {
         // Load the PEM file from test_certs
         let pem_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../test_certs/database.pem"
+            "/../../../test_certs/dist/database.pem"
         );
         let pem_data = fs::read(pem_path).expect("failed to read test cert pem");
         let (_rem, pem) = parse_x509_pem(&pem_data).expect("failed to parse PEM");
@@ -429,9 +482,9 @@ mod tests {
         // Use loopback addr as peer addr
         let id = TcpTransport::parse_peer_cert_der(der).expect("failed to parse cert DER");
 
-        // Expect the CN to be 'database' and SAN to be 'zzping' (updated dev certs)
-        assert_eq!(id.common_name, "database");
-        assert_eq!(id.san_username, "zzping");
+        // Expect Directory Model: O=zzping, OU=database, CN=root, SAN=zzping-mesh
+        assert_eq!(id.role, "database");
+        assert_eq!(id.username, "root");
     }
 
     #[test]
@@ -533,7 +586,7 @@ mod tests {
             .unwrap()
             .parent()
             .unwrap()
-            .join("test_certs/collector.pem");
+            .join("test_certs/dist/collector.pem");
 
         let pem_data = std::fs::read(&cert_path).expect("Failed to read collector.pem");
         let (_rem, pem) = parse_x509_pem(&pem_data).expect("Failed to parse PEM");
@@ -542,7 +595,8 @@ mod tests {
         let identity =
             TcpTransport::parse_peer_cert_der(cert_der).expect("Failed to parse collector cert");
 
-        assert_eq!(identity.common_name, "collector");
-        assert_eq!(identity.san_username, "zzping");
+        // Expect Directory Model: O=zzping, OU=collector, CN=root, SAN=zzping-mesh
+        assert_eq!(identity.role, "collector");
+        assert_eq!(identity.username, "root");
     }
 }

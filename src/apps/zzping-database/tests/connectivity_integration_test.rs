@@ -430,31 +430,31 @@ fn verify_prerequisites() -> std::path::PathBuf {
     );
 
     // Check certs exist
-    let ca_cert = workspace_root.join("test_certs/ca.pem");
+    let ca_cert = workspace_root.join("test_certs/ca/ca.pem");
     assert!(
         ca_cert.exists(),
         "CA certificate not found at: {}. Run: ./generate_certs.sh --all",
         ca_cert.display()
     );
-    let db_cert = workspace_root.join("test_certs/database.pem");
+    let db_cert = workspace_root.join("test_certs/dist/database.pem");
     assert!(
         db_cert.exists(),
         "Database certificate not found at: {}. Run: ./generate_certs.sh --all",
         db_cert.display()
     );
-    let db_key = workspace_root.join("test_certs/database.key");
+    let db_key = workspace_root.join("test_certs/secrets/database.key");
     assert!(
         db_key.exists(),
         "Database key not found at: {}. Run: ./generate_certs.sh --all",
         db_key.display()
     );
-    let collector_cert = workspace_root.join("test_certs/collector.pem");
+    let collector_cert = workspace_root.join("test_certs/dist/collector.pem");
     assert!(
         collector_cert.exists(),
         "Collector certificate not found at: {}. Run: ./generate_certs.sh --all",
         collector_cert.display()
     );
-    let collector_key = workspace_root.join("test_certs/collector.key");
+    let collector_key = workspace_root.join("test_certs/secrets/collector.key");
     assert!(
         collector_key.exists(),
         "Collector key not found at: {}. Run: ./generate_certs.sh --all",

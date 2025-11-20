@@ -19,6 +19,6 @@ pub fn to_transport_tls_config(
         cert,
         ca_cert_path: ca,
         add_native_ca_certs: false,
-        server_name: "zzping".into(),
+        server_name: "zzping-mesh".into(),
     }
 }

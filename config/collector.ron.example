@@ -15,9 +15,9 @@ CollectorConfig(
     // TLS certificate paths for mTLS authentication
     // Set to None() to disable TLS and use plain TCP
     tls: Some(CollectorTlsConfig(
-        ca_cert_path: "test_certs/ca.pem",
-        client_cert_path: "test_certs/collector.pem",
-        client_key_path: "test_certs/collector.key",
+        ca_cert_path: "test_certs/ca/ca.pem",
+        client_cert_path: "test_certs/dist/collector.pem",
+        client_key_path: "test_certs/secrets/collector.key",
     )),
 
     // Component-specific configuration

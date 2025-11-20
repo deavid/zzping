@@ -259,25 +259,25 @@ impl HelloActor {
             // Notify SessionManager if configured
             if let Some(ref session_mgr) = self.session_manager {
                 if let Some(ref peer_role) = self.peer_role {
-                    // TLS VALIDATION: If TLS is enabled, the certificate CN must match the HELLO role
+                    // TLS VALIDATION: If TLS is enabled, the certificate role (OU) must match the HELLO role
                     if let Some(ref tls_identity) = self.tls_peer_identity {
-                        if tls_identity.common_name != *peer_role {
+                        if tls_identity.role != *peer_role {
                             error!(
-                                "TLS validation FAILED: Certificate CN '{}' does not match HELLO role '{}'",
-                                tls_identity.common_name, peer_role
+                                "TLS validation FAILED: Certificate role '{}' does not match HELLO role '{}'",
+                                tls_identity.role, peer_role
                             );
                             self.handle_error(
                                 HelloError::HandshakeFailed(format!(
-                                    "TLS certificate CN '{}' does not match HELLO role '{}'",
-                                    tls_identity.common_name, peer_role
+                                    "TLS certificate role '{}' does not match HELLO role '{}'",
+                                    tls_identity.role, peer_role
                                 )),
                                 ctx,
                             );
                             return;
                         }
                         info!(
-                            "TLS validation SUCCESS: Certificate CN '{}' matches HELLO role",
-                            tls_identity.common_name
+                            "TLS validation SUCCESS: Certificate role '{}' matches HELLO role",
+                            tls_identity.role
                         );
                     } else {
                         debug!(
@@ -508,8 +508,8 @@ pub(crate) fn start_hello_actor_with_session_manager(
     let tls_peer_identity = transport.peer_tls_identity();
     if let Some(ref identity) = tls_peer_identity {
         debug!(
-            "TLS connection detected: CN='{}', SAN='{}', addr='{:?}'",
-            identity.common_name, identity.san_username, peer_addr
+            "TLS connection detected: role='{}', username='{}', addr='{:?}'",
+            identity.role, identity.username, peer_addr
         );
     } else {
         debug!("Connection with no TLS identity, addr='{peer_addr:?}'");

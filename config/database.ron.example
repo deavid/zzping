@@ -10,11 +10,11 @@ DatabaseConfig(
     // Set to None() to disable TLS and use plain TCP
     tls: Some(DatabaseTlsConfig(
         // CA certificate for verifying collector certificates
-            ca_cert_paths: ["../test_certs/ca.pem"],
+            ca_cert_paths: ["../test_certs/ca/ca.pem"],
         // Server certificate (this database's identity)
-        server_cert_path: "../test_certs/database.pem",
+        server_cert_path: "../test_certs/dist/database.pem",
         // Server private key
-        server_key_path: "../test_certs/database.key",
+        server_key_path: "../test_certs/secrets/database.key",
     )),
 
     // Directory where runtime data files are stored (relative paths are

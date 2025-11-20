@@ -3,24 +3,25 @@ use std::fmt;
 
 /// Represents the verified identity of a peer in the ZZPing network.
 ///
-/// Identity is extracted from certificates in TLS mode, or synthesized from
-/// HELLO messages in raw TCP mode. The identity model uses:
-/// - Common Name (CN): represents the role (collector, database, client-ro, etc.)
-/// - Subject Alternative Name (SAN): first DNS entry represents username ("root" for services, actual username for users)
+/// Identity is extracted from X.509 certificates using the Directory Model:
+/// - O (Organization): "zzping" (system scope, always constant)
+/// - OU (OrganizationalUnit): role (collector, database, client-ro, client-admin, etc.)
+/// - CN (CommonName): username ("root" for services, actual username for users)
+/// - SAN: "DNS:zzping-mesh" (topology token, not used for identity)
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerTLSIdentity {
-    /// The common name from the certificate (represents role).
-    pub common_name: String,
-    /// The first DNS entry from SAN (username or "root" for services).
-    pub san_username: String,
+    /// The role from the certificate's OU field (OrganizationalUnit).
+    pub role: String,
+    /// The username from the certificate's CN field (CommonName).
+    pub username: String,
 }
 
 impl PeerTLSIdentity {
     /// Returns true if this identity represents a service (not a user).
     ///
-    /// Services have "root" as their SAN username.
+    /// Services have "root" as their username.
     pub fn is_service(&self) -> bool {
-        self.san_username == "root"
+        self.username == "root"
     }
 
     /// Returns the full identity string for logging and authorization.
@@ -28,9 +29,9 @@ impl PeerTLSIdentity {
     /// Format: "username@role" for users, "role" for services.
     pub fn full_identity(&self) -> String {
         if self.is_service() {
-            self.common_name.clone()
+            self.role.clone()
         } else {
-            format!("{}@{}", self.san_username, self.common_name)
+            format!("{}@{}", self.username, self.role)
         }
     }
 }
@@ -136,14 +137,14 @@ mod tests {
     #[test]
     fn test_peer_identity_is_service() {
         let service = PeerTLSIdentity {
-            common_name: "collector".to_string(),
-            san_username: "root".to_string(),
+            role: "collector".to_string(),
+            username: "root".to_string(),
         };
         assert!(service.is_service());
 
         let user = PeerTLSIdentity {
-            common_name: "client-admin".to_string(),
-            san_username: "alice".to_string(),
+            role: "client-admin".to_string(),
+            username: "alice".to_string(),
         };
         assert!(!user.is_service());
     }
@@ -151,14 +152,14 @@ mod tests {
     #[test]
     fn test_peer_identity_full_identity() {
         let service = PeerTLSIdentity {
-            common_name: "collector".to_string(),
-            san_username: "root".to_string(),
+            role: "collector".to_string(),
+            username: "root".to_string(),
         };
         assert_eq!(service.full_identity(), "collector");
 
         let user = PeerTLSIdentity {
-            common_name: "client-admin".to_string(),
-            san_username: "alice".to_string(),
+            role: "client-admin".to_string(),
+            username: "alice".to_string(),
         };
         assert_eq!(user.full_identity(), "alice@client-admin");
     }
