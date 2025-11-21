@@ -17,8 +17,8 @@ use zznet_api::transport::TransportConnection;
 // The HELLO protocol is application-agnostic; it uses a role string, not a concrete enum.
 use crate::error::HelloError;
 use crate::handshake::Handshake;
-use crate::protocol::{Frame, HandshakeFrame, RoomFrame};
 use crate::session_messages::HandshakeComplete;
+use zznet_api::protocol::{Frame, HandshakeFrame, RoomFrame};
 
 /// Configures a `HelloActor`.
 #[derive(Debug, Clone)]
@@ -86,13 +86,17 @@ pub(crate) struct SendMessage {
 #[rtype(result = "()")]
 pub(crate) struct Disconnect;
 
-/// Provides the channel for forwarding inbound room messages.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub(crate) struct SetInboundChannel {
-    /// Channel for forwarding inbound room messages.
-    pub tx: tokio::sync::mpsc::Sender<(String, Vec<u8>)>,
+/// Transport handles for direct Router connection
+pub(crate) struct TransportHandles {
+    pub transport_tx: mpsc::Sender<Bytes>,
+    pub transport_rx: mpsc::Receiver<Result<Bytes, TransportError>>,
 }
+
+/// Requests transport handles after handshake complete.
+/// This transfers ownership of the transport channels to the caller.
+#[derive(Message)]
+#[rtype(result = "Result<TransportHandles, String>")]
+pub(crate) struct GetTransportHandles;
 
 /// Manages a connection's lifecycle using the HELLO protocol.
 pub(crate) struct HelloActor {
@@ -114,8 +118,6 @@ pub(crate) struct HelloActor {
     transport_tx: mpsc::Sender<Bytes>,
     /// Optional SessionManager recipient (for integration with higher layer). - FIXME: Why is this optional? it doesn't make sense
     session_manager: Option<Recipient<HandshakeComplete>>,
-    /// Channel to forward inbound messages to ConnectionManager. - TODO: Investigate if the Option is really needed, if it makes real sense.
-    inbound_tx: Option<tokio::sync::mpsc::Sender<(String, Vec<u8>)>>,
     /// Receiver for inbound frames from transport.
     transport_rx: Option<mpsc::Receiver<Result<Bytes, TransportError>>>,
 }
@@ -137,7 +139,6 @@ impl HelloActor {
             tls_peer_identity,
             transport_tx,
             session_manager: None,
-            inbound_tx: None,
             transport_rx: Some(transport_rx),
         }
     }
@@ -208,7 +209,9 @@ impl HelloActor {
                 self.handle_handshake_frame(data, ctx);
             }
             ActorState::Ready => {
-                self.handle_room_frame(data, ctx);
+                // After handshake, transport is transferred to Router.
+                // Any frames received here are protocol violations or race conditions.
+                warn!("Received frame in Ready state - transport should have been transferred");
             }
             ActorState::Failed => {
                 warn!("Received frame in Failed state, ignoring");
@@ -313,48 +316,6 @@ impl HelloActor {
         }
     }
 
-    /// Processes a frame during the `Ready` state.
-    fn handle_room_frame(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
-        match Frame::deserialize(&data) {
-            Ok(Frame::Room(room_frame)) => {
-                match room_frame {
-                    RoomFrame::Message {
-                        from_room,
-                        to_room,
-                        payload,
-                    } => {
-                        debug!(
-                            "Received room message: {} -> {} ({} bytes)",
-                            from_room,
-                            to_room,
-                            payload.len()
-                        );
-
-                        // Forward to ConnectionManager via inbound_tx
-                        if let Some(ref tx) = self.inbound_tx {
-                            if let Err(e) = tx.try_send((to_room.clone(), payload)) {
-                                error!("Failed to forward inbound message: {:?}", e);
-                            }
-                        } else {
-                            warn!("No inbound channel set, dropping message");
-                        }
-                    }
-                    RoomFrame::Disconnect => {
-                        info!("Peer sent disconnect");
-                        ctx.stop();
-                    }
-                }
-            }
-            Ok(Frame::Handshake(_)) => {
-                warn!("Received handshake frame after handshake complete, ignoring");
-            }
-            Err(e) => {
-                error!("Failed to deserialize room frame: {}", e);
-                self.handle_error(e.into(), ctx);
-            }
-        }
-    }
-
     /// Logs an error, sends an error frame to the peer, and stops the actor.
     // TODO (Architectural Review): Is sending an Error frame necessary? This adds complexity. Consider simplifying to just log and stop.
     fn handle_error(&mut self, error: HelloError, ctx: &mut Context<Self>) {
@@ -362,7 +323,7 @@ impl HelloActor {
         self.state = ActorState::Failed;
 
         // Try to send error frame to peer
-        if let Ok(error_frame) = Frame::Handshake(crate::protocol::HandshakeFrame::Error {
+        if let Ok(error_frame) = Frame::Handshake(zznet_api::protocol::HandshakeFrame::Error {
             message: error.to_string(),
         })
         .serialize()
@@ -485,12 +446,29 @@ impl Handler<Disconnect> for HelloActor {
     }
 }
 
-impl Handler<SetInboundChannel> for HelloActor {
-    type Result = ();
+impl Handler<GetTransportHandles> for HelloActor {
+    type Result = Result<TransportHandles, String>;
 
-    fn handle(&mut self, msg: SetInboundChannel, _ctx: &mut Context<Self>) -> Self::Result {
-        self.inbound_tx = Some(msg.tx);
-        debug!("Set inbound channel for forwarding received messages");
+    fn handle(&mut self, _msg: GetTransportHandles, ctx: &mut Context<Self>) -> Self::Result {
+        // Can only transfer handles if we're in Ready state and still have them
+        if self.state != ActorState::Ready {
+            return Err(
+                "Transport handles can only be extracted after handshake complete".to_string(),
+            );
+        }
+
+        let transport_rx = self
+            .transport_rx
+            .take()
+            .ok_or_else(|| "Transport receiver already transferred".to_string())?;
+
+        // Stop the actor since transport is being transferred
+        ctx.stop();
+
+        Ok(TransportHandles {
+            transport_tx: self.transport_tx.clone(),
+            transport_rx,
+        })
     }
 }
 

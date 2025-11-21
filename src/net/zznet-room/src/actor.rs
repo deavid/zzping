@@ -2,7 +2,9 @@
 
 // src/net/zznet-room/src/actor.rs
 use actix::prelude::*;
+use bytes::Bytes;
 use tokio::sync::mpsc;
+use zznet_api::protocol::{Frame, RoomFrame};
 use zznet_api::types::RoomId;
 
 use crate::room_manager::InboundRoomPayload;
@@ -12,13 +14,13 @@ use crate::room_message_trait::RoomMessageTrait;
 ///
 /// `RoomActor<T>` owns the byte boundary for a specific room:
 /// - inbound `InboundRoomPayload` bytes are decoded via `RoomMessageTrait`
-/// - outbound typed messages are serialized and forwarded to the router channel
+/// - outbound typed messages are serialized, wrapped in RoomFrame, and sent to transport
 pub struct RoomActor<T>
 where
     T: RoomMessageTrait + actix::Message<Result = ()> + Send + 'static,
 {
     room_id: RoomId,
-    outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
+    transport_tx: mpsc::Sender<Bytes>,
     component_recipient: Recipient<T>,
 }
 
@@ -29,12 +31,12 @@ where
     /// Build a room actor bound to a specific room id and component recipient.
     pub fn new(
         room_id: RoomId,
-        outbound_tx: mpsc::Sender<(RoomId, Vec<u8>)>,
+        transport_tx: mpsc::Sender<Bytes>,
         component_recipient: Recipient<T>,
     ) -> Self {
         Self {
             room_id,
-            outbound_tx,
+            transport_tx,
             component_recipient,
         }
     }
@@ -86,15 +88,34 @@ where
         }
 
         match msg.serialize_inner() {
-            Ok(bytes) => {
-                let outbound_tx = self.outbound_tx.clone();
-                let room_id = self.room_id.clone();
+            Ok(payload_bytes) => {
+                // Wrap the payload in a RoomFrame and then a Frame
+                let room_frame = RoomFrame::Message {
+                    from_room: self.room_id.as_str().to_string(),
+                    to_room: self.room_id.as_str().to_string(),
+                    payload: payload_bytes,
+                };
+                let frame = Frame::Room(room_frame);
 
-                if let Err(error) = outbound_tx.try_send((room_id, bytes)) {
-                    tracing::error!("RoomActor outbound send failed: {:?}", error);
-                    ctx.stop();
-                    // FIXME: In reality, stopping the actor has to guarantee that the connection is
-                    // entirely teared down. Currently we have not checked this.
+                match frame.serialize() {
+                    Ok(frame_bytes) => {
+                        let transport_tx = self.transport_tx.clone();
+
+                        if let Err(error) = transport_tx.try_send(Bytes::from(frame_bytes)) {
+                            tracing::error!("RoomActor transport send failed: {:?}", error);
+                            ctx.stop();
+                            // FIXME: In reality, stopping the actor has to guarantee that the connection is
+                            // entirely teared down. Currently we have not checked this.
+                        }
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            "RoomActor frame serialization failed for room {}: {}",
+                            self.room_id,
+                            error
+                        );
+                        ctx.stop();
+                    }
                 }
             }
             Err(error) => {

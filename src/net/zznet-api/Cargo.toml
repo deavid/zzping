@@ -19,7 +19,8 @@ tokio = { workspace = true }
 bytes = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
-serde = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+rmp-serde = { workspace = true }
 actix = { workspace = true }
 
 [dev-dependencies]

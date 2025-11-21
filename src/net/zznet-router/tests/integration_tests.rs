@@ -4,7 +4,9 @@
 //! including peer connection, room negotiation, and message routing.
 
 use actix::prelude::*;
+use bytes::Bytes;
 use tokio::sync::mpsc;
+use zznet_api::error::TransportError;
 use zznet_api::messages::OnPeerConnected;
 use zznet_api::types::{PeerId, Role, RoomId};
 use zznet_router::RouterActor;
@@ -20,9 +22,9 @@ async fn test_router_actor_peer_lifecycle() {
     let offered_rooms = vec![RoomId::new("shared-room"), RoomId::new("unique-room")];
     let router_actor = RouterActor::new(offered_rooms.clone()).start();
 
-    // Create channels for peer connection
-    let (outbound_tx, _outbound_rx) = mpsc::channel(10);
-    let (_inbound_tx, inbound_rx) = mpsc::channel(10);
+    // Create transport channels for peer connection
+    let (transport_tx, _transport_tx_rx) = mpsc::channel::<Bytes>(10);
+    let (_transport_rx_tx, transport_rx) = mpsc::channel::<Result<Bytes, TransportError>>(10);
 
     let peer_id = PeerId::from("test-peer");
 
@@ -31,8 +33,8 @@ async fn test_router_actor_peer_lifecycle() {
         peer_id: peer_id.clone(),
         role: create_test_role(),
         negotiated_rooms: offered_rooms.clone(),
-        outbound_tx,
-        inbound_rx,
+        transport_tx,
+        transport_rx,
     };
 
     let result = router_actor.send(connect_msg).await;

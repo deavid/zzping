@@ -121,7 +121,7 @@ impl<C: NetworkComponent> RoomFactory for StandardRoomFactory<C> {
         peer_id: PeerId,
         role: Role,
         room_id: RoomId,
-        outbound_to_peer: tokio::sync::mpsc::Sender<(RoomId, Vec<u8>)>,
+        transport_tx: tokio::sync::mpsc::Sender<bytes::Bytes>,
     ) -> Result<Option<RoomInboundRecipient>, String> {
         // 1. Check Room ID - return None if this isn't our room
         if room_id.as_str() != C::ROOM_ID {
@@ -147,7 +147,7 @@ impl<C: NetworkComponent> RoomFactory for StandardRoomFactory<C> {
         // 4. Spawn Room Actor (standard serialization/deserialization layer)
         let room = RoomActor::new(
             room_id,
-            outbound_to_peer,
+            transport_tx,
             net_addr.clone().recipient::<C::ProtocolMessage>(),
         );
         let room_addr = room.start();

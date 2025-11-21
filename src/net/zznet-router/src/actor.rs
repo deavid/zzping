@@ -67,8 +67,8 @@ impl Handler<OnPeerConnected> for RouterActor {
         let peer_id = msg.peer_id.clone();
         let role = msg.role;
         let negotiated_rooms = msg.negotiated_rooms;
-        let outbound_tx = msg.outbound_tx;
-        let inbound_rx = msg.inbound_rx;
+        let transport_tx = msg.transport_tx;
+        let transport_rx = msg.transport_rx;
         let mut builder = crate::peer_channels::PeerChannelsBuilder::new(peer_id.clone());
 
         // Get factories for negotiated rooms and call them synchronously
@@ -78,7 +78,7 @@ impl Handler<OnPeerConnected> for RouterActor {
                     peer_id.clone(),
                     role.clone(),
                     room_id.clone(),
-                    outbound_tx.clone(),
+                    transport_tx.clone(),
                 ) {
                     Ok(Some(room_recipient)) => {
                         if let Err(e) = builder.add_room(room_id.clone(), room_recipient) {
@@ -111,7 +111,7 @@ impl Handler<OnPeerConnected> for RouterActor {
             }
         }
 
-        builder.build_and_spawn_loop(inbound_rx);
+        builder.build_and_spawn_transport_demux(transport_rx);
 
         Ok(())
     }

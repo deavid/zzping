@@ -11,7 +11,7 @@
 //!    set of `active_rooms` for the session.
 
 use crate::error::HelloError;
-use crate::protocol::{Frame, HandshakeFrame};
+use zznet_api::protocol::{Frame, HandshakeFrame};
 
 /// The current state of the handshake process.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -409,7 +409,7 @@ mod tests {
             )
             .unwrap();
 
-        let room_frame = Frame::Room(crate::protocol::RoomFrame::Disconnect);
+        let room_frame = Frame::Room(zznet_api::protocol::RoomFrame::Disconnect);
         let room_data = room_frame.serialize().unwrap();
 
         let result = handshake.process_frame(&room_data);

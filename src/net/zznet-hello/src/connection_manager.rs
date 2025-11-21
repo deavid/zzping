@@ -5,7 +5,6 @@
 //! notifications, and then wires the authenticated peer into the `RouterActor`.
 
 use crate::actor::{HelloActor, HelloConfig, start_hello_actor_with_session_manager};
-use crate::session_bridge::SessionBridge;
 use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -138,75 +137,72 @@ impl Handler<HandshakeComplete> for ConnectionManager {
             msg.peer_role_str
         );
 
-        // Prepare data to send connection directly to RouterActor
+        // Get the transport handles from the HelloActor
         let router_addr = self.on_peer_connected.clone();
         let hello_actor = msg.hello_actor.clone();
 
-        // Create channels for SessionBridge
-        let (outbound_tx, outbound_rx) = tokio::sync::mpsc::channel(100);
-        let (conn_to_session_tx, conn_to_session_rx) = tokio::sync::mpsc::channel(100);
-        let (hello_to_conn_tx, hello_to_conn_rx) = tokio::sync::mpsc::channel(100);
-
-        // Spawn an async task to connect peer directly to RouterActor
-        // CRITICAL: Use actix::spawn (not tokio::spawn) to ensure task runs within
-        // the Actix LocalSet context. This is required because SessionBridge.start()
-        // calls spawn_local, which panics if called outside a LocalSet.
+        // Spawn an async task to get transport handles and connect to Router
+        // CRITICAL: Use actix::spawn to ensure task runs within Actix LocalSet
         actix::spawn(async move {
             let peer_id_api = zznet_api::types::PeerId::from(peer_id.as_str());
 
-            // Send OnPeerConnected directly to RouterActor with Role
-            let connect_result = router_addr
-                .send(OnPeerConnected {
-                    peer_id: peer_id_api.clone(),
-                    role: role.clone(),
-                    negotiated_rooms: msg
-                        .active_rooms
-                        .iter()
-                        .map(|s| RoomId::from(s.as_str()))
-                        .collect(),
-                    outbound_tx: outbound_tx.clone(),
-                    inbound_rx: conn_to_session_rx,
-                })
-                .await;
+            // Request transport handles from HelloActor
+            match hello_actor.send(crate::actor::GetTransportHandles).await {
+                Ok(Ok(handles)) => {
+                    // Send OnPeerConnected directly to RouterActor with transport handles
+                    let connect_result = router_addr
+                        .send(OnPeerConnected {
+                            peer_id: peer_id_api.clone(),
+                            role: role.clone(),
+                            negotiated_rooms: msg
+                                .active_rooms
+                                .iter()
+                                .map(|s| RoomId::from(s.as_str()))
+                                .collect(),
+                            transport_tx: handles.transport_tx,
+                            transport_rx: handles.transport_rx,
+                        })
+                        .await;
 
-            if let Err(e) = connect_result {
-                tracing::error!(
-                    "Failed to connect peer to RouterActor for {}: {:?}",
-                    peer_id,
-                    e
-                );
-                return;
-            }
-
-            match connect_result.unwrap() {
-                Ok(_) => {
-                    tracing::info!("Successfully connected peer {} to RouterActor", peer_id);
+                    match connect_result {
+                        Ok(Ok(_)) => {
+                            tracing::info!(
+                                "Successfully connected peer {} to RouterActor",
+                                peer_id
+                            );
+                            // Stop HelloActor - it's no longer needed
+                            hello_actor.do_send(crate::actor::Disconnect);
+                        }
+                        Ok(Err(error_msg)) => {
+                            tracing::error!("RouterActor rejected peer {}: {}", peer_id, error_msg);
+                            hello_actor.do_send(crate::actor::Disconnect);
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                "Failed to send to RouterActor for peer {}: {:?}",
+                                peer_id,
+                                e
+                            );
+                            hello_actor.do_send(crate::actor::Disconnect);
+                        }
+                    }
                 }
-                Err(error_msg) => {
-                    tracing::error!("RouterActor rejected peer {}: {}", peer_id, error_msg);
-                    return;
+                Ok(Err(e)) => {
+                    tracing::error!(
+                        "Failed to get transport handles from HelloActor for peer {}: {}",
+                        peer_id,
+                        e
+                    );
+                    hello_actor.do_send(crate::actor::Disconnect);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to communicate with HelloActor for peer {}: {:?}",
+                        peer_id,
+                        e
+                    );
                 }
             }
-
-            // Give HelloActor the channel for forwarding received messages
-            let set_inbound_msg = crate::actor::SetInboundChannel {
-                tx: hello_to_conn_tx,
-            };
-            if let Err(e) = hello_actor.try_send(set_inbound_msg) {
-                tracing::error!("Failed to set inbound channel on HelloActor: {:?}", e);
-                // continue - we still notify the actor to start the bridge
-            }
-
-            // Send channels back to actor so it can start the SessionBridge inside
-            // the actor context (this avoids spawn_local being called outside LocalSet).
-            let bridge = SessionBridge::new(
-                peer_id.as_str().to_string(),
-                hello_actor.clone(),
-                outbound_rx,
-                conn_to_session_tx.clone(),
-                hello_to_conn_rx,
-            );
-            let _addr = bridge.start();
 
             tracing::info!("Connected to peer {} as {:?}", peer_id, role);
         });

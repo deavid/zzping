@@ -2261,6 +2261,7 @@ dependencies = [
  "actix",
  "async-trait",
  "bytes",
+ "rmp-serde",
  "serde",
  "thiserror 2.0.17",
  "tokio",
@@ -2333,6 +2334,7 @@ version = "0.3.0-dev"
 dependencies = [
  "actix",
  "async-trait",
+ "bytes",
  "rmp-serde",
  "serde",
  "thiserror 2.0.17",
@@ -2347,6 +2349,9 @@ version = "0.3.0-dev"
 dependencies = [
  "actix",
  "async-trait",
+ "bytes",
+ "rmp-serde",
+ "serde",
  "thiserror 2.0.17",
  "tokio",
  "tracing",
