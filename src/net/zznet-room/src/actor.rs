@@ -5,7 +5,7 @@ use actix::prelude::*;
 use tokio::sync::mpsc;
 use zznet_api::types::RoomId;
 
-use crate::room_manager::{InboundRoomPayload, RoomInboundRecipient};
+use crate::room_manager::InboundRoomPayload;
 use crate::room_message_trait::RoomMessageTrait;
 
 /// Actix actor that centralizes (de-)serialization for a network room.
@@ -37,11 +37,6 @@ where
             outbound_tx,
             component_recipient,
         }
-    }
-
-    /// Convenience helper to expose the `InboundRoomPayload` recipient without leaking the type.
-    pub fn inbound_recipient(addr: &Addr<Self>) -> RoomInboundRecipient {
-        addr.clone().recipient::<InboundRoomPayload>()
     }
 }
 

@@ -12,11 +12,36 @@ use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permissions::IntentConfigPermissions;
 use actix::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateRoomForPeer, RoomInboundRecipient};
-use zznet_router::RouterActor;
+use zznet_router::{NetworkComponent, RouterActor};
+
+/// IntentConfig Manifest for the NetworkComponent pattern.
+///
+/// This Zero-Sized Type (ZST) binds together all the types for IntentConfig,
+/// eliminating the need for custom factory and RegisterPeer implementations.
+#[derive(Clone)]
+pub struct IntentConfigManifest;
+
+impl NetworkComponent for IntentConfigManifest {
+    const ROOM_ID: &'static str = "intent-config";
+
+    type MainActor = crate::actor::IntentConfigActor;
+    type ProtocolMessage = IntentConfigNetworkMsg;
+    type NetworkActor = IntentConfigNetworkActor;
+    type ManagerActor = IntentConfigNetworkManager;
+    type Permissions = IntentConfigPermissions;
+
+    fn create_network_actor(
+        peer_id: PeerId,
+        perms: Self::Permissions,
+        _main: Addr<Self::MainActor>,
+        mgr: Addr<Self::ManagerActor>,
+    ) -> Self::NetworkActor {
+        // IntentConfigNetworkActor doesn't need main_actor, only manager
+        IntentConfigNetworkActor::new(peer_id, perms, mgr)
+    }
+}
 
 /// IntentConfigNetworkManager orchestrates the per-peer translator layer.
 ///
@@ -36,13 +61,11 @@ pub struct IntentConfigNetworkManager {
     /// Address of the main business logic actor
     main_actor: Addr<crate::actor::IntentConfigActor>,
     /// Per-peer translator actors for message translation
-    translator_actors: Arc<RwLock<HashMap<PeerId, Addr<IntentConfigNetworkActor>>>>,
+    translator_actors: HashMap<PeerId, Addr<IntentConfigNetworkActor>>,
     /// Per-peer room actors for serialization
-    room_actors: Arc<RwLock<HashMap<PeerId, Addr<RoomActor<IntentConfigNetworkMsg>>>>>,
+    room_actors: HashMap<PeerId, Addr<RoomActor<IntentConfigNetworkMsg>>>,
     /// RouterActor for data-plane message routing
     router_actor: Addr<RouterActor>,
-    /// Address of this NetworkManager (set in started())
-    self_addr: Option<Addr<IntentConfigNetworkManager>>,
     /// Policy map from role strings to component-specific permissions
     permissions_map: HashMap<String, IntentConfigPermissions>,
 }
@@ -51,10 +74,9 @@ impl Clone for IntentConfigNetworkManager {
     fn clone(&self) -> Self {
         Self {
             main_actor: self.main_actor.clone(),
-            translator_actors: Arc::clone(&self.translator_actors),
-            room_actors: Arc::clone(&self.room_actors),
+            translator_actors: self.translator_actors.clone(),
+            room_actors: self.room_actors.clone(),
             router_actor: self.router_actor.clone(),
-            self_addr: self.self_addr.clone(),
             permissions_map: self.permissions_map.clone(),
         }
     }
@@ -69,10 +91,9 @@ impl IntentConfigNetworkManager {
     ) -> Self {
         Self {
             main_actor,
-            translator_actors: Arc::new(RwLock::new(HashMap::new())),
-            room_actors: Arc::new(RwLock::new(HashMap::new())),
+            translator_actors: HashMap::new(),
+            room_actors: HashMap::new(),
             router_actor,
-            self_addr: None,
             permissions_map,
         }
     }
@@ -88,17 +109,11 @@ impl IntentConfigNetworkManager {
         let mut removed_translator = false;
         let mut removed_room_actor = false;
 
-        if self
-            .translator_actors
-            .write()
-            .unwrap()
-            .remove(peer_id)
-            .is_some()
-        {
+        if self.translator_actors.remove(peer_id).is_some() {
             removed_translator = true;
         }
 
-        if self.room_actors.write().unwrap().remove(peer_id).is_some() {
+        if self.room_actors.remove(peer_id).is_some() {
             removed_room_actor = true;
         }
 
@@ -106,8 +121,8 @@ impl IntentConfigNetworkManager {
             log::info!("Destroying actors for peer: {}", peer_id);
             log::debug!(
                 "Actors destroyed - {} translators, {} room actors remain",
-                self.translator_actors.read().unwrap().len(),
-                self.room_actors.read().unwrap().len()
+                self.translator_actors.len(),
+                self.room_actors.len()
             );
         } else {
             log::warn!(
@@ -128,19 +143,15 @@ impl Actor for IntentConfigNetworkManager {
     fn started(&mut self, ctx: &mut Self::Context) {
         log::info!("IntentConfigNetworkManager started");
 
-        // Set our own address for RoomManager implementation
-        let addr: Addr<IntentConfigNetworkManager> = ctx.address();
-        self.self_addr = Some(addr);
-
-        // Register ourselves as a RoomManager with the Router
-        let manager = self
-            .self_addr
-            .as_ref()
-            .unwrap()
-            .clone()
-            .recipient::<CreateRoomForPeer>();
+        // Register with router using the StandardRoomFactory
+        let factory = std::sync::Arc::new(zznet_router::StandardRoomFactory::new(
+            IntentConfigManifest,
+            self.main_actor.clone(),
+            ctx.address(),
+            self.permissions_map.clone(),
+        ));
         let rooms = vec![RoomId::from("intent-config")];
-        let register_msg = zznet_router::RegisterManager { manager, rooms };
+        let register_msg = zznet_router::RegisterManager { factory, rooms };
         self.router_actor.do_send(register_msg);
 
         // Keep actor alive
@@ -150,16 +161,7 @@ impl Actor for IntentConfigNetworkManager {
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         log::info!("IntentConfigNetworkManager stopped");
 
-        // Clean up all actors
-        let translator_count = self.translator_actors.read().unwrap().len();
-        let room_count = self.room_actors.read().unwrap().len();
-        self.translator_actors.write().unwrap().clear();
-        self.room_actors.write().unwrap().clear();
-        log::debug!(
-            "Stopped {} NetworkActors and {} RoomActors",
-            translator_count,
-            room_count
-        );
+        // Actors will be automatically stopped when dropped
     }
 }
 
@@ -173,11 +175,11 @@ impl Handler<BroadcastConfigUpdate> for IntentConfigNetworkManager {
     fn handle(&mut self, msg: BroadcastConfigUpdate, _ctx: &mut Self::Context) -> Self::Result {
         log::info!(
             "Broadcasting config update to {} peers",
-            self.room_actors.read().unwrap().len()
+            self.room_actors.len()
         );
 
         // Fan-out to all room actors
-        for (peer_id, room_actor) in self.room_actors.read().unwrap().iter() {
+        for (peer_id, room_actor) in self.room_actors.iter() {
             log::debug!("Sending config update to peer: {}", peer_id);
             let network_msg = IntentConfigNetworkMsg::ConfigUpdate {
                 targets: msg.config.targets.clone(),
@@ -198,7 +200,7 @@ impl Handler<SendErrorToPeer> for IntentConfigNetworkManager {
     type Result = ();
 
     fn handle(&mut self, msg: SendErrorToPeer, _ctx: &mut Self::Context) -> Self::Result {
-        if let Some(room_actor) = self.room_actors.read().unwrap().get(&msg.peer_id) {
+        if let Some(room_actor) = self.room_actors.get(&msg.peer_id) {
             log::info!(
                 "Sending error to peer {}: {}",
                 msg.peer_id,
@@ -284,58 +286,29 @@ impl Handler<InboundGetConfigRequest> for IntentConfigNetworkManager {
     }
 }
 
-#[async_trait::async_trait]
-impl Handler<CreateRoomForPeer> for IntentConfigNetworkManager {
-    type Result = Result<Option<RoomInboundRecipient>, ()>;
+// ============================================================================
+// Handler: RegisterPeer (from RoomFactory)
+// ============================================================================
 
-    fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
-        // Only handle the "intent-config" room
-        if msg.room_id != RoomId::from("intent-config") {
-            return Ok(None);
-        }
+/// Handler for the RegisterPeer message from the RoomFactory.
+///
+/// The factory creates actors synchronously and sends this fire-and-forget message
+/// to register them with the manager for broadcasting and peer tracking.
+impl Handler<zznet_router::RegisterPeer<IntentConfigManifest>> for IntentConfigNetworkManager {
+    type Result = ();
 
-        // Translate the global Role to component-specific Permissions
-        let permissions = self
-            .permissions_map
-            .get(msg.role.as_str())
-            .cloned()
-            .unwrap_or_default();
-
-        // Create the translator actor with the peer's permissions (not role)
-        let translator = IntentConfigNetworkActor::new(
-            msg.peer_id.clone(),
-            permissions,
-            self.self_addr.as_ref().unwrap().clone(),
+    fn handle(
+        &mut self,
+        msg: zznet_router::RegisterPeer<IntentConfigManifest>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        log::debug!(
+            "IntentConfigNetworkManager: Registering peer {} with network and room actors",
+            msg.peer_id
         );
-
-        // Start the translator actor
-        let translator_addr = translator.start();
-
-        // Create the RoomActor<IntentConfigNetworkMsg>
-        let room_actor = RoomActor::new(
-            RoomId::from("intent-config"),
-            msg.outbound_to_peer,
-            translator_addr
-                .clone()
-                .recipient::<IntentConfigNetworkMsg>(),
-        );
-
-        // Start the RoomActor
-        let room_actor_addr = room_actor.start();
-
-        // Store the addresses in the maps
-        {
-            let mut translators = self.translator_actors.write().unwrap();
-            translators.insert(msg.peer_id.clone(), translator_addr);
-
-            let mut room_actors = self.room_actors.write().unwrap();
-            room_actors.insert(msg.peer_id.clone(), room_actor_addr.clone());
-        }
-
-        // Return the RoomActor's raw inbound recipient
-        let recipient = RoomActor::inbound_recipient(&room_actor_addr);
-
-        Ok(Some(recipient))
+        self.translator_actors
+            .insert(msg.peer_id.clone(), msg.network_actor);
+        self.room_actors.insert(msg.peer_id, msg.room_actor);
     }
 }
 

@@ -18,7 +18,13 @@
 
 mod actor;
 mod error;
+mod factory_utils;
+mod messages;
 mod peer_channels;
+mod room_factory;
 mod router;
 
-pub use actor::{OnPeerDisconnected, RegisterManager, RouterActor};
+pub use actor::{RegisterManager, RouterActor};
+pub use factory_utils::{NetworkComponent, StandardRoomFactory};
+pub use messages::RegisterPeer;
+pub use room_factory::{RoomFactory, RoomFactoryRef};

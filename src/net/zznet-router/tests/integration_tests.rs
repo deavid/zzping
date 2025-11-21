@@ -7,7 +7,7 @@ use actix::prelude::*;
 use tokio::sync::mpsc;
 use zznet_api::messages::OnPeerConnected;
 use zznet_api::types::{PeerId, Role, RoomId};
-use zznet_router::{OnPeerDisconnected, RouterActor};
+use zznet_router::RouterActor;
 
 /// Helper function to create a test Role
 fn create_test_role() -> Role {
@@ -47,12 +47,4 @@ async fn test_router_actor_peer_lifecycle() {
         "Peer connection should succeed: {:?}",
         connect_result
     );
-
-    // Test peer disconnection
-    let disconnect_msg = OnPeerDisconnected {
-        peer_id: peer_id.clone(),
-    };
-
-    let result = router_actor.send(disconnect_msg).await;
-    assert!(result.is_ok(), "Peer disconnection should succeed");
 }

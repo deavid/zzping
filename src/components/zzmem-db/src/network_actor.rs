@@ -14,12 +14,12 @@
 //!
 //! 2. **Per-Peer Context**:
 //!    - Each NetworkActor is tied to one peer
-//!    - Stores peer's Role for authorization (TODO: add auth logic)
+//!    - Enforces component-specific permissions for authorization
 //!    - Adds peer_id to all messages
 //!    - Handles protocol-level concerns
 
 use actix::prelude::*;
-use zznet_api::types::{PeerId, Role};
+use zznet_api::types::PeerId;
 
 use crate::actor::MemDBActor;
 use crate::internal_messages::{
@@ -27,20 +27,21 @@ use crate::internal_messages::{
 };
 use crate::network_manager::MemDBNetworkManager;
 use crate::network_messages::MemDBMessage;
+use crate::permissions::MemDBPermissions;
 
 /// NetworkActor handles protocol translation for a single peer.
 ///
 /// One NetworkActor is created per connected peer. It:
 /// - Receives network messages and translates them to internal messages
-/// - Stores peer's Role for authorization checks (TODO: add auth logic)
+/// - Enforces component-specific permissions for authorization
 /// - Sends network messages on behalf of MainActor
 /// - Provides per-peer context (peer_id) to all messages
 pub struct MemDBNetworkActor {
     /// The peer ID this actor represents
     peer_id: PeerId,
 
-    /// Role of this peer (for authorization checks)
-    _role: Role,
+    /// Permissions for this peer (for authorization checks)
+    _permissions: MemDBPermissions,
 
     /// Reference to MainActor for forwarding inbound messages
     main_actor: Addr<MemDBActor>,
@@ -54,13 +55,13 @@ impl MemDBNetworkActor {
     /// Create a new NetworkActor for the given peer.
     pub fn new(
         peer_id: PeerId,
-        role: Role,
+        permissions: MemDBPermissions,
         main_actor: Addr<MemDBActor>,
         manager: Addr<MemDBNetworkManager>,
     ) -> Self {
         Self {
             peer_id,
-            _role: role,
+            _permissions: permissions,
             main_actor,
             manager,
         }

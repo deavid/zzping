@@ -23,33 +23,40 @@
 
 use actix::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateRoomForPeer, RoomInboundRecipient};
-use zznet_router::RouterActor;
+use zznet_router::{NetworkComponent, RouterActor};
 
 use crate::actor::MemDBActor;
 use crate::internal_messages::{SendBatchAck, SendQueryResponse, SendSubmitBatch};
 use crate::network_actor::MemDBNetworkActor;
 use crate::network_messages::MemDBMessage;
+use crate::permissions::MemDBPermissions;
 
-/// Temporary bridge messages for SessionManager integration.
-/// Phase 6.4: Using real PeerLifecycleEvent from zznet-peer-manager
-/// Keeping placeholder messages for backward compatibility during migration
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "()")]
-pub struct PeerAdded {
-    /// Peer identifier for the newly added peer
-    pub peer_id: PeerId,
-}
+/// MemDB Manifest for the NetworkComponent pattern.
+///
+/// This Zero-Sized Type (ZST) binds together all the types for MemDB,
+/// eliminating the need for custom factory and RegisterPeer implementations.
+#[derive(Clone)]
+pub struct MemDBManifest;
 
-/// Message sent when a peer is removed from the network
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "()")]
-pub struct PeerRemoved {
-    /// Peer identifier for the removed peer
-    pub peer_id: PeerId,
+impl NetworkComponent for MemDBManifest {
+    const ROOM_ID: &'static str = "memdb";
+
+    type MainActor = MemDBActor;
+    type ProtocolMessage = MemDBMessage;
+    type NetworkActor = MemDBNetworkActor;
+    type ManagerActor = MemDBNetworkManager;
+    type Permissions = MemDBPermissions;
+
+    fn create_network_actor(
+        peer_id: PeerId,
+        perms: Self::Permissions,
+        main: Addr<Self::MainActor>,
+        mgr: Addr<Self::ManagerActor>,
+    ) -> Self::NetworkActor {
+        MemDBNetworkActor::new(peer_id, perms, main, mgr)
+    }
 }
 
 /// NetworkManager orchestrates peer lifecycle and message routing for MemDB.
@@ -63,39 +70,43 @@ pub struct MemDBNetworkManager {
     main_actor: Addr<MemDBActor>,
 
     /// Active NetworkActors, one per connected peer
-    translators: Arc<RwLock<HashMap<PeerId, Addr<MemDBNetworkActor>>>>,
+    translators: HashMap<PeerId, Addr<MemDBNetworkActor>>,
 
     /// RoomActor addresses for outbound sends
-    room_actors: Arc<RwLock<HashMap<PeerId, Addr<RoomActor<MemDBMessage>>>>>,
-
-    /// Address of this NetworkManager (set in started())
-    self_addr: Option<Addr<MemDBNetworkManager>>,
+    room_actors: HashMap<PeerId, Addr<RoomActor<MemDBMessage>>>,
 
     /// RouterActor for data-plane message routing
     router_actor: Addr<RouterActor>,
+
+    /// Permissions map for role-to-permissions translation
+    permissions_map: HashMap<String, MemDBPermissions>,
 }
 
 impl Clone for MemDBNetworkManager {
     fn clone(&self) -> Self {
         Self {
             main_actor: self.main_actor.clone(),
-            translators: Arc::clone(&self.translators),
-            room_actors: Arc::clone(&self.room_actors),
-            self_addr: self.self_addr.clone(),
+            translators: self.translators.clone(),
+            room_actors: self.room_actors.clone(),
             router_actor: self.router_actor.clone(),
+            permissions_map: self.permissions_map.clone(),
         }
     }
 }
 
 impl MemDBNetworkManager {
     /// Create a new NetworkManager.
-    pub fn new(main_actor: Addr<MemDBActor>, router_actor: Addr<RouterActor>) -> Self {
+    pub fn new(
+        main_actor: Addr<MemDBActor>,
+        router_actor: Addr<RouterActor>,
+        permissions_map: HashMap<String, MemDBPermissions>,
+    ) -> Self {
         Self {
             main_actor,
-            translators: Arc::new(RwLock::new(HashMap::new())),
-            room_actors: Arc::new(RwLock::new(HashMap::new())),
-            self_addr: None,
+            translators: HashMap::new(),
+            room_actors: HashMap::new(),
             router_actor,
+            permissions_map,
         }
     }
 }
@@ -105,27 +116,24 @@ impl Actor for MemDBNetworkManager {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         tracing::debug!("MemDBNetworkManager started");
-        // Set our own address for RoomManager implementation
-        let addr: Addr<MemDBNetworkManager> = ctx.address();
-        self.self_addr = Some(addr);
 
-        // Register ourselves as a RoomManager with the Router
-        let manager = self
-            .self_addr
-            .as_ref()
-            .unwrap()
-            .clone()
-            .recipient::<CreateRoomForPeer>();
+        // Register with router using the StandardRoomFactory
+        let factory = std::sync::Arc::new(zznet_router::StandardRoomFactory::new(
+            MemDBManifest,
+            self.main_actor.clone(),
+            ctx.address(),
+            self.permissions_map.clone(),
+        ));
         let rooms = vec![RoomId::from("memdb")];
-        let register_msg = zznet_router::RegisterManager { manager, rooms };
+        let register_msg = zznet_router::RegisterManager { factory, rooms };
         self.router_actor.do_send(register_msg);
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         tracing::debug!(
             "MemDBNetworkManager stopped, cleaning up {} NetworkActors and {} RoomActors",
-            self.translators.read().unwrap().len(),
-            self.room_actors.read().unwrap().len()
+            self.translators.len(),
+            self.room_actors.len()
         );
         // Actors will be automatically stopped when dropped
     }
@@ -135,42 +143,25 @@ impl Actor for MemDBNetworkManager {
 // PEER LIFECYCLE HANDLERS
 // ============================================================================
 
-impl Handler<PeerAdded> for MemDBNetworkManager {
+/// Handler for the RegisterPeer message from the RoomFactory.
+///
+/// The factory creates actors synchronously and sends this fire-and-forget message
+/// to register them with the manager for broadcasting and peer tracking.
+impl Handler<zznet_router::RegisterPeer<MemDBManifest>> for MemDBNetworkManager {
     type Result = ();
 
-    fn handle(&mut self, msg: PeerAdded, _ctx: &mut Self::Context) -> Self::Result {
-        tracing::debug!("Peer added: {}", msg.peer_id);
-        // Actors are now created in create_for_peer when Router calls it
-    }
-}
-
-impl Handler<PeerRemoved> for MemDBNetworkManager {
-    type Result = ();
-
-    fn handle(&mut self, msg: PeerRemoved, _ctx: &mut Self::Context) -> Self::Result {
-        tracing::debug!("Peer removed: {}", msg.peer_id);
-
-        let mut removed_translator = false;
-        let mut removed_room_actor = false;
-
-        if let Some(_actor) = self.translators.write().unwrap().remove(&msg.peer_id) {
-            removed_translator = true;
-        }
-
-        if let Some(_actor) = self.room_actors.write().unwrap().remove(&msg.peer_id) {
-            removed_room_actor = true;
-        }
-
-        if removed_translator || removed_room_actor {
-            tracing::debug!(
-                "Removed actors for peer {}, remaining translators: {}, room actors: {}",
-                msg.peer_id,
-                self.translators.read().unwrap().len(),
-                self.room_actors.read().unwrap().len()
-            );
-        } else {
-            tracing::warn!("Peer {} not found in actor maps", msg.peer_id);
-        }
+    fn handle(
+        &mut self,
+        msg: zznet_router::RegisterPeer<MemDBManifest>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        tracing::debug!(
+            "MemDBNetworkManager: Registering peer {} with network and room actors",
+            msg.peer_id
+        );
+        self.translators
+            .insert(msg.peer_id.clone(), msg.network_actor);
+        self.room_actors.insert(msg.peer_id, msg.room_actor);
     }
 }
 
@@ -194,7 +185,7 @@ impl Handler<SendBatchAck> for MemDBNetworkManager {
             timestamp_ms: msg.timestamp_ms,
         };
 
-        if let Some(room_actor) = self.room_actors.read().unwrap().get(&msg.peer_id) {
+        if let Some(room_actor) = self.room_actors.get(&msg.peer_id) {
             room_actor.do_send(network_msg);
         } else {
             tracing::warn!("No RoomActor found for peer {}", msg.peer_id);
@@ -217,7 +208,7 @@ impl Handler<SendQueryResponse> for MemDBNetworkManager {
             results: msg.results,
         };
 
-        if let Some(room_actor) = self.room_actors.read().unwrap().get(&msg.peer_id) {
+        if let Some(room_actor) = self.room_actors.get(&msg.peer_id) {
             room_actor.do_send(network_msg);
         } else {
             tracing::warn!("No RoomActor found for peer {}", msg.peer_id);
@@ -243,61 +234,10 @@ impl Handler<SendSubmitBatch> for MemDBNetworkManager {
             results: msg.results,
         };
 
-        if let Some(room_actor) = self.room_actors.read().unwrap().get(&msg.peer_id) {
+        if let Some(room_actor) = self.room_actors.get(&msg.peer_id) {
             room_actor.do_send(network_msg);
         } else {
             tracing::warn!("No RoomActor found for peer {}", msg.peer_id);
         }
-    }
-}
-
-impl Handler<CreateRoomForPeer> for MemDBNetworkManager {
-    type Result = Result<Option<RoomInboundRecipient>, ()>;
-
-    fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
-        // Only handle the "memdb" room
-        if msg.room_id != RoomId::from("memdb") {
-            return Ok(None);
-        }
-
-        tracing::debug!(
-            "Creating MemDBNetworkActor and RoomActor for peer: {:?}",
-            msg.peer_id
-        );
-
-        // Create the translator actor with the peer's role
-        let translator = MemDBNetworkActor::new(
-            msg.peer_id.clone(),
-            msg.role,
-            self.main_actor.clone(),
-            self.self_addr.as_ref().unwrap().clone(),
-        );
-
-        // Start the translator actor
-        let translator_addr = translator.start();
-
-        // Create the RoomActor<MemDBMessage>
-        let room_actor = RoomActor::new(
-            RoomId::from("memdb"),
-            msg.outbound_to_peer,
-            translator_addr.clone().recipient::<MemDBMessage>(),
-        );
-
-        // Start the RoomActor
-        let room_actor_addr = room_actor.start();
-
-        // Store the addresses in the maps
-        {
-            let mut translators = self.translators.write().unwrap();
-            translators.insert(msg.peer_id.clone(), translator_addr);
-
-            let mut room_actors = self.room_actors.write().unwrap();
-            room_actors.insert(msg.peer_id.clone(), room_actor_addr.clone());
-        }
-
-        // Return the RoomActor's raw inbound recipient
-        let recipient = RoomActor::inbound_recipient(&room_actor_addr);
-
-        Ok(Some(recipient))
     }
 }

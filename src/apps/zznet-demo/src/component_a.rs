@@ -54,12 +54,36 @@ use crate::messages::{
 };
 use actix::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use tracing::info;
 use zznet_api::types::PeerId;
-use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateRoomForPeer, RoomInboundRecipient};
-use zznet_router::RegisterManager;
+use zznet_router::{NetworkComponent, RegisterManager};
+
+/// ComponentA Manifest for the NetworkComponent pattern.
+///
+/// This Zero-Sized Type (ZST) binds together all the types for ComponentA,
+/// eliminating the need for custom factory and RegisterPeer implementations.
+#[derive(Clone)]
+pub struct ComponentAManifest;
+
+impl NetworkComponent for ComponentAManifest {
+    const ROOM_ID: &'static str = "room-a";
+
+    type MainActor = ComponentAActor;
+    type ProtocolMessage = ComponentAMessage;
+    type NetworkActor = ComponentANetworkActor;
+    type ManagerActor = ComponentANetworkManager;
+    type Permissions = ComponentAPermissions;
+
+    fn create_network_actor(
+        peer_id: PeerId,
+        perms: Self::Permissions,
+        main: Addr<Self::MainActor>,
+        _mgr: Addr<Self::ManagerActor>,
+    ) -> Self::NetworkActor {
+        // ComponentANetworkActor doesn't need the manager address
+        ComponentANetworkActor::new(peer_id, perms, main)
+    }
+}
 
 /// MainActor for ComponentA - handles business logic and local subscriptions.
 #[derive(Debug, Default)]
@@ -218,18 +242,11 @@ pub struct ComponentANetworkManager {
     main_actor: Addr<ComponentAActor>,
     /// Router for room registration
     router: Addr<zznet_router::RouterActor>,
-    /// NetworkActors per peer
-    network_actors:
-        Arc<std::sync::RwLock<std::collections::HashMap<PeerId, Addr<ComponentANetworkActor>>>>,
-    /// RoomActors per peer for outbound messaging
-    room_actors: Arc<
-        std::sync::RwLock<
-            std::collections::HashMap<
-                PeerId,
-                Addr<zznet_room::actor::RoomActor<ComponentAMessage>>,
-            >,
-        >,
-    >,
+    /// NetworkActors per peer (no longer needs Arc<RwLock> since only modified via messages)
+    network_actors: std::collections::HashMap<PeerId, Addr<ComponentANetworkActor>>,
+    /// RoomActors per peer for outbound messaging (no longer needs Arc<RwLock>)
+    room_actors:
+        std::collections::HashMap<PeerId, Addr<zznet_room::actor::RoomActor<ComponentAMessage>>>,
     /// Policy map from role strings to component-specific permissions
     permissions_map: HashMap<String, ComponentAPermissions>,
 }
@@ -244,8 +261,8 @@ impl ComponentANetworkManager {
         Self {
             main_actor,
             router,
-            network_actors: Arc::new(RwLock::new(std::collections::HashMap::new())),
-            room_actors: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            network_actors: std::collections::HashMap::new(),
+            room_actors: std::collections::HashMap::new(),
             permissions_map,
         }
     }
@@ -257,10 +274,15 @@ impl Actor for ComponentANetworkManager {
     fn started(&mut self, ctx: &mut Self::Context) {
         tracing::debug!("ComponentANetworkManager started");
 
-        // Register with router
-        let manager = ctx.address().recipient::<CreateRoomForPeer>();
+        // Register with router using the StandardRoomFactory
+        let factory = std::sync::Arc::new(zznet_router::StandardRoomFactory::new(
+            ComponentAManifest,
+            self.main_actor.clone(),
+            ctx.address(),
+            self.permissions_map.clone(),
+        ));
         let rooms = vec![zznet_api::types::RoomId::from("room-a")];
-        let register_msg = RegisterManager { manager, rooms };
+        let register_msg = RegisterManager { factory, rooms };
         self.router.do_send(register_msg);
     }
 
@@ -269,60 +291,25 @@ impl Actor for ComponentANetworkManager {
     }
 }
 
-impl Handler<CreateRoomForPeer> for ComponentANetworkManager {
-    type Result = Result<Option<RoomInboundRecipient>, ()>;
+/// Handler for the RegisterPeer message from the RoomFactory.
+///
+/// The factory creates actors synchronously and sends this fire-and-forget message
+/// to register them with the manager for broadcasting and peer tracking.
+impl Handler<zznet_router::RegisterPeer<ComponentAManifest>> for ComponentANetworkManager {
+    type Result = ();
 
-    fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(
+        &mut self,
+        msg: zznet_router::RegisterPeer<ComponentAManifest>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
         tracing::debug!(
-            "ComponentANetworkManager: create_for_peer called for peer {} in room {}",
-            msg.peer_id,
-            msg.room_id
+            "ComponentANetworkManager: Registering peer {} with network and room actors",
+            msg.peer_id
         );
-        if msg.room_id.as_str() == "room-a" {
-            // Translate the global Role to component-specific Permissions
-            let permissions = self
-                .permissions_map
-                .get(msg.role.as_str())
-                .cloned()
-                .unwrap_or_default();
-
-            // Create NetworkActor for this peer
-            let network_actor = ComponentANetworkActor::new(
-                msg.peer_id.clone(),
-                permissions,
-                self.main_actor.clone(),
-            );
-            let network_actor_addr = network_actor.start();
-
-            // Store the network actor
-            if let Ok(mut actors) = self.network_actors.write() {
-                actors.insert(msg.peer_id.clone(), network_actor_addr.clone());
-            }
-
-            // Create RoomActor that handles serialization/deserialization
-            let room_actor = RoomActor::new(
-                msg.room_id.clone(),
-                msg.outbound_to_peer,
-                network_actor_addr.recipient::<ComponentAMessage>(),
-            );
-            let room_actor_addr = room_actor.start();
-
-            // Store the room actor for outbound messaging
-            if let Ok(mut actors) = self.room_actors.write() {
-                actors.insert(msg.peer_id.clone(), room_actor_addr.clone());
-                tracing::debug!(
-                    "ComponentANetworkManager: Stored room actor for peer {}",
-                    msg.peer_id
-                );
-            }
-
-            // Return the recipient that RoomActor exposes for inbound messages
-            Ok(Some(RoomActor::<ComponentAMessage>::inbound_recipient(
-                &room_actor_addr,
-            )))
-        } else {
-            Ok(None)
-        }
+        self.network_actors
+            .insert(msg.peer_id.clone(), msg.network_actor);
+        self.room_actors.insert(msg.peer_id, msg.room_actor);
     }
 }
 
@@ -375,18 +362,14 @@ impl Handler<ComponentAMessage> for ComponentANetworkManager {
 
     fn handle(&mut self, msg: ComponentAMessage, _ctx: &mut Self::Context) -> Self::Result {
         // Broadcast to all connected room actors
-        if let Ok(room_actors) = self.room_actors.read() {
-            tracing::debug!(
-                "ComponentANetworkManager: Broadcasting message {:?} to {} peers",
-                msg,
-                room_actors.len()
-            );
-            for (peer_id, room_actor) in room_actors.iter() {
-                tracing::debug!("Sending message to peer {}: {:?}", peer_id, msg);
-                room_actor.do_send(msg.clone());
-            }
-        } else {
-            tracing::error!("ComponentANetworkManager: Failed to read room_actors");
+        tracing::debug!(
+            "ComponentANetworkManager: Broadcasting message {:?} to {} peers",
+            msg,
+            self.room_actors.len()
+        );
+        for (peer_id, room_actor) in self.room_actors.iter() {
+            tracing::debug!("Sending message to peer {}: {:?}", peer_id, msg);
+            room_actor.do_send(msg.clone());
         }
     }
 }

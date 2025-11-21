@@ -5,8 +5,9 @@
 //! 2. MemDBNetworkManager (Manager - peer lifecycle and routing)
 //! 3. MemDBNetworkActor (per-peer, created by Manager)
 
-use crate::{actor::MemDBActor, config::MemDBConfig};
+use crate::{actor::MemDBActor, config::MemDBConfig, permissions::MemDBPermissions};
 use actix::prelude::*;
+use std::collections::HashMap;
 use zznet_router::RouterActor;
 
 /// A builder for constructing `MemDBActor` instances.
@@ -15,14 +16,22 @@ use zznet_router::RouterActor;
 pub struct MemDBBuilder {
     config: MemDBConfig,
     router_actor: Option<Addr<RouterActor>>,
+    permissions_map: HashMap<String, MemDBPermissions>,
 }
 
 impl MemDBBuilder {
     /// Creates a new `MemDBBuilder`.
     pub fn new(config: MemDBConfig) -> Self {
+        // Default permissions map for common roles
+        let mut permissions_map = HashMap::new();
+        permissions_map.insert("Collector".to_string(), MemDBPermissions::collector());
+        permissions_map.insert("Database".to_string(), MemDBPermissions::database());
+        permissions_map.insert("Admin".to_string(), MemDBPermissions::admin());
+
         Self {
             config,
             router_actor: None,
+            permissions_map,
         }
     }
 
@@ -32,6 +41,17 @@ impl MemDBBuilder {
     /// will run in standalone mode without network capabilities.
     pub fn router(mut self, router_actor: Addr<RouterActor>) -> Self {
         self.router_actor = Some(router_actor);
+        self
+    }
+
+    /// Set custom permissions map for role-to-permissions translation.
+    ///
+    /// If not set, a default map is used with:
+    /// - "Collector" -> can submit batches
+    /// - "Database" -> can receive batches and query
+    /// - "Admin" -> full access
+    pub fn permissions_map(mut self, permissions_map: HashMap<String, MemDBPermissions>) -> Self {
+        self.permissions_map = permissions_map;
         self
     }
 
@@ -51,8 +71,11 @@ impl MemDBBuilder {
         if let Some(router_actor) = self.router_actor {
             tracing::info!("Creating MemDBNetworkManager for three-actor pattern");
 
-            let network_manager =
-                crate::network_manager::MemDBNetworkManager::new(actor_addr.clone(), router_actor);
+            let network_manager = crate::network_manager::MemDBNetworkManager::new(
+                actor_addr.clone(),
+                router_actor,
+                self.permissions_map,
+            );
 
             let network_manager = network_manager.start();
 

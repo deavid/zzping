@@ -16,11 +16,35 @@ use crate::{
 use actix::prelude::*;
 use log::{debug, info, warn};
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
-use zznet_room::room_manager::{CreateRoomForPeer, RoomInboundRecipient};
-use zznet_router::RouterActor;
+use zznet_router::{NetworkComponent, RouterActor};
+
+/// CState Manifest for the NetworkComponent pattern.
+///
+/// This Zero-Sized Type (ZST) binds together all the types for CState,
+/// eliminating the need for custom factory and RegisterPeer implementations.
+#[derive(Clone)]
+pub struct CStateManifest;
+
+impl NetworkComponent for CStateManifest {
+    const ROOM_ID: &'static str = "cstate";
+
+    type MainActor = crate::actor::CStateActor;
+    type ProtocolMessage = CStateMessage;
+    type NetworkActor = CStateNetworkActor;
+    type ManagerActor = CStateNetworkManager;
+    type Permissions = CStatePermissions;
+
+    fn create_network_actor(
+        peer_id: PeerId,
+        perms: Self::Permissions,
+        main: Addr<Self::MainActor>,
+        mgr: Addr<Self::ManagerActor>,
+    ) -> Self::NetworkActor {
+        CStateNetworkActor::new(peer_id, perms, main, mgr)
+    }
+}
 
 /// The NetworkManager orchestrates peer lifecycle and manages NetworkActors.
 ///
@@ -36,11 +60,9 @@ pub struct CStateNetworkManager {
     /// The main actor for handling internal messages
     main_actor: Addr<crate::actor::CStateActor>,
     /// Per-peer translator actors for message translation
-    translator_actors: Arc<RwLock<HashMap<PeerId, Addr<CStateNetworkActor>>>>,
+    translator_actors: HashMap<PeerId, Addr<CStateNetworkActor>>,
     /// Per-peer room actors for serialization
-    room_actors: Arc<RwLock<HashMap<PeerId, Addr<RoomActor<CStateMessage>>>>>,
-    /// Address of this NetworkManager (set in started())
-    self_addr: Option<Addr<CStateNetworkManager>>,
+    room_actors: HashMap<PeerId, Addr<RoomActor<CStateMessage>>>,
     /// Permissions map for role-to-permissions translation
     permissions_map: HashMap<String, CStatePermissions>,
 }
@@ -50,9 +72,8 @@ impl Clone for CStateNetworkManager {
         Self {
             router: self.router.clone(),
             main_actor: self.main_actor.clone(),
-            translator_actors: Arc::clone(&self.translator_actors),
-            room_actors: Arc::clone(&self.room_actors),
-            self_addr: self.self_addr.clone(),
+            translator_actors: self.translator_actors.clone(),
+            room_actors: self.room_actors.clone(),
             permissions_map: self.permissions_map.clone(),
         }
     }
@@ -73,9 +94,8 @@ impl CStateNetworkManager {
         Self {
             router,
             main_actor,
-            translator_actors: Arc::new(RwLock::new(HashMap::new())),
-            room_actors: Arc::new(RwLock::new(HashMap::new())),
-            self_addr: None,
+            translator_actors: HashMap::new(),
+            room_actors: HashMap::new(),
             permissions_map,
         }
     }
@@ -92,19 +112,15 @@ impl Actor for CStateNetworkManager {
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("CStateNetworkManager started");
 
-        // Set our own address for RoomManager implementation
-        let addr: Addr<CStateNetworkManager> = ctx.address();
-        self.self_addr = Some(addr);
-
-        // Register ourselves as a RoomManager with the Router
-        let manager = self
-            .self_addr
-            .as_ref()
-            .unwrap()
-            .clone()
-            .recipient::<CreateRoomForPeer>();
+        // Register with router using the StandardRoomFactory
+        let factory = std::sync::Arc::new(zznet_router::StandardRoomFactory::new(
+            CStateManifest,
+            self.main_actor.clone(),
+            ctx.address(),
+            self.permissions_map.clone(),
+        ));
         let rooms = vec![RoomId::from("cstate")];
-        let register_msg = zznet_router::RegisterManager { manager, rooms };
+        let register_msg = zznet_router::RegisterManager { factory, rooms };
         self.router.do_send(register_msg);
 
         // Note: PeerLifecycleEvent subscription deferred until PeerManager is standalone.
@@ -117,8 +133,8 @@ impl Actor for CStateNetworkManager {
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         info!(
             "CStateNetworkManager stopped, cleaning up {} NetworkActors and {} RoomActors",
-            self.translator_actors.read().unwrap().len(),
-            self.room_actors.read().unwrap().len()
+            self.translator_actors.len(),
+            self.room_actors.len()
         );
         // Actors will be automatically stopped when dropped
     }
@@ -139,7 +155,7 @@ impl Handler<SendHeartbeatAck> for CStateNetworkManager {
             server_time_ms: msg.server_time_ms,
         };
 
-        if let Some(room_actor) = self.room_actors.read().unwrap().get(&msg.peer_id) {
+        if let Some(room_actor) = self.room_actors.get(&msg.peer_id) {
             room_actor.do_send(network_msg);
         } else {
             warn!("No RoomActor found for peer: {:?}", msg.peer_id);
@@ -157,7 +173,7 @@ impl Handler<SendCollectorList> for CStateNetworkManager {
             collectors: msg.collectors,
         };
 
-        if let Some(room_actor) = self.room_actors.read().unwrap().get(&msg.peer_id) {
+        if let Some(room_actor) = self.room_actors.get(&msg.peer_id) {
             room_actor.do_send(network_msg);
         } else {
             warn!("No RoomActor found for peer: {:?}", msg.peer_id);
@@ -173,7 +189,7 @@ impl Handler<SendRegistrationRejected> for CStateNetworkManager {
 
         let network_msg = CStateMessage::RegistrationRejected { reason: msg.reason };
 
-        if let Some(room_actor) = self.room_actors.read().unwrap().get(&msg.peer_id) {
+        if let Some(room_actor) = self.room_actors.get(&msg.peer_id) {
             room_actor.do_send(network_msg);
         } else {
             warn!("No RoomActor found for peer: {:?}", msg.peer_id);
@@ -189,7 +205,7 @@ impl Handler<SendUnauthorized> for CStateNetworkManager {
 
         let network_msg = CStateMessage::Unauthorized { reason: msg.reason };
 
-        if let Some(room_actor) = self.room_actors.read().unwrap().get(&msg.peer_id) {
+        if let Some(room_actor) = self.room_actors.get(&msg.peer_id) {
             room_actor.do_send(network_msg);
         } else {
             warn!("No RoomActor found for peer: {:?}", msg.peer_id);
@@ -204,7 +220,7 @@ impl Handler<BroadcastHeartbeat> for CStateNetworkManager {
         debug!(
             "Broadcasting heartbeat from collector {} to {} peers",
             msg.collector_id,
-            self.room_actors.read().unwrap().len()
+            self.room_actors.len()
         );
 
         // Convert to network message
@@ -219,71 +235,36 @@ impl Handler<BroadcastHeartbeat> for CStateNetworkManager {
         };
 
         // Broadcast to all RoomActors
-        for (peer_id, room_actor) in self.room_actors.read().unwrap().iter() {
+        for (peer_id, room_actor) in self.room_actors.iter() {
             debug!("Sending heartbeat to peer: {:?}", peer_id);
             room_actor.do_send(network_msg.clone());
         }
     }
 }
 
-#[async_trait::async_trait]
-impl Handler<CreateRoomForPeer> for CStateNetworkManager {
-    type Result = Result<Option<RoomInboundRecipient>, ()>;
+// ============================================================================
+// Handler: RegisterPeer (from RoomFactory)
+// ============================================================================
 
-    fn handle(&mut self, msg: CreateRoomForPeer, _ctx: &mut Context<Self>) -> Self::Result {
-        // Only handle the "cstate" room
-        if msg.room_id != RoomId::from("cstate") {
-            return Ok(None);
-        }
+/// Handler for the RegisterPeer message from the RoomFactory.
+///
+/// The factory creates actors synchronously and sends this fire-and-forget message
+/// to register them with the manager for broadcasting and peer tracking.
+impl Handler<zznet_router::RegisterPeer<CStateManifest>> for CStateNetworkManager {
+    type Result = ();
 
-        // Translate Role to Permissions using the policy map
-        let permissions = self
-            .permissions_map
-            .get(msg.role.as_str())
-            .cloned()
-            .unwrap_or_default();
-
+    fn handle(
+        &mut self,
+        msg: zznet_router::RegisterPeer<CStateManifest>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
         debug!(
-            "Creating NetworkActor for peer {} with role '{}': permissions = {:?}",
-            msg.peer_id,
-            msg.role.as_str(),
-            permissions
+            "CStateNetworkManager: Registering peer {} with network and room actors",
+            msg.peer_id
         );
-
-        // Create the translator actor with the peer's permissions (not role)
-        let translator = CStateNetworkActor::new(
-            msg.peer_id.clone(),
-            permissions,
-            self.main_actor.clone(),
-            self.self_addr.as_ref().unwrap().clone(),
-        );
-
-        // Start the translator actor
-        let translator_addr = translator.start();
-
-        // Create the RoomActor<CStateMessage>
-        let room_actor = RoomActor::new(
-            RoomId::from("cstate"),
-            msg.outbound_to_peer,
-            translator_addr.clone().recipient::<CStateMessage>(),
-        );
-
-        // Start the RoomActor
-        let room_actor_addr = room_actor.start();
-
-        // Store the addresses in the maps
-        {
-            let mut translators = self.translator_actors.write().unwrap();
-            translators.insert(msg.peer_id.clone(), translator_addr);
-
-            let mut room_actors = self.room_actors.write().unwrap();
-            room_actors.insert(msg.peer_id.clone(), room_actor_addr.clone());
-        }
-
-        // Return the RoomActor's raw inbound recipient
-        let recipient = RoomActor::inbound_recipient(&room_actor_addr);
-
-        Ok(Some(recipient))
+        self.translator_actors
+            .insert(msg.peer_id.clone(), msg.network_actor);
+        self.room_actors.insert(msg.peer_id, msg.room_actor);
     }
 }
 
@@ -291,7 +272,6 @@ impl Handler<CreateRoomForPeer> for CStateNetworkManager {
 mod tests {
     // Phase 4.4: Tests will be added when implementing NetworkManager functionality.
     // These will cover:
-    // - PeerAdded/PeerRemoved handling
     // - NetworkActor spawning and cleanup
     // - Message routing (unicast and broadcast)
     // - SessionManager bridge pattern
