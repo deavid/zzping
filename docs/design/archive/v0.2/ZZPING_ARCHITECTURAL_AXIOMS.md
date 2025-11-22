@@ -1,5 +1,7 @@
 # **Title: `ZZPING_ARCHITECTURAL_AXIOMS.md`**
 
+NOTE: Deprecated documentation.
+
 **Status:** Immutable / Core Philosophy
 
 **Context:** Required reading for understanding _why_ the system is built this way.

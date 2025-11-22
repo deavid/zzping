@@ -1,44 +1,53 @@
 # ZZPing Network Layer: Core Vision
 
-**Document Purpose**: This is the reference document for the essential architectural vision of the ZZPing network layer. It captures the key insights, critical decisions, and fundamental principles that must guide all design and implementation work.
+NOTE: Deprecated documentation.
 
-**Date**: October 2, 2025
-**Status**: Authoritative Reference
-**Use Case**: When in doubt about architecture decisions, refer to this document first.
+**Document Purpose**: This is the reference document for the essential architectural vision of the ZZPing network layer.
+It captures the key insights, critical decisions, and fundamental principles that must guide all design and
+implementation work.
+
+**Date**: October 2, 2025 **Status**: Authoritative Reference **Use Case**: When in doubt about architecture decisions,
+refer to this document first.
 
 ---
 
 ## The Core Vision: Transport-Agnostic Typed Communication
 
-The network layer enables components to communicate across processes using **typed Rust messages** without any knowledge of how those messages are transported.
+The network layer enables components to communicate across processes using **typed Rust messages** without any knowledge
+of how those messages are transported.
 
 ### The Key Insight
 
-Components should be able to communicate across the network **exactly as if they were communicating in-memory**. The transport (TCP, mock, future transports) is completely pluggable and invisible to the component logic.
+Components should be able to communicate across the network **exactly as if they were communicating in-memory**. The
+transport (TCP, mock, future transports) is completely pluggable and invisible to the component logic.
 
 ---
 
 ## Critical Architectural Principle: Same Component, Different Config
 
 **WRONG Mental Model**: Different components on each side
+
 ```
 Collector Side: PingSubmitter
 Database Side:  PingReceiver
 ```
 
 **CORRECT Mental Model**: Same component, different configuration
+
 ```
 Process A: MemDB(config=Collector)
 Process B: MemDB(config=Database)
 ```
 
 **Why This Matters**:
+
 - All network communication code for a component lives in ONE place
 - Easy to reason about - you see both sides of the protocol in the same file
 - Testing is trivial - create two instances with different configs
 - No need to navigate multiple crates to understand communication
 
-**Rule**: A component's networking code must be self-contained in the component's crate. If Component X talks to Component X across the network, all that code is in Component X's implementation.
+**Rule**: A component's networking code must be self-contained in the component's crate. If Component X talks to
+Component X across the network, all that code is in Component X's implementation.
 
 ---
 
@@ -46,9 +55,8 @@ Process B: MemDB(config=Database)
 
 ### What Everyone Thinks
 
-❌ "A room is like an IRC channel where multiple peers broadcast to each other"
-❌ "Rooms enable many-to-many communication"
-❌ "Rooms are for broadcasting messages to multiple recipients"
+❌ "A room is like an IRC channel where multiple peers broadcast to each other" ❌ "Rooms enable many-to-many
+communication" ❌ "Rooms are for broadcasting messages to multiple recipients"
 
 ### What It Actually Is
 
@@ -76,6 +84,7 @@ Process A                          Process B
 A room is like a **phone line between two people**, not a **conference call with many people**.
 
 If Database has 3 collectors connected:
+
 - Connection 1 has room "memdb" (between DB and Collector-1)
 - Connection 2 has room "memdb" (between DB and Collector-2)
 - Connection 3 has room "memdb" (between DB and Collector-3)
@@ -95,6 +104,7 @@ The network layer has **two distinct protocols** that must not be confused:
 **Scope**: Handles bytes, exists at the transport boundary
 
 **Responsibilities**:
+
 - Peer identity exchange (hostname, role)
 - Protocol version negotiation
 - Basic authentication/authorization (role-based)
@@ -110,6 +120,7 @@ The network layer has **two distinct protocols** that must not be confused:
 **Scope**: Completely transport-agnostic, only typed messages
 
 **Responsibilities**:
+
 - Publish which rooms each side offers
 - Compute intersection (auto-join all matching rooms)
 - Route typed messages to/from local components
@@ -159,6 +170,7 @@ struct RoomChannel {
 ### What It Does
 
 **Inbound Flow** (receiving from network):
+
 ```
 ??? (serialization layer)
     → SessionManager.dispatch_message(from_peer, room_id, typed_message)
@@ -166,6 +178,7 @@ struct RoomChannel {
 ```
 
 **Outbound Flow** (sending to network):
+
 ```
 Local component
     → SessionManager.send_to_room(peer_id, room_id, typed_message)
@@ -173,6 +186,7 @@ Local component
 ```
 
 **Lifecycle Management**:
+
 ```
 Connection established
     → SessionManager.peer_connected(peer_id)
@@ -200,6 +214,7 @@ Connection terminated
 ### The Process
 
 1. **Boot Time**: Each process declares which rooms it offers
+
    ```rust
    // Collector offers:
    vec!["memdb", "health", "metrics"]
@@ -209,12 +224,14 @@ Connection terminated
    ```
 
 2. **Connection Time**: Both sides exchange PublishRooms messages (Protocol B)
+
    ```
    Collector → PublishRooms(["memdb", "health", "metrics"])
    Database  → PublishRooms(["memdb", "health", "admin"])
    ```
 
 3. **Auto-Join**: Compute intersection, auto-join all matching rooms
+
    ```
    Intersection = ["memdb", "health"]
 
@@ -337,16 +354,19 @@ This is where things get serialized/deserialized and where transport happens.
 ### Critical Boundaries
 
 **The SessionManager Boundary (MOST IMPORTANT)**:
+
 - **Above**: TypedMessage (Rust structs)
 - **Below**: TypedMessage (Rust structs)
 - **Key**: SessionManager NEVER crosses into bytes
 
 **The Serialization Boundary**:
+
 - **Above**: TypedMessage
 - **Below**: Vec<u8>
 - **Key**: This is where transport-agnostic becomes transport-specific
 
 **The Transport Boundary**:
+
 - **Above**: Vec<u8>
 - **Below**: Network I/O (TCP, TLS, etc.)
 - **Key**: This is completely pluggable
@@ -360,6 +380,7 @@ This is where things get serialized/deserialized and where transport happens.
 **Decision**: SessionManager operates entirely on typed messages, with zero knowledge of serialization or transport.
 
 **Why**:
+
 - Enables testing without network I/O
 - Makes transport truly pluggable
 - Simplifies reasoning about component communication
@@ -372,6 +393,7 @@ This is where things get serialized/deserialized and where transport happens.
 **Decision**: No explicit join/leave mechanism. Rooms are auto-joined based on intersection of offered rooms.
 
 **Why**:
+
 - Simpler protocol (no join/leave messages to handle)
 - Boot-time validation of room compatibility
 - Fail-fast if peers are incompatible
@@ -381,9 +403,11 @@ This is where things get serialized/deserialized and where transport happens.
 
 ### Decision 3: Same Component Code on Both Sides
 
-**Decision**: A component that communicates across the network uses the same code on both ends, just configured differently.
+**Decision**: A component that communicates across the network uses the same code on both ends, just configured
+differently.
 
 **Why**:
+
 - All communication code in one place
 - Easy to reason about both sides of protocol
 - Natural symmetry in protocol design
@@ -396,18 +420,21 @@ This is where things get serialized/deserialized and where transport happens.
 **Decision**: Rooms are 1:1 channels. No broadcasting to multiple peers.
 
 **Why**:
+
 - Our use case doesn't need broadcast
 - Simpler state management (no subscriber lists)
 - Clear ownership of connections
 - Application can implement multi-peer logic if needed
 
-**Trade-off**: Can't easily send same message to multiple peers (but this is a feature, not a bug—forces explicit intent).
+**Trade-off**: Can't easily send same message to multiple peers (but this is a feature, not a bug—forces explicit
+intent).
 
 ### Decision 5: Protocol A (HELLO) is Separate from Protocol B (Rooms)
 
 **Decision**: HELLO handshake happens first (bytes), then control passes to SessionManager (typed).
 
 **Why**:
+
 - HELLO is transport-adjacent, needs to handle bytes
 - SessionManager should never deal with serialization
 - Clear separation of concerns
@@ -421,7 +448,8 @@ This is where things get serialized/deserialized and where transport happens.
 
 ### ❌ Misconception 1: "Rooms are for broadcasting"
 
-**Reality**: Rooms are 1:1 typed channels. If you need to send to multiple peers, you explicitly send to each one's room.
+**Reality**: Rooms are 1:1 typed channels. If you need to send to multiple peers, you explicitly send to each one's
+room.
 
 ### ❌ Misconception 2: "SessionManager handles serialization"
 
@@ -503,17 +531,22 @@ Use this document as the reference when:
 5. **Resolving confusion**: "What exactly is a room again?"
 6. **Making trade-offs**: "What are the core principles I must not violate?"
 
-**Golden Rule**: If your design makes it impossible to test two SessionManagers communicating via mock transport, you've violated the core vision.
+**Golden Rule**: If your design makes it impossible to test two SessionManagers communicating via mock transport, you've
+violated the core vision.
 
 ---
 
 ## Conclusion
 
-The ZZPing network layer vision is built on one core idea: **components communicate with typed messages, completely independent of how those messages are transported**.
+The ZZPing network layer vision is built on one core idea: **components communicate with typed messages, completely
+independent of how those messages are transported**.
 
-SessionManager is the heart of this vision—a pure, typed, transport-agnostic component that can be tested without any network code. Everything else (HELLO, serialization, transport) exists to support SessionManager, not the other way around.
+SessionManager is the heart of this vision—a pure, typed, transport-agnostic component that can be tested without any
+network code. Everything else (HELLO, serialization, transport) exists to support SessionManager, not the other way
+around.
 
 When in doubt, remember:
+
 - Rooms are 1:1 typed channels
 - SessionManager never touches bytes
 - Same component code on both sides

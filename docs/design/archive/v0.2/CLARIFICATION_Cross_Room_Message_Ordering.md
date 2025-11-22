@@ -1,5 +1,8 @@
 # Clarification: Cross-Room Message Ordering (Non-Issue)
 
+NOTE: Deprecated documentation.
+
+
 **Date**: 2025-10-06
 **Purpose**: Clarify that cross-room message ordering is intentionally undefined
 

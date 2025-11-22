@@ -1,5 +1,7 @@
 # Clarification: Connection Topology
 
+NOTE: Deprecated documentation.
+
 **Date**: 2025-10-06
 **Purpose**: Document the simple connection topology for ZZPing architecture
 

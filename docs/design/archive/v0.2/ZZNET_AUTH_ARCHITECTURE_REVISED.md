@@ -1,20 +1,24 @@
 # ZZNet Authentication & Authorization Architecture (Revised)
 
-**Date**: October 5, 2025
-**Status**: Active Design - Revised based on codebase analysis
-**Supersedes**: `ZZNET_AUTH_ARCHITECTURE_PROPOSAL.md`
+NOTE: Deprecated documentation.
+
+**Date**: October 5, 2025 **Status**: Active Design - Revised based on codebase analysis **Supersedes**:
+`ZZNET_AUTH_ARCHITECTURE_PROPOSAL.md`
 
 ---
 
 ## 1. Executive Summary
 
-This document defines the authentication and authorization architecture for the ZZNet network layer and ZZPing application. The design is based on a critical insight discovered during implementation analysis:
+This document defines the authentication and authorization architecture for the ZZNet network layer and ZZPing
+application. The design is based on a critical insight discovered during implementation analysis:
 
-**ZZNet must remain auth-agnostic and reusable.** Authentication and authorization are application concerns, not network layer concerns.
+**ZZNet must remain auth-agnostic and reusable.** Authentication and authorization are application concerns, not network
+layer concerns.
 
 ### Core Architectural Principles
 
-1. **Separation of Concerns**: ZZNet provides verified cryptographic identity; applications define what that identity means.
+1. **Separation of Concerns**: ZZNet provides verified cryptographic identity; applications define what that identity
+   means.
 2. **Certificate-Based Identity**: mTLS certificates carry both role (CN) and user (SAN) for flexible access control.
 3. **Secure by Default**: Raw TCP mode is explicitly insecure and requires opt-in configuration.
 4. **Application-Layer ACLs**: Authorization decisions live in application code (e.g., `zzping-database`), not in zznet.
@@ -22,10 +26,12 @@ This document defines the authentication and authorization architecture for the 
 ### The Identity Model
 
 **Hybrid Role + User Model:**
+
 - **Services** (collector, database): Use service certificates with `CN=<role>` and `SAN=DNS:root`
 - **Human users** (admin, guests): Use user certificates with `CN=<role>` and `SAN=DNS:<username>`
 
 **Authentication Flow:**
+
 ```
 mTLS Handshake → Extract (CN, SAN) → Application resolves identity
                                    → Application enforces ACLs
@@ -39,14 +45,15 @@ mTLS Handshake → Extract (CN, SAN) → Application resolves identity
 
 All certificates in the system follow this convention:
 
-| Certificate Type | CN (Common Name) | SAN (Subject Alt Name) | Example |
-|-----------------|------------------|------------------------|---------|
-| Service (Collector) | `collector` | `DNS:root` | Service identity, no specific user |
-| Service (Database) | `database` | `DNS:root` | Service identity, no specific user |
-| Admin User | `client-admin` | `DNS:alice` | Admin user "alice" |
-| Read-Only User | `client-ro` | `DNS:guest-bob` | Guest user "bob" |
+| Certificate Type    | CN (Common Name) | SAN (Subject Alt Name) | Example                            |
+| ------------------- | ---------------- | ---------------------- | ---------------------------------- |
+| Service (Collector) | `collector`      | `DNS:root`             | Service identity, no specific user |
+| Service (Database)  | `database`       | `DNS:root`             | Service identity, no specific user |
+| Admin User          | `client-admin`   | `DNS:alice`            | Admin user "alice"                 |
+| Read-Only User      | `client-ro`      | `DNS:guest-bob`        | Guest user "bob"                   |
 
 **Key Properties:**
+
 - **CN defines the role** - This is the primary authorization scope
 - **SAN defines the user** - This enables per-user access control within a role
 - **SAN is mandatory** - Certificate generation must fail if SAN is not provided
@@ -65,6 +72,7 @@ The certificate generation script enforces this structure:
 ```
 
 **Enforcement Rules:**
+
 1. SAN must always be provided
 2. If no username is given, script must prompt for explicit `--user root` or fail
 3. This prevents accidental creation of ambiguous certificates
@@ -111,12 +119,14 @@ impl PeerIdentity {
 ### 3.1 Design Philosophy
 
 **ZZNet is auth-agnostic.** It does not:
+
 - ❌ Define application roles (Collector, Database, etc.)
 - ❌ Enforce authorization policies
 - ❌ Make access control decisions
 - ❌ Trust claimed identities from protocol messages
 
 **ZZNet's responsibility:**
+
 - ✅ Perform mTLS handshake with mutual authentication
 - ✅ Extract and provide verified cryptographic identity from peer certificate
 - ✅ Provide transport abstraction (TCP/TLS, mock, future transports)
@@ -141,6 +151,7 @@ pub trait TransportConnection: Send {
 ```
 
 **Implementation Notes:**
+
 - `peer_identity()` extracts CN and first DNS SAN from peer certificate
 - For TLS client connections: extracts from server certificate
 - For TLS server connections: extracts from client certificate
@@ -160,13 +171,15 @@ HandshakeFrame::Hello {
 
 **Security Semantics by Transport Mode:**
 
-| Transport Mode | Role Field Treatment | Security |
-|---------------|---------------------|----------|
-| **mTLS** | Informational only, NOT trusted | Certificate CN is authoritative |
-| **Raw TCP** | Trusted (insecure mode) | Peer can lie - development only |
+| Transport Mode | Role Field Treatment            | Security                        |
+| -------------- | ------------------------------- | ------------------------------- |
+| **mTLS**       | Informational only, NOT trusted | Certificate CN is authoritative |
+| **Raw TCP**    | Trusted (insecure mode)         | Peer can lie - development only |
 
 **Rationale**:
-- mTLS: The certificate's CN is cryptographically verified, so the claimed role in HELLO is redundant and cannot be trusted over the certificate.
+
+- mTLS: The certificate's CN is cryptographically verified, so the claimed role in HELLO is redundant and cannot be
+  trusted over the certificate.
 - Raw TCP: No cryptographic identity available, so we must trust the peer's claim (explicitly insecure).
 
 ---
@@ -176,12 +189,14 @@ HandshakeFrame::Hello {
 ### 4.1 Responsibility Boundary
 
 1. Defining application-specific roles or permissions (optionally by using typed enums)
-1. Defining application-specific roles or permissions (e.g., typed `AuthRole` enums) — application-local concerns. The framework's canonical role identifier is the `Role` newtype (string).
-2. Maintaining allow-lists of permitted identities
-3. Resolving `PeerIdentity` → application role
-4. Enforcing connection-level ACLs (who can connect)
-5. Enforcing room-level ACLs (who can access which rooms)
-6. Enforcing operation-level ACLs (who can perform which actions), using the trait-based permission model for reusable components (see Section 4.7).
+1. Defining application-specific roles or permissions (e.g., typed `AuthRole` enums) — application-local concerns. The
+   framework's canonical role identifier is the `Role` newtype (string).
+1. Maintaining allow-lists of permitted identities
+1. Resolving `PeerIdentity` → application role
+1. Enforcing connection-level ACLs (who can connect)
+1. Enforcing room-level ACLs (who can access which rooms)
+1. Enforcing operation-level ACLs (who can perform which actions), using the trait-based permission model for reusable
+   components (see Section 4.7).
 
 ### 4.2 ZZPing Authentication Flow
 
@@ -383,11 +398,15 @@ impl AuthRole {
 
 ### 4.7 Component-Level Permissions (Trait-Based Model)
 
-While connection and room-level authorization are normally enforced via coarse-grained checks (often implemented by application-level enums or mapped permissions), fine-grained permissions required by reusable components must be handled differently to prevent tight coupling between a component and the application's specific roles.
+While connection and room-level authorization are normally enforced via coarse-grained checks (often implemented by
+application-level enums or mapped permissions), fine-grained permissions required by reusable components must be handled
+differently to prevent tight coupling between a component and the application's specific roles.
 
-The standard pattern for this is to define a trait that represents the set of permissions a component requires. This makes the permissions **type-safe and compile-time checked**.
+The standard pattern for this is to define a trait that represents the set of permissions a component requires. This
+makes the permissions **type-safe and compile-time checked**.
 
-This approach is the mandated replacement for string-based permissions, as it prevents typos and makes the component's requirements explicit through the type system.
+This approach is the mandated replacement for string-based permissions, as it prevents typos and makes the component's
+requirements explicit through the type system.
 
 **1. Define a Permission Trait:**
 
@@ -404,7 +423,9 @@ pub trait IntentPermissions {
 
 **2. Implement the Trait for the Application's Role Enum:**
 
-The application (`zzping`) is responsible for performing `Role` → `Permissions` mapping and for implementing application-local helpers (e.g., typed enums or mappers). Core frameworks should be agnostic and only provide the `Role` identifier.
+The application (`zzping`) is responsible for performing `Role` → `Permissions` mapping and for implementing
+application-local helpers (e.g., typed enums or mappers). Core frameworks should be agnostic and only provide the `Role`
+identifier.
 
 ```rust
 // In the zzping application's auth logic
@@ -428,7 +449,8 @@ impl IntentPermissions for AuthRole {
 
 **3. Use the Trait in the Component:**
 
-The component's logic is then generic over any type that implements the permission trait. This ensures the component is decoupled and reusable.
+The component's logic is then generic over any type that implements the permission trait. This ensures the component is
+decoupled and reusable.
 
 ```rust
 // In the reusable component
@@ -447,7 +469,8 @@ impl<R: IntentPermissions> IntentConfigService<R> {
 }
 ```
 
-This model provides the decoupling of a classic permission system while maintaining the safety and clarity of the Rust type system.
+This model provides the decoupling of a classic permission system while maintaining the safety and clarity of the Rust
+type system.
 
 ---
 
@@ -456,6 +479,7 @@ This model provides the decoupling of a classic permission system while maintain
 ### 5.1 Production Mode: mTLS (Secure)
 
 **Configuration:**
+
 ```toml
 [network]
 tls_enabled = true
@@ -466,6 +490,7 @@ insecure_trust_hello = false  # Must be false for production
 ```
 
 **Security Properties:**
+
 - ✅ Mutual authentication via certificates
 - ✅ Encrypted transport
 - ✅ Cryptographic proof of identity
@@ -473,6 +498,7 @@ insecure_trust_hello = false  # Must be false for production
 - ✅ Identity extracted from certificate CN + SAN
 
 **Trust Chain:**
+
 ```
 CA signs all certificates
     ↓
@@ -490,6 +516,7 @@ Application enforces ACL policy
 ### 5.2 Development Mode: Raw TCP (Insecure)
 
 **Configuration:**
+
 ```toml
 [network]
 tls_enabled = false
@@ -499,12 +526,14 @@ insecure_trust_hello = true  # Explicitly enable insecure mode
 ```
 
 **Security Properties:**
+
 - ❌ No authentication
 - ❌ No encryption
 - ❌ Peer can claim any role
 - ⚠️ HELLO role field is trusted (insecure!)
 
 **Warning Message:**
+
 ```
 ⚠️  WARNING: Running in INSECURE mode!
     TLS is disabled and peer identity claims are trusted without verification.
@@ -512,8 +541,8 @@ insecure_trust_hello = true  # Explicitly enable insecure mode
     DO NOT use in production.
 ```
 
-**Implementation Note:**
-Applications must log this warning prominently and refuse to start in insecure mode unless explicitly configured.
+**Implementation Note:** Applications must log this warning prominently and refuse to start in insecure mode unless
+explicitly configured.
 
 ---
 
@@ -521,7 +550,8 @@ Applications must log this warning prominently and refuse to start in insecure m
 
 ### 6.1 User Access Revocation
 
-**Scenario**: You gave your friend `guest-bob` a certificate with `CN=client-ro, SAN=DNS:guest-bob`. Later, you want to revoke their access.
+**Scenario**: You gave your friend `guest-bob` a certificate with `CN=client-ro, SAN=DNS:guest-bob`. Later, you want to
+revoke their access.
 
 **Solution**: Remove from allow-list in database config:
 
@@ -535,18 +565,21 @@ allowed_peers = [
 ```
 
 **Operational Steps:**
+
 1. Edit `zzping-database.toml`
 2. Remove user's identity from `allowed_peers`
 3. Restart or reload database service (signal SIGHUP for config reload)
 4. User's certificate is now rejected at connection time
 
 **Benefits:**
+
 - ✅ No certificate regeneration needed
 - ✅ No Certificate Revocation List (CRL) complexity
 - ✅ Simple config file edit
 - ✅ Takes effect immediately on service restart/reload
 
 **Trade-offs:**
+
 - ⚠️ Requires manual config management
 - ⚠️ Revoked user keeps their certificate (just can't use it)
 - ⚠️ Need to manage config across services (but only database needs the allow-list)
@@ -554,6 +587,7 @@ allowed_peers = [
 ### 6.2 Per-Certificate Access Control
 
 **Scenario**: You create two certificates for Alice:
+
 - `CN=client-admin, SAN=DNS:alice` (admin cert)
 - `CN=client-ro, SAN=DNS:alice` (read-only cert)
 
@@ -569,8 +603,7 @@ allowed_peers = [
 ]
 ```
 
-**Client Responsibility:**
-Alice must configure her client to use the correct certificate:
+**Client Responsibility:** Alice must configure her client to use the correct certificate:
 
 ```toml
 # alice's client config
@@ -580,6 +613,7 @@ key_path = "alice-ro.key"
 ```
 
 **Use Cases:**
+
 - Give users multiple certificates with different privileges
 - User can switch certificates by changing client config
 - Allows "promotion" (add admin cert) without revoking RO cert
@@ -594,17 +628,20 @@ key_path = "alice-ro.key"
 **Objective**: Establish certificate identity extraction without changing auth logic.
 
 1. **Update certificate generation** (`generate_certs.sh`):
+
    - Add `--user <username>` parameter
    - Enforce SAN presence (fail if missing, suggest `--user root`)
    - Generate certificates with `SAN=DNS:<username>`
    - Regenerate all test certificates
 
 2. **Add PeerIdentity to zznet-api**:
+
    - Define `PeerIdentity` struct in `zznet-api/src/types.rs`
    - Add `peer_identity()` method to `TransportConnection` trait
    - Document semantics (returns `None` for raw TCP)
 
 3. **Implement identity extraction in zznet-transport-tcp**:
+
    - Extract CN from peer certificate
    - Extract first DNS entry from SAN
    - Return `PeerIdentity` from `TcpTransport::peer_identity()`
@@ -616,6 +653,7 @@ key_path = "alice-ro.key"
    - Document that role field is informational only in TLS mode
 
 **Validation:**
+
 - All tests pass with new certificate structure
 - `peer_identity()` returns correct CN + SAN for TLS connections
 - `peer_identity()` returns `None` for raw TCP
@@ -626,18 +664,21 @@ key_path = "alice-ro.key"
 **Objective**: Move auth logic from zznet to application layer.
 
 5. **Create zzping-auth crate**:
+
    - Move `AuthRole` enum from zznet-hello to zzping-auth
    - Implement `AclManager` with config-based allow-lists
    - Implement `can_connect_to()` and `can_access_room()` logic
    - Add insecure mode flag and warning logging
 
 6. **Update application config**:
+
    - Add `[acl]` section to TOML configs
    - Define `allowed_peers` lists for database
    - Add `insecure_trust_hello` flag
    - Create example configs for all roles
 
 7. **Wire auth into zzping applications**:
+
    - Load ACL config in `main.rs`
    - Create `AclManager` instance
    - Pass `AclManager` to session manager
@@ -651,6 +692,7 @@ key_path = "alice-ro.key"
    - Update zznet documentation
 
 **Validation:**
+
 - Applications start with new config format
 - TLS mode uses certificate identity for auth
 - TCP mode requires explicit insecure flag
@@ -662,11 +704,13 @@ key_path = "alice-ro.key"
 **Objective**: Polish, documentation, and operational tooling.
 
 9. **Operational tooling**:
+
    - Config validation tool (check allow-lists, detect typos)
    - Certificate inspection tool (show CN + SAN)
    - Live config reload (SIGHUP handler)
 
 10. **Documentation**:
+
     - Update README with new auth model
     - Document certificate management procedures
     - Create troubleshooting guide
@@ -685,6 +729,7 @@ key_path = "alice-ro.key"
 ### Current State Analysis
 
 **What exists today:**
+
 - ✅ mTLS transport layer with rustls
 - ✅ Certificate generation script (but all certs have `CN=zzping`)
 - ✅ `AuthRole` enum in zznet-hello
@@ -692,6 +737,7 @@ key_path = "alice-ro.key"
 - ⚠️ HELLO message role is trusted (insecure for mTLS)
 
 **What's missing:**
+
 - ❌ SAN in certificates
 - ❌ Identity extraction from certificates
 - ❌ Application-layer ACL configuration
@@ -700,11 +746,13 @@ key_path = "alice-ro.key"
 ### Migration Strategy
 
 **Backward Compatibility:**
+
 - Phase 1 is backward compatible (adds features, doesn't change behavior)
 - Phase 2 breaks compatibility (requires new certs and config)
 - Old certificates without SAN will be rejected
 
 **Migration Path:**
+
 1. Implement Phase 1 (identity extraction infrastructure)
 2. Generate new certificates with SANs
 3. Deploy new certificates to all services
@@ -713,6 +761,7 @@ key_path = "alice-ro.key"
 6. Revoke old certificates
 
 **Rollback Plan:**
+
 - Keep Phase 1 changes minimal and isolated
 - Phase 1 can be rolled back without data loss
 - Phase 2 requires coordination (all services must upgrade together)
@@ -724,51 +773,61 @@ key_path = "alice-ro.key"
 ### Decision 1: CN = Role, SAN = User
 
 **Rationale**:
+
 - Role is the primary authorization scope (coarse-grained)
 - User enables fine-grained access control within a role
 - Separation allows flexible cert management
 
 **Alternative Considered**: CN = User, role in SAN
+
 - Rejected because role is more fundamental to the system
 
 ### Decision 2: Auth Logic in Application, Not ZZNet
 
 **Rationale**:
+
 - Makes zznet reusable for other projects
 - Application has better context for auth decisions
 - Follows separation of concerns principle
 
 **Alternative Considered**: Generic auth trait in zznet
+
 - Rejected as over-engineering; adds complexity without clear benefit
 
 ### Decision 3: SAN Mandatory, "root" for Services
 
 **Rationale**:
+
 - Eliminates ambiguity (every cert explicitly states service vs. user)
 - Prevents accidental creation of user-less certs
 - Makes cert inspection obvious (see "root" → know it's a service)
 
 **Alternative Considered**: SAN optional, absence means service
+
 - Rejected because it's error-prone (forgot SAN = service?)
 
 ### Decision 4: Allow-List in Config, Not Certificate Extensions
 
 **Rationale**:
+
 - Simple revocation (edit config, restart)
 - No PKI infrastructure complexity (CRL, OCSP)
 - Matches operational model (database is central authority)
 
 **Alternative Considered**: Certificate extensions with permissions
+
 - Rejected due to operational complexity and inflexibility
 
 ### Decision 5: Keep HELLO Role Field for TCP Fallback
 
 **Rationale**:
+
 - Development mode needs some identity mechanism
 - Removing field would break protocol versioning
 - Field is harmless if not trusted in TLS mode
 
 **Alternative Considered**: Remove field entirely, TCP has no identity
+
 - Rejected because it makes local development harder
 
 ---
@@ -778,12 +837,14 @@ key_path = "alice-ro.key"
 ### Threat Model
 
 **In Scope:**
+
 - Rogue clients attempting to connect with unauthorized certificates
 - Compromised user credentials (revocation scenario)
 - Misconfiguration (wrong cert loaded, wrong role claimed)
 - Eavesdropping on network traffic (TLS protects)
 
 **Out of Scope:**
+
 - CA compromise (if CA is compromised, system trust is broken)
 - Insider threats with legitimate certificates (they have access by design)
 - Host-level attacks (if host is compromised, game over)
@@ -792,6 +853,7 @@ key_path = "alice-ro.key"
 ### Security Properties
 
 **With mTLS Enabled:**
+
 - **Authentication**: Peer identity is cryptographically proven
 - **Confidentiality**: All traffic is encrypted
 - **Integrity**: TLS ensures messages are not tampered with
@@ -799,14 +861,14 @@ key_path = "alice-ro.key"
 
 **Attack Scenarios:**
 
-| Attack | Mitigation |
-|--------|-----------|
+| Attack                          | Mitigation                                         |
+| ------------------------------- | -------------------------------------------------- |
 | Peer claims wrong role in HELLO | TLS mode: Ignored, certificate CN is authoritative |
-| Stolen certificate | Remove from allow-list, peer is rejected |
-| MITM attack | TLS mutual authentication prevents MITM |
-| Replay attack | TLS nonces prevent replay |
-| Certificate not in allow-list | Connection rejected at handshake |
-| Raw TCP in production | Requires explicit config flag, logs WARNING |
+| Stolen certificate              | Remove from allow-list, peer is rejected           |
+| MITM attack                     | TLS mutual authentication prevents MITM            |
+| Replay attack                   | TLS nonces prevent replay                          |
+| Certificate not in allow-list   | Connection rejected at handshake                   |
+| Raw TCP in production           | Requires explicit config flag, logs WARNING        |
 
 ### Best Practices
 
@@ -840,7 +902,8 @@ key_path = "alice-ro.key"
 
 ## 12. Conclusion
 
-This architecture provides a pragmatic, secure, and maintainable authentication system for ZZNet and ZZPing. Key achievements:
+This architecture provides a pragmatic, secure, and maintainable authentication system for ZZNet and ZZPing. Key
+achievements:
 
 - ✅ **Certificate-based identity** with flexible role+user model
 - ✅ **ZZNet remains reusable** by being auth-agnostic
@@ -848,13 +911,16 @@ This architecture provides a pragmatic, secure, and maintainable authentication 
 - ✅ **Secure by default** with explicit opt-in for insecure mode
 - ✅ **Clear migration path** from current implementation
 
-The hybrid identity model (role in CN, user in SAN) strikes the right balance between operational simplicity for services and fine-grained control for user access. By moving auth logic to the application layer, we preserve ZZNet's reusability while giving ZZPing the flexibility to enforce its specific security policies.
+The hybrid identity model (role in CN, user in SAN) strikes the right balance between operational simplicity for
+services and fine-grained control for user access. By moving auth logic to the application layer, we preserve ZZNet's
+reusability while giving ZZPing the flexibility to enforce its specific security policies.
 
 ---
 
 ## Appendix A: Certificate Examples
 
 ### Service Certificate (Collector)
+
 ```bash
 $ openssl x509 -in collector.pem -noout -text
 Subject: CN = collector
@@ -863,6 +929,7 @@ X509v3 Subject Alternative Name:
 ```
 
 ### User Certificate (Admin)
+
 ```bash
 $ openssl x509 -in alice-admin.pem -noout -text
 Subject: CN = client-admin
@@ -871,6 +938,7 @@ X509v3 Subject Alternative Name:
 ```
 
 ### Identity Representation
+
 - Collector: `"collector"` (service identity)
 - Database: `"database"` (service identity)
 - Alice admin: `"alice@client-admin"` (user identity)
@@ -881,6 +949,7 @@ X509v3 Subject Alternative Name:
 ## Appendix B: Configuration Examples
 
 ### Database Configuration (Full)
+
 ```toml
 [network]
 listen_address = "0.0.0.0:8080"
@@ -901,6 +970,7 @@ insecure_trust_hello = false
 ```
 
 ### Collector Configuration (Minimal)
+
 ```toml
 [network]
 database_address = "192.168.1.100:8080"
@@ -915,6 +985,7 @@ insecure_trust_hello = false
 ```
 
 ### Development Configuration (Insecure)
+
 ```toml
 [network]
 listen_address = "127.0.0.1:8080"
@@ -927,9 +998,8 @@ allowed_peers = []  # Not used in insecure mode
 
 ---
 
-**Document Version**: 1.1
-**Last Updated**: October 2025 (Phase 2 Implementation)
-**Next Review**: After Phase 2 validation
+**Document Version**: 1.1 **Last Updated**: October 2025 (Phase 2 Implementation) **Next Review**: After Phase 2
+validation
 
 ## Appendix: Phase 2 Implementation Details
 
@@ -959,8 +1029,7 @@ The `zzping-auth` crate provides the application-layer ACL implementation:
 
 ### Performance Benchmarks
 
-Authorization checks: ~45ns for small ACLs, ~45ns for large ACLs (1000 entries)
-Config parsing: ~760ns
-Config validation: ~7.7µs for 100 entries
+Authorization checks: ~45ns for small ACLs, ~45ns for large ACLs (1000 entries) Config parsing: ~760ns Config
+validation: ~7.7µs for 100 entries
 
 ---

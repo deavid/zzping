@@ -1,5 +1,8 @@
 # Clarification: Per-Connection Child Actor Pattern
 
+NOTE: Deprecated documentation.
+
+
 **Date**: 2025-10-06
 **Purpose**: Document the per-connection child actor pattern for component-to-network integration
 

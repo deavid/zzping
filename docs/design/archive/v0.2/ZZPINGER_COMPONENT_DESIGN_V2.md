@@ -1,5 +1,7 @@
 # **Title: `ZZPINGER_COMPONENT_DESIGN_V2.md`**
 
+NOTE: Deprecated documentation.
+
 - **Author:** David Martínez Martí & GitHub Copilot
 - **Date:** November 18, 2025
 - **Status:** Final / Authoritative

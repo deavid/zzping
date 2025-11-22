@@ -1,16 +1,19 @@
 # ZZNet Component Framework: Vision & Architecture
 
-**Document Purpose**: Comprehensive architectural vision for the ZZNet component framework and how it integrates with ZZPing applications.
+NOTE: Deprecated documentation.
 
-**Date**: October 21, 2025
-**Status**: Authoritative Reference
-**Supersedes**: Previous component framework documents
+**Document Purpose**: Comprehensive architectural vision for the ZZNet component framework and how it integrates with
+ZZPing applications.
+
+**Date**: October 21, 2025 **Status**: Authoritative Reference **Supersedes**: Previous component framework documents
 
 ---
 
 ## Executive Summary
 
-**ZZNet** is a component framework for building distributed applications using Actix actors that communicate over the network via typed Rust messages. Components remain completely transport-agnostic - they work identically whether connected via TCP/TLS or in-memory mock channels.
+**ZZNet** is a component framework for building distributed applications using Actix actors that communicate over the
+network via typed Rust messages. Components remain completely transport-agnostic - they work identically whether
+connected via TCP/TLS or in-memory mock channels.
 
 ### Core Vision
 
@@ -112,16 +115,19 @@ self.session_manager.send_to_room(
 ### Critical Boundaries
 
 **The SessionManager Boundary** (Most Important):
+
 - **Above**: Typed messages only
 - **Below**: Typed messages only
 - **Never crosses into bytes** - this is the architecture's foundation
 
 **The Serialization Boundary**:
+
 - **Above**: Typed Rust structs
 - **Below**: Vec<u8> bytes
 - **One-way conversion** at send/receive points only
 
 **The Transport Boundary**:
+
 - **Above**: Framed bytes
 - **Below**: Raw network I/O
 - **Completely pluggable** via TransportConnection trait
@@ -135,18 +141,21 @@ self.session_manager.send_to_room(
 **A Component is an Actix actor that implements business logic and optionally communicates over the network.**
 
 Components are:
+
 - ✅ Self-contained actors with private state
 - ✅ Configured via "roles" (Collector vs Database behavior)
 - ✅ Testable without network (SessionManager is optional)
 - ✅ Same code on both sides (just configured differently)
 
 Components are NOT:
+
 - ❌ Different implementations for client vs server
 - ❌ Aware of transport details (TCP, sockets, etc.)
 - ❌ Concerned with serialization
 - ❌ Managing connections directly
 
 **Example**: `MemDB` component
+
 - On collector: buffers ping results, sends batches to database
 - On database: receives batches, stores to disk
 - Same actor implementation, different `MemDBRole` config
@@ -156,6 +165,7 @@ Components are NOT:
 **A Room is a 1:1 bidirectional typed channel between two component instances across a single connection.**
 
 Critical properties:
+
 - ✅ **Point-to-point**: Connects exactly two endpoints
 - ✅ **Per-connection**: Each TCP connection has its own set of rooms
 - ✅ **Typed channel**: Messages are strongly-typed Rust structs
@@ -164,11 +174,13 @@ Critical properties:
 - ✅ **Auto-negotiated**: Joined automatically based on intersection
 
 ❌ **NOT a broadcast channel**: If database has 3 collectors connected:
+
 ```
 Connection 1: Database ←─ "memdb" room ─→ Collector-1
 Connection 2: Database ←─ "memdb" room ─→ Collector-2
 Connection 3: Database ←─ "memdb" room ─→ Collector-3
 ```
+
 These are **three separate rooms**, even with the same name "memdb".
 
 ### 3. SessionManager
@@ -176,6 +188,7 @@ These are **three separate rooms**, even with the same name "memdb".
 **SessionManager is the transport-agnostic core that manages all peer connections and routes typed messages.**
 
 Responsibilities:
+
 - Manages `HashMap<PeerId, PeerSession>` (one per connection)
 - Routes messages: `send_to_room(peer_id, room_id, message)`
 - Handles connection lifecycle: `peer_connected()`, `peer_disconnected()`
@@ -183,6 +196,7 @@ Responsibilities:
 - Delivers `SessionEvent` to components (Active/Inactive)
 
 **Critical constraints**:
+
 - ❌ **Never touches bytes** - only typed messages
 - ❌ **Never performs serialization** - that's serialization layer's job
 - ❌ **Never touches transport** - uses abstract channels
@@ -206,6 +220,7 @@ enum MemDBRole {
 ```
 
 **Same component, different role:**
+
 - Collector role: buffers and sends data
 - Database role: receives and persists data
 - Implementation shares common logic
@@ -215,11 +230,13 @@ enum MemDBRole {
 **Component messages have no delivery guarantees beyond TCP.**
 
 What IS guaranteed (while connected):
+
 - ✅ **Ordering within a room**: Messages arrive in FIFO order
 - ✅ **TCP delivery**: If connection exists, TCP delivers it
 - ✅ **Serialization correctness**: Typed → bytes → typed is lossless
 
 What is NOT guaranteed:
+
 - ❌ **No ACKs**: Sender doesn't know if message was received
 - ❌ **No retries**: Framework doesn't retry failed sends
 - ❌ **Connection loss = message loss**: In-flight messages are lost
@@ -253,6 +270,7 @@ src/components/zzmem-db/
 ### Key Files
 
 **`network_messages.rs`** - Messages that go over the wire:
+
 ```rust
 use serde::{Deserialize, Serialize};
 use actix::Message;
@@ -274,6 +292,7 @@ pub enum MemDBMessage {
 ```
 
 **`role.rs`** - Component configuration:
+
 ```rust
 #[derive(Debug, Clone)]
 pub enum MemDBRole {
@@ -311,9 +330,11 @@ impl MemDBRole {
 ## Crate Responsibilities
 
 ### zznet-api
+
 **Purpose**: Abstract transport trait definitions
 
 **Provides**:
+
 - `TransportConnection` trait (send/recv bytes)
 - `TransportServer` trait (accept connections)
 - `TransportClient` trait (create connections)
@@ -327,9 +348,11 @@ impl MemDBRole {
 ---
 
 ### zznet-transport-tcp
+
 **Purpose**: Production TCP/TLS transport
 
 **Provides**:
+
 - `TcpTransport` implementing `TransportConnection`
 - `TcpTransportServer` implementing `TransportServer`
 - `TcpTransportClient` implementing `TransportClient`
@@ -344,9 +367,11 @@ impl MemDBRole {
 ---
 
 ### zznet-hello
+
 **Purpose**: HELLO protocol and serialization boundary
 
 **Provides**:
+
 - Protocol A (HELLO handshake): peer identity exchange
 - Room negotiation: compute intersection of offered rooms
 - Serialization/deserialization at transport boundary
@@ -354,6 +379,7 @@ impl MemDBRole {
 - `ConnectionManager` for auto-reconnect
 
 **Responsibilities**:
+
 - Extract `PeerIdentity` from transport
 - Exchange HELLO frames (version, role, hostname, rooms)
 - Validate protocol compatibility
@@ -367,15 +393,18 @@ impl MemDBRole {
 ---
 
 ### zznet-session
+
 **Purpose**: Transport-agnostic session management
 
 **Provides**:
+
 - `SessionManager`: manages all peer connections
 - `PeerSession`: per-connection state
 - Room routing: routes messages to/from component handlers
 - Connection lifecycle events: `SessionEvent::Active/Inactive`
 
 **Critical constraints**:
+
 - ❌ **Never touches bytes** - only typed messages
 - ❌ **No serialization** - doesn't know about serde
 - ❌ **No transport dependency** - doesn't depend on zznet-api
@@ -388,15 +417,18 @@ impl MemDBRole {
 ---
 
 ### zznet-room
+
 **Purpose**: Component-facing room abstraction
 
 **Provides**:
+
 - `Room<T>` typed channel wrapper
 - Auto-registration with SessionManager
 - Helper utilities for room management
 - Room connector for tests (wire two rooms together)
 
 **Responsibilities**:
+
 - Provide ergonomic API for components
 - Handle serialization for messages (typed → bytes for transport)
 - Auto-register with SessionManager on construction
@@ -409,14 +441,18 @@ impl MemDBRole {
 ---
 
 ### zznet-auth
+
 **Purpose**: Generic authentication/authorization traits
 
 **Provides**:
-- Typed roles may exist as application-domain enums, but the core networking code uses a compact `Role` newtype (string) representation for routing/filtering.
+
+- Typed roles may exist as application-domain enums, but the core networking code uses a compact `Role` newtype (string)
+  representation for routing/filtering.
 - `PermissionCheck` trait (components use this)
 - Generic ACL utilities
 
 **Responsibilities**:
+
 - Define generic role/permission model
 - Provide reusable auth patterns
 - Keep zznet auth-agnostic (apps provide concrete roles)
@@ -428,9 +464,11 @@ impl MemDBRole {
 ---
 
 ### zznet-builder
+
 **Purpose**: High-level integration API (batteries included)
 
 **Provides**:
+
 - `ServerBuilder`: fluent API for creating servers
 - `ClientBuilder`: fluent API for creating clients
 - Automatic wiring: SessionManager + HELLO + Transport
@@ -438,6 +476,7 @@ impl MemDBRole {
 - Connection lifecycle management
 
 **Example**:
+
 ```rust
 // Production server with TCP
 ServerBuilder::new()
@@ -477,6 +516,7 @@ pub struct PeerIdentity {
 ```
 
 **Identity format**:
+
 - Services: `CN=collector`, `SAN=DNS:root` → identity = "collector"
 - Users: `CN=client-admin`, `SAN=DNS:alice` → identity = "alice@client-admin"
 
@@ -499,11 +539,13 @@ pub struct PeerIdentity {
 ### Security Model
 
 **mTLS (Production)**:
+
 - Certificate CN is authoritative (cryptographically verified)
 - HELLO message role field is informational only (ignored)
 - PeerIdentity extracted from certificate is trusted
 
 **Raw TCP (Testing/Development)**:
+
 - No certificate available
 - HELLO message role field is trusted (peer can lie!)
 - Explicitly insecure, requires opt-in config
@@ -515,6 +557,7 @@ pub struct PeerIdentity {
 ### Connection Topology
 
 **Simple model**:
+
 - Database = TCP server (binds to port, accepts connections)
 - Collectors/Clients = TCP clients (connect to database)
 - ONE connection per app instance (not per component or room)
@@ -539,11 +582,13 @@ pub struct PeerIdentity {
 ### Lifecycle Events
 
 **1. Connection Established**
+
 ```
 Transport connects → HELLO handshake → Room negotiation → SessionEvent::Active
 ```
 
 Components receive:
+
 ```rust
 SessionEvent::Active {
     peer_id: PeerId,          // e.g., "collector-01"
@@ -553,11 +598,13 @@ SessionEvent::Active {
 ```
 
 **2. Connection Lost**
+
 ```
 Transport error → SessionManager cleanup → SessionEvent::Inactive
 ```
 
 Components receive:
+
 ```rust
 SessionEvent::Inactive {
     peer_id: PeerId,
@@ -565,6 +612,7 @@ SessionEvent::Inactive {
 ```
 
 **3. Reconnection**
+
 ```
 Auto-reconnect → New HELLO → New SessionEvent::Active
 ```
@@ -574,6 +622,7 @@ Auto-reconnect → New HELLO → New SessionEvent::Active
 ### Auto-Reconnect
 
 **Client-side** (collectors, GUI):
+
 ```rust
 // ClientBuilder handles reconnection automatically
 loop {
@@ -593,6 +642,7 @@ loop {
 ```
 
 **Server-side** (database):
+
 ```rust
 // ServerBuilder accepts connections in a loop
 loop {
@@ -611,6 +661,7 @@ loop {
 ### Levels of Testing
 
 **1. Unit Tests (No Network)**
+
 ```rust
 #[actix::test]
 async fn test_component_logic() {
@@ -623,6 +674,7 @@ async fn test_component_logic() {
 ```
 
 **2. Component Integration Tests (Mock Transport)**
+
 ```rust
 #[actix::test]
 async fn test_component_communication() {
@@ -643,6 +695,7 @@ async fn test_component_communication() {
 ```
 
 **3. Integration Tests (Real TCP, Localhost)**
+
 ```rust
 #[tokio::test]
 async fn test_full_stack() {
@@ -662,6 +715,7 @@ async fn test_full_stack() {
 ```
 
 **4. Smoke Tests (Real TLS)**
+
 ```rust
 #[tokio::test]
 async fn test_with_tls() {
@@ -674,6 +728,7 @@ async fn test_with_tls() {
 ### Testing Philosophy
 
 **Mock-first development**:
+
 1. Write component with SessionManager abstraction
 2. Test with mock transport (fast, deterministic)
 3. Verify with real TCP (slow, validates integration)
@@ -830,6 +885,7 @@ impl<T> Handler<GetHealth> for MyComponentActor<T> {
 ## Summary: Key Architectural Decisions
 
 ### Decision 1: SessionManager is Transport-Agnostic
+
 **Decision**: SessionManager operates entirely on typed messages, with zero knowledge of serialization or transport.
 
 **Why**: Enables testing without network I/O, makes transport truly pluggable, simplifies reasoning.
@@ -839,6 +895,7 @@ impl<T> Handler<GetHealth> for MyComponentActor<T> {
 ---
 
 ### Decision 2: Rooms Are Auto-Joined via Intersection
+
 **Decision**: No explicit join/leave. Rooms are auto-joined based on intersection of offered rooms during HELLO.
 
 **Why**: Simpler protocol, boot-time validation, fail-fast if incompatible, no race conditions.
@@ -848,6 +905,7 @@ impl<T> Handler<GetHealth> for MyComponentActor<T> {
 ---
 
 ### Decision 3: Same Component Code on Both Sides
+
 **Decision**: Components use same implementation on client and server, configured via roles.
 
 **Why**: All communication code in one place, easy to reason about, simpler testing, natural protocol symmetry.
@@ -857,15 +915,19 @@ impl<T> Handler<GetHealth> for MyComponentActor<T> {
 ---
 
 ### Decision 4: Fire-and-Forget, No Framework ACKs
-**Decision**: No ACKs or retries at framework level. TCP provides ordering and delivery, application provides reliability.
 
-**Why**: Simpler framework, avoids complexity, forces explicit reliability design, matches use case (1+ hour partition tolerance).
+**Decision**: No ACKs or retries at framework level. TCP provides ordering and delivery, application provides
+reliability.
+
+**Why**: Simpler framework, avoids complexity, forces explicit reliability design, matches use case (1+ hour partition
+tolerance).
 
 **Trade-off**: Components must implement application-level reliability if needed (e.g., MemDB buffering).
 
 ---
 
 ### Decision 5: ZZNet is Auth-Agnostic
+
 **Decision**: ZZNet extracts identity, applications enforce authorization.
 
 **Why**: Keeps zznet reusable for other applications, separates concerns, applications know their security requirements.
@@ -879,18 +941,21 @@ impl<T> Handler<GetHealth> for MyComponentActor<T> {
 Use this to verify implementations follow the vision:
 
 ### SessionManager Validation
+
 - [ ] SessionManager compiles without zznet-api dependency
 - [ ] SessionManager has zero references to `Vec<u8>`, bytes, or serialization
 - [ ] SessionManager testable with in-memory mock channels
 - [ ] Two SessionManagers can communicate with no network I/O
 
 ### Room Validation
+
 - [ ] Rooms declared at boot time (static)
 - [ ] Room negotiation via intersection (automatic)
 - [ ] Empty intersection causes connection failure
 - [ ] Rooms are 1:1 per connection (not broadcast)
 
 ### Component Validation
+
 - [ ] Component's network code lives in component's crate
 - [ ] Component works with different roles (client/server)
 - [ ] Component registers room handlers with SessionManager
@@ -898,12 +963,14 @@ Use this to verify implementations follow the vision:
 - [ ] Component testable without SessionManager
 
 ### Transport Validation
+
 - [ ] Clear separation: SessionManager (typed) vs Serialization (bytes)
 - [ ] HELLO handler separate from SessionManager
 - [ ] Transport is pluggable (can swap TCP for mock)
 - [ ] Application components never directly touch transport
 
 ### Builder Validation
+
 - [ ] ServerBuilder and ClientBuilder support both TCP and mock
 - [ ] Builder wires SessionManager + HELLO + Transport automatically
 - [ ] Apps don't have duplicated setup code
@@ -921,9 +988,11 @@ The ZZNet component framework provides a robust foundation for building distribu
 - **Security is clear**: mTLS provides identity, apps enforce authorization
 - **Reliability is explicit**: Fire-and-forget at framework, retry at application
 
-**Golden Rule**: If your design makes it impossible to test two SessionManagers communicating via mock transport, you've violated the core vision.
+**Golden Rule**: If your design makes it impossible to test two SessionManagers communicating via mock transport, you've
+violated the core vision.
 
 When in doubt, refer back to:
+
 - Rooms are 1:1 typed channels (not broadcast)
 - SessionManager never touches bytes
 - Same component code on both sides

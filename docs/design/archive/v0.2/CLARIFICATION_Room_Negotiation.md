@@ -1,5 +1,8 @@
 # Clarification: Room Negotiation and Partial Connections
 
+NOTE: Deprecated documentation.
+
+
 **Date**: 2025-10-06
 **Purpose**: Clarify what happens when room negotiation has partial intersection
 

@@ -1,5 +1,7 @@
 # ZZPing Architecture Diagrams
 
+NOTE: Deprecated documentation.
+
 **Visual guide to understanding the ZZPing architecture**
 
 ---
@@ -180,6 +182,7 @@ COLLECTOR PROCESS:
 ## Diagram 4: Room Concept (The Most Misunderstood Part)
 
 ### WRONG Mental Model ❌
+
 ```
          Database
             │
@@ -192,6 +195,7 @@ COLLECTOR PROCESS:
 ```
 
 ### CORRECT Mental Model ✅
+
 ```
 Connection 1:
   Collector-1 ←─ "memdb" room ─→ Database
@@ -248,8 +252,7 @@ Each is a 1:1 typed channel
 └────────────────────────────────────────────────────────────┘
 ```
 
-**Critical**: SessionManager boundary is between typed and bytes.
-**Everything above** SessionManager = typed.
+**Critical**: SessionManager boundary is between typed and bytes. **Everything above** SessionManager = typed.
 **Everything below** SessionManager = bytes.
 
 ---
@@ -346,14 +349,14 @@ Collector:                     Database:
 └─────────────┘                └─────────────┘
 ```
 
-**Key Point**: Reconnection is treated as NEW connection.
-No state carried over - must be renegotiated.
+**Key Point**: Reconnection is treated as NEW connection. No state carried over - must be renegotiated.
 
 ---
 
 ## Diagram 7: Testing Strategy (Mock vs Real)
 
 ### Mock Transport (Unit/Integration Tests)
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     IN-MEMORY TEST                              │
@@ -373,6 +376,7 @@ No state carried over - must be renegotiated.
 ```
 
 ### Real Transport (System Tests)
+
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                     REAL NETWORK TEST                           │
@@ -392,6 +396,7 @@ No state carried over - must be renegotiated.
 ```
 
 **Strategy**:
+
 - 90% of tests use mock transport
 - 10% use real network (smoke tests only)
 - Mock validates architecture, real validates implementation
@@ -504,6 +509,7 @@ CYCLE COMPLETE - Repeat every second
 **These diagrams should help visualize the architecture!**
 
 Key takeaways:
+
 1. **Same component, different roles** (not separate components)
 2. **Rooms are 1:1** (not broadcast channels)
 3. **SessionManager never touches bytes** (transport-agnostic)
@@ -511,6 +517,7 @@ Key takeaways:
 5. **Data flows through rooms** (typed messages)
 
 For more details, see:
+
 - `IMPLEMENTATION_PLAN_OCT2025.md` - Detailed plan
 - `QUICK_START_GUIDE.md` - Getting started
 - `ZZPing_Network_Layer_Vision.md` - Core vision

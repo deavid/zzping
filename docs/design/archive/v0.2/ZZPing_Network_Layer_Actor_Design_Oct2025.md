@@ -1,10 +1,12 @@
 # ZZPing Network Layer Architecture: Actor-Based Design
 
-**Date**: October 1, 2025 (Updated: October 2, 2025)
-**Status**: Active Design - Aligned with Vision Document
+NOTE: Deprecated documentation.
+
+**Date**: October 1, 2025 (Updated: October 2, 2025) **Status**: Active Design - Aligned with Vision Document
 **Authors**: David Martínez Martí, AI Design Partner (Claude 4.5 Sonnet)
 
-**Reference**: This document has been aligned with `ZZPing_Network_Layer_Vision.md`, which serves as the authoritative reference for essential architectural principles.
+**Reference**: This document has been aligned with `ZZPing_Network_Layer_Vision.md`, which serves as the authoritative
+reference for essential architectural principles.
 
 ---
 
@@ -14,39 +16,60 @@
 
 This document supersedes and clarifies the following previous design documents:
 
-- **`ZZPing_ZzNet_Architecture_And_Design.md`** - Fully superseded. That document described an imperative API model (`request_channel`/`listen_for_channel`) and a facade pattern that has been identified as architecturally flawed. This document replaces it with a declarative, actor-based model.
+- **`ZZPing_ZzNet_Architecture_And_Design.md`** - Fully superseded. That document described an imperative API model
+  (`request_channel`/`listen_for_channel`) and a facade pattern that has been identified as architecturally flawed. This
+  document replaces it with a declarative, actor-based model.
 
-- **`ZZPing_Component_Framework_Architecture.md`** - Partially superseded. The networking aspects are completely replaced by this document. The general component philosophy (isolation, testability, lifecycle management) remains valid, but the specific patterns (Builder → Wiring → Handle) are no longer emphasized as requirements—they were implementation patterns, not core needs.
+- **`ZZPing_Component_Framework_Architecture.md`** - Partially superseded. The networking aspects are completely
+  replaced by this document. The general component philosophy (isolation, testability, lifecycle management) remains
+  valid, but the specific patterns (Builder → Wiring → Handle) are no longer emphasized as requirements—they were
+  implementation patterns, not core needs.
 
-- **`DESIGN_LOG.md`** - Extended and clarified. This document builds upon the three-crate architecture (`zznet-api`, `zznet`, `zznet-lib`) concept but reorganizes it around actors and adds critical missing pieces like per-connection session actors and explicit lifecycle management.
+- **`DESIGN_LOG.md`** - Extended and clarified. This document builds upon the three-crate architecture (`zznet-api`,
+  `zznet`, `zznet-lib`) concept but reorganizes it around actors and adds critical missing pieces like per-connection
+  session actors and explicit lifecycle management.
 
-- **`ADR-001_ZzChorale_vs_CGP.md`** - Resolved. The decision to abandon the custom `zzchorale` framework in favor of the established `actix` actor framework for the actor model is now the foundation of this design. This document describes the architecture using `actix` as the actor runtime.
+- **`ADR-001_ZzChorale_vs_CGP.md`** - Resolved. The decision to abandon the custom `zzchorale` framework in favor of the
+  established `actix` actor framework for the actor model is now the foundation of this design. This document describes
+  the architecture using `actix` as the actor runtime.
 
 ### Why a New Design Was Needed
 
 The previous designs suffered from several fundamental issues that were uncovered through critical analysis:
 
-1. **Confused Responsibilities**: The connection layer was conflating connection management, room routing, and application concerns. Subscriber maps were duplicated across layers, and it was unclear which component owned what responsibility.
+1. **Confused Responsibilities**: The connection layer was conflating connection management, room routing, and
+   application concerns. Subscriber maps were duplicated across layers, and it was unclear which component owned what
+   responsibility.
 
-2. **Hidden Lifecycle Complexity**: Connection lifecycle events were not explicitly propagated to application components, making stateful protocols difficult to implement correctly. Reconnections were treated ambiguously.
+2. **Hidden Lifecycle Complexity**: Connection lifecycle events were not explicitly propagated to application
+   components, making stateful protocols difficult to implement correctly. Reconnections were treated ambiguously.
 
-3. **Lack of Connection Awareness**: Application components had no clean way to maintain per-connection state, leading to patterns like `HashMap<ConnectionId, State>` with associated locking and complexity.
+3. **Lack of Connection Awareness**: Application components had no clean way to maintain per-connection state, leading
+   to patterns like `HashMap<ConnectionId, State>` with associated locking and complexity.
 
-4. **Implementation Patterns Mistaken for Requirements**: Concepts like the three-phase lifecycle (Builder → Wiring → Handle) were described as requirements when they were actually just one possible implementation approach. This led to over-engineering and confusion about what was actually necessary.
+4. **Implementation Patterns Mistaken for Requirements**: Concepts like the three-phase lifecycle (Builder → Wiring →
+   Handle) were described as requirements when they were actually just one possible implementation approach. This led to
+   over-engineering and confusion about what was actually necessary.
 
-5. **Insufficient Clarity on Core Concepts**: Terms like "Room" and "Session" were used ambiguously. The relationship between connections, rooms, and components was not clearly defined, leading to design confusion.
+5. **Insufficient Clarity on Core Concepts**: Terms like "Room" and "Session" were used ambiguously. The relationship
+   between connections, rooms, and components was not clearly defined, leading to design confusion.
 
-This document provides a clean, layered architecture with clear separation of concerns, explicit lifecycle management, and a connection-aware model that makes stateful protocols straightforward to implement.
+This document provides a clean, layered architecture with clear separation of concerns, explicit lifecycle management,
+and a connection-aware model that makes stateful protocols straightforward to implement.
 
 ---
 
 ## Executive Summary
 
-This document defines the architecture for the **ZZPing network layer**, which enables components within a service to communicate with their counterparts in other services over the network.
+This document defines the architecture for the **ZZPing network layer**, which enables components within a service to
+communicate with their counterparts in other services over the network.
 
-**Core Insight**: The **SessionManager** is the heart of the network layer—a completely transport-agnostic component that manages all peer connections and routes typed messages between components. Components communicate using only typed messages, completely independent of how those messages are transported.
+**Core Insight**: The **SessionManager** is the heart of the network layer—a completely transport-agnostic component
+that manages all peer connections and routes typed messages between components. Components communicate using only typed
+messages, completely independent of how those messages are transported.
 
 **Key Architectural Layers**:
+
 1. **Transport Layer**: Abstract, pluggable transport (TCP/TLS, mock, gRPC, etc.) - handles bytes only
 2. **HELLO Handler**: Peer identity and transport-level handshake (operates on bytes)
 3. **SessionManager**: Transport-agnostic core managing PeerSessions (operates on typed messages only)
@@ -54,10 +77,12 @@ This document defines the architecture for the **ZZPing network layer**, which e
 5. **Application Components**: Business logic with same code on both sides (e.g., MemDB ↔ MemDB)
 
 **Two Distinct Protocols**:
+
 - **Protocol A (HELLO)**: Peer identity exchange using bytes - handled before SessionManager involvement
 - **Protocol B (Room Communication)**: Typed message exchange between components - managed entirely by SessionManager
 
 **What This Enables**:
+
 - SessionManager completely testable without any network I/O (mock-first testing)
 - Pure actor model with no shared state or locking
 - Self-testable components with minimal dependencies
@@ -68,10 +93,13 @@ This document defines the architecture for the **ZZPing network layer**, which e
 
 ## Core Requirements
 
-These are the fundamental, non-negotiable requirements. They describe **what** the system must do, not **how** it does it. Design decisions that follow must satisfy all of these requirements.
+These are the fundamental, non-negotiable requirements. They describe **what** the system must do, not **how** it does
+it. Design decisions that follow must satisfy all of these requirements.
 
 ### R1: Pure Actor Model for Component Isolation
-Components must be implemented as isolated actors. Communication between components occurs exclusively through message passing. No shared mutable state. No `Arc<Mutex<T>>` patterns (which are code smells indicating architectural problems).
+
+Components must be implemented as isolated actors. Communication between components occurs exclusively through message
+passing. No shared mutable state. No `Arc<Mutex<T>>` patterns (which are code smells indicating architectural problems).
 
 **Rationale**: Enables independent testing, eliminates race conditions, and provides clear concurrency semantics.
 
@@ -79,134 +107,202 @@ Components must be implemented as isolated actors. Communication between compone
 
 ## System Context and Operational Constraints
 
-Before diving into the architecture, it's critical to understand the operational context in which this network layer operates. These constraints justify many architectural decisions and explain why "fail fast, fail loud" is an appropriate strategy.
+Before diving into the architecture, it's critical to understand the operational context in which this network layer
+operates. These constraints justify many architectural decisions and explain why "fail fast, fail loud" is an
+appropriate strategy.
 
 ### Service-Level Resilience Design
 
-**Network Partition Tolerance**: All zzping services are designed to survive network isolation for **at least 1 hour** with graceful degradation:
+**Network Partition Tolerance**: All zzping services are designed to survive network isolation for **at least 1 hour**
+with graceful degradation:
+
 - **Collectors** continue pinging targets and buffer results in local memory (memdb component)
 - **Database** continues serving queries with existing data
 - **GUI/CLI** freeze and work with cached local data
 
-**Fail-Static Behavior**: Services maintain their last-known-good state during network outages rather than failing open or closed unpredictably.
+**Fail-Static Behavior**: Services maintain their last-known-good state during network outages rather than failing open
+or closed unpredictably.
 
-**Operational Independence**: Each service is designed to not be a strict dependency of any other service. A service failure should not cascade to dependent services beyond the expected loss of that service's functionality.
+**Operational Independence**: Each service is designed to not be a strict dependency of any other service. A service
+failure should not cascade to dependent services beyond the expected loss of that service's functionality.
 
-**Automatic Recovery**: Services are expected to be managed by process supervisors (systemd, Docker, Kubernetes) that automatically restart them on failure. Restart is fast and clean, with minimal operational impact.
+**Automatic Recovery**: Services are expected to be managed by process supervisors (systemd, Docker, Kubernetes) that
+automatically restart them on failure. Restart is fast and clean, with minimal operational impact.
 
-**Architectural Consequence**: This system-level resilience means the network layer can afford to "fail fast, fail loud" at the connection level. If a connection encounters an unrecoverable error, tearing it down is acceptable because:
+**Architectural Consequence**: This system-level resilience means the network layer can afford to "fail fast, fail loud"
+at the connection level. If a connection encounters an unrecoverable error, tearing it down is acceptable because:
+
 1. The remote service is designed to handle connection loss
 2. Reconnection will happen automatically
 3. Service-level state is preserved independently of connection state
 
 ### Component Lifecycle Model
 
-**Static Wiring**: Components are wired together at boot time, and this wiring never changes during the service lifetime. There is no dynamic component discovery, no runtime registration changes, no readiness probes, no health checks beyond basic "is the actor alive?"
+**Static Wiring**: Components are wired together at boot time, and this wiring never changes during the service
+lifetime. There is no dynamic component discovery, no runtime registration changes, no readiness probes, no health
+checks beyond basic "is the actor alive?"
 
-**No Startup Sequencing**: Components do not have complex startup dependencies. Each component is self-sufficient enough to start in any order. If a component needs data from another component, it naturally waits (via message passing) until that data arrives.
+**No Startup Sequencing**: Components do not have complex startup dependencies. Each component is self-sufficient enough
+to start in any order. If a component needs data from another component, it naturally waits (via message passing) until
+that data arrives.
 
-**Pre-Online State**: As a consequence of the boot sequence (`Actors → Router → SessionManager → Transport`), the architecture explicitly supports a "pre-online" state where:
+**Pre-Online State**: As a consequence of the boot sequence (`Actors → Router → SessionManager → Transport`), the
+architecture explicitly supports a "pre-online" state where:
+
 - All internal actors are running and communicating
 - All room handlers are registered and ready
 - The transport layer is NOT yet attached (no network connections accepted/initiated)
 
-This pre-online state is operationally valuable for controlled rollouts, maintenance windows, or testing scenarios where you want the service logic running but network-isolated.
+This pre-online state is operationally valuable for controlled rollouts, maintenance windows, or testing scenarios where
+you want the service logic running but network-isolated.
 
-**Single Point of Activation**: Attaching the transport layer is the final step that makes the service "live" on the network. This is a clear, auditable boundary between "service is prepared" and "service is online."
+**Single Point of Activation**: Attaching the transport layer is the final step that makes the service "live" on the
+network. This is a clear, auditable boundary between "service is prepared" and "service is online."
 
 ### Transport Layer Resilience Requirement
 
-**Exception to "Fail Fast"**: While most components can panic on unexpected errors (triggering service restart), the **transport layer must be resilient** because it performs real I/O operations with external systems.
+**Exception to "Fail Fast"**: While most components can panic on unexpected errors (triggering service restart), the
+**transport layer must be resilient** because it performs real I/O operations with external systems.
 
-**Required Error Handling**: The transport layer must use `Result<T, E>` for all I/O operations and handle errors gracefully:
+**Required Error Handling**: The transport layer must use `Result<T, E>` for all I/O operations and handle errors
+gracefully:
+
 - TCP connection failures → log and retry or report to session layer
 - Socket read/write errors → close connection cleanly, notify session layer
 - TLS handshake failures → log and reject connection
 
-**Rationale**: The transport layer is the boundary between our controlled actor environment and the chaotic external network. It must absorb and translate external failures into clean internal events (e.g., `TransportTerminated`), not panic.
+**Rationale**: The transport layer is the boundary between our controlled actor environment and the chaotic external
+network. It must absorb and translate external failures into clean internal events (e.g., `TransportTerminated`), not
+panic.
 
-**Contrast with Application Layer**: Application business logic is expected to use `Result<T, E>` for expected errors (e.g., validation failures), but unexpected errors (logic bugs) should panic. The transport layer has no "unexpected errors" when it comes to I/O—all I/O failures are expected and must be handled.
+**Contrast with Application Layer**: Application business logic is expected to use `Result<T, E>` for expected errors
+(e.g., validation failures), but unexpected errors (logic bugs) should panic. The transport layer has no "unexpected
+errors" when it comes to I/O—all I/O failures are expected and must be handled.
 
 ### Failure Isolation Philosophy
 
-**Component Failure = Process Failure**: If a main application actor (e.g., `IntentConfigActor`) panics due to a logic bug, the entire service should crash and restart. There is no partial recovery.
+**Component Failure = Process Failure**: If a main application actor (e.g., `IntentConfigActor`) panics due to a logic
+bug, the entire service should crash and restart. There is no partial recovery.
 
-**Connection Failure = Local Failure**: If a per-connection session actor panics, only that connection's vertical slice should tear down (session actor + protocol actor + transport connection). Other connections continue normally.
+**Connection Failure = Local Failure**: If a per-connection session actor panics, only that connection's vertical slice
+should tear down (session actor + protocol actor + transport connection). Other connections continue normally.
 
-**Why This Works**: The system-level design (automatic restarts, 1-hour partition tolerance, fail-static behavior) makes service restarts cheap and safe. It's better to crash and restart in a clean state than to continue in a corrupted state.
+**Why This Works**: The system-level design (automatic restarts, 1-hour partition tolerance, fail-static behavior) makes
+service restarts cheap and safe. It's better to crash and restart in a clean state than to continue in a corrupted
+state.
 
 ### Invariants Under This Model
 
 Given the operational context above, the following invariants are critical:
 
-1. **"Fail Atomically"**: If any part of a connection's vertical slice fails (application session actor, protocol session actor, transport), the entire slice must be torn down atomically. Partial failures must not leave dangling state.
+1. **"Fail Atomically"**: If any part of a connection's vertical slice fails (application session actor, protocol
+   session actor, transport), the entire slice must be torn down atomically. Partial failures must not leave dangling
+   state.
 
-2. **"Static Wiring"**: Room registrations never change after boot. The set of rooms a service can handle is fixed for the lifetime of the process.
+2. **"Static Wiring"**: Room registrations never change after boot. The set of rooms a service can handle is fixed for
+   the lifetime of the process.
 
-3. **"No Orphan Messages"**: A room message must never be sent to a transport connection without a corresponding registered application subscriber. This is enforced by static registration and boot-time validation.
+3. **"No Orphan Messages"**: A room message must never be sent to a transport connection without a corresponding
+   registered application subscriber. This is enforced by static registration and boot-time validation.
 
-4. **"Session-to-Connection 1:1"**: There is exactly one protocol session actor per active transport connection. No sharing, no multiplexing at the session level.
+4. **"Session-to-Connection 1:1"**: There is exactly one protocol session actor per active transport connection. No
+   sharing, no multiplexing at the session level.
 
-5. **"Transport Errors Are Expected"**: The transport layer must never panic due to I/O errors. All I/O operations must be wrapped in `Result<T, E>` and handled explicitly.
+5. **"Transport Errors Are Expected"**: The transport layer must never panic due to I/O errors. All I/O operations must
+   be wrapped in `Result<T, E>` and handled explicitly.
 
 ---
 
 ### R2: Components Must Be Self-Testable with Minimal Dependencies
-Each component must be testable in isolation with mock dependencies. A component's networking code must be self-contained within the same crate as its business logic.
 
-**Rationale**: Enables rapid iteration and confident refactoring. Developers should not need to understand the entire system to test one component.
+Each component must be testable in isolation with mock dependencies. A component's networking code must be
+self-contained within the same crate as its business logic.
+
+**Rationale**: Enables rapid iteration and confident refactoring. Developers should not need to understand the entire
+system to test one component.
 
 ### R3: Components Must Work Without Active Connections (0 to N)
-A component must function correctly whether it has zero, one, or many active network connections. Components must not assume connection availability.
 
-**Rationale**: Enables offline operation, graceful degradation, and resilience to network failures. Components should buffer, queue, or defer work as appropriate to their domain logic.
+A component must function correctly whether it has zero, one, or many active network connections. Components must not
+assume connection availability.
+
+**Rationale**: Enables offline operation, graceful degradation, and resilience to network failures. Components should
+buffer, queue, or defer work as appropriate to their domain logic.
 
 ### R4: Components Must Be Connection-Aware for Stateful Protocols
-Components implementing stateful protocols must receive explicit notification of connection lifecycle events (connection established, connection terminated). Components must be able to maintain independent state per connection.
 
-**Rationale**: Many protocols require negotiation or synchronization when connections are established. Hiding connection lifecycle creates ambiguity and makes correct implementation difficult. For example, a config sync component must re-send initial state to each new connection.
+Components implementing stateful protocols must receive explicit notification of connection lifecycle events (connection
+established, connection terminated). Components must be able to maintain independent state per connection.
+
+**Rationale**: Many protocols require negotiation or synchronization when connections are established. Hiding connection
+lifecycle creates ambiguity and makes correct implementation difficult. For example, a config sync component must
+re-send initial state to each new connection.
 
 ### R5: Symmetric Protocol (Same Code for Client and Server)
-The same component code must work on both the client side (initiating connections) and the server side (accepting connections). The only difference should be configuration (e.g., "connect to X" vs. "listen on Y").
 
-**Rationale**: Reduces code duplication, simplifies testing, and ensures protocol compatibility. If both sides use the same state machine, protocol bugs are caught immediately.
+The same component code must work on both the client side (initiating connections) and the server side (accepting
+connections). The only difference should be configuration (e.g., "connect to X" vs. "listen on Y").
+
+**Rationale**: Reduces code duplication, simplifies testing, and ensures protocol compatibility. If both sides use the
+same state machine, protocol bugs are caught immediately.
 
 ### R6: Transport Agnostic
-The connection and application layers must not depend on a specific transport implementation. It must be possible to swap TCP/TLS for gRPC, or add a new transport, without modifying application component code.
 
-**Rationale**: Enables experimentation with different transports, supports diverse deployment environments, and prevents vendor lock-in.
+The connection and application layers must not depend on a specific transport implementation. It must be possible to
+swap TCP/TLS for gRPC, or add a new transport, without modifying application component code.
+
+**Rationale**: Enables experimentation with different transports, supports diverse deployment environments, and prevents
+vendor lock-in.
 
 ### R7: No Heavy Buffering in Network Layer
-The network layer (session and routing layers) must not implement application-level buffering policies. Buffering decisions are the responsibility of application components.
 
-**Rationale**: Different applications have different buffering needs (e.g., drop old data vs. apply backpressure). The network layer should not make these policy decisions. Small performance-oriented buffers (e.g., batching 3 messages) are acceptable.
+The network layer (session and routing layers) must not implement application-level buffering policies. Buffering
+decisions are the responsibility of application components.
+
+**Rationale**: Different applications have different buffering needs (e.g., drop old data vs. apply backpressure). The
+network layer should not make these policy decisions. Small performance-oriented buffers (e.g., batching 3 messages) are
+acceptable.
 
 ### R8: Static Room List at Boot Time
-The set of "rooms" (logical service types) that a service supports must be known at boot time and must not change during runtime. Dynamic addition or removal of room types is not required.
 
-**Rationale**: Simplifies the design significantly. Room lists can be validated at startup. Runtime changes add complexity for no clear benefit in our use case.
+The set of "rooms" (logical service types) that a service supports must be known at boot time and must not change during
+runtime. Dynamic addition or removal of room types is not required.
+
+**Rationale**: Simplifies the design significantly. Room lists can be validated at startup. Runtime changes add
+complexity for no clear benefit in our use case.
 
 ### R9: Reconnection = New Connection (No Identity Persistence at Protocol Level)
-When a connection is lost and re-established, the protocol layer must treat it as a completely new connection with a fresh connection ID. The protocol must not attempt to restore previous connection state.
 
-**Rationale**: In our domain, a disconnection almost always indicates a process restart (not a transient network flap), which means state has been lost. Attempting to restore state creates a dangerous illusion of continuity. Application components can implement their own reconnection logic at a higher level if needed.
+When a connection is lost and re-established, the protocol layer must treat it as a completely new connection with a
+fresh connection ID. The protocol must not attempt to restore previous connection state.
+
+**Rationale**: In our domain, a disconnection almost always indicates a process restart (not a transient network flap),
+which means state has been lost. Attempting to restore state creates a dangerous illusion of continuity. Application
+components can implement their own reconnection logic at a higher level if needed.
 
 ### R10: Component Networking Code Is Self-Contained
-A component's networking code (message types, serialization, protocol logic) must reside in the same crate as its business logic. A developer working on a component should not need to navigate across multiple crates to understand its network behavior.
 
-**Rationale**: Improves code locality, reduces cognitive load, and makes components truly self-contained units. If a component talks to itself across the network, all that code should be in one place.
+A component's networking code (message types, serialization, protocol logic) must reside in the same crate as its
+business logic. A developer working on a component should not need to navigate across multiple crates to understand its
+network behavior.
+
+**Rationale**: Improves code locality, reduces cognitive load, and makes components truly self-contained units. If a
+component talks to itself across the network, all that code should be in one place.
 
 ---
 
 ## Architectural Guarantees (Not Conventions)
 
-The following are not best practices or recommendations—they are **guarantees** enforced by the architecture itself, making certain classes of bugs impossible.
+The following are not best practices or recommendations—they are **guarantees** enforced by the architecture itself,
+making certain classes of bugs impossible.
 
 ### Guarantee 1: SessionHandle Enforces "Fail Atomically"
 
-**The Invariant**: If any part of a connection's vertical slice fails (application session actor, protocol session actor, or transport), the entire slice must be torn down atomically. Partial failures must not leave dangling state.
+**The Invariant**: If any part of a connection's vertical slice fails (application session actor, protocol session
+actor, or transport), the entire slice must be torn down atomically. Partial failures must not leave dangling state.
 
-**How It's Enforced**: The `SessionHandle` given to application session actors uses Rust's **RAII (Resource Acquisition Is Initialization)** pattern via the `Drop` trait:
+**How It's Enforced**: The `SessionHandle` given to application session actors uses Rust's **RAII (Resource Acquisition
+Is Initialization)** pattern via the `Drop` trait:
 
 ```rust
 pub struct SessionHandle {
@@ -224,12 +320,14 @@ impl Drop for SessionHandleInner {
 ```
 
 **What This Means**:
+
 - When an application session actor stops (clean shutdown or panic), its `SessionHandle` is automatically dropped
 - Dropping the handle triggers `TeardownConnection` to the protocol actor
 - The protocol actor stops and closes the transport
 - The entire vertical slice is torn down atomically
 
 **Why This Is Better Than Convention**:
+
 - Developers cannot forget to tear down the connection—Rust's type system guarantees it
 - Works correctly even during panics (Drop always runs, even during unwinding)
 - No special error handling code needed in application actors
@@ -258,18 +356,22 @@ pub enum SessionEvent {
 ```
 
 **What This Enables**:
+
 - Authorization: "Only accept connections from Database role"
 - Logging: "Collector 'collector-01' connected"
 - Application logic: "Behave differently when talking to CLI vs Database"
 - Debugging: Operators can see WHO is connected, not just connection IDs
 
-**Why This Matters**: Without peer context, applications would need to implement their own ad-hoc "who are you?" protocol at the start of every session. This design makes peer identity a first-class citizen of the architecture.
+**Why This Matters**: Without peer context, applications would need to implement their own ad-hoc "who are you?"
+protocol at the start of every session. This design makes peer identity a first-class citizen of the architecture.
 
 ### Guarantee 3: Message Ordering Within a Room
 
-**The Invariant**: Messages sent to the same room on the same connection are delivered in FIFO (First-In-First-Out) order.
+**The Invariant**: Messages sent to the same room on the same connection are delivered in FIFO (First-In-First-Out)
+order.
 
 **How It's Enforced**: The entire pipeline naturally preserves FIFO ordering:
+
 1. Application session actor sends messages through `SessionHandle` in order
 2. Protocol session actor receives them in its mailbox (Actix mailboxes are FIFO)
 3. Protocol actor serializes them onto the TCP stream in order
@@ -277,113 +379,145 @@ pub enum SessionEvent {
 5. Peer receives and processes frames in order
 
 **What This Enables**:
+
 - Stateful protocols can send sequences of updates (`Create`, `Update`, `Delete`) and know they'll be processed in order
 - No need for explicit sequence numbers within a room
 - Simplifies application logic dramatically
 
 **What Is NOT Guaranteed**:
+
 - ❌ **No ordering between different rooms** on the same connection (they come from independent actors)
 - ❌ **No ordering across different connections** (network latency is unpredictable)
 
 ### Guarantee 4: SessionActive Arrives Before Data
 
-**The Invariant**: For any connection, the `SessionActive` event is fully processed by application components before any `DataForRoom` events arrive for that connection.
+**The Invariant**: For any connection, the `SessionActive` event is fully processed by application components before any
+`DataForRoom` events arrive for that connection.
 
 **How It's Enforced**: The protocol session actor processes events sequentially:
+
 1. Completes handshake and room negotiation
 2. Publishes `SessionActive` events to all relevant rooms
 3. Only then continues reading and dispatching data frames from the transport
 
-Because the protocol actor is single-threaded (actor model) and processes its mailbox sequentially, and because Actix message delivery is fast (microseconds), the `SessionActive` handlers in main actors will spawn session actors before the first data frame is read from the TCP buffer.
+Because the protocol actor is single-threaded (actor model) and processes its mailbox sequentially, and because Actix
+message delivery is fast (microseconds), the `SessionActive` handlers in main actors will spawn session actors before
+the first data frame is read from the TCP buffer.
 
 **What This Prevents**:
+
 - Race conditions where data arrives before the session actor exists
 - Orphan data that has no handler
 - Complex buffering logic in main actors
 
-**Why This Works**: The actor model's sequential processing, combined with TCP's receive buffering, creates a natural synchronization point. The protocol actor cannot read the next frame until it has dispatched the previous event.
+**Why This Works**: The actor model's sequential processing, combined with TCP's receive buffering, creates a natural
+synchronization point. The protocol actor cannot read the next frame until it has dispatched the previous event.
 
 ---
 
 ## Critical Clarifications
 
-These are answers to questions that inevitably arise when reading the requirements. They clarify common sources of confusion and provide precise definitions of ambiguous terms.
+These are answers to questions that inevitably arise when reading the requirements. They clarify common sources of
+confusion and provide precise definitions of ambiguous terms.
 
 ### What Is a "Room"?
 
 A **room** is a per-connection, 1:1 logical communication channel between two specific component instances.
 
 **It is NOT**:
+
 - A shared broadcast channel (like an IRC room)
 - A multiplexed group communication mechanism
 - A persistent entity that survives connection loss
 
 **It IS**:
+
 - A type-safe communication path for one specific protocol (e.g., "intent-config")
 - Tied to a single, specific TCP connection
 - Unique per connection (Connection A has its own "intent-config" room, Connection B has a separate one)
 
-**Better Mental Model**: Think of a room as a "phone line" between two processes, not a "conference call". Each connection is a separate line.
+**Better Mental Model**: Think of a room as a "phone line" between two processes, not a "conference call". Each
+connection is a separate line.
 
-**Naming Note**: The term "Room" was chosen because it's established in the codebase. A more precise term might be "ConnectionRoom" or "ServiceChannel", but changing terminology now would create more confusion than it solves. Just remember: rooms are per-connection and 1:1.
+**Naming Note**: The term "Room" was chosen because it's established in the codebase. A more precise term might be
+"ConnectionRoom" or "ServiceChannel", but changing terminology now would create more confusion than it solves. Just
+remember: rooms are per-connection and 1:1.
 
 ### What Does "Connection-Aware" Mean?
 
-**Connection-aware** means that application components receive explicit events when connections are established and terminated, and they can maintain separate state per connection.
+**Connection-aware** means that application components receive explicit events when connections are established and
+terminated, and they can maintain separate state per connection.
 
 **Example**: An `IntentConfigActor` on the server side:
+
 - Receives `SessionActive { connection_id: 42, ... }` when Collector-1 connects
 - Spawns a session actor to handle connection #42
 - Sends initial config state to connection #42
 - Receives `SessionTerminated { connection_id: 42 }` when Collector-1 disconnects
 - Cleans up any per-connection state for #42
 
-**Why This Matters**: Without connection awareness, the component would blindly send messages without knowing if they're going to an old, dead connection or a new one. Stateful protocols require explicit knowledge of connection boundaries.
+**Why This Matters**: Without connection awareness, the component would blindly send messages without knowing if they're
+going to an old, dead connection or a new one. Stateful protocols require explicit knowledge of connection boundaries.
 
 ### How Does Reconnection Work?
 
 **It doesn't.** There is no "reconnection" at the protocol layer.
 
 When a TCP connection is lost:
+
 1. The session actor for that connection stops
 2. Application components receive `SessionTerminated { connection_id: 42 }`
 3. Per-connection state is cleaned up
 4. **End of story**
 
 When a new TCP connection is established (even from the same remote host):
+
 1. A **new** session actor is spawned with a **new**, unique `connection_id` (e.g., 87)
 2. Application components receive `SessionActive { connection_id: 87, ... }`
 3. The protocol negotiation happens from scratch
 4. Application components re-establish any necessary state for this **new** connection
 
-**Rationale**: In our deployment model, a disconnection almost always means the remote process restarted. The remote state is gone. Treating it as a "reconnection" and attempting to resume creates a dangerous illusion of continuity. It's safer and clearer to start fresh.
+**Rationale**: In our deployment model, a disconnection almost always means the remote process restarted. The remote
+state is gone. Treating it as a "reconnection" and attempting to resume creates a dangerous illusion of continuity. It's
+safer and clearer to start fresh.
 
-**Higher-Level Identity**: Application components **may** implement their own notion of identity (e.g., via hostname in mTLS certificate) and maintain cross-connection state at a higher level, but this is application logic, not protocol logic.
+**Higher-Level Identity**: Application components **may** implement their own notion of identity (e.g., via hostname in
+mTLS certificate) and maintain cross-connection state at a higher level, but this is application logic, not protocol
+logic.
 
 ### Who Buffers Messages?
 
 **Application components decide their own buffering policy.** The network layer does not buffer.
 
 **Example Policies**:
+
 - `PingerActor` might drop new pings if the send buffer is full (drop-newest policy)
 - `IntentConfigActor` might keep only the latest config update (replace-old policy)
 - `BatchCollectorActor` might apply backpressure and block until space is available
 
-**Network Layer's Role**: The network layer may use small, performance-oriented buffering (e.g., batching a few messages to reduce syscalls), but it does not implement application-level queueing or buffering strategies.
+**Network Layer's Role**: The network layer may use small, performance-oriented buffering (e.g., batching a few messages
+to reduce syscalls), but it does not implement application-level queueing or buffering strategies.
 
-**Rationale**: Buffering policy is domain-specific. A ping monitor has different needs than a file transfer. The network layer should not make these decisions.
+**Rationale**: Buffering policy is domain-specific. A ping monitor has different needs than a file transfer. The network
+layer should not make these decisions.
 
 ### What About Multiple Connections from the Same "Identity"?
 
 **They are different processes.** The protocol treats them as completely independent connections.
 
-**Example Scenario**: Collector-1 has an active connection (#42) to the database. An operator starts a second instance of the collector process (same hostname, same config) to perform a handoff/takeover. The second instance creates connection #87.
+**Example Scenario**: Collector-1 has an active connection (#42) to the database. An operator starts a second instance
+of the collector process (same hostname, same config) to perform a handoff/takeover. The second instance creates
+connection #87.
 
-**From zznet's perspective**: These are two separate connections, two separate sets of session actors, two independent protocol state machines. The protocol does not attempt to correlate them.
+**From zznet's perspective**: These are two separate connections, two separate sets of session actors, two independent
+protocol state machines. The protocol does not attempt to correlate them.
 
-**From the application's perspective**: The `DatabaseOrchestrator` component (business logic) might recognize via hostnames that both connections claim to be "Collector-1" and implement handoff logic. But this is application-level orchestration, not protocol-level behavior.
+**From the application's perspective**: The `DatabaseOrchestrator` component (business logic) might recognize via
+hostnames that both connections claim to be "Collector-1" and implement handoff logic. But this is application-level
+orchestration, not protocol-level behavior.
 
-**Rationale**: Attempting to correlate connections at the protocol level adds immense complexity for unclear benefit. Let application components make identity decisions based on their domain knowledge.
+**Rationale**: Attempting to correlate connections at the protocol level adds immense complexity for unclear benefit.
+Let application components make identity decisions based on their domain knowledge.
 
 ### How Is Serialization Handled?
 
@@ -392,6 +526,7 @@ When a new TCP connection is established (even from the same remote host):
 **The Serialization Layers**:
 
 1. **Component Layer** (typed → typed): Component sends typed message to SessionManager
+
    ```rust
    // Component code
    let msg = MemDBMessage::Insert { key, value };
@@ -399,6 +534,7 @@ When a new TCP connection is established (even from the same remote host):
    ```
 
 2. **SessionManager Layer** (typed → typed): Routes typed message to correct PeerSession
+
    ```rust
    // SessionManager code - NO serialization, only routing
    impl SessionManager {
@@ -410,6 +546,7 @@ When a new TCP connection is established (even from the same remote host):
    ```
 
 3. **PeerSession Layer** (typed → bytes): Serializes message, wraps in envelope, sends to transport
+
    ```rust
    // PeerSession code - THIS is where serialization happens
    impl PeerSession {
@@ -431,17 +568,20 @@ When a new TCP connection is established (even from the same remote host):
    ```
 
 **Why This Layering?**
+
 - **SessionManager is transport-agnostic**: It never sees bytes, only typed messages
 - **PeerSession is the serialization boundary**: It converts between typed (above) and bytes (below)
 - **Testing without network**: SessionManager can be tested with mock TransportHandles
 - **Type safety**: Compiler catches type mismatches between components
 
 **The Key Insight**:
+
 - SessionManager doesn't know about serialization, envelopes, or bytes
 - PeerSession encapsulates all byte-handling
 - This is what makes SessionManager transport-agnostic and testable without network I/O
 
 **Trade-offs**:
+
 - ✅ SessionManager completely testable without network
 - ✅ Transport truly pluggable (TCP, mock, gRPC)
 - ✅ Clear layer boundaries (typed vs bytes)
@@ -454,22 +594,26 @@ When a new TCP connection is established (even from the same remote host):
 
 ## Protocol Structure: Two Distinct Protocols
 
-The zznet layer uses **two separate protocols** operating at different layers with different concerns. Understanding this separation is critical for comprehending the architecture.
+The zznet layer uses **two separate protocols** operating at different layers with different concerns. Understanding
+this separation is critical for comprehending the architecture.
 
 ### Protocol A: HELLO (Peer Identity & Transport Handshake)
 
-This protocol establishes peer identity and validates the transport connection **before** the SessionManager gets involved.
+This protocol establishes peer identity and validates the transport connection **before** the SessionManager gets
+involved.
 
 **Layer**: Operates at the transport layer, **below** SessionManager
 
 **Data Format**: Bytes (serialized frames)
 
 **Purpose**:
+
 - Establish basic peer identity (hostname, role)
 - Verify protocol compatibility
 - Complete transport-level handshake (may include TLS, authentication, etc.)
 
 **Frame Structure** (simplified):
+
 ```rust
 #[derive(Serialize, Deserialize)]
 struct HelloFrame {
@@ -488,6 +632,7 @@ struct HelloAckFrame {
 ```
 
 **Behavior**:
+
 1. Transport connection established (TCP, TLS, etc.)
 2. HELLO Handler sends `HelloFrame` with identity
 3. Remote peer receives `HelloFrame`, validates it
@@ -496,6 +641,7 @@ struct HelloAckFrame {
 6. **If rejected**: Connection closed with error
 
 **Critical Points**:
+
 - HELLO operates on **bytes** (serialized frames)
 - HELLO knows nothing about rooms or typed messages
 - HELLO completes **before** SessionManager creates a PeerSession
@@ -510,11 +656,13 @@ After HELLO completes and SessionManager creates a PeerSession, components commu
 **Data Format**: Typed Rust messages (e.g., `MemDBMessage`, `IntentConfigMessage`)
 
 **Purpose**:
+
 - Negotiate which rooms (communication channels) are active
 - Exchange typed messages between component pairs
 - Handle component-level lifecycle (room activation, message exchange)
 
 **Room Negotiation**:
+
 ```rust
 // Each side publishes their supported rooms
 let local_rooms = vec!["memdb", "intent-config"];
@@ -528,6 +676,7 @@ let active_rooms = local_rooms.intersection(&peer_rooms); // ["memdb"]
 ```
 
 **Message Exchange** (SessionManager perspective):
+
 ```rust
 // Component sends typed message
 component.send_to_peer(
@@ -544,6 +693,7 @@ component.send_to_peer(
 ```
 
 **Critical Points**:
+
 - SessionManager operates **only on typed messages** - never sees bytes
 - Room negotiation happens via auto-join intersection (no dynamic subscribe/unsubscribe)
 - Same component code on both sides (e.g., MemDB(Collector) ↔ MemDB(Database))
@@ -553,23 +703,27 @@ component.send_to_peer(
 ### Why Two Protocols?
 
 **Complete Layer Separation**:
+
 - **Protocol A (HELLO)**: Transport layer concern - operates on bytes, handles peer identity
-- **Protocol B (Room Communication)**: Application layer concern - operates on typed messages, handles component communication
+- **Protocol B (Room Communication)**: Application layer concern - operates on typed messages, handles component
+  communication
 - SessionManager sits **above** Protocol A and manages Protocol B
 
 **Transport Agnostic Testing**:
+
 - SessionManager can be tested with mock transport (in-memory channels)
 - Two SessionManagers can communicate via mock without any network I/O
 - Protocol A (HELLO) can be tested independently of SessionManager
 - This is the **design validation**: if you can't test SessionManager without network I/O, the architecture is wrong
 
 **Evolution Without Breaking Changes**:
+
 - HELLO protocol (Protocol A) changes rarely - provides stable foundation
 - Room message types (Protocol B) can evolve independently
 - SessionManager never changes when transport changes (TCP → mock → gRPC)
 
-**Critical Architectural Invariant**:
-SessionManager must compile and function **without** any transport crate dependency. It receives PeerIdentity (from HELLO Handler) and sends/receives typed messages. It never sees bytes.
+**Critical Architectural Invariant**: SessionManager must compile and function **without** any transport crate
+dependency. It receives PeerIdentity (from HELLO Handler) and sends/receives typed messages. It never sees bytes.
 
 ### Implementation Architecture
 
@@ -604,23 +758,27 @@ impl SessionManager {
 }
 ```
 
-**Critical Separation**: HELLO Handler completes **before** SessionManager creates a PeerSession. SessionManager never participates in HELLO - it only receives the validated result.
+**Critical Separation**: HELLO Handler completes **before** SessionManager creates a PeerSession. SessionManager never
+participates in HELLO - it only receives the validated result.
 
 ### Room Name Registry (Implicit Contract)
 
-While room names are strings at the protocol level, they represent **well-known protocol identifiers** in the zzping ecosystem:
+While room names are strings at the protocol level, they represent **well-known protocol identifiers** in the zzping
+ecosystem:
 
-| Room Name       | Purpose                          | Message Protocol          |
-|-----------------|----------------------------------|---------------------------|
-| `intent-config` | Intent configuration sync        | `IntentConfigMessage`     |
-| `health`        | Health check / heartbeat         | `HealthMessage`           |
-| `metrics`       | Metrics collection               | `MetricsMessage`          |
-| `alerts`        | Alert notifications              | `AlertMessage`            |
-| `ping-results`  | Ping result streaming            | `PingResultMessage`       |
+| Room Name       | Purpose                   | Message Protocol      |
+| --------------- | ------------------------- | --------------------- |
+| `intent-config` | Intent configuration sync | `IntentConfigMessage` |
+| `health`        | Health check / heartbeat  | `HealthMessage`       |
+| `metrics`       | Metrics collection        | `MetricsMessage`      |
+| `alerts`        | Alert notifications       | `AlertMessage`        |
+| `ping-results`  | Ping result streaming     | `PingResultMessage`   |
 
-**These are not arbitrary strings.** They are the equivalent of API endpoints or RPC method names in a distributed system. If a component offers "intent-config", it **must** implement the `IntentConfigMessage` protocol correctly.
+**These are not arbitrary strings.** They are the equivalent of API endpoints or RPC method names in a distributed
+system. If a component offers "intent-config", it **must** implement the `IntentConfigMessage` protocol correctly.
 
-**Configuration errors** (e.g., a Database expecting "metrics" but Collector only offers "ping-results") will be caught during room negotiation, resulting in an empty intersection and connection rejection.
+**Configuration errors** (e.g., a Database expecting "metrics" but Collector only offers "ping-results") will be caught
+during room negotiation, resulting in an empty intersection and connection rejection.
 
 ---
 
@@ -632,9 +790,12 @@ This section defines critical operational characteristics of the network layer t
 
 **Model**: Persistent, long-lived connections. No connection pooling or reuse.
 
-**Rationale**: Each connection represents an active relationship between two services. When a service restarts, it establishes a new connection. The overhead of TCP handshake + TLS + protocol negotiation is acceptable for our connection frequency (minutes to hours between reconnects, not seconds).
+**Rationale**: Each connection represents an active relationship between two services. When a service restarts, it
+establishes a new connection. The overhead of TCP handshake + TLS + protocol negotiation is acceptable for our
+connection frequency (minutes to hours between reconnects, not seconds).
 
 **Behavior**:
+
 - Services establish connections at startup and maintain them until shutdown
 - No connection pool management needed
 - Each connection is independent (no state sharing between connections)
@@ -644,6 +805,7 @@ This section defines critical operational characteristics of the network layer t
 **Mechanism**: Transport-level heartbeat using **zero-sized frames**.
 
 **Frame Format**:
+
 ```rust
 // Transport frame structure
 // [u32 length][payload bytes]
@@ -653,42 +815,50 @@ This section defines critical operational characteristics of the network layer t
 ```
 
 **Behavior**:
+
 - **Both sides** must send heartbeat frames periodically (every 1 second recommended)
 - If no frames received (heartbeat or data) for configured timeout (e.g., 5 seconds), assume connection is dead
 - If several consecutive heartbeat send attempts fail at TCP level, close connection
 - Heartbeat is **transport layer responsibility**, not visible to protocol or application layers
 
-**Rationale**: Detect "zombie connections" (peer crashed but TCP didn't notice) quickly. TCP keepalive can take minutes; protocol-level heartbeat detects failure in seconds.
+**Rationale**: Detect "zombie connections" (peer crashed but TCP didn't notice) quickly. TCP keepalive can take minutes;
+protocol-level heartbeat detects failure in seconds.
 
 ### Message Size Limits
 
 **Hard Limit**: 16 MiB (16,777,216 bytes) per message.
 
 **Enforcement**:
-- **Sending**: Protocol layer must reject messages exceeding 16 MiB before attempting to send. Return error to application session actor.
+
+- **Sending**: Protocol layer must reject messages exceeding 16 MiB before attempting to send. Return error to
+  application session actor.
 - **Receiving**: If frame header indicates size > 16 MiB, immediately close connection with protocol error.
 
 **Rationale**:
+
 1. **Security**: Prevent attackers from causing memory exhaustion by claiming terabytes of data
 2. **Multiplexing**: Large messages would starve other rooms on the same connection (head-of-line blocking)
 3. **Predictability**: Services can allocate bounded buffers
 
 **Configuration**: This is a compile-time constant in the transport layer, not runtime-configurable.
 
-**Failure Mode**: Attempting to send >16 MiB is a logic error (panic-worthy). Receiving >16 MiB is a protocol violation (close connection).
+**Failure Mode**: Attempting to send >16 MiB is a logic error (panic-worthy). Receiving >16 MiB is a protocol violation
+(close connection).
 
 ### Observability
 
 **Requirements**: The framework must provide visibility into connection state for operators.
 
 **Minimum Required Metrics** (to be exposed):
+
 - Number of active connections
 - List of connected peers (hostname, role)
 - Active rooms per connection
 - Messages sent/received counters
 - Errors (backpressure, protocol violations, etc.)
 
-**Implementation Strategy** (deferred): For v1.0, logging to console is sufficient. Future versions may expose structured metrics (Prometheus, statsd, etc.).
+**Implementation Strategy** (deferred): For v1.0, logging to console is sufficient. Future versions may expose
+structured metrics (Prometheus, statsd, etc.).
 
 **Logging Frequency**: Periodic summary (e.g., every 60 seconds) showing active connections and basic stats.
 
@@ -696,121 +866,156 @@ This section defines critical operational characteristics of the network layer t
 
 ## Explicit Non-Goals
 
-These are design decisions about what the architecture explicitly **does not** provide. Documenting non-goals prevents scope creep and clarifies boundaries.
+These are design decisions about what the architecture explicitly **does not** provide. Documenting non-goals prevents
+scope creep and clarifies boundaries.
 
 ### NG1: Connection Pooling
 
-**Not Provided**: The framework does not implement connection pooling, connection reuse, or connection multiplexing across application requests.
+**Not Provided**: The framework does not implement connection pooling, connection reuse, or connection multiplexing
+across application requests.
 
-**Rationale**: Our connection model is persistent, long-lived connections. Pooling is for short-lived request/response patterns (e.g., HTTP). Not needed here.
+**Rationale**: Our connection model is persistent, long-lived connections. Pooling is for short-lived request/response
+patterns (e.g., HTTP). Not needed here.
 
 ### NG2: Multiple Connections from Same Identity
 
-**Not Provided**: The framework does not correlate or manage multiple connections claiming the same identity (e.g., two connections from "Collector-1").
+**Not Provided**: The framework does not correlate or manage multiple connections claiming the same identity (e.g., two
+connections from "Collector-1").
 
-**Who Handles It**: Application business logic. The framework treats each connection as independent. If an application needs "connection displacement" (close old connection when new one arrives), it must implement that logic itself using the `peer_hostname` field in `SessionActive`.
+**Who Handles It**: Application business logic. The framework treats each connection as independent. If an application
+needs "connection displacement" (close old connection when new one arrives), it must implement that logic itself using
+the `peer_hostname` field in `SessionActive`.
 
 ### NG3: Resource Limits and Admission Control
 
 **Not Provided**: No maximum connection limits, no per-peer connection limits, no admission control.
 
-**Rationale**: Not needed for our use case. Services are deployed in controlled environments with known peer counts (e.g., 10 collectors, 1 database). If needed in the future, the transport layer can implement limits.
+**Rationale**: Not needed for our use case. Services are deployed in controlled environments with known peer counts
+(e.g., 10 collectors, 1 database). If needed in the future, the transport layer can implement limits.
 
 ### NG4: Graceful Shutdown
 
 **Not Provided**: No graceful connection drain, no "goodbye" frame, no timeout for finishing in-flight requests.
 
-**Behavior**: On shutdown (SIGINT, SIGTERM), connections are closed immediately. From the peer's perspective, the connection just drops.
+**Behavior**: On shutdown (SIGINT, SIGTERM), connections are closed immediately. From the peer's perspective, the
+connection just drops.
 
-**Who Handles It**: Application business logic can implement its own shutdown logic (e.g., flush buffers before stopping actors) using signal handlers, but the network layer does not coordinate this.
+**Who Handles It**: Application business logic can implement its own shutdown logic (e.g., flush buffers before stopping
+actors) using signal handlers, but the network layer does not coordinate this.
 
 ### NG5: Transport Switching
 
 **Not Provided**: No dynamic transport negotiation (e.g., starting with TCP, upgrading to QUIC).
 
-**Rationale**: YAGNI. Transport is decided before connection establishment and never changes. If transport switching is needed, build a separate transport layer implementation.
+**Rationale**: YAGNI. Transport is decided before connection establishment and never changes. If transport switching is
+needed, build a separate transport layer implementation.
 
 ### NG6: Error Recovery at Application Layer
 
-**Not Provided**: All errors at the application layer (deserialization failures, logic panics) are **fatal** and tear down the connection.
+**Not Provided**: All errors at the application layer (deserialization failures, logic panics) are **fatal** and tear
+down the connection.
 
-**Rationale**: Errors indicate bugs or incompatible protocol versions. Better to fail fast and restart than continue in an inconsistent state.
+**Rationale**: Errors indicate bugs or incompatible protocol versions. Better to fail fast and restart than continue in
+an inconsistent state.
 
-**Exception**: The transport layer handles I/O errors gracefully (using `Result<T, E>`), but these are not exposed to applications.
+**Exception**: The transport layer handles I/O errors gracefully (using `Result<T, E>`), but these are not exposed to
+applications.
 
 ### NG7: Authorization Error Responses
 
-**Current Limitation**: If an application rejects a connection based on authorization (e.g., "this role is not allowed for this room"), there is no way to send an error message back to the peer. The connection is silently closed.
+**Current Limitation**: If an application rejects a connection based on authorization (e.g., "this role is not allowed
+for this room"), there is no way to send an error message back to the peer. The connection is silently closed.
 
-**Future Consideration**: Could add a `Frame::Rejected { room: String, reason: String }` frame, but this is not a v1.0 requirement.
+**Future Consideration**: Could add a `Frame::Rejected { room: String, reason: String }` frame, but this is not a v1.0
+requirement.
 
 ---
 
 ## Key Architectural Insights
 
-These are the critical "aha moments" that led to this design. Understanding these insights helps understand why the architecture is structured the way it is.
+These are the critical "aha moments" that led to this design. Understanding these insights helps understand why the
+architecture is structured the way it is.
 
 ### Insight 1: Duplicated State Is a Code Smell
 
-**The Problem**: In the previous design, `ZzNetConnManager` held a `HashMap<String, RoomSubscribers>`, and every `ZzNetConnActor` received a **cloned copy** of this entire map.
+**The Problem**: In the previous design, `ZzNetConnManager` held a `HashMap<String, RoomSubscribers>`, and every
+`ZzNetConnActor` received a **cloned copy** of this entire map.
 
 **The Symptom**: This duplication felt wrong, but it was hard to articulate why.
 
-**The Diagnosis**: Duplication of data structures almost always indicates confused responsibilities. If two components need the same data, either:
+**The Diagnosis**: Duplication of data structures almost always indicates confused responsibilities. If two components
+need the same data, either:
+
 1. They should be the same component, or
 2. One should be the source of truth and publish events to the other
 
-**The Insight**: The connection actor should not "know" about subscribers. It should only know about protocol state and frame routing. The routing of messages to subscribers is a separate concern that belongs in a separate layer.
+**The Insight**: The connection actor should not "know" about subscribers. It should only know about protocol state and
+frame routing. The routing of messages to subscribers is a separate concern that belongs in a separate layer.
 
-**The Fix**: Introduce a dedicated `RoomRouter` that owns subscriber information. Connection actors publish events; the router subscribes and dispatches.
+**The Fix**: Introduce a dedicated `RoomRouter` that owns subscriber information. Connection actors publish events; the
+router subscribes and dispatches.
 
 ### Insight 2: Per-Connection Session Actors Eliminate Shared State
 
-**The Problem**: If a single `MainActor` has to handle multiple connections, it needs a `HashMap<u64, ConnectionState>`. Accessing this requires either:
+**The Problem**: If a single `MainActor` has to handle multiple connections, it needs a `HashMap<u64, ConnectionState>`.
+Accessing this requires either:
+
 - `Arc<Mutex<HashMap<...>>>` (lock contention, runtime overhead)
 - Messaging patterns (complex, hard to get right)
 
-**The Insight**: Each connection's state can be isolated in its own actor. When a connection becomes active, spawn a `SessionActor` for it. When the connection dies, the actor stops automatically.
+**The Insight**: Each connection's state can be isolated in its own actor. When a connection becomes active, spawn a
+`SessionActor` for it. When the connection dies, the actor stops automatically.
 
 **The Result**:
+
 - No shared state between connections
 - No mutexes or atomic operations
 - Lifecycle is automatic (actor lifetime = connection lifetime)
 - Each session actor is a simple, single-connection state machine
 
-**Why This Works**: Actix actors are lightweight. Spawning one per connection is not expensive, and the architectural clarity gained is enormous.
+**Why This Works**: Actix actors are lightweight. Spawning one per connection is not expensive, and the architectural
+clarity gained is enormous.
 
 ### Insight 3: Connection Layer Should Be Dumb Pipes
 
-**The Problem**: The previous design had the connection layer directly routing messages to application actors. This created tight coupling.
+**The Problem**: The previous design had the connection layer directly routing messages to application actors. This
+created tight coupling.
 
 **The Insight**: The **session layer** should only know about:
+
 - Handshake protocol
 - Frame serialization
 - Room negotiation
 - Multiplexing messages by room name
 
 It should **not** know about:
+
 - Which application components exist
 - How to deserialize application messages
 - What to do with the messages (that's routing logic)
 
-**The Result**: The session layer publishes events (connection active, data received, connection terminated). A separate **routing layer** subscribes to these events and dispatches to application components.
+**The Result**: The session layer publishes events (connection active, data received, connection terminated). A separate
+**routing layer** subscribes to these events and dispatches to application components.
 
-**Analogy**: The session layer is like a post office that routes packages by zip code. It doesn't know what's inside the packages or who the recipients are—that's the router's job.
+**Analogy**: The session layer is like a post office that routes packages by zip code. It doesn't know what's inside the
+packages or who the recipients are—that's the router's job.
 
 ### Insight 4: Main Actor + Session Actors = Clean Lifecycle
 
 **The Pattern**:
+
 - **Main Actor**: Singleton, holds global state, lives for the lifetime of the service
 - **Session Actors**: One per connection, holds per-connection state, lives for the lifetime of the connection
 
 **Why This Is Powerful**:
-- Main actor doesn't need to track "active" vs "dead" connections—each session actor is either running (active) or stopped (dead)
+
+- Main actor doesn't need to track "active" vs "dead" connections—each session actor is either running (active) or
+  stopped (dead)
 - No cleanup logic needed—when a session actor stops, its state is automatically dropped
 - No risk of accessing stale state—if you have an `Addr<SessionActor>`, it's valid
 
 **Example**:
+
 ```rust
 impl Handler<SessionActive> for IntentConfigActor {
     fn handle(&mut self, msg: SessionActive, ctx: &mut Context<Self>) {
@@ -837,20 +1042,25 @@ impl Handler<SessionTerminated> for IntentConfigActor {
 
 ### Insight 5: Registration-Based Wiring Avoids Chicken-and-Egg
 
-**The Problem**: If you try to wire actors by passing addresses during construction, you often get circular dependencies:
+**The Problem**: If you try to wire actors by passing addresses during construction, you often get circular
+dependencies:
+
 - To create Actor A, you need the address of Actor B
 - To create Actor B, you need the address of Actor A
 - 💥 Impossible
 
 **The Solution**: Use **registration** instead of **injection**:
+
 1. Create all actors first (they start in a "not yet wired" state)
 2. Create a central registry (e.g., `RoomRouter`)
 3. Each actor registers itself with the registry
 4. Start accepting connections
 
-**Why This Works**: The registry is a simple, passive component. It has no dependencies. Actors can register in any order. No circular dependencies possible.
+**Why This Works**: The registry is a simple, passive component. It has no dependencies. Actors can register in any
+order. No circular dependencies possible.
 
 **Boot Sequence**:
+
 ```rust
 // 1. Create all actors (no dependencies on each other yet)
 let intent_config = IntentConfigActor::new(...).start();
@@ -884,9 +1094,11 @@ session_mgr.do_send(AttachTransport { transport });
 
 ### Boot Validation
 
-Before attaching the transport, the system validates that the wiring is correct. Invalid configurations cause the service to **panic at boot** rather than fail silently at runtime.
+Before attaching the transport, the system validates that the wiring is correct. Invalid configurations cause the
+service to **panic at boot** rather than fail silently at runtime.
 
 **Validation checks**:
+
 ```rust
 fn validate_boot_config(router: &RoomRouter, session_mgr: &SessionManager) -> Result<(), BootError> {
     let offered_rooms = session_mgr.offered_rooms();
@@ -918,6 +1130,7 @@ fn validate_boot_config(router: &RoomRouter, session_mgr: &SessionManager) -> Re
 ```
 
 **Failure mode**: If validation fails, the service panics with a clear error message:
+
 ```
 thread 'main' panicked at 'Boot validation failed: NoHandlerForRoom {
     room: "intent-config",
@@ -925,13 +1138,15 @@ thread 'main' panicked at 'Boot validation failed: NoHandlerForRoom {
 }'
 ```
 
-**Why this is good**: Misconfiguration is caught immediately at boot, not discovered hours later when a connection finally arrives. Operators get clear, actionable error messages.
+**Why this is good**: Misconfiguration is caught immediately at boot, not discovered hours later when a connection
+finally arrives. Operators get clear, actionable error messages.
 
 ---
 
 ## Layered Architecture
 
-The network layer is organized into distinct layers with a **critical boundary** between typed messages (above SessionManager) and bytes (below SessionManager).
+The network layer is organized into distinct layers with a **critical boundary** between typed messages (above
+SessionManager) and bytes (below SessionManager).
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -995,55 +1210,68 @@ The network layer is organized into distinct layers with a **critical boundary**
 └──────────────────────────────────────────────────────────┘
 ```
 
-**Critical Architectural Invariant**: SessionManager operates **entirely above the typed/bytes boundary**. It never sees serialized bytes, never knows about the transport implementation, and can be fully tested with mock TransportHandles.
+**Critical Architectural Invariant**: SessionManager operates **entirely above the typed/bytes boundary**. It never sees
+serialized bytes, never knows about the transport implementation, and can be fully tested with mock TransportHandles.
 
 ### Layer Responsibilities
 
 #### Application Components
+
 **What they do**:
+
 - Implement business logic for specific protocols (e.g., MemDB, IntentConfig)
 - Same code runs on both sides, configured differently
 - Send/receive typed messages via SessionManager
 - Handle component-specific lifecycle
 
 **What they know about**:
+
 - Their own message types (e.g., `MemDBMessage`)
 - Which rooms they publish (e.g., `["memdb"]`)
 - Their business logic
 
 **What they do NOT know about**:
+
 - Transport implementation (TCP vs. mock)
 - Serialization format (bincode, JSON, etc.)
 - Network layer existence (fully decoupled)
 - Other application components
 
 #### Room Router
+
 **What it does**:
+
 - Maintains registry: room name → component handler
 - Routes typed messages from SessionManager to components
 - Routes typed messages from components to SessionManager
 
 **What it knows about**:
+
 - Room name → component mappings
 - Typed message routing (generic over message type)
 
 **What it does NOT know about**:
+
 - Message content or semantics
 - Transport or serialization details
 
 #### SessionManager (THE CORE)
+
 **What it does**:
+
 - Manages all PeerSessions (one per peer connection)
 - Negotiates rooms via PublishRooms intersection
 - Routes typed messages between components and PeerSessions
 - Completely transport-agnostic
 
 **What it knows about**:
+
 - PeerIdentity (from HELLO Handler)
 - Which rooms are active per peer
 - Typed message routing
 
 **What it does NOT know about**:
+
 - How messages are serialized (that's PeerSession's job)
 - Transport implementation (receives TransportHandle abstraction)
 - HELLO protocol details (receives validated PeerIdentity)
@@ -1051,31 +1279,39 @@ The network layer is organized into distinct layers with a **critical boundary**
 **Critical Constraint**: SessionManager must compile without any transport crate dependency
 
 #### HELLO Handler
+
 **What it does**:
+
 - Performs Protocol A (HELLO) handshake
 - Validates peer identity
 - Hands validated PeerIdentity + TransportHandle to SessionManager
 
 **What it knows about**:
+
 - HELLO frame format (bytes)
 - Peer validation rules
 - Transport details (for handshake)
 
 **What it does NOT know about**:
+
 - Rooms or typed messages
 - SessionManager internals
 
 #### Transport Layer
+
 **What it does**:
+
 - Provides byte stream abstraction (send_bytes/recv_bytes)
 - Handles physical connection (TCP, TLS, mock channels)
 - Completely pluggable via trait
 
 **What it knows about**:
+
 - Network I/O or mock channel I/O
 - Transport-specific config (TLS certs, etc.)
 
 **What it does NOT know about**:
+
 - Message framing or content
 - HELLO protocol
 - Application logic
@@ -1084,7 +1320,8 @@ The network layer is organized into distinct layers with a **critical boundary**
 
 ## SessionManager: The Transport-Agnostic Core
 
-The **SessionManager** is the central component of the network layer. It is **completely transport-agnostic** and operates entirely on typed messages, never seeing bytes.
+The **SessionManager** is the central component of the network layer. It is **completely transport-agnostic** and
+operates entirely on typed messages, never seeing bytes.
 
 ### Core Responsibilities
 
@@ -1096,6 +1333,7 @@ The **SessionManager** is the central component of the network layer. It is **co
 ### Critical Design Constraints
 
 **SessionManager MUST**:
+
 - ✅ Operate only on typed messages (never bytes)
 - ✅ Compile without transport crate dependency
 - ✅ Be fully testable with mock TransportHandles
@@ -1103,6 +1341,7 @@ The **SessionManager** is the central component of the network layer. It is **co
 - ✅ Know nothing about HELLO protocol details
 
 **SessionManager MUST NOT**:
+
 - ❌ Call any transport methods directly (only via TransportHandle abstraction)
 - ❌ Serialize or deserialize messages (that's PeerSession's job)
 - ❌ Participate in HELLO handshake (receives validated PeerIdentity)
@@ -1173,6 +1412,7 @@ for room in active_rooms {
 ### Message Routing Flow
 
 **Outbound** (Component → Peer):
+
 ```rust
 // Component sends typed message
 memdb_component.send_to_peer(
@@ -1226,6 +1466,7 @@ impl PeerSession {
 ```
 
 **Inbound** (Peer → Component):
+
 ```rust
 // PeerSession receives bytes from transport
 impl PeerSession {
@@ -1262,7 +1503,8 @@ impl SessionManager {
 
 ### Testing Strategy
 
-**The Design Validation**: Two SessionManagers must be able to communicate via in-memory channels without any network I/O.
+**The Design Validation**: Two SessionManagers must be able to communicate via in-memory channels without any network
+I/O.
 
 ```rust
 #[test]
@@ -1314,6 +1556,7 @@ fn test_session_manager_communication() {
 ```
 
 **This test proves**:
+
 - SessionManager works without any network
 - Transport is truly abstracted
 - Components can be tested in isolation
@@ -1325,16 +1568,19 @@ fn test_session_manager_communication() {
 **Modularity**: Each layer has clear boundaries and minimal dependencies
 
 **Flexibility**:
+
 - Swap TCP for mock without changing SessionManager
 - Swap bincode for protobuf without changing SessionManager
 - Add new transports without touching SessionManager
 
 **Type Safety**:
+
 - Components work with typed messages
 - Compiler catches message type mismatches
 - No casting or dynamic typing
 
 **Simplicity**:
+
 - SessionManager has one job: route typed messages between components and peers
 - No serialization logic mixed with routing logic
 - No transport logic mixed with application logic
@@ -1343,13 +1589,16 @@ fn test_session_manager_communication() {
 
 ## Component Design Patterns
 
-These patterns show how components interact with the network layer. **Critical**: The same component code runs on both sides of a connection, just configured differently.
+These patterns show how components interact with the network layer. **Critical**: The same component code runs on both
+sides of a connection, just configured differently.
 
 ### Example: MemDB Component (Same Code Both Sides)
 
-The MemDB component demonstrates the symmetric protocol design. The **exact same code** runs on both Collector and Database, but with different configuration.
+The MemDB component demonstrates the symmetric protocol design. The **exact same code** runs on both Collector and
+Database, but with different configuration.
 
 **On Collector**:
+
 ```rust
 let memdb = MemDB::new(MemDBConfig {
     role: Role::Collector,
@@ -1359,6 +1608,7 @@ let memdb = MemDB::new(MemDBConfig {
 ```
 
 **On Database**:
+
 ```rust
 let memdb = MemDB::new(MemDBConfig {
     role: Role::Database,
@@ -1368,6 +1618,7 @@ let memdb = MemDB::new(MemDBConfig {
 ```
 
 **Communication Flow**:
+
 ```
 Collector MemDB                    Database MemDB
      |                                    |
@@ -1379,19 +1630,22 @@ Collector MemDB                    Database MemDB
      |<------------------------------------|
 ```
 
-Both sides understand `MemDBMessage` and handle it according to their configuration. Neither side knows or cares whether the peer is a Collector or Database—they just exchange typed messages.
+Both sides understand `MemDBMessage` and handle it according to their configuration. Neither side knows or cares whether
+the peer is a Collector or Database—they just exchange typed messages.
 
 ### Pattern 1: Component Structure (Generic)
 
 **Purpose**: Self-contained component that can communicate with its peer instances.
 
 **Characteristics**:
+
 - One instance per service (may spawn per-connection actors internally if needed)
 - Same code on both sides, different config
 - Publishes room names it supports
 - Sends/receives typed messages
 
 **Typical State**:
+
 ```rust
 pub struct MemDBActor {
     // Configuration determines behavior
@@ -1406,6 +1660,7 @@ pub struct MemDBActor {
 ```
 
 **Typical Message Handlers**:
+
 ```rust
 // From SessionManager (via RoomRouter)
 impl Handler<PeerConnected> for MemDBActor { ... }
@@ -1440,6 +1695,7 @@ impl MemDBActor {
 **When to Use**: Only if the component needs different state per peer connection. Many components don't need this.
 
 **Example**: MemDB might track sync status per peer:
+
 ```rust
 pub struct MemDBActor {
     config: MemDBConfig,
@@ -1474,11 +1730,13 @@ impl Handler<PeerDisconnected> for MemDBActor {
 }
 ```
 
-**Key Point**: Per-connection state is **internal to the component**. The network layer (SessionManager) doesn't know or care about it. The component receives `PeerConnected`/`PeerDisconnected` events and manages its own state.
+**Key Point**: Per-connection state is **internal to the component**. The network layer (SessionManager) doesn't know or
+care about it. The component receives `PeerConnected`/`PeerDisconnected` events and manages its own state.
 
 ### Pattern 3: Lifecycle Management
 
 **Connection Established Flow**:
+
 ```
 1. Transport provides new connection
 2. HELLO Handler performs Protocol A handshake (bytes)
@@ -1492,6 +1750,7 @@ impl Handler<PeerDisconnected> for MemDBActor {
 ```
 
 **Message Exchange Flow** (Collector → Database):
+
 ```
 1. Collector MemDB: memdb.send_to_peer(db_peer, MemDBMessage::Insert { ... })
 2. SessionManager: routes to PeerSession for db_peer
@@ -1506,6 +1765,7 @@ impl Handler<PeerDisconnected> for MemDBActor {
 ```
 
 **Connection Terminated Flow**:
+
 ```
 1. Transport detects connection loss (or receives close)
 2. SessionManager notifies all components with active rooms
@@ -1515,6 +1775,7 @@ impl Handler<PeerDisconnected> for MemDBActor {
 ```
 
 **Key Points**:
+
 - Lifecycle is **explicit and observable** - every transition is a message
 - Same flow for all components (MemDB, IntentConfig, etc.)
 - Components are completely decoupled from transport layer
@@ -1524,7 +1785,8 @@ impl Handler<PeerDisconnected> for MemDBActor {
 
 ## Crate Organization
 
-The system is organized into four crates, each corresponding to one of the architectural layers. This organization ensures clean dependency graphs and prevents circular dependencies.
+The system is organized into four crates, each corresponding to one of the architectural layers. This organization
+ensures clean dependency graphs and prevents circular dependencies.
 
 ### Crate 1: `zznet-transport` (Abstraction/Trait)
 
@@ -1533,6 +1795,7 @@ The system is organized into four crates, each corresponding to one of the archi
 **Purpose**: Define the abstract interface for transport connections.
 
 **Contents**:
+
 ```rust
 /// Represents a bidirectional byte stream from a transport layer.
 pub trait TransportConnection: Send {
@@ -1556,6 +1819,7 @@ pub trait Transport: Send {
 **Dependencies**: None (or only `tokio`, `anyhow`)
 
 **Implementations** (separate crates or modules):
+
 - `TcpTransport`: TCP sockets with optional TLS
 - `MockTransport`: In-memory pipes for testing
 - (Future) `GrpcTransport`, `QuicTransport`, etc.
@@ -1564,7 +1828,8 @@ pub trait Transport: Send {
 
 **Location**: `src/components/zznet-hello/`
 
-**Purpose**: Implement Protocol A (HELLO handshake) - peer identity exchange and validation. Operates on bytes, sits between transport and SessionManager.
+**Purpose**: Implement Protocol A (HELLO handshake) - peer identity exchange and validation. Operates on bytes, sits
+between transport and SessionManager.
 
 **Key Types**:
 
@@ -1611,12 +1876,14 @@ impl HelloHandler {
 **Dependencies**: `zznet-transport`, `serde`, `bincode`
 
 **Responsibilities**:
+
 - Serialize/deserialize HELLO frames
 - Send Hello, receive HelloAck (or vice versa)
 - Validate peer identity and protocol version
 - Return PeerIdentity to SessionManager
 
 **What it does NOT do**:
+
 - Room negotiation (that's SessionManager's job)
 - Typed message handling
 - Application logic
@@ -1627,7 +1894,8 @@ impl HelloHandler {
 
 **Location**: `src/components/zznet-session/`
 
-**Purpose**: Manage PeerSessions and route typed messages. **100% transport-agnostic** - never touches bytes or serialization.
+**Purpose**: Manage PeerSessions and route typed messages. **100% transport-agnostic** - never touches bytes or
+serialization.
 
 **Key Types**:
 
@@ -1664,15 +1932,18 @@ enum SessionMessage {
 
 **Dependencies**: `zznet-hello` (for `PeerIdentity`), `actix`, `serde` (but NOT zznet-transport!)
 
-**Critical Constraint**: SessionManager must compile without any transport crate dependency. It only knows about the TransportHandle trait.
+**Critical Constraint**: SessionManager must compile without any transport crate dependency. It only knows about the
+TransportHandle trait.
 
 **What it does**:
+
 - Create PeerSession after HELLO completes
 - Negotiate rooms via PublishRooms intersection (Protocol B)
 - Route typed messages between components and PeerSessions
 - Notify components of peer connect/disconnect
 
 **What it does NOT do**:
+
 - HELLO protocol (that's HelloHandler's job)
 - Direct transport access (only via TransportHandle trait)
 - Serialization of component messages (PeerSession handles that)
@@ -1681,14 +1952,8 @@ enum SessionMessage {
 
 ### Crate 4: `zznet-router` (Message Routing)
 
-impl SessionManager {
-    /// Called after HELLO Handler completes
-    pub fn create_peer_session(
-        &mut self,
-        peer_identity: PeerIdentity,
-        transport_handle: Box<dyn TransportHandle>,
-    ) -> Result<PeerId> {
-        let peer_id = PeerId::new();
+impl SessionManager { /// Called after HELLO Handler completes pub fn create_peer_session( &mut self, peer_identity:
+PeerIdentity, transport_handle: Box<dyn TransportHandle>, ) -> Result<PeerId> { let peer_id = PeerId::new();
 
         // Create PeerSession
         let session = PeerSession {
@@ -1760,13 +2025,11 @@ impl SessionManager {
         // Delegate to PeerSession (it handles serialization)
         session.send_room_message(room, message)
     }
+
 }
 
-/// Per-connection state handles serialization (SessionManager doesn't!)
-impl PeerSession {
-    fn send_message(&self, msg: SessionMessage) -> Result<()> {
-        // Serialize SessionMessage to bytes
-        let bytes = bincode::serialize(&msg)?;
+/// Per-connection state handles serialization (SessionManager doesn't!) impl PeerSession { fn send_message(&self, msg:
+SessionMessage) -> Result<()> { // Serialize SessionMessage to bytes let bytes = bincode::serialize(&msg)?;
 
         // Send via abstract transport
         self.transport_handle.send_bytes(bytes)
@@ -1793,24 +2056,16 @@ impl PeerSession {
         // Send via abstract transport
         self.send_message(session_msg)
     }
+
 }
 
-/// Handle for components to send to peer (simplified for illustration)
-/// CRITICAL: This handle uses RAII (Drop) to guarantee the "fail atomically" invariant.
-pub struct PeerHandle {
-    peer_id: PeerId,
-    session_manager: Addr<SessionManager>,
-}
+/// Handle for components to send to peer (simplified for illustration) /// CRITICAL: This handle uses RAII (Drop) to
+guarantee the "fail atomically" invariant. pub struct PeerHandle { peer_id: PeerId, session_manager:
+Addr<SessionManager>, }
 
-impl PeerHandle {
-    pub async fn send<T: Serialize>(&self, room: &str, message: T) -> Result<()> {
-        self.session_manager.send(SendToPeer {
-            peer_id: self.peer_id,
-            room: room.to_string(),
-            message_bytes: bincode::serialize(&message)?,
-        }).await
-    }
-}
+impl PeerHandle { pub async fn send<T: Serialize>(&self, room: &str, message: T) -> Result<()> {
+self.session_manager.send(SendToPeer { peer_id: self.peer_id, room: room.to_string(), message_bytes:
+bincode::serialize(&message)?, }).await } }
 
 }
 
@@ -1818,7 +2073,8 @@ impl PeerHandle {
 
 ### Crate 4: `zznet-router` (Message Routing)
 
-**Note**: The above shows how SessionManager and PeerSession work together. PeerSession handles serialization so SessionManager doesn't have to know about bytes.
+**Note**: The above shows how SessionManager and PeerSession work together. PeerSession handles serialization so
+SessionManager doesn't have to know about bytes.
 
 **Location**: `src/components/zznet-router/`
 
@@ -1844,6 +2100,7 @@ pub struct RegisterRoom {
 **Dependencies**: `zznet-session` (for `SessionEvent` type), `actix`
 
 **Messages from SessionManager**:
+
 ```rust
 #[derive(Message)]
 pub enum RoomEvent {
@@ -1865,6 +2122,7 @@ pub enum RoomEvent {
 ```
 
 **Logic**:
+
 ```rust
 impl Handler<RoomEvent> for RoomRouter {
     fn handle(&mut self, msg: RoomEvent, _ctx: &mut Context<Self>) {
@@ -1892,7 +2150,8 @@ impl Handler<RoomEvent> for RoomRouter {
 }
 ```
 
-**Why a separate crate?** Keeps the router's responsibilities explicit and testable in isolation. Also makes it easy to swap routing strategies (e.g., add filtering, priorities, etc.) without touching session or application code.
+**Why a separate crate?** Keeps the router's responsibilities explicit and testable in isolation. Also makes it easy to
+swap routing strategies (e.g., add filtering, priorities, etc.) without touching session or application code.
 
 ### Crate 4: Application Components (e.g., `intent-config`)
 
@@ -1925,9 +2184,11 @@ pub enum IntentConfigMessage {
 }
 ```
 
-**Dependencies**: `zznet-session` (for `SessionEvent`, `SessionHandle`), `zznet-router` (for `RegisterRoom`), `actix`, `serde`
+**Dependencies**: `zznet-session` (for `SessionEvent`, `SessionHandle`), `zznet-router` (for `RegisterRoom`), `actix`,
+`serde`
 
 **Registration at Boot**:
+
 ```rust
 pub struct IntentConfigComponent {
     main_actor: Addr<IntentConfigActor>,
@@ -2015,6 +2276,7 @@ TcpTransport                SessionManager          SessionActor        RoomRout
 ```
 
 **Notes**:
+
 - Handshake is symmetric (both sides send Hello, both send PublishRooms)
 - Active rooms = intersection of offered rooms from both sides
 - SessionActive event carries the `SessionHandle` for sending data back
@@ -2043,7 +2305,8 @@ Transport          SessionActor(protocol)     RoomRouter         IntentConfigAct
     │                      │                       │                     │ (main actor decides response)
 ```
 
-**Key Point**: Each layer deserializes only what it needs to know. Protocol layer deserializes the frame envelope. Session actor deserializes the application message.
+**Key Point**: Each layer deserializes only what it needs to know. Protocol layer deserializes the frame envelope.
+Session actor deserializes the application message.
 
 ### Flow 4: Data Flow (Outbound)
 
@@ -2085,13 +2348,15 @@ Transport    SessionActor(protocol)    RoomRouter    IntentConfigActor    Intent
     │                 │                     │                │<──clean up state─────│
 ```
 
-**Key Point**: Termination is cascading and explicit. Protocol session actor stops first, publishes event, then application session actor stops.
+**Key Point**: Termination is cascading and explicit. Protocol session actor stops first, publishes event, then
+application session actor stops.
 
 ---
 
 ## Testing Strategy
 
-A core requirement (R2) is that components must be self-testable. This section describes how the architecture enables comprehensive testing at multiple levels.
+A core requirement (R2) is that components must be self-testable. This section describes how the architecture enables
+comprehensive testing at multiple levels.
 
 ### Level 1: Unit Tests (Individual Actor Logic)
 
@@ -2129,13 +2394,15 @@ async fn test_intent_config_handles_update() {
 ```
 
 **Advantages**:
+
 - Fast (no network I/O)
 - Isolated (failures don't cascade)
 - Easy to set up edge cases
 
 ### Level 2: Integration Tests (Full Stack with Mock Transport)
 
-**What**: Test the complete interaction between session layer, router, and application components, using an in-memory mock transport.
+**What**: Test the complete interaction between session layer, router, and application components, using an in-memory
+mock transport.
 
 **How**: Create two full stacks (client and server) and connect them with in-memory pipes.
 
@@ -2175,6 +2442,7 @@ async fn test_full_handshake_and_message_exchange() {
 ```
 
 **Mock Transport Implementation**:
+
 ```rust
 pub mod mock_transport {
     pub fn create_pipe() -> (MockConnection, MockConnection) {
@@ -2206,6 +2474,7 @@ pub mod mock_transport {
 ```
 
 **Advantages**:
+
 - Tests the full protocol flow
 - No network dependencies
 - Fast and deterministic
@@ -2233,6 +2502,7 @@ async fn test_intent_config_merge_logic() {
 ```
 
 **Advantages**:
+
 - Tests only business logic
 - No network or protocol concerns
 - Fastest possible tests
@@ -2268,11 +2538,13 @@ async fn test_real_tcp_connection() {
 ```
 
 **Advantages**:
+
 - Tests the complete, real system
 - Catches platform-specific issues
 - Validates TLS configuration, etc.
 
 **Disadvantages**:
+
 - Slow
 - Flaky (port conflicts, timing issues)
 - Should be minimal—rely on lower-level tests for most coverage
@@ -2281,23 +2553,29 @@ async fn test_real_tcp_connection() {
 
 ## Design Decisions and Rationale
 
-This section documents the key design decisions made, the alternatives considered, and the trade-offs accepted. Future developers can use this to understand the "why" behind the design.
+This section documents the key design decisions made, the alternatives considered, and the trade-offs accepted. Future
+developers can use this to understand the "why" behind the design.
 
 ### Decision 1: Per-Connection Session Actors
 
 **Decision**: Spawn a dedicated session actor for each active connection within each application component.
 
 **Alternatives Considered**:
-- **Single main actor with `HashMap<ConnectionId, State>`**: Requires locking or complex message patterns. Hard to ensure proper cleanup.
-- **Connection pooling pattern**: Reuse session actors across connections. Complex lifecycle management, risk of state leakage between connections.
+
+- **Single main actor with `HashMap<ConnectionId, State>`**: Requires locking or complex message patterns. Hard to
+  ensure proper cleanup.
+- **Connection pooling pattern**: Reuse session actors across connections. Complex lifecycle management, risk of state
+  leakage between connections.
 
 **Why This Decision**:
+
 - Actor lifetime = connection lifetime (automatic cleanup)
 - No shared state between connections
 - Simple, easy to reason about
 - Leverages Actix's lightweight actor model
 
 **Trade-offs Accepted**:
+
 - ✅ Clean lifecycle and state isolation
 - ✅ Simple mental model
 - ⚠️ One actor per connection (but actors are cheap)
@@ -2308,17 +2586,22 @@ This section documents the key design decisions made, the alternatives considere
 **Decision**: Use a central `RoomRouter` with explicit registration instead of dependency injection during construction.
 
 **Alternatives Considered**:
+
 - **Constructor injection**: Pass `Addr<OtherActor>` to constructors. Causes chicken-and-egg problems.
-- **Global registry (static)**: Avoids chicken-and-egg but introduces global mutable state and initialization order issues.
-- **Pub/Sub with topics**: All actors publish/subscribe to topic strings. Loose coupling but harder to validate at compile time.
+- **Global registry (static)**: Avoids chicken-and-egg but introduces global mutable state and initialization order
+  issues.
+- **Pub/Sub with topics**: All actors publish/subscribe to topic strings. Loose coupling but harder to validate at
+  compile time.
 
 **Why This Decision**:
+
 - Avoids circular dependencies
 - Explicit and auditable (can see all registrations in boot code)
 - Easy to validate (error if unregistered room is used)
 - Supports dynamic registration if needed (though not required by R8)
 
 **Trade-offs Accepted**:
+
 - ✅ No chicken-and-egg problems
 - ✅ Clear boot sequence
 - ⚠️ One extra step at boot (registration)
@@ -2329,16 +2612,20 @@ This section documents the key design decisions made, the alternatives considere
 **Decision**: Application messages are serialized, then wrapped in a protocol frame and serialized again.
 
 **Alternatives Considered**:
+
 - **Single-stage with dynamic dispatch**: Use `Box<dyn Any>` or similar. Loses type safety, makes testing harder.
-- **Code generation**: Generate protocol-aware serialization code for each component. Complex build process, tight coupling.
+- **Code generation**: Generate protocol-aware serialization code for each component. Complex build process, tight
+  coupling.
 - **No framing layer**: Send raw application messages. No way to multiplex multiple rooms over one connection.
 
 **Why This Decision**:
+
 - Maintains type safety at every layer
 - Clean separation of concerns (protocol layer doesn't know about application types)
 - Allows different serialization formats (protocol uses bincode, application could use JSON, etc.)
 
 **Trade-offs Accepted**:
+
 - ✅ Type safety
 - ✅ Layer separation
 - ✅ Transport agnostic
@@ -2347,19 +2634,25 @@ This section documents the key design decisions made, the alternatives considere
 
 ### Decision 4: No Reconnection Abstraction
 
-**Decision**: Treat each TCP connection as a completely new, independent session. Do not attempt to provide reconnection logic at the protocol layer.
+**Decision**: Treat each TCP connection as a completely new, independent session. Do not attempt to provide reconnection
+logic at the protocol layer.
 
 **Alternatives Considered**:
-- **Transparent reconnection**: Automatically reconnect and buffer messages. Hides important lifecycle events from application components.
-- **Session persistence**: Maintain session ID across connections, restore state. Complex, and in our domain, disconnection usually means process restart (state is gone anyway).
+
+- **Transparent reconnection**: Automatically reconnect and buffer messages. Hides important lifecycle events from
+  application components.
+- **Session persistence**: Maintain session ID across connections, restore state. Complex, and in our domain,
+  disconnection usually means process restart (state is gone anyway).
 
 **Why This Decision**:
+
 - In our deployment model, disconnection almost always indicates process restart
 - Attempting to restore state after restart is dangerous (remote state is gone)
 - Application components need to know about connection lifecycle for correct protocol implementation
 - Simpler, more explicit
 
 **Trade-offs Accepted**:
+
 - ✅ Explicit lifecycle
 - ✅ Correct handling of process restarts
 - ✅ Simpler protocol layer
@@ -2368,37 +2661,48 @@ This section documents the key design decisions made, the alternatives considere
 
 ### Decision 5: Static Room List
 
-**Decision**: Require the set of supported rooms to be known at boot time. Do not support dynamic addition/removal of rooms at runtime.
+**Decision**: Require the set of supported rooms to be known at boot time. Do not support dynamic addition/removal of
+rooms at runtime.
 
 **Alternatives Considered**:
-- **Dynamic rooms**: Allow components to register rooms at any time. Complex, must handle race conditions (what if message arrives for a room before it's registered?).
+
+- **Dynamic rooms**: Allow components to register rooms at any time. Complex, must handle race conditions (what if
+  message arrives for a room before it's registered?).
 
 **Why This Decision**:
+
 - Simplifies the design significantly
 - Matches our actual use case (services know their component types at compile time)
 - Allows validation at startup (error if client and server have no rooms in common)
 - Reduces edge cases
 
 **Trade-offs Accepted**:
+
 - ✅ Simpler design
 - ✅ Startup validation
 - ⚠️ Can't add rooms dynamically (not needed in our use case)
 
 ### Decision 6: Separate Routing Layer
 
-**Decision**: Create a dedicated `RoomRouter` component instead of having the session layer directly dispatch to application components.
+**Decision**: Create a dedicated `RoomRouter` component instead of having the session layer directly dispatch to
+application components.
 
 **Alternatives Considered**:
-- **Direct dispatch**: SessionActor holds `HashMap<String, Recipient<...>>`. Simpler but tightly couples session layer to application layer.
-- **No router**: Application components subscribe directly to session manager. Complex subscription logic, harder to test.
+
+- **Direct dispatch**: SessionActor holds `HashMap<String, Recipient<...>>`. Simpler but tightly couples session layer
+  to application layer.
+- **No router**: Application components subscribe directly to session manager. Complex subscription logic, harder to
+  test.
 
 **Why This Decision**:
+
 - Clean separation of concerns (session layer only knows about protocol, not about applications)
 - Centralized routing logic (easy to add filtering, logging, metrics)
 - Easier to test (can test router in isolation)
 - Supports multiple routing strategies (e.g., broadcast, round-robin) without touching session layer
 
 **Trade-offs Accepted**:
+
 - ✅ Clean layer separation
 - ✅ Testable in isolation
 - ✅ Extensible
@@ -2408,7 +2712,8 @@ This section documents the key design decisions made, the alternatives considere
 
 ## Migration Path
 
-The current `zznet-connection` crate has issues but also contains working protocol logic and tests. We will not delete it immediately. Instead:
+The current `zznet-connection` crate has issues but also contains working protocol logic and tests. We will not delete
+it immediately. Instead:
 
 ### Phase 1: Build New Design in Parallel
 
@@ -2417,6 +2722,7 @@ The current `zznet-connection` crate has issues but also contains working protoc
 3. Keep `zznet-connection` as-is (for reference and comparison)
 
 **Advantages**:
+
 - No risk of breaking existing code
 - Can compare designs side-by-side
 - Can copy-paste protocol logic from old to new (with modifications)
@@ -2448,48 +2754,63 @@ The current `zznet-connection` crate has issues but also contains working protoc
 
 ## Error Handling and Supervision Strategy
 
-A critical aspect of any actor-based system is how it handles failures. This section defines the error handling and supervision strategy for the network layer.
+A critical aspect of any actor-based system is how it handles failures. This section defines the error handling and
+supervision strategy for the network layer.
 
 ### Failure Categories
 
 **1. Transport Failures (Connection Loss)**
+
 - **Cause**: Network issues, remote process crash, TCP timeout
-- **Handling**: Explicit and expected. SessionActor (protocol layer) detects `recv() = None`, publishes `SessionTerminated` event, and stops
+- **Handling**: Explicit and expected. SessionActor (protocol layer) detects `recv() = None`, publishes
+  `SessionTerminated` event, and stops
 - **Result**: Clean cascade - application session actors receive termination event and stop gracefully
 
 **2. Protocol Errors (Malformed Frames, Handshake Failure)**
+
 - **Cause**: Protocol violation, version mismatch, corrupted data
 - **Handling**: SessionActor (protocol layer) logs error and stops, triggering the same cascade as transport failure
 - **Result**: Connection is terminated, remote peer will see a clean disconnect
 
 **2a. Empty Room Intersection**
+
 - **Cause**: After room negotiation, the intersection of offered rooms is empty (no compatible protocols)
 - **Handling**: SessionActor logs warning "No compatible rooms with peer {hostname}" and stops immediately
-- **Result**: Both sides disconnect. If client, it will retry connection, repeating the warning. This indicates a configuration error that operators must fix.
-- **Example**: Collector offers ["intent-config", "health"], Database offers ["metrics", "alerts"], intersection = [] → disconnect
+- **Result**: Both sides disconnect. If client, it will retry connection, repeating the warning. This indicates a
+  configuration error that operators must fix.
+- **Example**: Collector offers ["intent-config", "health"], Database offers ["metrics", "alerts"], intersection = [] →
+  disconnect
 
 **3. Application Logic Errors (Panic in Session Actor)**
+
 - **Cause**: Bug in application code (e.g., deserialization failure, logic panic)
 - **Handling**: **This is the critical case.** If an `IntentConfigSessionActor` panics:
   - The actor stops immediately
   - **The entire vertical slice must tear down**: protocol session actor + transport connection
-  - Rationale: A panic likely indicates corrupted per-connection state. Continuing the connection could lead to undefined behavior or data corruption
+  - Rationale: A panic likely indicates corrupted per-connection state. Continuing the connection could lead to
+    undefined behavior or data corruption
 
 **4. Application Logic Errors (Panic in Main Actor)**
+
 - **Cause**: Severe bug in global component logic
 - **Handling**: **The entire service should crash**
-- **Rationale**: The main actor holds global state. If it panics, the service is in an undefined state. Better to crash and restart (via process supervisor) than continue in an inconsistent state
+- **Rationale**: The main actor holds global state. If it panics, the service is in an undefined state. Better to crash
+  and restart (via process supervisor) than continue in an inconsistent state
 
 ### Supervision Strategy
 
-**Actix Default Behavior**: When an actor panics, Actix stops the actor and drops all its addresses. Any messages sent to a stopped actor are silently dropped or return errors (depending on send method).
+**Actix Default Behavior**: When an actor panics, Actix stops the actor and drops all its addresses. Any messages sent
+to a stopped actor are silently dropped or return errors (depending on send method).
 
 **Our Strategy**:
 
 #### For Application Session Actors (e.g., `IntentConfigSessionActor`)
+
 - **Supervision**: No restart. Let the actor die.
-- **Cascading Teardown**: When the application session actor stops (whether cleanly or via panic), it must trigger teardown of the protocol session actor
+- **Cascading Teardown**: When the application session actor stops (whether cleanly or via panic), it must trigger
+  teardown of the protocol session actor
 - **Implementation**:
+
   ```rust
   impl Actor for IntentConfigSessionActor {
       type Context = Context<Self>;
@@ -2511,9 +2832,11 @@ A critical aspect of any actor-based system is how it handles failures. This sec
   ```
 
 #### For Protocol Session Actors (e.g., `ZzNetSessionActor`)
+
 - **Supervision**: No restart. Let the actor die.
 - **Cascading Teardown**: When stopped, close the transport connection
 - **Implementation**:
+
   ```rust
   impl Actor for SessionActor {
       type Context = Context<Self>;
@@ -2533,18 +2856,22 @@ A critical aspect of any actor-based system is how it handles failures. This sec
   ```
 
 #### For Main Actors (e.g., `IntentConfigActor`)
+
 - **Supervision**: No restart. Let the service crash.
 - **Rationale**: Main actors hold global state. A panic indicates a severe bug that cannot be recovered from
 - **Implementation**: No special handling needed. Let Actix stop the actor, which will cause the service to exit
 
 #### For Singleton Infrastructure Actors (`SessionManager`, `RoomRouter`)
+
 - **Supervision**: No restart. Let the service crash.
 - **Rationale**: These are critical infrastructure. If they fail, the entire network layer is non-functional
-- **Implementation**: No special handling. Service should exit and be restarted by a process supervisor (systemd, Docker, etc.)
+- **Implementation**: No special handling. Service should exit and be restarted by a process supervisor (systemd,
+  Docker, etc.)
 
 ### Error Propagation
 
 **Vertical Slice Teardown** (Application → Protocol → Transport):
+
 1. Application session actor panics or encounters fatal error
 2. In `stopped()`, it closes `SessionHandle`
 3. Protocol session actor detects closed handle and stops
@@ -2552,6 +2879,7 @@ A critical aspect of any actor-based system is how it handles failures. This sec
 5. Transport closure triggers connection termination cleanup
 
 **Horizontal Event Propagation** (Protocol → Router → Application):
+
 1. Protocol session actor stops (for any reason)
 2. Before stopping, it publishes `SessionTerminated` event
 3. Router forwards event to all registered handlers
@@ -2560,11 +2888,13 @@ A critical aspect of any actor-based system is how it handles failures. This sec
 ### Key Principle: Fail Fast, Fail Loud
 
 **Do NOT**:
+
 - Swallow errors silently
 - Attempt to "recover" from panics (can't be done safely)
 - Continue processing on a connection where an actor has panicked
 
 **DO**:
+
 - Log all errors with full context
 - Tear down the entire connection on any actor panic
 - Let the service crash on main actor or infrastructure actor failures
@@ -2595,7 +2925,8 @@ async fn test_session_actor_panic_tears_down_connection() {
 
 ## Backpressure and Flow Control
 
-A critical aspect of any network system is how it handles the case where data is produced faster than it can be consumed. This section defines the backpressure strategy and provides guidance for application developers.
+A critical aspect of any network system is how it handles the case where data is produced faster than it can be
+consumed. This section defines the backpressure strategy and provides guidance for application developers.
 
 ### The SessionHandle.send() Contract
 
@@ -2636,16 +2967,19 @@ impl SessionHandle {
 }
 ```
 
-**The critical error is `ChannelFull`**. This means the bounded channel between the application session actor and the protocol session actor is full. The protocol actor cannot keep up with the rate of messages being sent.
+**The critical error is `ChannelFull`**. This means the bounded channel between the application session actor and the
+protocol session actor is full. The protocol actor cannot keep up with the rate of messages being sent.
 
 ### Why Bounded Channels?
 
 **We use bounded channels** (not unbounded) because:
+
 1. **Prevents OOM**: Unbounded queues can grow without limit, consuming all memory
 2. **Explicit backpressure**: The producer (application) is forced to handle the "too fast" case
 3. **Failure detection**: If queues are growing unbounded, something is fundamentally wrong
 
-**The downside**: Application developers must explicitly handle `ChannelFull` errors. This is a trade-off we accept for safety and explicitness.
+**The downside**: Application developers must explicitly handle `ChannelFull` errors. This is a trade-off we accept for
+safety and explicitness.
 
 ### Backpressure Handling Patterns
 
@@ -2682,8 +3016,7 @@ impl IntentConfigSessionActor {
 }
 ```
 
-**Pros**: Simple, never blocks, system stays responsive
-**Cons**: Data loss (acceptable for latency-sensitive data)
+**Pros**: Simple, never blocks, system stays responsive **Cons**: Data loss (acceptable for latency-sensitive data)
 
 #### Pattern 2: Replace Old Data (State Synchronization)
 
@@ -2728,8 +3061,7 @@ impl IntentConfigSessionActor {
 }
 ```
 
-**Pros**: Never blocks, guarantees latest state is eventually sent
-**Cons**: Requires state tracking, retry logic
+**Pros**: Never blocks, guarantees latest state is eventually sent **Cons**: Requires state tracking, retry logic
 
 #### Pattern 3: Apply Backpressure (Reliable Delivery)
 
@@ -2766,8 +3098,7 @@ impl MetricsSessionActor {
 }
 ```
 
-**Pros**: Reliable delivery, no data loss
-**Cons**: Can block the sender, may cause head-of-line blocking
+**Pros**: Reliable delivery, no data loss **Cons**: Can block the sender, may cause head-of-line blocking
 
 #### Pattern 4: Aggregate and Compress (High-Throughput)
 
@@ -2818,8 +3149,7 @@ impl TelemetrySessionActor {
 }
 ```
 
-**Pros**: Reduces message overhead, handles bursts well
-**Cons**: Adds latency, complexity in batching logic
+**Pros**: Reduces message overhead, handles bursts well **Cons**: Adds latency, complexity in batching logic
 
 ### Channel Sizing
 
@@ -2829,24 +3159,32 @@ The bounded channel size is a tuning parameter. Recommendations:
 - **Latency-sensitive** (pings, health): 10 messages (fail fast if slow)
 - **High-throughput** (metrics, logs): 1000 messages (buffer bursts)
 
-**Rule of thumb**: The channel should buffer ~1 second of typical load. If the protocol actor can't keep up for more than 1 second, something is wrong and backpressure should kick in.
+**Rule of thumb**: The channel should buffer ~1 second of typical load. If the protocol actor can't keep up for more
+than 1 second, something is wrong and backpressure should kick in.
 
 ### What About Receiving Data?
 
-**Receiving is simpler**: The protocol session actor reads frames from the transport and dispatches them to the application session actor via its mailbox. Actix mailboxes are bounded (default 16), so automatic backpressure is applied.
+**Receiving is simpler**: The protocol session actor reads frames from the transport and dispatches them to the
+application session actor via its mailbox. Actix mailboxes are bounded (default 16), so automatic backpressure is
+applied.
 
-**If an application session actor is slow**, its mailbox fills up, the protocol actor's sends block, the TCP receive buffer fills up, and the peer experiences TCP backpressure. This is the correct behavior.
+**If an application session actor is slow**, its mailbox fills up, the protocol actor's sends block, the TCP receive
+buffer fills up, and the peer experiences TCP backpressure. This is the correct behavior.
 
 **Application developers should**:
+
 - Process messages quickly (< 1ms per message)
 - If expensive work is needed, spawn a task or send to a worker pool
 - Never block the actor's message handler
 
 ### Key Principle: Explicit is Better Than Implicit
 
-**We force application developers to think about backpressure** by making `ChannelFull` an explicit error. This is intentional. Different applications have different requirements, and the framework should not make policy decisions for them.
+**We force application developers to think about backpressure** by making `ChannelFull` an explicit error. This is
+intentional. Different applications have different requirements, and the framework should not make policy decisions for
+them.
 
-**The alternative** (unbounded queues, silent dropping) hides problems until production, when memory exhaustion or data loss occurs mysteriously. By making backpressure explicit, we force correct-by-construction designs.
+**The alternative** (unbounded queues, silent dropping) hides problems until production, when memory exhaustion or data
+loss occurs mysteriously. By making backpressure explicit, we force correct-by-construction designs.
 
 ---
 
@@ -2856,50 +3194,61 @@ These are questions that do not need to be answered now but may become relevant 
 
 ### Question 1: Connection Pooling
 
-**Context**: Currently, each connection spawns independent session actors. If a client needs to maintain multiple connections to the same server (e.g., for redundancy), how should this work?
+**Context**: Currently, each connection spawns independent session actors. If a client needs to maintain multiple
+connections to the same server (e.g., for redundancy), how should this work?
 
 **Options**:
+
 - Application-level pooling (main actor tracks multiple connections)
 - Protocol-level pooling (session manager provides "best available connection")
 - No change needed (current design handles this naturally)
 
-**Decision**: Deferred. Current design handles multiple connections naturally (each gets its own session actor). Application components can implement pooling logic if needed.
+**Decision**: Deferred. Current design handles multiple connections naturally (each gets its own session actor).
+Application components can implement pooling logic if needed.
 
 ### Question 2: Authentication and Authorization
 
 **Context**: The protocol has an `auth_role` field in the handshake, but authorization logic is not specified.
 
 **Options**:
+
 - Protocol layer checks role and refuses to activate certain rooms
 - Application layer checks role and refuses to handle certain messages
 - Hybrid (protocol filters, application authorizes)
 
-**Decision**: Deferred. Application components should handle authorization (they know the business rules). Protocol layer can optionally filter rooms based on role if needed.
+**Decision**: Deferred. Application components should handle authorization (they know the business rules). Protocol
+layer can optionally filter rooms based on role if needed.
 
 ### Question 3: Protocol Versioning and Backwards Compatibility
 
-**Context**: The current design uses a simple `version: "1.0"` string in the `Hello` frame. Currently, version strings must match exactly or the connection is rejected. As the protocol evolves, we may need to support backwards compatibility to enable non-disruptive upgrades.
+**Context**: The current design uses a simple `version: "1.0"` string in the `Hello` frame. Currently, version strings
+must match exactly or the connection is rejected. As the protocol evolves, we may need to support backwards
+compatibility to enable non-disruptive upgrades.
 
 **Key Questions to Explore Later**:
 
 1. **Upgrade Strategy**:
+
    - In our deployment model, do we upgrade all services atomically (entire system goes down, upgrades, comes back up)?
    - Or do we need rolling upgrades where old and new versions coexist temporarily?
    - What's the typical upgrade window and acceptable downtime?
 
 2. **Compatibility Surface**:
+
    - What changes to the protocol are "compatible" vs "breaking"?
    - Adding new room types: compatible or breaking?
    - Adding new fields to existing frames: compatible or breaking?
    - Changing serialization format: always breaking?
 
 3. **Version Negotiation Mechanisms** (if needed):
+
    - Simple rejection: "versions must match exactly" (current approach)
    - Negotiation: "I support versions X, Y, Z; pick one we both support"
    - Feature flags: "I support features A, B, C; use the intersection"
    - Backwards compatibility mode: "new server can speak old protocol"
 
 4. **Discovery and Diagnostics**:
+
    - When a version mismatch occurs, how does an operator discover it?
    - What information is logged? (both versions, who rejected whom, why)
    - Can we detect "mixed version" states in a cluster?
@@ -2909,106 +3258,150 @@ These are questions that do not need to be answered now but may become relevant 
    - Can we evolve from "exact match" to "negotiated match" gracefully?
 
 **Architectural Consideration**: The current design supports adding versioning logic later without fundamental changes:
+
 - The `Hello` frame already has a version field
 - The handshake phase is where version checking happens
-- We can evolve the version field from a simple string to a structured format (e.g., `{ major: 1, minor: 2, features: [...] }`) without changing the architecture
+- We can evolve the version field from a simple string to a structured format (e.g.,
+  `{ major: 1, minor: 2, features: [...] }`) without changing the architecture
 - Compatibility logic would live in the `SessionActor` (protocol layer), not in application components
 
-**Current Decision**: Use exact version matching ("1.0" == "1.0" or reject). This is simple, forces clarity in deployments, and doesn't preclude adding negotiation later when we have actual compatibility requirements.
+**Current Decision**: Use exact version matching ("1.0" == "1.0" or reject). This is simple, forces clarity in
+deployments, and doesn't preclude adding negotiation later when we have actual compatibility requirements.
 
 ### Question 4: Backpressure and Flow Control
 
 **Context**: If a component produces data faster than the network can send it, what happens?
 
 **Options**:
+
 - Bounded channels (back pressure to producer)
 - Unbounded channels (risk of OOM)
 - Explicit flow control protocol (complex)
 
-**Decision**: Use bounded channels for session actors. If channel is full, sender is automatically back-pressured. This is simple and effective.
+**Decision**: Use bounded channels for session actors. If channel is full, sender is automatically back-pressured. This
+is simple and effective.
 
 ### Question 5: Metrics and Observability
 
 **Context**: How do we expose metrics (e.g., active connections, messages sent/received, errors)?
 
 **Options**:
+
 - Each actor publishes metrics
 - Centralized metrics collector
 - Logging only
 
-**Decision**: Deferred. Can add later without changing architecture. Actors can publish metrics messages to a metrics collector actor.
+**Decision**: Deferred. Can add later without changing architecture. Actors can publish metrics messages to a metrics
+collector actor.
 
 ---
 
 ## Summary of Architectural Invariants
 
-This section collects all the invariants identified throughout this document in one place. These are the properties that **must always be true** for the system to function correctly.
+This section collects all the invariants identified throughout this document in one place. These are the properties that
+**must always be true** for the system to function correctly.
 
 ### Protocol-Level Invariants
 
-1. **"Room Names Are Protocol Identifiers"**: A room name (e.g., "intent-config") must mean the same protocol (same message types, same serialization format) on both sides of a connection. Room names are part of the global contract across all zzping services.
+1. **"Room Names Are Protocol Identifiers"**: A room name (e.g., "intent-config") must mean the same protocol (same
+   message types, same serialization format) on both sides of a connection. Room names are part of the global contract
+   across all zzping services.
 
-2. **"HELLO Before Application Protocol"**: The HELLO negotiation phase (Protocol A) must complete successfully before SessionManager creates a PeerSession and begins room negotiation (Protocol B). HELLO Handler completes first, then hands validated PeerIdentity to SessionManager.
+2. **"HELLO Before Application Protocol"**: The HELLO negotiation phase (Protocol A) must complete successfully before
+   SessionManager creates a PeerSession and begins room negotiation (Protocol B). HELLO Handler completes first, then
+   hands validated PeerIdentity to SessionManager.
 
-3. **"Empty Intersection = Error"**: If room negotiation produces an empty intersection (no compatible rooms), the connection must be terminated immediately with an error logged on both sides.
+3. **"Empty Intersection = Error"**: If room negotiation produces an empty intersection (no compatible rooms), the
+   connection must be terminated immediately with an error logged on both sides.
 
-4. **"FIFO Within a Room"**: Messages sent to the same room on the same connection are delivered in FIFO order. This is guaranteed by the TCP transport and actor mailbox ordering.
+4. **"FIFO Within a Room"**: Messages sent to the same room on the same connection are delivered in FIFO order. This is
+   guaranteed by the TCP transport and actor mailbox ordering.
 
 ### Lifecycle Invariants
 
-5. **"Static Wiring"**: Room registrations never change after boot. The set of rooms a service can handle is fixed for the lifetime of the process. (R8)
+5. **"Static Wiring"**: Room registrations never change after boot. The set of rooms a service can handle is fixed for
+   the lifetime of the process. (R8)
 
-6. **"Session-to-Connection 1:1"**: There is exactly one protocol session actor per active transport connection. No sharing, no multiplexing at the session level.
+6. **"Session-to-Connection 1:1"**: There is exactly one protocol session actor per active transport connection. No
+   sharing, no multiplexing at the session level.
 
-7. **"SessionActive Before DataForRoom"**: For any connection, the `SessionActive` event is fully processed by application components before any `DataForRoom` events arrive for that connection. This prevents orphan data and race conditions.
+7. **"SessionActive Before DataForRoom"**: For any connection, the `SessionActive` event is fully processed by
+   application components before any `DataForRoom` events arrive for that connection. This prevents orphan data and race
+   conditions.
 
-8. **"No Orphan Messages"**: A room message is never sent to a transport connection without a corresponding registered application subscriber. This is enforced by static registration and boot-time validation.
+8. **"No Orphan Messages"**: A room message is never sent to a transport connection without a corresponding registered
+   application subscriber. This is enforced by static registration and boot-time validation.
 
 ### Failure Invariants
 
-9. **"Fail Atomically"**: If any part of a connection's vertical slice fails (application session actor, protocol session actor, or transport), the entire slice must be torn down atomically. Partial failures must not leave dangling state. This is **guaranteed** by the RAII pattern on `SessionHandle`.
+9. **"Fail Atomically"**: If any part of a connection's vertical slice fails (application session actor, protocol
+   session actor, or transport), the entire slice must be torn down atomically. Partial failures must not leave dangling
+   state. This is **guaranteed** by the RAII pattern on `SessionHandle`.
 
-10. **"SessionHandle Enforces Teardown"**: When a `SessionHandle` is dropped (explicitly via `.close()` or when the owning actor stops), it automatically triggers teardown of the entire connection. This is enforced by Rust's type system via the `Drop` trait.
+10. **"SessionHandle Enforces Teardown"**: When a `SessionHandle` is dropped (explicitly via `.close()` or when the
+    owning actor stops), it automatically triggers teardown of the entire connection. This is enforced by Rust's type
+    system via the `Drop` trait.
 
-11. **"Main Actor Failure = Service Failure"**: If a main application actor or infrastructure actor (RoomRouter, SessionManager) panics, the entire service should crash and restart. There is no partial recovery from singleton actor failures.
+11. **"Main Actor Failure = Service Failure"**: If a main application actor or infrastructure actor (RoomRouter,
+    SessionManager) panics, the entire service should crash and restart. There is no partial recovery from singleton
+    actor failures.
 
-12. **"Transport Errors Are Expected"**: The transport layer must never panic due to I/O errors. All I/O operations must be wrapped in `Result<T, E>` and handled explicitly. This is the exception to "fail fast, fail loud."
+12. **"Transport Errors Are Expected"**: The transport layer must never panic due to I/O errors. All I/O operations must
+    be wrapped in `Result<T, E>` and handled explicitly. This is the exception to "fail fast, fail loud."
 
 ### Message Constraints
 
-13. **"16 MiB Maximum Message Size"**: No message may exceed 16 MiB. The protocol layer rejects messages exceeding this limit before sending. The transport layer closes the connection if it receives a frame header claiming >16 MiB. This is a hard, compile-time constant.
+13. **"16 MiB Maximum Message Size"**: No message may exceed 16 MiB. The protocol layer rejects messages exceeding this
+    limit before sending. The transport layer closes the connection if it receives a frame header claiming >16 MiB. This
+    is a hard, compile-time constant.
 
-14. **"Heartbeat Keepalive"**: The transport layer sends zero-sized frames every ~1 second as heartbeat. Both sides must send heartbeats. If no frames (heartbeat or data) are received for >5 seconds, the connection is assumed dead and closed.
+14. **"Heartbeat Keepalive"**: The transport layer sends zero-sized frames every ~1 second as heartbeat. Both sides must
+    send heartbeats. If no frames (heartbeat or data) are received for >5 seconds, the connection is assumed dead and
+    closed.
 
 ### Ordering Guarantees
 
-13. **"FIFO Within a Room"** (restated for emphasis): Messages sent to the same room on the same connection arrive in order at the peer.
+13. **"FIFO Within a Room"** (restated for emphasis): Messages sent to the same room on the same connection arrive in
+    order at the peer.
 
-14. **"No Ordering Between Rooms"**: Messages sent to different rooms on the same connection have no ordering guarantee. They come from independent actors with independent timing.
+14. **"No Ordering Between Rooms"**: Messages sent to different rooms on the same connection have no ordering guarantee.
+    They come from independent actors with independent timing.
 
-15. **"No Ordering Across Connections"**: Messages from different connections arrive in arbitrary order. Network latency and scheduler timing are unpredictable.
+15. **"No Ordering Across Connections"**: Messages from different connections arrive in arbitrary order. Network latency
+    and scheduler timing are unpredictable.
 
 ### Boot-Time Guarantees
 
-16. **"Offered Rooms Must Have Handlers"**: Every room in the "offered rooms" list must have a registered handler in the RoomRouter. This is validated at boot time before the transport is attached. Violation causes a panic with a clear error message.
+16. **"Offered Rooms Must Have Handlers"**: Every room in the "offered rooms" list must have a registered handler in the
+    RoomRouter. This is validated at boot time before the transport is attached. Violation causes a panic with a clear
+    error message.
 
-17. **"Pre-Online State"**: After wiring is complete and validated, but before the transport is attached, the service is in a "pre-online" state where all internal actors are running and ready, but no network connections are accepted. This is an intentional architectural feature.
+17. **"Pre-Online State"**: After wiring is complete and validated, but before the transport is attached, the service is
+    in a "pre-online" state where all internal actors are running and ready, but no network connections are accepted.
+    This is an intentional architectural feature.
 
 ### Backpressure Guarantees
 
-18. **"Bounded Channels"**: Communication channels between components and SessionManager (and internally within SessionManager to PeerSessions) are bounded. When full, send operations return errors, forcing explicit backpressure handling.
+18. **"Bounded Channels"**: Communication channels between components and SessionManager (and internally within
+    SessionManager to PeerSessions) are bounded. When full, send operations return errors, forcing explicit backpressure
+    handling.
 
-19. **"send() Means Queued"**: A successful send from a component to SessionManager means the message was queued for delivery. It does NOT mean data was sent on the wire or received by the peer. Components must use application-level acknowledgments if they need delivery confirmation.
+19. **"send() Means Queued"**: A successful send from a component to SessionManager means the message was queued for
+    delivery. It does NOT mean data was sent on the wire or received by the peer. Components must use application-level
+    acknowledgments if they need delivery confirmation.
 
 ### Peer Identity Guarantees
 
-20. **"Peer Context Is Always Available"**: Application components always know WHO they're connected to (peer hostname, role, protocol version). This information is included in the `PeerConnected` event and comes from the validated PeerIdentity (which originated from the HELLO handshake performed by the HelloHandler).
+20. **"Peer Context Is Always Available"**: Application components always know WHO they're connected to (peer hostname,
+    role, protocol version). This information is included in the `PeerConnected` event and comes from the validated
+    PeerIdentity (which originated from the HELLO handshake performed by the HelloHandler).
 
 ---
 
 ## Conclusion
 
-This document defines a clean, layered architecture for the ZZPing network layer based on the actor model. The key insights are:
+This document defines a clean, layered architecture for the ZZPing network layer based on the actor model. The key
+insights are:
 
 1. **Per-connection session actors** eliminate shared state and provide explicit lifecycle management
 2. **Clear layer separation** (transport, session, routing, application) makes the system understandable and testable
@@ -3016,9 +3409,11 @@ This document defines a clean, layered architecture for the ZZPing network layer
 4. **Connection-aware design** makes stateful protocols straightforward to implement
 5. **No hidden magic** (no transparent reconnection, no heavy buffering) keeps the system explicit and debugable
 
-The design satisfies all core requirements (R1-R10) and provides a solid foundation for building reliable, testable, distributed components.
+The design satisfies all core requirements (R1-R10) and provides a solid foundation for building reliable, testable,
+distributed components.
 
 **Next Steps**:
+
 1. Review this document for correctness and completeness
 2. Begin implementation of `zznet-hello` crate (Protocol A - HELLO handler for peer identity)
 3. Begin implementation of `zznet-session` crate (Protocol B - SessionManager + PeerSession for typed messages)
