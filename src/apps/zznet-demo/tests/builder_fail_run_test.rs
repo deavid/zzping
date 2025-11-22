@@ -28,9 +28,7 @@ async fn test_harness_run_fails_when_service_startup_errors() {
 
     let service = FailDemoService;
 
-    let handle = tokio::task::spawn_blocking(move || {
-        harness.run(service)
-    });
+    let handle = tokio::task::spawn_blocking(move || harness.run(service));
 
     let res = handle.await.unwrap();
     assert!(res.is_err());

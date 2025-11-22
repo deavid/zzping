@@ -43,6 +43,12 @@ impl AppHarness {
         crate::logging::init_logging(&self.log_level);
     }
 
+    /// Initialize for unit tests
+    pub fn init_test() {
+        install_crypto_provider();
+        crate::logging::init_logging("trace");
+    }
+
     /// Run the application until a shutdown signal is received.
     ///
     /// This method:

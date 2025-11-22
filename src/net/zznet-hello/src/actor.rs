@@ -211,7 +211,7 @@ impl HelloActor {
             ActorState::Ready => {
                 // After handshake, transport is transferred to Router.
                 // Any frames received here are protocol violations or race conditions.
-                warn!("Received frame in Ready state - transport should have been transferred");
+                error!("Received frame in Ready state - transport should have been transferred");
             }
             ActorState::Failed => {
                 warn!("Received frame in Failed state, ignoring");
@@ -251,8 +251,6 @@ impl HelloActor {
         }
     }
 
-    /// Transitions to `Ready` state and notifies the `SessionManager`.
-    // TODO: Add a test case that uses a TLS-enabled transport to cover certificate validation logic in `complete_handshake`.
     fn complete_handshake(&mut self, ctx: &mut Context<Self>) {
         if let Some(rooms) = self.handshake.active_rooms() {
             info!("Handshake complete! Active rooms: {:?}", rooms);

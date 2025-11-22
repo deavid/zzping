@@ -12,6 +12,7 @@ workspace = true
 
 [dependencies]
 actix.workspace = true
+actix-rt.workspace = true
 anyhow.workspace = true
 tokio.workspace = true
 serde.workspace = true

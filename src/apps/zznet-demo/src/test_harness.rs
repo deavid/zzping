@@ -5,6 +5,7 @@ use crate::service::DemoAppService;
 use actix::Addr;
 use zznet_api::mock::create_mock_pair;
 use zznet_builder::harness::AppHarness;
+use zznet_builder::traits::ZZNetApplication;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::HandleTransport;
 
@@ -23,30 +24,18 @@ pub async fn spawn_demo_service(
 /// Returns the spawned demo service handles and a stop channel sender that can be used to request shutdown.
 pub async fn spawn_demo_service_with_builder(
     config: DemoAppConfig,
-) -> (
-    tokio::task::JoinHandle<()>,
-    DemoAppService,
-    Addr<crate::component_a::ComponentAActor>,
-    tokio::sync::oneshot::Sender<()>,
-) {
+) -> (DemoAppService, Addr<crate::component_a::ComponentAActor>) {
     // Create the service directly
-    let service = DemoAppService::new(config.clone()).unwrap();
-    let comp_a_addr = service.component_a.clone();
+    let mut app = DemoAppService::new(config.clone()).unwrap();
+    let comp_a_addr = app.component_a.clone();
 
-    // Create a programmatic stop channel
-    let (stop_tx, _stop_rx) = tokio::sync::oneshot::channel::<()>();
+    AppHarness::init_test();
 
-    // Spawn a task that runs the service with harness
-    let cfg_clone = config.clone();
-    let handle = tokio::task::spawn(async move {
-        let harness = AppHarness::new().log_level("info");
-        harness.init_logging();
+    tracing::info!("Starting {}", app.service_name());
 
-        let app = DemoAppService::new(cfg_clone).unwrap();
-        let _ = harness.run(app);
-    });
+    app.startup().await.expect("Startup failed");
 
-    (handle, service, comp_a_addr, stop_tx)
+    (app, comp_a_addr)
 }
 
 /// Connects two `DemoAppService` instances using a mock transport.
