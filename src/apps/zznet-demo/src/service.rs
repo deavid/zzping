@@ -7,10 +7,8 @@ use crate::{
 };
 use actix::prelude::*;
 use anyhow::Result;
-use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use zznet_api::types::{Role, RoomId};
-use zznet_builder::traits::ZZNetApplication;
 use zznet_hello::connection_manager::ConnectionManager;
 use zznet_router::RouterActor;
 
@@ -91,22 +89,5 @@ impl DemoAppService {
             component_a,
             component_b,
         })
-    }
-}
-
-#[async_trait]
-impl ZZNetApplication for DemoAppService {
-    fn service_name(&self) -> &str {
-        "ZZNet Demo"
-    }
-
-    async fn startup(&mut self) -> Result<(), anyhow::Error> {
-        tracing::info!("DemoAppService is running");
-        Ok(())
-    }
-
-    async fn shutdown(&mut self) -> Result<(), anyhow::Error> {
-        // Clean up resources if needed
-        Ok(())
     }
 }

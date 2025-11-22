@@ -15,7 +15,6 @@ zzpinger.workspace = true
 
 # Network layer dependencies
 zznet-api.workspace = true
-zznet-builder.workspace = true
 zznet-hello.workspace = true
 zznet-room.workspace = true
 zznet-router.workspace = true
@@ -37,6 +36,7 @@ clap.workspace = true
 
 # Logging and tracing
 tracing.workspace = true
+tracing-subscriber.workspace = true
 
 # Error handling
 anyhow.workspace = true

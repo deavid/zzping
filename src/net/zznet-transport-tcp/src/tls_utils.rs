@@ -6,9 +6,9 @@ pub fn to_transport_tls_config(
     key_path: &str,
     ca_cert_path: Option<&str>,
     server_name: String,
-) -> zznet_transport_tcp::config::TlsConfig {
+) -> crate::config::TlsConfig {
+    use crate::config::{TlsCertAndKey, TlsConfig as TransportTlsConfig};
     use std::path::PathBuf;
-    use zznet_transport_tcp::config::{TlsCertAndKey, TlsConfig as TransportTlsConfig};
 
     let cert = TlsCertAndKey {
         pem_path: PathBuf::from(cert_path),

@@ -4,8 +4,6 @@ use crate::config::DemoAppConfig;
 use crate::service::DemoAppService;
 use actix::Addr;
 use zznet_api::mock::create_mock_pair;
-use zznet_builder::harness::AppHarness;
-use zznet_builder::traits::ZZNetApplication;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::HandleTransport;
 
@@ -19,23 +17,15 @@ pub async fn spawn_demo_service(
     (service, comp_a_addr)
 }
 
-/// Spawn the demo service using the `zznet-builder` API. This will run the
-/// full app lifecycle in a background thread using the builder's `run_service_with_config_and_stop`.
-/// Returns the spawned demo service handles and a stop channel sender that can be used to request shutdown.
+/// Spawn the demo service. Returns the spawned demo service handles.
 pub async fn spawn_demo_service_with_builder(
     config: DemoAppConfig,
 ) -> (DemoAppService, Addr<crate::component_a::ComponentAActor>) {
     // Create the service directly
-    let mut app = DemoAppService::new(config.clone()).unwrap();
-    let comp_a_addr = app.component_a.clone();
+    let service = DemoAppService::new(config.clone()).unwrap();
+    let comp_a_addr = service.component_a.clone();
 
-    AppHarness::init_test();
-
-    tracing::info!("Starting {}", app.service_name());
-
-    app.startup().await.expect("Startup failed");
-
-    (app, comp_a_addr)
+    (service, comp_a_addr)
 }
 
 /// Connects two `DemoAppService` instances using a mock transport.

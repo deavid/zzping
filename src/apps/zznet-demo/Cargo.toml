@@ -24,7 +24,6 @@ zznet-api.workspace = true
 zznet-hello.workspace = true
 zznet-room.workspace = true
 zznet-router.workspace = true
-zznet-builder.workspace = true
 
 [dev-dependencies]
 ntest.workspace = true
