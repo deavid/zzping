@@ -94,7 +94,6 @@ use crate::messages::{
     ComponentAMessage, GetCounter, PublishToA, SendPing, SetNetworkManager, StateUpdate, Subscribe,
 };
 use actix::prelude::*;
-use bytes::Bytes;
 use std::collections::HashMap;
 use tracing::info;
 use zznet_api::types::PeerId;
@@ -128,7 +127,7 @@ impl zznet_router::RoomFactory for ComponentARoomFactory {
         peer_id: PeerId,
         role: zznet_api::types::Role,
         room_id: zznet_api::types::RoomId,
-        transport_tx: tokio::sync::mpsc::Sender<Bytes>,
+        transport_tx: tokio::sync::mpsc::Sender<zznet_api::types::TransportFrame>,
     ) -> Result<Option<zznet_room::room_manager::RoomInboundRecipient>, String> {
         // Check if this is our room
         if room_id.as_str() != "room-a" {

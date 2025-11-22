@@ -3,10 +3,9 @@
 //! Components implement this trait to provide synchronous factory methods that create
 //! room actors without requiring async/await. This removes the need for a mutex-guarded Router.
 
-use bytes::Bytes;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use zznet_api::types::{PeerId, Role, RoomId};
+use zznet_api::types::{PeerId, Role, RoomId, TransportFrame};
 use zznet_room::room_manager::RoomInboundRecipient;
 
 /// Factory for creating rooms synchronously on the Router's thread.
@@ -45,7 +44,7 @@ pub trait RoomFactory: Send + Sync {
         peer_id: PeerId,
         role: Role,
         room_id: RoomId,
-        transport_tx: mpsc::Sender<Bytes>,
+        transport_tx: mpsc::Sender<TransportFrame>,
     ) -> Result<Option<RoomInboundRecipient>, String>;
 }
 

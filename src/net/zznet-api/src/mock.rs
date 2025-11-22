@@ -5,18 +5,17 @@
 
 use crate::error::TransportError;
 use crate::transport::{TransportClient, TransportConnection, TransportServer};
-use crate::types::PeerTLSIdentity;
+use crate::types::{PeerTLSIdentity, TransportFrame};
 use async_trait::async_trait;
-use bytes::Bytes;
 use std::io;
 use tokio::sync::{Mutex, mpsc};
 
 /// In-memory transport connection used for tests.
 ///
-/// Sends and receives framed `Bytes` via channels.
+/// Sends and receives framed `TransportFrame` via channels.
 pub struct MockConnection {
-    tx: mpsc::Sender<Bytes>,
-    rx: mpsc::Receiver<Bytes>,
+    tx: mpsc::Sender<TransportFrame>,
+    rx: mpsc::Receiver<TransportFrame>,
     /// Connection identifier (for debugging/assertions).
     peer_id: String,
     inject_error: Option<TransportError>,
@@ -42,7 +41,7 @@ impl MockConnection {
     }
 
     /// Send method for testing (not part of trait).
-    pub async fn send(&mut self, frame: Bytes) -> Result<(), TransportError> {
+    pub async fn send(&mut self, frame: TransportFrame) -> Result<(), TransportError> {
         if let Some(error) = self.inject_error.take() {
             return Err(error);
         }
@@ -54,13 +53,13 @@ impl MockConnection {
     }
 
     /// Recv method for testing (not part of trait).
-    pub async fn recv(&mut self) -> Result<Bytes, TransportError> {
+    pub async fn recv(&mut self) -> Result<TransportFrame, TransportError> {
         if let Some(error) = self.inject_error.take() {
             return Err(error);
         }
 
         match self.rx.recv().await {
-            Some(bytes) => Ok(bytes),
+            Some(frame) => Ok(frame),
             None => Err(TransportError::ConnectionClosed(io::Error::other(
                 "connection closed",
             ))),
@@ -73,8 +72,8 @@ impl TransportConnection for MockConnection {
     fn start(
         self: Box<Self>,
     ) -> (
-        mpsc::Sender<Bytes>,
-        mpsc::Receiver<Result<Bytes, TransportError>>,
+        mpsc::Sender<TransportFrame>,
+        mpsc::Receiver<Result<TransportFrame, TransportError>>,
     ) {
         let MockConnection {
             tx,
@@ -84,15 +83,15 @@ impl TransportConnection for MockConnection {
         } = *self;
         let (result_tx, result_rx) = mpsc::channel(32);
 
-        // Spawn a task to convert Bytes to Result<Bytes, TransportError>
+        // Spawn a task to convert TransportFrame to Result<TransportFrame, TransportError>
         tokio::spawn(async move {
             let mut rx = rx;
             if let Some(error) = inject_error {
                 let _ = result_tx.send(Err(error)).await;
                 return;
             }
-            while let Some(bytes) = rx.recv().await {
-                if result_tx.send(Ok(bytes)).await.is_err() {
+            while let Some(frame) = rx.recv().await {
+                if result_tx.send(Ok(frame)).await.is_err() {
                     break;
                 }
             }
@@ -209,21 +208,26 @@ mod tests {
         assert_eq!(conn_a.peer_addr(), Some("mock:test_basic_a".to_string()));
 
         // bidirectional
-        conn_a.send(Bytes::from("hello")).await.unwrap();
-        assert_eq!(conn_b.recv().await.unwrap(), Bytes::from("hello"));
-        conn_b.send(Bytes::from("world")).await.unwrap();
-        assert_eq!(conn_a.recv().await.unwrap(), Bytes::from("world"));
+        conn_a.send(TransportFrame::new(b"hello".to_vec())).await.unwrap();
+        let frame_b = conn_b.recv().await.unwrap();
+        assert_eq!(frame_b.get_bytes().as_ref(), b"hello");
+
+        conn_b.send(TransportFrame::new(b"world".to_vec())).await.unwrap();
+        let frame_a = conn_a.recv().await.unwrap();
+        assert_eq!(frame_a.get_bytes().as_ref(), b"world");
 
         // multiple messages
         for i in 0..5 {
             let msg = format!("msg{}", i);
-            conn_a.send(Bytes::from(msg.clone())).await.unwrap();
-            assert_eq!(conn_b.recv().await.unwrap(), Bytes::from(msg));
+            conn_a.send(TransportFrame::new(msg.as_bytes().to_vec())).await.unwrap();
+            let frame = conn_b.recv().await.unwrap();
+            assert_eq!(frame.get_bytes().as_ref(), msg.as_bytes());
         }
 
         // zero-length
-        conn_a.send(Bytes::new()).await.unwrap();
-        assert_eq!(conn_b.recv().await.unwrap(), Bytes::new());
+        conn_a.send(TransportFrame::new(vec![])).await.unwrap();
+        let frame = conn_b.recv().await.unwrap();
+        assert_eq!(frame.get_bytes().as_ref(), &[]);
     }
 
     #[tokio::test]
@@ -238,7 +242,7 @@ mod tests {
         let (mut conn_a2, conn_b2) = create_mock_pair("test_send_after_close");
         drop(conn_b2);
         assert!(matches!(
-            conn_a2.send(Bytes::from("x")).await,
+            conn_a2.send(TransportFrame::new(b"x".to_vec())).await,
             Err(TransportError::ConnectionClosed(_))
         ));
     }
@@ -250,10 +254,10 @@ mod tests {
         // send side
         conn_a.inject_error(TransportError::Timeout(io::Error::other("e1")));
         assert!(matches!(
-            conn_a.send(Bytes::from("x")).await,
+            conn_a.send(TransportFrame::new(b"x".to_vec())).await,
             Err(TransportError::Timeout(_))
         ));
-        conn_a.send(Bytes::from("ok")).await.unwrap();
+        conn_a.send(TransportFrame::new(b"ok".to_vec())).await.unwrap();
 
         // recv side (inject into self before waiting)
         conn_a.inject_error(TransportError::Timeout(io::Error::other("e2")));

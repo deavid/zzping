@@ -1,5 +1,43 @@
 //! Shared types used across the transport layer.
+use bytes::Bytes;
 use std::fmt;
+
+/// A serialized protocol frame ready for transport.
+///
+/// This represents a discrete, atomic unit of data. The transport layer
+/// guarantees that this entire block will be framed (e.g. with a length prefix)
+/// and delivered as a single unit to the peer.
+///
+/// Unlike `Bytes`, this type semantically represents a complete protocol frame,
+/// not a stream or arbitrary blob. This clarity helps prevent misuse and
+/// enables future extensions (e.g., priority, compression flags) without
+/// breaking component signatures.
+#[derive(Clone, Debug)]
+pub struct TransportFrame(Bytes);
+
+impl TransportFrame {
+    /// Wrap raw bytes into a transport frame.
+    pub fn new(data: Vec<u8>) -> Self {
+        Self(Bytes::from(data))
+    }
+
+    /// Access the inner bytes (used by the Transport layer only).
+    pub fn get_bytes(&self) -> &Bytes {
+        &self.0
+    }
+
+    /// Consume the frame into bytes (used by the Transport layer).
+    pub fn into_bytes(self) -> Bytes {
+        self.0
+    }
+}
+
+// Allow cheap conversion from Bytes if needed internally
+impl From<Bytes> for TransportFrame {
+    fn from(b: Bytes) -> Self {
+        Self(b)
+    }
+}
 
 /// Represents the verified identity of a peer
 ///

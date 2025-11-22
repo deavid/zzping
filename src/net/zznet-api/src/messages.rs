@@ -1,8 +1,7 @@
 //! Actix mesages for zznet
 
-use crate::types::{PeerId, Role, RoomId};
+use crate::types::{PeerId, Role, RoomId, TransportFrame};
 use actix::prelude::*;
-use bytes::Bytes;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
@@ -31,5 +30,5 @@ pub struct OnPeerConnected {
     /// The list of rooms successfully negotiated with the peer
     pub negotiated_rooms: Vec<RoomId>,
     /// Direct transport write handle - writes raw frames to network
-    pub transport_tx: mpsc::Sender<Bytes>,
+    pub transport_tx: mpsc::Sender<TransportFrame>,
 }

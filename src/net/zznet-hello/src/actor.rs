@@ -5,7 +5,6 @@
 //! the actor's single-threaded context.
 
 use actix::prelude::*;
-use bytes::Bytes;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -16,7 +15,7 @@ use zznet_api::error::TransportError;
 use zznet_api::messages::InboundRoomPayload;
 use zznet_api::protocol::{Frame, HandshakeFrame, RoomFrame};
 use zznet_api::transport::TransportConnection;
-use zznet_api::types::RoomId;
+use zznet_api::types::{RoomId, TransportFrame};
 
 // The HELLO protocol is application-agnostic; it uses a role string, not a concrete enum.
 use crate::error::HelloError;
@@ -109,7 +108,7 @@ pub(crate) struct SetRoutes(
 
 /// Gets the transport_tx sender for room creation.
 #[derive(Message)]
-#[rtype(result = "mpsc::Sender<Bytes>")]
+#[rtype(result = "mpsc::Sender<TransportFrame>")]
 pub(crate) struct GetTransportTx;
 
 /// Manages a connection's lifecycle using the HELLO protocol.
@@ -129,11 +128,11 @@ pub(crate) struct HelloActor {
     /// Used to validate that HELLO role matches certificate CN when TLS is enabled.
     tls_peer_identity: Option<zznet_api::types::PeerTLSIdentity>,
     /// Sender to transport for outbound frames.
-    transport_tx: mpsc::Sender<Bytes>,
+    transport_tx: mpsc::Sender<TransportFrame>,
     /// Optional SessionManager recipient (for integration with higher layer). - FIXME: Why is this optional? it doesn't make sense
     session_manager: Option<Recipient<HandshakeComplete>>,
     /// Receiver for inbound frames from transport.
-    transport_rx: Option<mpsc::Receiver<Result<Bytes, TransportError>>>,
+    transport_rx: Option<mpsc::Receiver<Result<TransportFrame, TransportError>>>,
 }
 
 impl HelloActor {
@@ -141,8 +140,8 @@ impl HelloActor {
     fn new(
         config: HelloConfig,
         tls_peer_identity: Option<zznet_api::types::PeerTLSIdentity>,
-        transport_tx: mpsc::Sender<Bytes>,
-        transport_rx: mpsc::Receiver<Result<Bytes, TransportError>>,
+        transport_tx: mpsc::Sender<TransportFrame>,
+        transport_rx: mpsc::Receiver<Result<TransportFrame, TransportError>>,
     ) -> Self {
         Self {
             config,
@@ -210,7 +209,8 @@ impl HelloActor {
 
     /// Sends a raw frame to the transport.
     fn send_frame_to_transport(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
-        if let Err(e) = self.transport_tx.try_send(Bytes::from(data)) {
+        let frame = TransportFrame::new(data);
+        if let Err(e) = self.transport_tx.try_send(frame) {
             error!("Transport channel closed: {}", e);
             ctx.stop();
         }
@@ -432,10 +432,10 @@ impl Handler<IoError> for HelloActor {
     }
 }
 
-impl StreamHandler<Result<Bytes, TransportError>> for HelloActor {
-    fn handle(&mut self, item: Result<Bytes, TransportError>, ctx: &mut Context<Self>) {
+impl StreamHandler<Result<TransportFrame, TransportError>> for HelloActor {
+    fn handle(&mut self, item: Result<TransportFrame, TransportError>, ctx: &mut Context<Self>) {
         match item {
-            Ok(data) => self.handle_received_frame(data.to_vec(), ctx),
+            Ok(frame) => self.handle_received_frame(frame.get_bytes().to_vec(), ctx),
             Err(e) => {
                 if matches!(e, TransportError::ConnectionClosed(_)) {
                     info!("Transport closed by peer");

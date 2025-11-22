@@ -71,7 +71,7 @@ mod tests {
             _peer_id: zznet_api::types::PeerId,
             _role: zznet_api::types::Role,
             _room_id: zznet_api::types::RoomId,
-            _transport_tx: tokio::sync::mpsc::Sender<bytes::Bytes>,
+            _transport_tx: tokio::sync::mpsc::Sender<zznet_api::types::TransportFrame>,
         ) -> Result<Option<zznet_room::room_manager::RoomInboundRecipient>, String> {
             Ok(None)
         }

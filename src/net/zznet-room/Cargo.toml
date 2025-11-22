@@ -22,7 +22,6 @@ tracing.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["derive"] }
 rmp-serde.workspace = true
-bytes.workspace = true
 
 # Internal dependencies - NO zznet-session to avoid cycles
 zznet-api.workspace = true

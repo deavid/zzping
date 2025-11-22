@@ -4,8 +4,8 @@
 //! higher layers. Protocol logic and serialization belong to upper layers.
 
 use crate::error::TransportError;
+use crate::types::TransportFrame;
 use async_trait::async_trait;
-use bytes::Bytes;
 use tokio::sync::mpsc;
 
 /// Low-level bidirectional transport connection.
@@ -30,8 +30,8 @@ pub trait TransportConnection: Send {
     fn start(
         self: Box<Self>,
     ) -> (
-        mpsc::Sender<Bytes>,
-        mpsc::Receiver<Result<Bytes, TransportError>>,
+        mpsc::Sender<TransportFrame>,
+        mpsc::Receiver<Result<TransportFrame, TransportError>>,
     );
 
     /// Peer address for logging/metrics, if available.

@@ -68,7 +68,7 @@ impl zznet_router::RoomFactory for MemDBRoomFactory {
         peer_id: PeerId,
         role: zznet_api::types::Role,
         room_id: RoomId,
-        transport_tx: tokio::sync::mpsc::Sender<bytes::Bytes>,
+        transport_tx: tokio::sync::mpsc::Sender<zznet_api::types::TransportFrame>,
     ) -> Result<Option<zznet_room::room_manager::RoomInboundRecipient>, String> {
         // Check if this is our room
         if room_id.as_str() != "memdb" {

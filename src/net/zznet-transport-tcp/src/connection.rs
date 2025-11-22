@@ -3,7 +3,6 @@
 //! This module provides TcpTransport which implements the TransportConnection trait.
 
 use async_trait::async_trait;
-use bytes::Bytes;
 use std::net::SocketAddr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -13,7 +12,7 @@ use x509_parser::prelude::*;
 
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportConnection;
-use zznet_api::types::PeerTLSIdentity;
+use zznet_api::types::{PeerTLSIdentity, TransportFrame};
 
 use crate::framing;
 
@@ -221,8 +220,8 @@ impl TcpTransport {
 /// This consolidates the identical task-spawning logic used for Plain, TlsClient, and TlsServer streams.
 fn spawn_transport_tasks<S>(
     stream: S,
-    mut rx: mpsc::Receiver<Bytes>,
-    result_tx: mpsc::Sender<Result<Bytes, TransportError>>,
+    mut rx: mpsc::Receiver<TransportFrame>,
+    result_tx: mpsc::Sender<Result<TransportFrame, TransportError>>,
 ) where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
@@ -230,8 +229,8 @@ fn spawn_transport_tasks<S>(
 
     // Spawn writer task
     tokio::spawn(async move {
-        while let Some(bytes) = rx.recv().await {
-            if let Err(e) = framing::write_frame(&mut write_half, &bytes).await {
+        while let Some(frame) = rx.recv().await {
+            if let Err(e) = framing::write_frame(&mut write_half, frame.get_bytes()).await {
                 error!("Write error: {}", e);
                 break;
             }
@@ -243,7 +242,11 @@ fn spawn_transport_tasks<S>(
         loop {
             match framing::read_frame(&mut read_half).await {
                 Ok(bytes) => {
-                    if result_tx.send(Ok(bytes)).await.is_err() {
+                    if result_tx
+                        .send(Ok(TransportFrame::from(bytes)))
+                        .await
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -261,10 +264,11 @@ impl TransportConnection for TcpTransport {
     fn start(
         self: Box<Self>,
     ) -> (
-        mpsc::Sender<Bytes>,
-        mpsc::Receiver<Result<Bytes, TransportError>>,
+        mpsc::Sender<TransportFrame>,
+        mpsc::Receiver<Result<TransportFrame, TransportError>>,
     ) {
-        let (tx, rx): (mpsc::Sender<Bytes>, mpsc::Receiver<Bytes>) = mpsc::channel(32);
+        let (tx, rx): (mpsc::Sender<TransportFrame>, mpsc::Receiver<TransportFrame>) =
+            mpsc::channel(32);
         let (result_tx, result_rx) = mpsc::channel(32);
 
         // Split the stream into read and write halves
@@ -313,10 +317,12 @@ mod tests {
 
             // Receive a message
             let msg = rx.recv().await.unwrap().unwrap();
-            assert_eq!(msg.as_ref(), b"Hello from client");
+            assert_eq!(msg.get_bytes().as_ref(), b"Hello from client");
 
             // Send a response
-            tx.send(Bytes::from("Hello from server")).await.unwrap();
+            tx.send(TransportFrame::new(b"Hello from server".to_vec()))
+                .await
+                .unwrap();
         });
 
         // Client connects
@@ -326,11 +332,13 @@ mod tests {
         let (tx, mut rx) = Box::new(transport).start();
 
         // Send a message
-        tx.send(Bytes::from("Hello from client")).await.unwrap();
+        tx.send(TransportFrame::new(b"Hello from client".to_vec()))
+            .await
+            .unwrap();
 
         // Receive response
         let response = rx.recv().await.unwrap().unwrap();
-        assert_eq!(response.as_ref(), b"Hello from server");
+        assert_eq!(response.get_bytes().as_ref(), b"Hello from server");
 
         // Wait for server to finish
         server_handle.await.unwrap();
@@ -388,10 +396,12 @@ mod tests {
         // Send and receive 3 messages
         for i in 1..=3 {
             let msg = format!("Message {}", i);
-            tx.send(Bytes::from(msg.clone())).await.unwrap();
+            tx.send(TransportFrame::new(msg.as_bytes().to_vec()))
+                .await
+                .unwrap();
 
             let response = rx.recv().await.unwrap().unwrap();
-            assert_eq!(response.as_ref(), msg.as_bytes());
+            assert_eq!(response.get_bytes().as_ref(), msg.as_bytes());
         }
 
         server_handle.await.unwrap();

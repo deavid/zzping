@@ -23,7 +23,6 @@ serde.workspace = true
 rmp-serde.workspace = true
 tracing.workspace = true
 thiserror.workspace = true
-bytes.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "sync", "macros"] }

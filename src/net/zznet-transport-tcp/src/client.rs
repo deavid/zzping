@@ -12,6 +12,8 @@ use tracing::{debug, error, info};
 
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportClient;
+#[cfg(test)]
+use zznet_api::types::TransportFrame;
 
 use crate::config::TlsConfig;
 use crate::connection::TcpTransport;
@@ -152,11 +154,11 @@ mod tests {
         let (tx, mut rx) = conn.start();
 
         // Send a message
-        tx.send(bytes::Bytes::from("test message")).await.unwrap();
+        tx.send(TransportFrame::new(b"test message".to_vec())).await.unwrap();
 
         // Receive echo
         let response = rx.recv().await.unwrap().unwrap();
-        assert_eq!(response.as_ref(), b"test message");
+        assert_eq!(response.get_bytes().as_ref(), b"test message");
 
         server_handle.await.unwrap();
     }

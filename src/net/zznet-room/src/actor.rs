@@ -2,11 +2,10 @@
 
 // src/net/zznet-room/src/actor.rs
 use actix::prelude::*;
-use bytes::Bytes;
 use tokio::sync::mpsc;
 use zznet_api::messages::InboundRoomPayload;
 use zznet_api::protocol::{Frame, RoomFrame};
-use zznet_api::types::RoomId;
+use zznet_api::types::{RoomId, TransportFrame};
 
 use crate::room_message_trait::RoomMessageTrait;
 
@@ -20,7 +19,7 @@ where
     T: RoomMessageTrait + actix::Message<Result = ()> + Send + 'static,
 {
     room_id: RoomId,
-    transport_tx: mpsc::Sender<Bytes>,
+    transport_tx: mpsc::Sender<TransportFrame>,
     component_recipient: Recipient<T>,
 }
 
@@ -31,7 +30,7 @@ where
     /// Build a room actor bound to a specific room id and component recipient.
     pub fn new(
         room_id: RoomId,
-        transport_tx: mpsc::Sender<Bytes>,
+        transport_tx: mpsc::Sender<TransportFrame>,
         component_recipient: Recipient<T>,
     ) -> Self {
         Self {
@@ -100,8 +99,9 @@ where
                 match frame.serialize() {
                     Ok(frame_bytes) => {
                         let transport_tx = self.transport_tx.clone();
+                        let transport_frame = TransportFrame::new(frame_bytes);
 
-                        if let Err(error) = transport_tx.try_send(Bytes::from(frame_bytes)) {
+                        if let Err(error) = transport_tx.try_send(transport_frame) {
                             tracing::error!("RoomActor transport send failed: {:?}", error);
                             ctx.stop();
                             // FIXME: In reality, stopping the actor has to guarantee that the connection is

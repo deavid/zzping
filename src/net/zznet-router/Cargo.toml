@@ -10,7 +10,6 @@ tracing = { workspace = true }
 actix = { workspace = true }
 async-trait.workspace = true
 thiserror.workspace = true
-bytes = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 rmp-serde = { workspace = true }
 
