@@ -2,9 +2,9 @@
 //!
 //! The Manager actor in the three-actor pattern.
 
+use crate::events::IntentConfigEvent;
 use crate::internal_messages::{
-    BroadcastConfigUpdate, InboundConfigChangeRequest, InboundGetConfigRequest,
-    NetworkConfigChangeRequest, SendErrorToPeer,
+    InboundConfigChangeRequest, InboundGetConfigRequest, NetworkConfigChangeRequest,
 };
 use crate::messages::{GetCurrentConfig, IntentConfigData};
 use crate::network_actor::IntentConfigNetworkActor;
@@ -14,32 +14,85 @@ use actix::prelude::*;
 use std::collections::HashMap;
 use zznet_api::types::{PeerId, RoomId};
 use zznet_room::actor::RoomActor;
-use zznet_router::{NetworkComponent, RouterActor};
+use zznet_router::RouterActor;
 
-/// IntentConfig Manifest for the NetworkComponent pattern.
+/// Custom factory for IntentConfig that passes event_bus to NetworkActors
 ///
-/// This Zero-Sized Type (ZST) binds together all the types for IntentConfig,
-/// eliminating the need for custom factory and RegisterPeer implementations.
-#[derive(Clone)]
-pub struct IntentConfigManifest;
+/// Replaces StandardRoomFactory to resolve circular dependency.
+/// Creates NetworkActor first, then RoomActor, then wires them via SetRoomActor.
+pub struct IntentConfigRoomFactory {
+    manager: Addr<IntentConfigNetworkManager>,
+    event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>,
+    permissions_map: HashMap<String, IntentConfigPermissions>,
+}
 
-impl NetworkComponent for IntentConfigManifest {
-    const ROOM_ID: &'static str = "intent-config";
+impl IntentConfigRoomFactory {
+    /// Create a new IntentConfigRoomFactory
+    ///
+    /// # Arguments
+    /// * `manager` - Address of the NetworkManager for registration
+    /// * `event_bus` - Event bus sender for broadcasting config changes
+    /// * `permissions_map` - Map from role strings to permissions
+    pub fn new(
+        manager: Addr<IntentConfigNetworkManager>,
+        event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>,
+        permissions_map: HashMap<String, IntentConfigPermissions>,
+    ) -> Self {
+        Self {
+            manager,
+            event_bus,
+            permissions_map,
+        }
+    }
+}
 
-    type MainActor = crate::actor::IntentConfigActor;
-    type ProtocolMessage = IntentConfigNetworkMsg;
-    type NetworkActor = IntentConfigNetworkActor;
-    type ManagerActor = IntentConfigNetworkManager;
-    type Permissions = IntentConfigPermissions;
-
-    fn create_network_actor(
+impl zznet_router::RoomFactory for IntentConfigRoomFactory {
+    fn create_room(
+        &self,
         peer_id: PeerId,
-        perms: Self::Permissions,
-        _main: Addr<Self::MainActor>,
-        mgr: Addr<Self::ManagerActor>,
-    ) -> Self::NetworkActor {
-        // IntentConfigNetworkActor doesn't need main_actor, only manager
-        IntentConfigNetworkActor::new(peer_id, perms, mgr)
+        role: zznet_api::types::Role,
+        room_id: RoomId,
+        transport_tx: tokio::sync::mpsc::Sender<bytes::Bytes>,
+    ) -> Result<Option<zznet_room::room_manager::RoomInboundRecipient>, String> {
+        // Check if this is our room
+        if room_id.as_str() != "intent-config" {
+            return Ok(None);
+        }
+
+        log::debug!(
+            "Creating room for peer {} with role {}",
+            peer_id,
+            role.as_str()
+        );
+
+        // Lookup permissions
+        let perms = self
+            .permissions_map
+            .get(role.as_str())
+            .cloned()
+            .unwrap_or_default();
+
+        // Create NetworkActor without room_actor
+        let net = IntentConfigNetworkActor::new(
+            peer_id.clone(),
+            perms,
+            self.manager.clone(),
+            self.event_bus.subscribe(), // Each actor gets its own Receiver
+        );
+        let net_addr = net.start();
+
+        // Create RoomActor with NetworkActor's recipient
+        let room = RoomActor::new(
+            room_id,
+            transport_tx,
+            net_addr.clone().recipient::<IntentConfigNetworkMsg>(),
+        );
+        let room_addr = room.start();
+
+        // Wire them together via SetRoomActor message
+        net_addr.do_send(crate::network_actor::SetRoomActor(room_addr.clone()));
+
+        Ok(Some(room_addr.recipient()))
     }
 }
 
@@ -60,8 +113,8 @@ impl NetworkComponent for IntentConfigManifest {
 pub struct IntentConfigNetworkManager {
     /// Address of the main business logic actor
     main_actor: Addr<crate::actor::IntentConfigActor>,
-    /// Per-peer room actors for serialization
-    room_actors: HashMap<PeerId, Addr<RoomActor<IntentConfigNetworkMsg>>>,
+    /// Event bus for broadcasting config changes to all NetworkActors
+    event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>,
     /// RouterActor for data-plane message routing
     router_actor: Addr<RouterActor>,
     /// Policy map from role strings to component-specific permissions
@@ -72,7 +125,7 @@ impl Clone for IntentConfigNetworkManager {
     fn clone(&self) -> Self {
         Self {
             main_actor: self.main_actor.clone(),
-            room_actors: self.room_actors.clone(),
+            event_bus: self.event_bus.clone(),
             router_actor: self.router_actor.clone(),
             permissions_map: self.permissions_map.clone(),
         }
@@ -81,17 +134,26 @@ impl Clone for IntentConfigNetworkManager {
 
 impl IntentConfigNetworkManager {
     /// Create a new NetworkManager tied to the provided IntentConfigActor.
+    ///
+    /// The event_bus will be created with a default channel. After starting,
+    /// you should call update_event_bus() to set it to the MainActor's actual event_bus.
     pub fn new(
         main_actor: Addr<crate::actor::IntentConfigActor>,
         router_actor: Addr<RouterActor>,
         permissions_map: HashMap<String, IntentConfigPermissions>,
     ) -> Self {
+        let (event_tx, _) = tokio::sync::broadcast::channel(100);
         Self {
             main_actor,
-            room_actors: HashMap::new(),
+            event_bus: event_tx,
             router_actor,
             permissions_map,
         }
+    }
+
+    /// Update the event bus to use the one from MainActor
+    pub fn set_event_bus(&mut self, event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>) {
+        self.event_bus = event_bus;
     }
 
     /// Get the permissions map (for testing)
@@ -110,11 +172,10 @@ impl Actor for IntentConfigNetworkManager {
     fn started(&mut self, ctx: &mut Self::Context) {
         log::info!("IntentConfigNetworkManager started");
 
-        // Register with router using the StandardRoomFactory
-        let factory = std::sync::Arc::new(zznet_router::StandardRoomFactory::new(
-            IntentConfigManifest,
-            self.main_actor.clone(),
+        // Register with router using custom factory
+        let factory = std::sync::Arc::new(IntentConfigRoomFactory::new(
             ctx.address(),
+            self.event_bus.clone(),
             self.permissions_map.clone(),
         ));
         let rooms = vec![RoomId::from("intent-config")];
@@ -129,60 +190,6 @@ impl Actor for IntentConfigNetworkManager {
         log::info!("IntentConfigNetworkManager stopped");
 
         // Actors will be automatically stopped when dropped
-    }
-}
-
-// ============================================================================
-// Handler: BroadcastConfigUpdate (from MainActor)
-// ============================================================================
-
-impl Handler<BroadcastConfigUpdate> for IntentConfigNetworkManager {
-    type Result = ();
-
-    fn handle(&mut self, msg: BroadcastConfigUpdate, _ctx: &mut Self::Context) -> Self::Result {
-        log::info!(
-            "Broadcasting config update to {} peers",
-            self.room_actors.len()
-        );
-
-        // Fan-out to all room actors
-        for (peer_id, room_actor) in self.room_actors.iter() {
-            log::debug!("Sending config update to peer: {}", peer_id);
-            let network_msg = IntentConfigNetworkMsg::ConfigUpdate {
-                targets: msg.config.targets.clone(),
-                ping_rate_pps: msg.config.ping_rate_pps,
-            };
-            room_actor.do_send(network_msg);
-        }
-
-        log::debug!("Broadcast complete");
-    }
-}
-
-// ============================================================================
-// Handler: SendErrorToPeer (from MainActor)
-// ============================================================================
-
-impl Handler<SendErrorToPeer> for IntentConfigNetworkManager {
-    type Result = ();
-
-    fn handle(&mut self, msg: SendErrorToPeer, _ctx: &mut Self::Context) -> Self::Result {
-        if let Some(room_actor) = self.room_actors.get(&msg.peer_id) {
-            log::info!(
-                "Sending error to peer {}: {}",
-                msg.peer_id,
-                msg.error_message
-            );
-            let network_msg = IntentConfigNetworkMsg::Error {
-                reason: msg.error_message,
-            };
-            room_actor.do_send(network_msg);
-        } else {
-            log::warn!(
-                "Cannot send error to peer {} - no RoomActor exists",
-                msg.peer_id
-            );
-        }
     }
 }
 
@@ -251,35 +258,4 @@ impl Handler<InboundGetConfigRequest> for IntentConfigNetworkManager {
             }
         })
     }
-}
-
-// ============================================================================
-// Handler: RegisterPeer (from RoomFactory)
-// ============================================================================
-
-/// Handler for the RegisterPeer message from the RoomFactory.
-///
-/// The factory creates actors synchronously and sends this fire-and-forget message
-/// to register them with the manager for broadcasting and peer tracking.
-impl Handler<zznet_router::RegisterPeer<IntentConfigManifest>> for IntentConfigNetworkManager {
-    type Result = ();
-
-    fn handle(
-        &mut self,
-        msg: zznet_router::RegisterPeer<IntentConfigManifest>,
-        _ctx: &mut Self::Context,
-    ) -> Self::Result {
-        log::debug!(
-            "IntentConfigNetworkManager: Registering peer {} with room actor",
-            msg.peer_id
-        );
-        self.room_actors.insert(msg.peer_id, msg.room_actor);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    // Phase 3.9 COMPLETE: Integration tests in tests/three_actor_integration_tests.rs
-    // These tests cover the happy-path scenarios for the three-actor pattern.
-    // Unit tests for NetworkManager are deferred until Room<T> integration is complete.
 }

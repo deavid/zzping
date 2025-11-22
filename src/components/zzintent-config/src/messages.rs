@@ -1,5 +1,6 @@
 //! Defines the message types that the IntentConfigActor can handle.
 
+use crate::events::IntentConfigEvent;
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
@@ -68,6 +69,11 @@ pub struct Unsubscribe(pub usize);
 #[derive(Message)]
 #[rtype(result = "IntentConfigData")]
 pub struct GetCurrentConfig;
+
+/// A command message to get the event bus sender for networking
+#[derive(Message)]
+#[rtype(result = "tokio::sync::broadcast::Sender<IntentConfigEvent>")]
+pub struct GetEventBus;
 
 /// Health information for the IntentConfigActor.
 #[derive(Message, Clone, Debug, PartialEq, Serialize, Deserialize)]

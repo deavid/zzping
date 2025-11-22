@@ -24,6 +24,7 @@ rmp-serde.workspace = true
 thiserror.workspace = true
 log.workspace = true
 async-trait.workspace = true
+bytes.workspace = true
 
 zznet-api.workspace = true
 zznet-room.workspace = true

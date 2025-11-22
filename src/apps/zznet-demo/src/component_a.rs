@@ -49,44 +49,126 @@ pub mod permissions {
 
 pub use permissions::ComponentAPermissions;
 
+/// Message to set the room_actor address after NetworkActor creation
+///
+/// Used to resolve circular dependency in factory.
+/// Factory creates NetworkActor first, then RoomActor, then wires them together.
+#[derive(Clone)]
+pub struct SetRoomActor(pub Addr<zznet_room::actor::RoomActor<ComponentAMessage>>);
+
+impl Message for SetRoomActor {
+    type Result = ();
+}
+
+/// Internal message to send ping to room
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SendPingToRoom(u64, String);
+
+/// Internal message to send pong to room
+#[derive(Message)]
+#[rtype(result = "()")]
+struct SendPongToRoom(u64, String);
+
+impl Handler<SendPingToRoom> for ComponentANetworkActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: SendPingToRoom, _ctx: &mut Self::Context) {
+        if let Some(room_actor) = &self.room_actor {
+            room_actor.do_send(ComponentAMessage::Ping((msg.0, msg.1)));
+        }
+    }
+}
+
+impl Handler<SendPongToRoom> for ComponentANetworkActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: SendPongToRoom, _ctx: &mut Self::Context) {
+        if let Some(room_actor) = &self.room_actor {
+            room_actor.do_send(ComponentAMessage::Pong((msg.0, msg.1)));
+        }
+    }
+}
+
 use crate::messages::{
     ComponentAMessage, GetCounter, PublishToA, SendPing, SetNetworkManager, StateUpdate, Subscribe,
 };
 use actix::prelude::*;
+use bytes::Bytes;
 use std::collections::HashMap;
 use tracing::info;
 use zznet_api::types::PeerId;
-use zznet_router::{NetworkComponent, RegisterManager};
+use zznet_router::RegisterManager;
 
-/// ComponentA Manifest for the NetworkComponent pattern.
+/// Custom factory for ComponentA that wires NetworkActor with RoomActor
 ///
-/// This Zero-Sized Type (ZST) binds together all the types for ComponentA,
-/// eliminating the need for custom factory and RegisterPeer implementations.
-#[derive(Clone)]
-pub struct ComponentAManifest;
+/// Replaces StandardRoomFactory to properly wire NetworkActor with RoomActor via SetRoomActor.
+pub struct ComponentARoomFactory {
+    main_actor: Addr<ComponentAActor>,
+    permissions_map: HashMap<String, ComponentAPermissions>,
+}
 
-impl NetworkComponent for ComponentAManifest {
-    const ROOM_ID: &'static str = "room-a";
+impl ComponentARoomFactory {
+    /// Create a new ComponentARoomFactory
+    pub fn new(
+        _manager: Addr<ComponentANetworkManager>,
+        main_actor: Addr<ComponentAActor>,
+        permissions_map: HashMap<String, ComponentAPermissions>,
+    ) -> Self {
+        Self {
+            main_actor,
+            permissions_map,
+        }
+    }
+}
 
-    type MainActor = ComponentAActor;
-    type ProtocolMessage = ComponentAMessage;
-    type NetworkActor = ComponentANetworkActor;
-    type ManagerActor = ComponentANetworkManager;
-    type Permissions = ComponentAPermissions;
-
-    fn create_network_actor(
+impl zznet_router::RoomFactory for ComponentARoomFactory {
+    fn create_room(
+        &self,
         peer_id: PeerId,
-        perms: Self::Permissions,
-        main: Addr<Self::MainActor>,
-        _mgr: Addr<Self::ManagerActor>,
-    ) -> Self::NetworkActor {
-        // ComponentANetworkActor doesn't need the manager address
-        ComponentANetworkActor::new(peer_id, perms, main)
+        role: zznet_api::types::Role,
+        room_id: zznet_api::types::RoomId,
+        transport_tx: tokio::sync::mpsc::Sender<Bytes>,
+    ) -> Result<Option<zznet_room::room_manager::RoomInboundRecipient>, String> {
+        // Check if this is our room
+        if room_id.as_str() != "room-a" {
+            return Ok(None);
+        }
+
+        tracing::debug!(
+            "Creating room for peer {} with role {}",
+            peer_id,
+            role.as_str()
+        );
+
+        // Lookup permissions
+        let perms = self
+            .permissions_map
+            .get(role.as_str())
+            .cloned()
+            .unwrap_or_default();
+
+        // Create NetworkActor
+        let net = ComponentANetworkActor::new(peer_id.clone(), perms, self.main_actor.clone());
+        let net_addr = net.start();
+
+        // Create RoomActor
+        let room = zznet_room::actor::RoomActor::new(
+            room_id,
+            transport_tx,
+            net_addr.clone().recipient::<ComponentAMessage>(),
+        );
+        let room_addr = room.start();
+
+        // Wire them together via SetRoomActor message
+        net_addr.do_send(SetRoomActor(room_addr.clone()));
+
+        Ok(Some(room_addr.recipient()))
     }
 }
 
 /// MainActor for ComponentA - handles business logic and local subscriptions.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ComponentAActor {
     /// Current counter value
     counter: u64,
@@ -96,16 +178,26 @@ pub struct ComponentAActor {
     subscribers: Vec<Recipient<StateUpdate>>,
     /// NetworkManager for sending network messages
     network_manager: Option<Addr<ComponentANetworkManager>>,
+    /// Event bus sender for broadcasting state changes
+    event_tx: tokio::sync::broadcast::Sender<crate::messages::ComponentAEvent>,
+}
+
+impl Default for ComponentAActor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ComponentAActor {
     /// Create a new ComponentAActor
     pub fn new() -> Self {
+        let (event_tx, _) = tokio::sync::broadcast::channel(100);
         Self {
             counter: 0,
             data: String::new(),
             subscribers: Vec::new(),
             network_manager: None,
+            event_tx,
         }
     }
 
@@ -116,12 +208,12 @@ impl ComponentAActor {
 
     /// Send a pong message over the network
     fn send_pong(&self, value: u64) -> Result<(), String> {
-        if let Some(ref nm) = self.network_manager {
-            nm.do_send(ComponentAMessage::Pong((value, "pong".to_string())));
-            Ok(())
-        } else {
-            Err("NetworkManager not set".to_string())
-        }
+        // Send event for pong
+        let _ = self.event_tx.send(crate::messages::ComponentAEvent::Pong {
+            counter: value,
+            data: "pong".to_string(),
+        });
+        Ok(())
     }
 
     /// Publish the current state to all subscribers
@@ -133,6 +225,13 @@ impl ComponentAActor {
         for sub in &self.subscribers {
             sub.do_send(state.clone());
         }
+        // Send event for network broadcasting
+        let _ = self
+            .event_tx
+            .send(crate::messages::ComponentAEvent::StateChanged {
+                counter: self.counter,
+                data: self.data.clone(),
+            });
     }
 }
 
@@ -168,10 +267,6 @@ impl Handler<SendPing> for ComponentAActor {
     fn handle(&mut self, msg: SendPing, _ctx: &mut Self::Context) {
         self.counter += 1;
         self.data = msg.data.clone();
-        if let Some(network_manager) = &self.network_manager {
-            // We send a ComponentAMessage over the network, not the triggering SendPing message
-            network_manager.do_send(ComponentAMessage::Ping((self.counter, self.data.clone())));
-        }
         self.publish_state();
     }
 }
@@ -182,14 +277,10 @@ impl Handler<PublishToA> for ComponentAActor {
 
     fn handle(&mut self, msg: PublishToA, _ctx: &mut Self::Context) {
         // This message now originates from ComponentB and is a request to publish.
-        // We don't increment our own counter here, but use the state to send a Ping.
+        // We update state and broadcast via event bus.
         self.data = msg.data;
-        if let Some(nm) = &self.network_manager {
-            nm.do_send(ComponentAMessage::Ping((
-                self.counter + 1, // We send the *next* state
-                self.data.clone(),
-            )));
-        }
+        self.counter += 1;
+        self.publish_state();
     }
 }
 
@@ -227,6 +318,18 @@ impl Handler<GetCounter> for ComponentAActor {
     }
 }
 
+impl Handler<crate::messages::GetEventBus> for ComponentAActor {
+    type Result = MessageResult<crate::messages::GetEventBus>;
+
+    fn handle(
+        &mut self,
+        _msg: crate::messages::GetEventBus,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        MessageResult(self.event_tx.clone())
+    }
+}
+
 impl Handler<SetNetworkManager> for ComponentAActor {
     type Result = ();
 
@@ -242,9 +345,6 @@ pub struct ComponentANetworkManager {
     main_actor: Addr<ComponentAActor>,
     /// Router for room registration
     router: Addr<zznet_router::RouterActor>,
-    /// RoomActors per peer for outbound messaging (no longer needs Arc<RwLock>)
-    room_actors:
-        std::collections::HashMap<PeerId, Addr<zznet_room::actor::RoomActor<ComponentAMessage>>>,
     /// Policy map from role strings to component-specific permissions
     permissions_map: HashMap<String, ComponentAPermissions>,
 }
@@ -259,7 +359,6 @@ impl ComponentANetworkManager {
         Self {
             main_actor,
             router,
-            room_actors: std::collections::HashMap::new(),
             permissions_map,
         }
     }
@@ -271,11 +370,10 @@ impl Actor for ComponentANetworkManager {
     fn started(&mut self, ctx: &mut Self::Context) {
         tracing::debug!("ComponentANetworkManager started");
 
-        // Register with router using the StandardRoomFactory
-        let factory = std::sync::Arc::new(zznet_router::StandardRoomFactory::new(
-            ComponentAManifest,
-            self.main_actor.clone(),
+        // Register with router using the custom ComponentARoomFactory
+        let factory = std::sync::Arc::new(ComponentARoomFactory::new(
             ctx.address(),
+            self.main_actor.clone(),
             self.permissions_map.clone(),
         ));
         let rooms = vec![zznet_api::types::RoomId::from("room-a")];
@@ -288,26 +386,6 @@ impl Actor for ComponentANetworkManager {
     }
 }
 
-/// Handler for the RegisterPeer message from the RoomFactory.
-///
-/// The factory creates actors synchronously and sends this fire-and-forget message
-/// to register them with the manager for broadcasting and peer tracking.
-impl Handler<zznet_router::RegisterPeer<ComponentAManifest>> for ComponentANetworkManager {
-    type Result = ();
-
-    fn handle(
-        &mut self,
-        msg: zznet_router::RegisterPeer<ComponentAManifest>,
-        _ctx: &mut Self::Context,
-    ) -> Self::Result {
-        tracing::debug!(
-            "ComponentANetworkManager: Registering peer {} with room actor",
-            msg.peer_id
-        );
-        self.room_actors.insert(msg.peer_id, msg.room_actor);
-    }
-}
-
 /// NetworkActor for ComponentA - handles per-peer protocol translation.
 pub struct ComponentANetworkActor {
     /// Peer this actor handles
@@ -316,6 +394,8 @@ pub struct ComponentANetworkActor {
     permissions: ComponentAPermissions,
     /// Main actor address
     main_actor: Addr<ComponentAActor>,
+    /// Room actor for outbound messages
+    room_actor: Option<Addr<zznet_room::actor::RoomActor<ComponentAMessage>>>,
 }
 
 impl ComponentANetworkActor {
@@ -329,6 +409,7 @@ impl ComponentANetworkActor {
             peer_id,
             permissions,
             main_actor,
+            room_actor: None,
         }
     }
 }
@@ -336,11 +417,32 @@ impl ComponentANetworkActor {
 impl Actor for ComponentANetworkActor {
     type Context = Context<Self>;
 
-    fn started(&mut self, _ctx: &mut Self::Context) {
+    fn started(&mut self, ctx: &mut Self::Context) {
         tracing::debug!(
             "ComponentANetworkActor started for peer: {:?}",
             self.peer_id
         );
+
+        // Subscribe to events from main actor
+        let main_actor = self.main_actor.clone();
+        let addr = ctx.address();
+        actix::spawn(async move {
+            if let Ok(event_tx) = main_actor.send(crate::messages::GetEventBus).await {
+                let mut event_rx = event_tx.subscribe();
+                while let Ok(event) = event_rx.recv().await {
+                    match event {
+                        crate::messages::ComponentAEvent::StateChanged { counter, data } => {
+                            // Send message to self to send to room
+                            let _ = addr.send(SendPingToRoom(counter, data)).await;
+                        }
+                        crate::messages::ComponentAEvent::Pong { counter, data } => {
+                            // Send Pong to room
+                            let _ = addr.send(SendPongToRoom(counter, data)).await;
+                        }
+                    }
+                }
+            }
+        });
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -351,21 +453,11 @@ impl Actor for ComponentANetworkActor {
     }
 }
 
-/// Handle outbound messages from MainActor (broadcast to all peers)
-impl Handler<ComponentAMessage> for ComponentANetworkManager {
+impl Handler<SetRoomActor> for ComponentANetworkActor {
     type Result = ();
 
-    fn handle(&mut self, msg: ComponentAMessage, _ctx: &mut Self::Context) -> Self::Result {
-        // Broadcast to all connected room actors
-        tracing::debug!(
-            "ComponentANetworkManager: Broadcasting message {:?} to {} peers",
-            msg,
-            self.room_actors.len()
-        );
-        for (peer_id, room_actor) in self.room_actors.iter() {
-            tracing::debug!("Sending message to peer {}: {:?}", peer_id, msg);
-            room_actor.do_send(msg.clone());
-        }
+    fn handle(&mut self, msg: SetRoomActor, _ctx: &mut Self::Context) {
+        self.room_actor = Some(msg.0);
     }
 }
 

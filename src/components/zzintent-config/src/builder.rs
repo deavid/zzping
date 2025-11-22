@@ -95,7 +95,7 @@ impl IntentConfigBuilder {
     /// It internally creates the `IntentConfigActor` and starts it on the
     /// currently running Actix System.
     ///
-    /// Phase 7.2: Builds the three-actor system:
+    /// Builds the three-actor system:
     /// - IntentConfigActor (Main Actor - business logic)
     /// - IntentConfigNetworkManager (Manager Actor - peer lifecycle)
     /// - IntentConfigNetworkActor (Per-peer translator, created by Manager)
@@ -123,10 +123,8 @@ impl IntentConfigBuilder {
             actor.get_config().persist_config
         );
 
-        // Start the main actor first (needed for NetworkManager creation)
         let actor_addr = actor.start();
 
-        // Phase 7.2: Create NetworkManager if we have RouterActor
         if let Some(router_actor) = self.router_actor.take() {
             log::info!("Creating IntentConfigNetworkManager for three-actor pattern");
 
@@ -135,17 +133,12 @@ impl IntentConfigBuilder {
                 HashMap::new()
             });
 
-            let network_manager = crate::network_manager::IntentConfigNetworkManager::new(
+            let _network_manager = crate::network_manager::IntentConfigNetworkManager::new(
                 actor_addr.clone(),
                 router_actor,
                 permissions_map,
             )
             .start();
-
-            // Wire NetworkManager back to MainActor
-            actor_addr.do_send(crate::internal_messages::SetNetworkManager {
-                network_manager: network_manager.clone(),
-            });
 
             log::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
         } else {

@@ -5,8 +5,7 @@
 
 use crate::config::MemDBConfig;
 use crate::internal_messages::{
-    InboundBatchAck, InboundQuery, InboundQueryResponse, InboundSubmitBatch, SendBatchAck,
-    SendQueryResponse, SendSubmitBatch, SetNetworkManager,
+    InboundBatchAck, InboundQuery, InboundQueryResponse, InboundSubmitBatch,
 };
 use crate::messages::{
     ClearBuffer, GetHealth, GetStats, MemDBError, MemDBHealth, StorePingResult, TargetStats,
@@ -16,7 +15,6 @@ use crate::storage::StorageBackend;
 use actix::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use zznet_api::types::PeerId;
 
 /// The MemDBActor handles ping result storage and querying.
 ///
@@ -33,9 +31,6 @@ pub struct MemDBActor {
     /// Buffer for Collector role (unsent results)
     buffer: Vec<PingResult>,
 
-    /// NetworkManager for three-actor pattern communication
-    network_manager: Option<Addr<crate::network_manager::MemDBNetworkManager>>,
-
     /// Health counters for operational visibility
     successful_batches: Arc<AtomicU64>,
     failed_batches: Arc<AtomicU64>,
@@ -43,6 +38,9 @@ pub struct MemDBActor {
 
     /// For Collector role: track the timestamp of the currently outstanding batch
     outstanding_batch: Option<u64>,
+
+    /// Reference to NetworkManager for sending batches to Database peers
+    network_manager: Option<Addr<crate::network_manager::MemDBNetworkManager>>,
 }
 
 impl Default for MemDBActor {
@@ -69,12 +67,20 @@ impl MemDBActor {
             config,
             storage,
             buffer: Vec::new(),
-            network_manager: None,
             successful_batches: Arc::new(AtomicU64::new(0)),
             failed_batches: Arc::new(AtomicU64::new(0)),
             total_results: Arc::new(AtomicU64::new(0)),
             outstanding_batch: None,
+            network_manager: None,
         }
+    }
+
+    /// Set the NetworkManager reference (called during startup by the framework)
+    pub fn set_network_manager(
+        &mut self,
+        manager: Addr<crate::network_manager::MemDBNetworkManager>,
+    ) {
+        self.network_manager = Some(manager);
     }
 
     /// Deprecated: use `new()` with config instead
@@ -136,27 +142,28 @@ impl MemDBActor {
         // Mark this batch as outstanding
         self.outstanding_batch = Some(timestamp_ms);
 
-        // Send batch via NetworkManager
-        // NOTE: In production, database peer_id should come from configuration or service discovery
-        if let Some(network_manager) = &self.network_manager {
-            let database_peer_id = PeerId::from("database");
-
-            network_manager.do_send(SendSubmitBatch {
-                peer_id: database_peer_id,
+        // Send batch to all Database peers via NetworkManager
+        if let Some(ref manager) = self.network_manager {
+            let batch_msg = crate::internal_messages::BatchReadyToSend {
                 timestamp_ms,
-                results,
-            });
-
-            log::debug!(
-                "Sent batch with timestamp {} via NetworkManager",
-                timestamp_ms
+                results: results.clone(),
+            };
+            manager.do_send(batch_msg);
+            log::info!(
+                "Collector batch transmission initiated (timestamp: {}, results: {})",
+                timestamp_ms,
+                results.len()
             );
+            self.successful_batches.fetch_add(1, Ordering::Relaxed);
         } else {
-            log::debug!(
-                "No network manager; would send batch with timestamp {}",
+            log::warn!(
+                "Cannot send batch - NetworkManager not yet configured (timestamp: {})",
                 timestamp_ms
             );
-            // Still mark the batch as sent for testing purposes
+            self.failed_batches.fetch_add(1, Ordering::Relaxed);
+            return Err(MemDBError::InternalError(
+                "NetworkManager not configured".to_string(),
+            ));
         }
 
         Ok(())
@@ -204,25 +211,15 @@ impl Actor for MemDBActor {
     }
 }
 
-// Message handlers
-
-impl Handler<SetNetworkManager> for MemDBActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: SetNetworkManager, _ctx: &mut Context<Self>) {
-        self.network_manager = Some(msg.network_manager);
-    }
-}
-
 // ============================================================================
 // INBOUND MESSAGE HANDLERS (Network → MainActor)
 // ============================================================================
 
 /// Database receives batch from Collector
 impl Handler<InboundSubmitBatch> for MemDBActor {
-    type Result = ();
+    type Result = Result<crate::internal_messages::BatchAckResponse, String>;
 
-    fn handle(&mut self, msg: InboundSubmitBatch, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: InboundSubmitBatch, _ctx: &mut Context<Self>) -> Self::Result {
         let received_count = msg.results.len();
         log::debug!(
             "Database received batch with {} results from peer {}",
@@ -238,32 +235,24 @@ impl Handler<InboundSubmitBatch> for MemDBActor {
             self.successful_batches.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Send acknowledgment back via NetworkManager
-        if let Some(network_manager) = &self.network_manager {
-            let ack_timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as u64;
+        // Return ack response directly (no NetworkManager needed)
+        let ack_timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
 
-            network_manager.do_send(SendBatchAck {
-                peer_id: msg.peer_id,
-                received_count,
-                timestamp_ms: ack_timestamp,
-            });
-        } else {
-            log::debug!(
-                "No network manager; would send BatchAck for {} results",
-                received_count
-            );
-        }
+        Ok(crate::internal_messages::BatchAckResponse {
+            received_count,
+            timestamp_ms: ack_timestamp,
+        })
     }
 }
 
 /// Database receives query from Admin
 impl Handler<InboundQuery> for MemDBActor {
-    type Result = ();
+    type Result = Result<Vec<crate::network_messages::StoredPingResult>, String>;
 
-    fn handle(&mut self, msg: InboundQuery, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: InboundQuery, _ctx: &mut Context<Self>) -> Self::Result {
         log::debug!(
             "Database received query for target {} from peer {}",
             msg.target,
@@ -276,18 +265,8 @@ impl Handler<InboundQuery> for MemDBActor {
             Vec::new()
         };
 
-        // Send response back via NetworkManager
-        if let Some(network_manager) = &self.network_manager {
-            network_manager.do_send(SendQueryResponse {
-                peer_id: msg.peer_id,
-                results,
-            });
-        } else {
-            log::debug!(
-                "No network manager; would send QueryResponse with {} results",
-                results.len()
-            );
-        }
+        // Return results directly (no NetworkManager needed)
+        Ok(results)
     }
 }
 
@@ -424,6 +403,8 @@ impl Handler<GetStats> for MemDBActor {
 #[cfg(test)]
 #[allow(deprecated)]
 mod tests {
+    use zznet_api::types::PeerId;
+
     use super::*;
 
     #[test]
@@ -512,7 +493,7 @@ mod tests {
         // Batch sending now uses NetworkManager (tested through integration tests)
     }
 
-    // Test removed in Phase 8 - SetSessionManager handler no longer exists
+    // Test removed - SetSessionManager handler no longer exists
     // #[test]
     // fn test_set_session_manager_message_handler() { ... }
 
@@ -669,7 +650,7 @@ mod tests {
         let batch_timestamp = 1234567890;
         actor.outstanding_batch = Some(batch_timestamp);
 
-        // Phase 5.7: Use internal message instead of MemDBMessage
+        // Use internal message instead of MemDBMessage
         let msg = crate::internal_messages::InboundBatchAck {
             peer_id: PeerId::from("test-peer"),
             received_count: 5,
@@ -706,7 +687,7 @@ mod tests {
     async fn test_database_handles_submit_batch() {
         let mut actor = MemDBActor::new(MemDBConfig::for_database(1000, None));
 
-        // Phase 5.7: Use internal message instead of MemDBMessage
+        // Use internal message instead of MemDBMessage
         let msg = crate::internal_messages::InboundSubmitBatch {
             peer_id: PeerId::from("peer1"),
             timestamp_ms: 1234567890,
@@ -724,7 +705,7 @@ mod tests {
             ],
         };
 
-        actor.handle(msg, &mut Context::new());
+        actor.handle(msg, &mut Context::new()).unwrap();
 
         // Verify results were stored
         let results_8_8_8_8 = actor
@@ -747,7 +728,7 @@ mod tests {
     async fn test_collector_ignores_submit_batch() {
         let mut actor = MemDBActor::new(MemDBConfig::for_collector(100));
 
-        // Phase 5.7: Use internal message instead of MemDBMessage
+        // Use internal message instead of MemDBMessage
         let msg = crate::internal_messages::InboundSubmitBatch {
             peer_id: PeerId::from("peer1"),
             timestamp_ms: 1234567890,
@@ -758,7 +739,7 @@ mod tests {
             }],
         };
 
-        actor.handle(msg, &mut Context::new());
+        actor.handle(msg, &mut Context::new()).unwrap();
 
         // Collector should ignore SubmitBatch (no storage, no error)
         assert!(actor.storage.is_none());
@@ -768,7 +749,7 @@ mod tests {
     async fn test_database_ignores_query_response() {
         let mut actor = MemDBActor::new(MemDBConfig::for_database(1000, None));
 
-        // Phase 5.7: Use internal message instead of MemDBMessage
+        // Use internal message instead of MemDBMessage
         let msg = crate::internal_messages::InboundQueryResponse {
             peer_id: PeerId::from("test-peer"),
             results: vec![],

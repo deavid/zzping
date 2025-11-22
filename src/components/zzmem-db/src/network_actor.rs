@@ -22,9 +22,6 @@ use actix::prelude::*;
 use zznet_api::types::PeerId;
 
 use crate::actor::MemDBActor;
-use crate::internal_messages::{
-    InboundBatchAck, InboundQuery, InboundQueryResponse, InboundSubmitBatch,
-};
 use crate::network_manager::MemDBNetworkManager;
 use crate::network_messages::MemDBMessage;
 use crate::permissions::MemDBPermissions;
@@ -85,7 +82,7 @@ impl Actor for MemDBNetworkActor {
 // ============================================================================
 
 impl Handler<MemDBMessage> for MemDBNetworkActor {
-    type Result = ();
+    type Result = ResponseFuture<()>;
 
     fn handle(&mut self, msg: MemDBMessage, _ctx: &mut Self::Context) -> Self::Result {
         tracing::trace!(
@@ -94,17 +91,40 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
             msg
         );
 
+        let main_actor = self.main_actor.clone();
+        let peer_id = self.peer_id.clone();
+
         match msg {
             MemDBMessage::SubmitBatch {
                 sender_peer_id: _,
                 timestamp_ms,
                 results,
             } => {
-                self.main_actor.do_send(InboundSubmitBatch {
-                    peer_id: self.peer_id.clone(),
-                    timestamp_ms,
-                    results,
-                });
+                let fut = async move {
+                    let request = crate::internal_messages::InboundSubmitBatch {
+                        peer_id: peer_id.clone(),
+                        timestamp_ms,
+                        results,
+                    };
+
+                    match main_actor.send(request).await {
+                        Ok(Ok(ack_response)) => {
+                            tracing::debug!(
+                                "Batch accepted: {} results",
+                                ack_response.received_count
+                            );
+                            // TODO: Send response to room_actor
+                            // For now, acknowledged
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!("Batch rejected: {}", e);
+                        }
+                        Err(e) => {
+                            tracing::error!("MainActor error: {}", e);
+                        }
+                    }
+                };
+                Box::pin(fut)
             }
             MemDBMessage::Query {
                 sender_peer_id: _,
@@ -112,35 +132,52 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                 from_ms,
                 to_ms,
             } => {
-                self.main_actor.do_send(InboundQuery {
-                    peer_id: self.peer_id.clone(),
-                    target,
-                    from_ms,
-                    to_ms,
-                });
+                let fut = async move {
+                    let request = crate::internal_messages::InboundQuery {
+                        peer_id: peer_id.clone(),
+                        target,
+                        from_ms,
+                        to_ms,
+                    };
+
+                    match main_actor.send(request).await {
+                        Ok(Ok(results)) => {
+                            tracing::debug!("Query returned {} results", results.len());
+                            // TODO: Send response to room_actor
+                            // For now, acknowledged
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!("Query rejected: {}", e);
+                        }
+                        Err(e) => {
+                            tracing::error!("MainActor error: {}", e);
+                        }
+                    }
+                };
+                Box::pin(fut)
             }
             MemDBMessage::BatchAck {
                 received_count,
                 timestamp_ms,
             } => {
-                self.main_actor.do_send(InboundBatchAck {
-                    peer_id: self.peer_id.clone(),
-                    received_count,
-                    timestamp_ms,
-                });
+                // Unsolicited ack from database to collector
+                self.main_actor
+                    .do_send(crate::internal_messages::InboundBatchAck {
+                        peer_id: peer_id.clone(),
+                        received_count,
+                        timestamp_ms,
+                    });
+                Box::pin(async {})
             }
             MemDBMessage::QueryResponse { results } => {
-                self.main_actor.do_send(InboundQueryResponse {
-                    peer_id: self.peer_id.clone(),
-                    results,
-                });
+                // Unsolicited response from database
+                self.main_actor
+                    .do_send(crate::internal_messages::InboundQueryResponse {
+                        peer_id: peer_id.clone(),
+                        results,
+                    });
+                Box::pin(async {})
             }
         }
     }
 }
-
-// ============================================================================
-// OUTBOUND PROTOCOL TRANSLATION (MainActor → Network)
-// ============================================================================
-// OUTBOUND HANDLING REMOVED - Now handled by RoomActor<T>
-// ============================================================================

@@ -9,6 +9,7 @@ workspace = true
 [dependencies]
 anyhow = { workspace = true }
 actix = { workspace = true }
+bytes = { workspace = true }
 chrono = { workspace = true }
 log = { workspace = true }
 rand = { workspace = true }

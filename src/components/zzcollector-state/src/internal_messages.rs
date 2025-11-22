@@ -15,12 +15,22 @@ use zznet_api::types::PeerId;
 // Inbound Messages (NetworkActor → MainActor)
 // ============================================================================
 
+/// Response data for heartbeat acknowledgment
+#[derive(Debug, Clone)]
+pub struct HeartbeatAckResponse {
+    /// The timestamp of the heartbeat being acknowledged
+    pub timestamp_ms: u64,
+    /// The server's time
+    pub server_time_ms: u64,
+    /// Optional rejection reason if registration was denied
+    pub rejection: Option<String>,
+}
+
 /// A heartbeat message received from a collector peer.
 ///
-/// NetworkActor translates CStateMessage::Heartbeat into this internal message
-/// and forwards it to MainActor for business logic processing.
+/// Now returns Result with acknowledgment or rejection
 #[derive(Message)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<HeartbeatAckResponse, String>")]
 pub struct InboundHeartbeat {
     /// The peer ID of the sender.
     pub peer_id: PeerId,
@@ -55,10 +65,8 @@ pub struct InboundHeartbeatAck {
 }
 
 /// A query for the list of collectors from an admin peer.
-///
-/// NetworkActor translates CStateMessage::QueryCollectors into this internal message.
 #[derive(Message)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<Vec<CollectorInfo>, String>")]
 pub struct InboundQueryCollectors {
     /// The peer ID of the requester (admin).
     pub peer_id: PeerId,
@@ -98,95 +106,4 @@ pub struct InboundUnauthorized {
     pub peer_id: PeerId,
     /// Human-readable reason for denial.
     pub reason: String,
-}
-
-// ============================================================================
-// Outbound Messages (MainActor → NetworkManager → NetworkActor)
-// ============================================================================
-
-/// Command to send a heartbeat acknowledgment to a specific peer.
-///
-/// MainActor sends this to NetworkManager, which forwards it to the appropriate NetworkActor.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct SendHeartbeatAck {
-    /// The peer ID to send the acknowledgment to.
-    pub peer_id: PeerId,
-    /// The timestamp of the heartbeat being acknowledged.
-    pub timestamp_ms: u64,
-    /// The server's time.
-    pub server_time_ms: u64,
-}
-
-/// Command to send the collector list to a specific peer (admin).
-///
-/// MainActor sends this to NetworkManager, which forwards it to the appropriate NetworkActor.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct SendCollectorList {
-    /// The peer ID to send the list to.
-    pub peer_id: PeerId,
-    /// The list of active collectors.
-    pub collectors: Vec<CollectorInfo>,
-}
-
-/// Command to send a registration rejection to a specific peer.
-///
-/// MainActor sends this to NetworkManager, which forwards it to the appropriate NetworkActor.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct SendRegistrationRejected {
-    /// The peer ID to send the rejection to.
-    pub peer_id: PeerId,
-    /// Human-readable reason for rejection.
-    pub reason: String,
-}
-
-/// Command to send an unauthorized message to a specific peer.
-///
-/// MainActor sends this to NetworkManager, which forwards it to the appropriate NetworkActor.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct SendUnauthorized {
-    /// The peer ID to send the message to.
-    pub peer_id: PeerId,
-    /// Human-readable reason for denial.
-    pub reason: String,
-}
-
-/// Command to broadcast a heartbeat to all database peers.
-///
-/// MainActor (in Collector role) sends this to NetworkManager, which broadcasts
-/// to all connected NetworkActors.
-#[derive(Message, Clone)]
-#[rtype(result = "()")]
-pub struct BroadcastHeartbeat {
-    /// The collector ID.
-    pub collector_id: String,
-    /// The uptime of the collector in seconds.
-    pub uptime_secs: u64,
-    /// The total number of pings sent.
-    pub pings_sent: u64,
-    /// The total number of pings received.
-    pub pings_received: u64,
-    /// The total number of batches sent.
-    pub batches_sent: u64,
-    /// The timestamp of the last configuration update.
-    pub last_config_update_ms: u64,
-    /// A unique nonce for the collector's connection.
-    pub connection_nonce: u64,
-}
-
-// ============================================================================
-// NetworkManager Setup Messages
-// ============================================================================
-
-/// Message to set the NetworkManager address in the MainActor.
-///
-/// This is sent during the wiring phase to establish bidirectional communication.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct SetNetworkManager {
-    /// The NetworkManager address.
-    pub network_manager: Addr<crate::network_manager::CStateNetworkManager>,
 }

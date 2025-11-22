@@ -29,6 +29,12 @@ if [[ ${#path_filters[@]} -gt 0 ]]; then
     files=$(echo "$files" | grep -E "$filter_pattern")
 fi
 
+echo; echo;
+echo "--- INCLUDED FILE LIST ---";
+echo; echo;
+echo $files | xargs -n1 echo
+echo; echo;
+
 echo "PROJECT: ";
 pwd;
 echo; echo;

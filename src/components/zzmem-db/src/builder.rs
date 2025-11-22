@@ -11,8 +11,6 @@ use std::collections::HashMap;
 use zznet_router::RouterActor;
 
 /// A builder for constructing `MemDBActor` instances.
-///
-/// Phase 7.4: Creates and wires all three actors together with Router.
 pub struct MemDBBuilder {
     config: MemDBConfig,
     router_actor: Option<Addr<RouterActor>>,
@@ -57,7 +55,7 @@ impl MemDBBuilder {
 
     /// Builds and starts the `MemDBActor` along with its NetworkManager.
     ///
-    /// Phase 7.4: This creates the complete three-actor system:
+    /// This creates the complete three-actor system:
     /// - MemDBActor (business logic, zero network dependencies)
     /// - MemDBNetworkManager (orchestrates peer lifecycle)
     /// - MemDBNetworkActor instances (created per peer by NetworkManager)
@@ -67,7 +65,7 @@ impl MemDBBuilder {
         // Create and start the MainActor first
         let actor_addr = MemDBActor::create(move |_ctx| MemDBActor::new(self.config));
 
-        // Phase 7.4: Create NetworkManager if we have RouterActor
+        // Create NetworkManager if we have RouterActor
         if let Some(router_actor) = self.router_actor {
             tracing::info!("Creating MemDBNetworkManager for three-actor pattern");
 
@@ -77,12 +75,7 @@ impl MemDBBuilder {
                 self.permissions_map,
             );
 
-            let network_manager = network_manager.start();
-
-            // Wire NetworkManager back to MainActor
-            actor_addr.do_send(crate::internal_messages::SetNetworkManager {
-                network_manager: network_manager.clone(),
-            });
+            let _network_manager = network_manager.start();
 
             tracing::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
         } else {

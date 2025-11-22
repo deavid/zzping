@@ -12,10 +12,10 @@
 
 use crate::{
     config::CStateConfig,
+    events::CStateEvent,
     internal_messages::{
-        BroadcastHeartbeat, InboundCollectorList, InboundHeartbeat, InboundHeartbeatAck,
-        InboundQueryCollectors, InboundRegistrationRejected, InboundUnauthorized,
-        SendCollectorList, SendHeartbeatAck, SendRegistrationRejected, SetNetworkManager,
+        InboundCollectorList, InboundHeartbeat, InboundHeartbeatAck, InboundQueryCollectors,
+        InboundRegistrationRejected, InboundUnauthorized,
     },
     messages::{
         CStateError, CStateHealth, ForceHeartbeat, GetCollectorState, GetHealth,
@@ -62,9 +62,8 @@ pub struct CStateActor {
     /// Health counter: total heartbeats that failed to send.
     heartbeats_failed: Arc<AtomicU64>,
 
-    /// Link to NetworkManager for sending outbound messages.
-    /// Set via SetNetworkManager message after actor creation.
-    network_manager: Option<Addr<crate::network_manager::CStateNetworkManager>>,
+    /// Event bus for broadcasting heartbeat events to all NetworkActors
+    event_tx: tokio::sync::broadcast::Sender<CStateEvent>,
 }
 
 impl CStateActor {
@@ -73,6 +72,7 @@ impl CStateActor {
     /// The role determines which internal state is populated (collector or database).
     /// The network_manager will be set later via SetNetworkManager message.
     pub fn new(config: CStateConfig) -> Self {
+        let (event_tx, _) = tokio::sync::broadcast::channel(100);
         let mut actor = Self {
             config,
             collector_state: None,
@@ -80,7 +80,7 @@ impl CStateActor {
             heartbeats_sent: Arc::new(AtomicU64::new(0)),
             heartbeats_acked: Arc::new(AtomicU64::new(0)),
             heartbeats_failed: Arc::new(AtomicU64::new(0)),
-            network_manager: None,
+            event_tx,
         };
         // Initialize config-specific state
         if let Some(collector_id) = &actor.config.collector_id {
@@ -98,33 +98,36 @@ impl CStateActor {
         actor
     }
 
+    /// Get event bus for NetworkActor subscriptions
+    pub fn event_bus(&self) -> tokio::sync::broadcast::Sender<CStateEvent> {
+        self.event_tx.clone()
+    }
+
     /// Sends a heartbeat by notifying the NetworkManager to broadcast.
     ///
     /// This triggers the NetworkManager to send the heartbeat to all connected peers.
     fn send_heartbeat(&mut self, _ctx: &mut Context<Self>) -> Result<(), CStateError> {
-        if let Some(network_manager) = &self.network_manager {
-            if let Some(state) = &mut self.collector_state {
-                let msg = BroadcastHeartbeat {
-                    collector_id: state.collector_id.clone(),
-                    uptime_secs: state.start_time.elapsed().as_secs(),
-                    pings_sent: state.pings_sent,
-                    pings_received: state.pings_received,
-                    batches_sent: state.batches_sent,
-                    last_config_update_ms: state.last_config_update_ms,
-                    connection_nonce: state.connection_nonce,
-                };
+        if let Some(state) = &mut self.collector_state {
+            let event = CStateEvent::HeartbeatTick {
+                collector_id: state.collector_id.clone(),
+                uptime_secs: state.start_time.elapsed().as_secs(),
+                pings_sent: state.pings_sent,
+                pings_received: state.pings_received,
+                batches_sent: state.batches_sent,
+                last_config_update_ms: state.last_config_update_ms,
+                connection_nonce: state.connection_nonce,
+            };
 
-                network_manager.do_send(msg);
-
-                self.heartbeats_sent.fetch_add(1, Ordering::Relaxed);
-                state.last_heartbeat_sent_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
+            if let Err(e) = self.event_tx.send(event) {
+                warn!("Failed to publish heartbeat event: {}", e);
+                return Err(CStateError::NotConnected);
             }
-        } else {
-            warn!("send_heartbeat called but NetworkManager not set");
-            return Err(CStateError::NotConnected);
+
+            self.heartbeats_sent.fetch_add(1, Ordering::Relaxed);
+            state.last_heartbeat_sent_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
         }
         Ok(())
     }
@@ -187,71 +190,63 @@ impl Handler<ForceHeartbeat> for CStateActor {
 // ============================================================================
 
 impl Handler<InboundHeartbeat> for CStateActor {
-    type Result = ();
+    type Result = Result<crate::internal_messages::HeartbeatAckResponse, String>;
 
-    fn handle(&mut self, msg: InboundHeartbeat, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: InboundHeartbeat, _ctx: &mut Context<Self>) -> Self::Result {
         // Only database-like configurations process heartbeats
         if !self.config.track_collectors {
-            warn!("Received heartbeat but not configured to track collectors");
-            return;
+            return Err("Not configured to track collectors".to_string());
         }
 
         if let Some(state) = &mut self.database_state {
             debug!("Received heartbeat from collector: {}", msg.collector_id);
 
             // Enforce max_collectors policy: reject new registrations if at capacity
-            let mut reject = false;
             if let Some(max) = state.max_collectors
                 && !state.collectors.contains_key(&msg.collector_id)
                 && state.collectors.len() >= max
             {
-                reject = true;
+                let timestamp_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+
+                return Ok(crate::internal_messages::HeartbeatAckResponse {
+                    timestamp_ms,
+                    server_time_ms: timestamp_ms,
+                    rejection: Some(format!("Database at capacity (max {})", max)),
+                });
             }
 
-            if reject {
-                // Send rejection via NetworkManager
-                if let Some(network_manager) = &self.network_manager {
-                    network_manager.do_send(SendRegistrationRejected {
-                        peer_id: msg.peer_id,
-                        reason: format!(
-                            "Database at capacity (max {})",
-                            state.max_collectors.unwrap()
-                        ),
-                    });
-                }
-            } else {
-                // Register or update collector
-                let collector = state
-                    .collectors
-                    .entry(msg.collector_id.clone())
-                    .or_insert_with(|| {
-                        info!("Registered new collector: {}", msg.collector_id);
-                        TrackedCollector::new(msg.collector_id.clone(), msg.connection_nonce)
-                    });
+            // Register or update collector
+            let collector = state
+                .collectors
+                .entry(msg.collector_id.clone())
+                .or_insert_with(|| {
+                    info!("Registered new collector: {}", msg.collector_id);
+                    TrackedCollector::new(msg.collector_id.clone(), msg.connection_nonce)
+                });
 
-                collector.update_heartbeat(
-                    msg.uptime_secs,
-                    msg.pings_sent,
-                    msg.pings_received,
-                    msg.batches_sent,
-                    msg.last_config_update_ms,
-                );
+            collector.update_heartbeat(
+                msg.uptime_secs,
+                msg.pings_sent,
+                msg.pings_received,
+                msg.batches_sent,
+                msg.last_config_update_ms,
+            );
 
-                // Send acknowledgment via NetworkManager
-                if let Some(network_manager) = &self.network_manager {
-                    network_manager.do_send(SendHeartbeatAck {
-                        peer_id: msg.peer_id,
-                        timestamp_ms: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64,
-                        server_time_ms: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_millis() as u64,
-                    });
-                }
-            }
+            let timestamp_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+
+            Ok(crate::internal_messages::HeartbeatAckResponse {
+                timestamp_ms,
+                server_time_ms: timestamp_ms,
+                rejection: None,
+            })
+        } else {
+            Err("Database state not initialized".to_string())
         }
     }
 }
@@ -277,13 +272,12 @@ impl Handler<InboundHeartbeatAck> for CStateActor {
 }
 
 impl Handler<InboundQueryCollectors> for CStateActor {
-    type Result = ();
+    type Result = Result<Vec<crate::network_messages::CollectorInfo>, String>;
 
-    fn handle(&mut self, msg: InboundQueryCollectors, _ctx: &mut Context<Self>) {
+    fn handle(&mut self, msg: InboundQueryCollectors, _ctx: &mut Context<Self>) -> Self::Result {
         // Only database-like configurations can respond to queries
         if !self.config.track_collectors {
-            warn!("Received QueryCollectors but not configured to track collectors");
-            return;
+            return Err("Not configured to track collectors".to_string());
         }
 
         if let Some(state) = &self.database_state {
@@ -302,13 +296,9 @@ impl Handler<InboundQueryCollectors> for CStateActor {
                 })
                 .collect();
 
-            // Send response via NetworkManager
-            if let Some(network_manager) = &self.network_manager {
-                network_manager.do_send(SendCollectorList {
-                    peer_id: msg.peer_id,
-                    collectors,
-                });
-            }
+            Ok(collectors)
+        } else {
+            Err("Database state not initialized".to_string())
         }
     }
 }
@@ -352,17 +342,8 @@ impl Handler<InboundUnauthorized> for CStateActor {
 }
 
 // ============================================================================
-// Setup Message Handler
+// Message Handlers
 // ============================================================================
-
-impl Handler<SetNetworkManager> for CStateActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: SetNetworkManager, _ctx: &mut Context<Self>) {
-        debug!("NetworkManager link established");
-        self.network_manager = Some(msg.network_manager);
-    }
-}
 
 impl Handler<crate::messages::CleanupStaleCollectors> for CStateActor {
     type Result = ();

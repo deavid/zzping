@@ -18,6 +18,7 @@ pub mod actor;
 pub mod api;
 pub mod builder;
 pub mod config;
+pub mod events;
 pub mod internal_messages;
 pub mod messages;
 pub mod network_actor;

@@ -18,6 +18,7 @@ workspace = true
 actix = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+bytes = { workspace = true }
 log = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

@@ -25,14 +25,14 @@ async fn test_database_role_sends_ack_and_query_response() {
         connection_nonce: 1,
     };
 
-    actor.send(msg).await.unwrap();
+    actor.send(msg).await.unwrap().unwrap();
 
     // Now send QueryCollectors from admin peer
     let query = InboundQueryCollectors {
         peer_id: PeerId::from("admin-peer"),
     };
 
-    actor.send(query).await.unwrap();
+    actor.send(query).await.unwrap().unwrap();
 }
 
 #[actix::test]
@@ -47,7 +47,7 @@ async fn test_unauthorized_query_collectors_is_denied() {
         peer_id: PeerId::from("some-peer"),
     };
 
-    actor.send(query).await.unwrap();
+    actor.send(query).await.unwrap().unwrap();
 }
 
 #[actix::test]
@@ -69,7 +69,7 @@ async fn test_max_collectors_rejection() {
         connection_nonce: 1,
     };
 
-    actor.send(msg1).await.unwrap();
+    actor.send(msg1).await.unwrap().unwrap();
 
     // Second heartbeat from a different collector should be rejected due to max_collectors=1
     let msg2 = InboundHeartbeat {
@@ -83,7 +83,7 @@ async fn test_max_collectors_rejection() {
         connection_nonce: 2,
     };
 
-    actor.send(msg2).await.unwrap();
+    actor.send(msg2).await.unwrap().unwrap();
 
     // Check that a RegistrationRejected was sent to peer-2
 }
@@ -108,7 +108,7 @@ async fn test_stale_collector_cleanup() {
         connection_nonce: 1,
     };
 
-    actor.send(msg).await.unwrap();
+    actor.send(msg).await.unwrap().unwrap();
 
     // Trigger cleanup immediately
     actor
@@ -120,7 +120,7 @@ async fn test_stale_collector_cleanup() {
     let query = InboundQueryCollectors {
         peer_id: PeerId::from("admin-peer"),
     };
-    actor.send(query).await.unwrap();
+    actor.send(query).await.unwrap().unwrap();
 }
 
 #[actix::test]
@@ -140,7 +140,7 @@ async fn test_database_role_receives_heartbeat() {
         connection_nonce: 1,
     };
 
-    actor.send(msg).await.unwrap();
+    actor.send(msg).await.unwrap().unwrap();
 }
 
 #[actix::test]
@@ -176,7 +176,7 @@ async fn test_unauthorized_response_sent() {
         peer_id: PeerId::from("some-peer"),
     };
 
-    actor.send(query).await.unwrap();
+    actor.send(query).await.unwrap().unwrap();
 }
 
 #[actix::test]
@@ -225,7 +225,7 @@ async fn test_stale_collector_cleanup_deterministic() {
         connection_nonce: 1,
     };
 
-    actor.send(now_msg).await.unwrap();
+    actor.send(now_msg).await.unwrap().unwrap();
 
     // Trigger cleanup immediately (0s configured)
     actor
@@ -237,7 +237,7 @@ async fn test_stale_collector_cleanup_deterministic() {
     let query = InboundQueryCollectors {
         peer_id: PeerId::from("admin-peer"),
     };
-    actor.send(query).await.unwrap();
+    actor.send(query).await.unwrap().unwrap();
 }
 
 #[actix::test]
@@ -258,12 +258,20 @@ async fn test_multiple_collectors_tracked() {
         connection_nonce: 1,
     };
 
-    actor.send(mk_msg("peer-a", "collector-a")).await.unwrap();
-    actor.send(mk_msg("peer-b", "collector-b")).await.unwrap();
+    actor
+        .send(mk_msg("peer-a", "collector-a"))
+        .await
+        .unwrap()
+        .unwrap();
+    actor
+        .send(mk_msg("peer-b", "collector-b"))
+        .await
+        .unwrap()
+        .unwrap();
 
     // Query collectors as admin
     let query = InboundQueryCollectors {
         peer_id: PeerId::from("admin-peer"),
     };
-    actor.send(query).await.unwrap();
+    actor.send(query).await.unwrap().unwrap();
 }

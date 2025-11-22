@@ -11,8 +11,6 @@ use std::collections::HashMap;
 use zznet_router::RouterActor;
 
 /// A builder for constructing `CStateActor` instances.
-///
-/// Phase 7.3: Creates and wires all three actors together with Router.
 pub struct CStateBuilder {
     config: CStateConfig,
     router_actor: Option<Addr<RouterActor>>,
@@ -55,18 +53,22 @@ impl CStateBuilder {
 
     /// Builds and starts the `CStateActor` along with its NetworkManager.
     ///
-    /// Phase 7.3: This creates the complete three-actor system:
+    /// This creates the complete three-actor system:
     /// - CStateActor (business logic, zero network dependencies)
     /// - CStateNetworkManager (orchestrates peer lifecycle)
     /// - CStateNetworkActor instances (created per peer by NetworkManager)
     ///
     /// Returns the address of the MainActor.
     pub fn build(self) -> Addr<CStateActor> {
-        // Create and start the MainActor first
+        // Create the MainActor but don't start it yet (need to get event_bus)
         let config = self.config.clone();
-        let actor_addr = CStateActor::create(move |_ctx| CStateActor::new(config));
+        let actor = CStateActor::new(config);
+        let event_bus = actor.event_bus();
 
-        // Phase 7.3: Create NetworkManager if we have RouterActor
+        // Now start the actor
+        let actor_addr = actor.start();
+
+        // Create NetworkManager if we have RouterActor
         if let Some(router_actor) = self.router_actor {
             log::info!("Creating CStateNetworkManager for three-actor pattern");
 
@@ -75,18 +77,15 @@ impl CStateBuilder {
                 HashMap::new()
             });
 
+            // Pass event_bus from MainActor to NetworkManager
             let network_manager = crate::network_manager::CStateNetworkManager::new(
                 actor_addr.clone(),
                 router_actor,
+                event_bus,
                 permissions_map,
             );
 
-            let network_manager = network_manager.start();
-
-            // Wire NetworkManager back to MainActor
-            actor_addr.do_send(crate::internal_messages::SetNetworkManager {
-                network_manager: network_manager.clone(),
-            });
+            let _network_manager = network_manager.start();
 
             log::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
         } else {

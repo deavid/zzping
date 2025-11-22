@@ -29,20 +29,18 @@ use actix::prelude::*;
 use zznet_api::types::PeerId;
 
 // ============================================================================
-// INBOUND MESSAGES (Network → MainActor)
+// INBOUND MESSAGES (Network → MainActor) - Request/Reply Pattern
 // ============================================================================
 
 /// Database received batch of ping results from Collector.
 ///
 /// Sent by: NetworkActor (translates MemDBMessage::SubmitBatch)
 /// Handled by: MainActor (Database role)
+/// Response: BatchAckResponse or error string
 ///
-/// Flow:
-/// 1. NetworkActor receives MemDBMessage::SubmitBatch from network
-/// 2. Translates to InboundSubmitBatch with peer_id
-/// 3. MainActor stores results and sends SendBatchAck
+/// NetworkActor now awaits response and sends directly to room_actor
 #[derive(Message, Debug, Clone)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<BatchAckResponse, String>")]
 pub struct InboundSubmitBatch {
     /// Peer ID of the collector who sent the batch
     pub peer_id: PeerId,
@@ -52,17 +50,22 @@ pub struct InboundSubmitBatch {
     pub results: Vec<PingResult>,
 }
 
+/// Response to a successful batch submission
+#[derive(Debug, Clone)]
+pub struct BatchAckResponse {
+    /// Number of results that were received and stored
+    pub received_count: usize,
+    /// Timestamp when the batch was acknowledged
+    pub timestamp_ms: u64,
+}
+
 /// Database received query request from Admin client.
 ///
 /// Sent by: NetworkActor (translates MemDBMessage::Query)
 /// Handled by: MainActor (Database role)
-///
-/// Flow:
-/// 1. NetworkActor receives MemDBMessage::Query from network
-/// 2. Translates to InboundQuery with peer_id
-/// 3. MainActor queries storage and sends SendQueryResponse
+/// Response: QueryResponse or error string
 #[derive(Message, Debug, Clone)]
-#[rtype(result = "()")]
+#[rtype(result = "Result<Vec<StoredPingResult>, String>")]
 pub struct InboundQuery {
     /// Peer ID of the admin client who sent the query
     pub peer_id: PeerId,
@@ -76,13 +79,9 @@ pub struct InboundQuery {
 
 /// Collector received batch acknowledgment from Database.
 ///
-/// Sent by: NetworkActor (translates MemDBMessage::BatchAck)
-/// Handled by: MainActor (Collector role)
-///
-/// Flow:
-/// 1. NetworkActor receives MemDBMessage::BatchAck from network
-/// 2. Translates to InboundBatchAck with peer_id
-/// 3. MainActor clears outstanding batch and updates metrics
+/// This message is still sent by MainActor but goes to NetworkActor
+/// (not through NetworkManager). NetworkActor sends it directly to room_actor.
+/// Stored in MainActor's peer tracking for async broadcast capability.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct InboundBatchAck {
@@ -96,13 +95,8 @@ pub struct InboundBatchAck {
 
 /// Admin client received query response from Database.
 ///
-/// Sent by: NetworkActor (translates MemDBMessage::QueryResponse)
-/// Handled by: MainActor (Admin role, future use)
-///
-/// Flow:
-/// 1. NetworkActor receives MemDBMessage::QueryResponse from network
-/// 2. Translates to InboundQueryResponse with peer_id
-/// 3. MainActor processes query results (future: forward to UI)
+/// This message is still sent by MainActor but goes to NetworkActor
+/// (not through NetworkManager). NetworkActor sends it directly to room_actor.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct InboundQueryResponse {
@@ -113,87 +107,23 @@ pub struct InboundQueryResponse {
 }
 
 // ============================================================================
-// OUTBOUND MESSAGES (MainActor → NetworkManager → NetworkActor → Network)
+// Outbound batch notification from MainActor
 // ============================================================================
+// When MainActor has a batch ready to send to Database peers,
+// it creates a SubmitBatch network message that should be sent to all Database peers.
+// For Collector role: MainActor is ready to send batch
+// NetworkActors that have Database peers can listen for this and route to their RoomActors
 
-/// Request to send batch acknowledgment to specific collector peer.
+/// Notification that MainActor has a batch ready to send (Collector role only)
 ///
-/// Sent by: MainActor (Database role, after storing batch)
-/// Handled by: NetworkManager (routes to specific peer's NetworkActor)
-///
-/// Flow:
-/// 1. MainActor receives InboundSubmitBatch
-/// 2. Stores results in storage
-/// 3. Sends SendBatchAck to NetworkManager
-/// 4. NetworkManager routes to peer's NetworkActor
-/// 5. NetworkActor translates to MemDBMessage::BatchAck and sends
+/// Used for Collector→Database batch transmission
+/// When MainActor has buffered enough results, it sends this message to NetworkManager
+/// which broadcasts it to all connected Database peers via RoomActor
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
-pub struct SendBatchAck {
-    /// Target peer ID (the collector who sent the batch)
-    pub peer_id: PeerId,
-    /// Number of results that were received
-    pub received_count: usize,
-    /// Timestamp when the batch was acknowledged
-    pub timestamp_ms: u64,
-}
-
-/// Request to send query response to specific admin peer.
-///
-/// Sent by: MainActor (Database role, after querying storage)
-/// Handled by: NetworkManager (routes to specific peer's NetworkActor)
-///
-/// Flow:
-/// 1. MainActor receives InboundQuery
-/// 2. Queries storage for results
-/// 3. Sends SendQueryResponse to NetworkManager
-/// 4. NetworkManager routes to peer's NetworkActor
-/// 5. NetworkActor translates to MemDBMessage::QueryResponse and sends
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "()")]
-pub struct SendQueryResponse {
-    /// Target peer ID (the admin who sent the query)
-    pub peer_id: PeerId,
-    /// The query results to send
-    pub results: Vec<StoredPingResult>,
-}
-
-/// Request to send batch of ping results to database peer.
-///
-/// Sent by: MainActor (Collector role, when buffer is full)
-/// Handled by: NetworkManager (routes to database peer's NetworkActor)
-///
-/// Flow:
-/// 1. MainActor receives StorePingResult (from Pinger component)
-/// 2. Buffers results until buffer is full
-/// 3. Sends SendSubmitBatch to NetworkManager
-/// 4. NetworkManager routes to database peer's NetworkActor
-/// 5. NetworkActor translates to MemDBMessage::SubmitBatch and sends
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "()")]
-pub struct SendSubmitBatch {
-    /// Target peer ID (the database peer)
-    pub peer_id: PeerId,
+pub struct BatchReadyToSend {
     /// Timestamp when the batch was created
     pub timestamp_ms: u64,
-    /// The ping results to send
-    pub results: Vec<PingResult>,
-}
-
-// ============================================================================
-// SYSTEM MESSAGES (Wiring & Internal Communication)
-// ============================================================================
-
-/// Wire the NetworkManager to the MainActor after creation.
-///
-/// Sent by: Builder (during system initialization)
-/// Handled by: MainActor (stores NetworkManager address)
-///
-/// This message completes the wiring between MainActor and NetworkManager,
-/// enabling MainActor to send outbound message requests.
-#[derive(Message, Debug)]
-#[rtype(result = "()")]
-pub struct SetNetworkManager {
-    /// The NetworkManager actor address
-    pub network_manager: Addr<crate::network_manager::MemDBNetworkManager>,
+    /// The ping results ready to send
+    pub results: Vec<crate::network_messages::PingResult>,
 }

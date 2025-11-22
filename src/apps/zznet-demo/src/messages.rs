@@ -74,10 +74,34 @@ pub struct StateUpdate {
     pub data: String,
 }
 
+/// Event for ComponentA state changes
+#[derive(Clone, Debug)]
+pub enum ComponentAEvent {
+    /// State changed with new counter and data
+    StateChanged {
+        /// The new counter value
+        counter: u64,
+        /// The new data value
+        data: String,
+    },
+    /// Pong sent
+    Pong {
+        /// The counter value
+        counter: u64,
+        /// The data value
+        data: String,
+    },
+}
+
 /// A message to get the current counter value from a component.
 #[derive(Message, Clone)]
 #[rtype(result = "u64")]
 pub struct GetCounter;
+
+/// A message to get the event bus sender.
+#[derive(Message, Clone)]
+#[rtype(result = "tokio::sync::broadcast::Sender<ComponentAEvent>")]
+pub struct GetEventBus;
 
 /// A message to subscribe to ComponentA's state updates.
 #[derive(Message, Clone)]
