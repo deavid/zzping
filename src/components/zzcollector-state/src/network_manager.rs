@@ -59,8 +59,6 @@ pub struct CStateNetworkManager {
     router: Addr<RouterActor>,
     /// The main actor for handling internal messages
     main_actor: Addr<crate::actor::CStateActor>,
-    /// Per-peer translator actors for message translation
-    translator_actors: HashMap<PeerId, Addr<CStateNetworkActor>>,
     /// Per-peer room actors for serialization
     room_actors: HashMap<PeerId, Addr<RoomActor<CStateMessage>>>,
     /// Permissions map for role-to-permissions translation
@@ -72,7 +70,6 @@ impl Clone for CStateNetworkManager {
         Self {
             router: self.router.clone(),
             main_actor: self.main_actor.clone(),
-            translator_actors: self.translator_actors.clone(),
             room_actors: self.room_actors.clone(),
             permissions_map: self.permissions_map.clone(),
         }
@@ -94,7 +91,6 @@ impl CStateNetworkManager {
         Self {
             router,
             main_actor,
-            translator_actors: HashMap::new(),
             room_actors: HashMap::new(),
             permissions_map,
         }
@@ -132,8 +128,7 @@ impl Actor for CStateNetworkManager {
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         info!(
-            "CStateNetworkManager stopped, cleaning up {} NetworkActors and {} RoomActors",
-            self.translator_actors.len(),
+            "CStateNetworkManager stopped, cleaning up {} RoomActors",
             self.room_actors.len()
         );
         // Actors will be automatically stopped when dropped
@@ -259,11 +254,9 @@ impl Handler<zznet_router::RegisterPeer<CStateManifest>> for CStateNetworkManage
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         debug!(
-            "CStateNetworkManager: Registering peer {} with network and room actors",
+            "CStateNetworkManager: Registering peer {} with room actor",
             msg.peer_id
         );
-        self.translator_actors
-            .insert(msg.peer_id.clone(), msg.network_actor);
         self.room_actors.insert(msg.peer_id, msg.room_actor);
     }
 }

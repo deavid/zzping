@@ -242,8 +242,6 @@ pub struct ComponentANetworkManager {
     main_actor: Addr<ComponentAActor>,
     /// Router for room registration
     router: Addr<zznet_router::RouterActor>,
-    /// NetworkActors per peer (no longer needs Arc<RwLock> since only modified via messages)
-    network_actors: std::collections::HashMap<PeerId, Addr<ComponentANetworkActor>>,
     /// RoomActors per peer for outbound messaging (no longer needs Arc<RwLock>)
     room_actors:
         std::collections::HashMap<PeerId, Addr<zznet_room::actor::RoomActor<ComponentAMessage>>>,
@@ -261,7 +259,6 @@ impl ComponentANetworkManager {
         Self {
             main_actor,
             router,
-            network_actors: std::collections::HashMap::new(),
             room_actors: std::collections::HashMap::new(),
             permissions_map,
         }
@@ -304,11 +301,9 @@ impl Handler<zznet_router::RegisterPeer<ComponentAManifest>> for ComponentANetwo
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         tracing::debug!(
-            "ComponentANetworkManager: Registering peer {} with network and room actors",
+            "ComponentANetworkManager: Registering peer {} with room actor",
             msg.peer_id
         );
-        self.network_actors
-            .insert(msg.peer_id.clone(), msg.network_actor);
         self.room_actors.insert(msg.peer_id, msg.room_actor);
     }
 }

@@ -69,9 +69,6 @@ pub struct MemDBNetworkManager {
     /// Reference to the MainActor for business logic
     main_actor: Addr<MemDBActor>,
 
-    /// Active NetworkActors, one per connected peer
-    translators: HashMap<PeerId, Addr<MemDBNetworkActor>>,
-
     /// RoomActor addresses for outbound sends
     room_actors: HashMap<PeerId, Addr<RoomActor<MemDBMessage>>>,
 
@@ -86,7 +83,6 @@ impl Clone for MemDBNetworkManager {
     fn clone(&self) -> Self {
         Self {
             main_actor: self.main_actor.clone(),
-            translators: self.translators.clone(),
             room_actors: self.room_actors.clone(),
             router_actor: self.router_actor.clone(),
             permissions_map: self.permissions_map.clone(),
@@ -103,7 +99,6 @@ impl MemDBNetworkManager {
     ) -> Self {
         Self {
             main_actor,
-            translators: HashMap::new(),
             room_actors: HashMap::new(),
             router_actor,
             permissions_map,
@@ -131,8 +126,7 @@ impl Actor for MemDBNetworkManager {
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         tracing::debug!(
-            "MemDBNetworkManager stopped, cleaning up {} NetworkActors and {} RoomActors",
-            self.translators.len(),
+            "MemDBNetworkManager stopped, cleaning up {} RoomActors",
             self.room_actors.len()
         );
         // Actors will be automatically stopped when dropped
@@ -156,11 +150,9 @@ impl Handler<zznet_router::RegisterPeer<MemDBManifest>> for MemDBNetworkManager 
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         tracing::debug!(
-            "MemDBNetworkManager: Registering peer {} with network and room actors",
+            "MemDBNetworkManager: Registering peer {} with room actor",
             msg.peer_id
         );
-        self.translators
-            .insert(msg.peer_id.clone(), msg.network_actor);
         self.room_actors.insert(msg.peer_id, msg.room_actor);
     }
 }

@@ -60,8 +60,6 @@ impl NetworkComponent for IntentConfigManifest {
 pub struct IntentConfigNetworkManager {
     /// Address of the main business logic actor
     main_actor: Addr<crate::actor::IntentConfigActor>,
-    /// Per-peer translator actors for message translation
-    translator_actors: HashMap<PeerId, Addr<IntentConfigNetworkActor>>,
     /// Per-peer room actors for serialization
     room_actors: HashMap<PeerId, Addr<RoomActor<IntentConfigNetworkMsg>>>,
     /// RouterActor for data-plane message routing
@@ -74,7 +72,6 @@ impl Clone for IntentConfigNetworkManager {
     fn clone(&self) -> Self {
         Self {
             main_actor: self.main_actor.clone(),
-            translator_actors: self.translator_actors.clone(),
             room_actors: self.room_actors.clone(),
             router_actor: self.router_actor.clone(),
             permissions_map: self.permissions_map.clone(),
@@ -91,7 +88,6 @@ impl IntentConfigNetworkManager {
     ) -> Self {
         Self {
             main_actor,
-            translator_actors: HashMap::new(),
             room_actors: HashMap::new(),
             router_actor,
             permissions_map,
@@ -101,35 +97,6 @@ impl IntentConfigNetworkManager {
     /// Get the permissions map (for testing)
     pub fn permissions_map(&self) -> &HashMap<String, IntentConfigPermissions> {
         &self.permissions_map
-    }
-
-    /// Destroy per-peer actors when lifecycle events indicate removal.
-    fn _destroy_peer_actors(&mut self, peer_id: &PeerId) {
-        // FIXME: This code is dead. This is never executed which means we are missing tooling.
-        let mut removed_translator = false;
-        let mut removed_room_actor = false;
-
-        if self.translator_actors.remove(peer_id).is_some() {
-            removed_translator = true;
-        }
-
-        if self.room_actors.remove(peer_id).is_some() {
-            removed_room_actor = true;
-        }
-
-        if removed_translator || removed_room_actor {
-            log::info!("Destroying actors for peer: {}", peer_id);
-            log::debug!(
-                "Actors destroyed - {} translators, {} room actors remain",
-                self.translator_actors.len(),
-                self.room_actors.len()
-            );
-        } else {
-            log::warn!(
-                "Attempted to destroy non-existent actors for peer: {}",
-                peer_id
-            );
-        }
     }
 }
 
@@ -303,11 +270,9 @@ impl Handler<zznet_router::RegisterPeer<IntentConfigManifest>> for IntentConfigN
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         log::debug!(
-            "IntentConfigNetworkManager: Registering peer {} with network and room actors",
+            "IntentConfigNetworkManager: Registering peer {} with room actor",
             msg.peer_id
         );
-        self.translator_actors
-            .insert(msg.peer_id.clone(), msg.network_actor);
         self.room_actors.insert(msg.peer_id, msg.room_actor);
     }
 }
