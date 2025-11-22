@@ -17,10 +17,17 @@ impl Actor for MockPeerHandler {
 }
 
 impl Handler<OnPeerConnected> for MockPeerHandler {
-    type Result = Result<(), String>;
+    type Result = Result<
+        std::collections::HashMap<
+            zznet_api::types::RoomId,
+            actix::Recipient<zznet_api::messages::InboundRoomPayload>,
+        >,
+        String,
+    >;
 
     fn handle(&mut self, _msg: OnPeerConnected, _ctx: &mut Context<Self>) -> Self::Result {
-        Ok(())
+        // Return empty routing table for test
+        Ok(std::collections::HashMap::new())
     }
 }
 

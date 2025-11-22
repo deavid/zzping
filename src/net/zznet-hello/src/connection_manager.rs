@@ -137,70 +137,64 @@ impl Handler<HandshakeComplete> for ConnectionManager {
             msg.peer_role_str
         );
 
-        // Get the transport handles from the HelloActor
+        // Get the router address and hello actor for the async task
         let router_addr = self.on_peer_connected.clone();
         let hello_actor = msg.hello_actor.clone();
 
-        // Spawn an async task to get transport handles and connect to Router
+        // Spawn an async task to set up the data plane proxy
         // CRITICAL: Use actix::spawn to ensure task runs within Actix LocalSet
         actix::spawn(async move {
             let peer_id_api = zznet_api::types::PeerId::from(peer_id.as_str());
 
-            // Request transport handles from HelloActor
-            match hello_actor.send(crate::actor::GetTransportHandles).await {
-                Ok(Ok(handles)) => {
-                    // Send OnPeerConnected directly to RouterActor with transport handles
-                    let connect_result = router_addr
-                        .send(OnPeerConnected {
-                            peer_id: peer_id_api.clone(),
-                            role: role.clone(),
-                            negotiated_rooms: msg
-                                .active_rooms
-                                .iter()
-                                .map(|s| RoomId::from(s.as_str()))
-                                .collect(),
-                            transport_tx: handles.transport_tx,
-                            transport_rx: handles.transport_rx,
-                        })
-                        .await;
-
-                    match connect_result {
-                        Ok(Ok(_)) => {
-                            tracing::info!(
-                                "Successfully connected peer {} to RouterActor",
-                                peer_id
-                            );
-                            // Stop HelloActor - it's no longer needed
-                            hello_actor.do_send(crate::actor::Disconnect);
-                        }
-                        Ok(Err(error_msg)) => {
-                            tracing::error!("RouterActor rejected peer {}: {}", peer_id, error_msg);
-                            hello_actor.do_send(crate::actor::Disconnect);
-                        }
-                        Err(e) => {
-                            tracing::error!(
-                                "Failed to send to RouterActor for peer {}: {:?}",
-                                peer_id,
-                                e
-                            );
-                            hello_actor.do_send(crate::actor::Disconnect);
-                        }
-                    }
-                }
-                Ok(Err(e)) => {
+            // Get transport_tx from HelloActor
+            let transport_tx = match hello_actor.send(crate::actor::GetTransportTx).await {
+                Ok(tx) => tx,
+                Err(e) => {
                     tracing::error!(
-                        "Failed to get transport handles from HelloActor for peer {}: {}",
+                        "Failed to get transport_tx from HelloActor for peer {}: {:?}",
                         peer_id,
                         e
                     );
                     hello_actor.do_send(crate::actor::Disconnect);
+                    return;
+                }
+            };
+
+            // Send OnPeerConnected to RouterActor to create rooms and get routing table
+            let connect_result = router_addr
+                .send(OnPeerConnected {
+                    peer_id: peer_id_api.clone(),
+                    role: role.clone(),
+                    negotiated_rooms: msg
+                        .active_rooms
+                        .iter()
+                        .map(|s| RoomId::from(s.as_str()))
+                        .collect(),
+                    transport_tx,
+                })
+                .await;
+
+            match connect_result {
+                Ok(Ok(routes)) => {
+                    tracing::info!(
+                        "Router created {} rooms for peer {}, configuring proxy",
+                        routes.len(),
+                        peer_id
+                    );
+                    // Send routing table to HelloActor to transition to Proxy state
+                    hello_actor.do_send(crate::actor::SetRoutes(routes));
+                }
+                Ok(Err(error_msg)) => {
+                    tracing::error!("RouterActor rejected peer {}: {}", peer_id, error_msg);
+                    hello_actor.do_send(crate::actor::Disconnect);
                 }
                 Err(e) => {
                     tracing::error!(
-                        "Failed to communicate with HelloActor for peer {}: {:?}",
+                        "Failed to send to RouterActor for peer {}: {:?}",
                         peer_id,
                         e
                     );
+                    hello_actor.do_send(crate::actor::Disconnect);
                 }
             }
 

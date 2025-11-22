@@ -61,15 +61,20 @@ impl Handler<RegisterManager> for RouterActor {
 }
 
 impl Handler<OnPeerConnected> for RouterActor {
-    type Result = Result<(), String>;
+    type Result = Result<
+        std::collections::HashMap<
+            zznet_api::types::RoomId,
+            zznet_api::messages::RoomInboundRecipient,
+        >,
+        String,
+    >;
 
     fn handle(&mut self, msg: OnPeerConnected, _ctx: &mut Context<Self>) -> Self::Result {
         let peer_id = msg.peer_id.clone();
         let role = msg.role;
         let negotiated_rooms = msg.negotiated_rooms;
         let transport_tx = msg.transport_tx;
-        let transport_rx = msg.transport_rx;
-        let mut builder = crate::peer_channels::PeerChannelsBuilder::new(peer_id.clone());
+        let mut room_routes = std::collections::HashMap::new();
 
         // Get factories for negotiated rooms and call them synchronously
         for room_id in negotiated_rooms {
@@ -81,14 +86,8 @@ impl Handler<OnPeerConnected> for RouterActor {
                     transport_tx.clone(),
                 ) {
                     Ok(Some(room_recipient)) => {
-                        if let Err(e) = builder.add_room(room_id.clone(), room_recipient) {
-                            tracing::error!(
-                                "Failed to add room {} for peer {}: {:?}",
-                                room_id,
-                                peer_id,
-                                e
-                            );
-                        }
+                        // Store the room recipient for returning
+                        room_routes.insert(room_id.clone(), room_recipient);
                     }
                     Ok(None) => {
                         tracing::warn!(
@@ -111,8 +110,8 @@ impl Handler<OnPeerConnected> for RouterActor {
             }
         }
 
-        builder.build_and_spawn_transport_demux(transport_rx);
+        // NOTE: No longer spawning transport_demux - HelloActor handles inbound frames
 
-        Ok(())
+        Ok(room_routes)
     }
 }

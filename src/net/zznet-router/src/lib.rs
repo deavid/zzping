@@ -20,7 +20,6 @@ mod actor;
 mod error;
 mod factory_utils;
 mod messages;
-mod peer_channels;
 mod room_factory;
 mod router;
 

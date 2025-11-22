@@ -6,19 +6,22 @@
 
 use actix::prelude::*;
 use bytes::Bytes;
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use tokio_stream::wrappers::ReceiverStream;
 use zznet_api::error::TransportError;
+use zznet_api::messages::InboundRoomPayload;
+use zznet_api::protocol::{Frame, HandshakeFrame, RoomFrame};
 use zznet_api::transport::TransportConnection;
+use zznet_api::types::RoomId;
 
 // The HELLO protocol is application-agnostic; it uses a role string, not a concrete enum.
 use crate::error::HelloError;
 use crate::handshake::Handshake;
 use crate::session_messages::HandshakeComplete;
-use zznet_api::protocol::{Frame, HandshakeFrame, RoomFrame};
 
 /// Configures a `HelloActor`.
 #[derive(Debug, Clone)]
@@ -45,12 +48,19 @@ impl Default for HelloConfig {
 }
 
 /// `HelloActor` state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ActorState {
     /// Handshaking with peer.
     Handshaking,
-    /// Ready for room communication.
+    /// Ready for room communication (handshake complete, awaiting routes).
     Ready,
+    /// Proxying frames to rooms (data plane active).
+    Proxy {
+        routes: std::collections::HashMap<
+            zznet_api::types::RoomId,
+            actix::Recipient<zznet_api::messages::InboundRoomPayload>,
+        >,
+    },
     /// Terminal state after failure or closure.
     Failed,
 }
@@ -86,17 +96,21 @@ pub(crate) struct SendMessage {
 #[rtype(result = "()")]
 pub(crate) struct Disconnect;
 
-/// Transport handles for direct Router connection
-pub(crate) struct TransportHandles {
-    pub transport_tx: mpsc::Sender<Bytes>,
-    pub transport_rx: mpsc::Receiver<Result<Bytes, TransportError>>,
-}
-
-/// Requests transport handles after handshake complete.
-/// This transfers ownership of the transport channels to the caller.
+/// Sets the routing table for proxy mode.
+/// After receiving this message, HelloActor transitions to Proxy state.
 #[derive(Message)]
-#[rtype(result = "Result<TransportHandles, String>")]
-pub(crate) struct GetTransportHandles;
+#[rtype(result = "()")]
+pub(crate) struct SetRoutes(
+    pub  std::collections::HashMap<
+        zznet_api::types::RoomId,
+        actix::Recipient<zznet_api::messages::InboundRoomPayload>,
+    >,
+);
+
+/// Gets the transport_tx sender for room creation.
+#[derive(Message)]
+#[rtype(result = "mpsc::Sender<Bytes>")]
+pub(crate) struct GetTransportTx;
 
 /// Manages a connection's lifecycle using the HELLO protocol.
 pub(crate) struct HelloActor {
@@ -204,17 +218,65 @@ impl HelloActor {
 
     /// Routes a received frame based on the current actor state.
     fn handle_received_frame(&mut self, data: Vec<u8>, ctx: &mut Context<Self>) {
-        match self.state {
+        match &self.state {
             ActorState::Handshaking => {
                 self.handle_handshake_frame(data, ctx);
             }
             ActorState::Ready => {
-                // After handshake, transport is transferred to Router.
-                // Any frames received here are protocol violations or race conditions.
-                error!("Received frame in Ready state - transport should have been transferred");
+                // After handshake, waiting for routes to be set
+                warn!(
+                    "Received frame in Ready state before routes set, buffering not implemented - frame dropped"
+                );
+            }
+            ActorState::Proxy { routes } => {
+                self.handle_proxy_frame(data, routes.clone(), ctx);
             }
             ActorState::Failed => {
                 warn!("Received frame in Failed state, ignoring");
+            }
+        }
+    }
+
+    /// Processes frames in Proxy state - forwards to appropriate room.
+    fn handle_proxy_frame(
+        &mut self,
+        data: Vec<u8>,
+        routes: HashMap<RoomId, Recipient<InboundRoomPayload>>,
+        ctx: &mut Context<Self>,
+    ) {
+        // Deserialize the frame
+        match Frame::deserialize(&data) {
+            Ok(Frame::Room(RoomFrame::Message {
+                to_room,
+                from_room,
+                payload,
+            })) => {
+                debug!(
+                    "Proxying message: {} -> {}, {} bytes",
+                    from_room,
+                    to_room,
+                    payload.len()
+                );
+                // Look up the destination room
+                if let Some(room_recipient) = routes.get(&RoomId::from(to_room.as_str())) {
+                    // Forward payload to room actor
+                    room_recipient.do_send(InboundRoomPayload { payload });
+                } else {
+                    warn!("No route found for room: {}", to_room);
+                }
+            }
+            Ok(Frame::Room(RoomFrame::Disconnect)) => {
+                info!("Received disconnect frame, stopping actor");
+                ctx.stop();
+            }
+            Ok(other_frame) => {
+                warn!(
+                    "Received unexpected frame type in Proxy state: {:?}",
+                    other_frame
+                );
+            }
+            Err(e) => {
+                error!("Failed to deserialize frame in Proxy state: {:?}", e);
             }
         }
     }
@@ -444,29 +506,28 @@ impl Handler<Disconnect> for HelloActor {
     }
 }
 
-impl Handler<GetTransportHandles> for HelloActor {
-    type Result = Result<TransportHandles, String>;
+impl Handler<SetRoutes> for HelloActor {
+    type Result = ();
 
-    fn handle(&mut self, _msg: GetTransportHandles, ctx: &mut Context<Self>) -> Self::Result {
-        // Can only transfer handles if we're in Ready state and still have them
+    fn handle(&mut self, msg: SetRoutes, _ctx: &mut Context<Self>) -> Self::Result {
         if self.state != ActorState::Ready {
-            return Err(
-                "Transport handles can only be extracted after handshake complete".to_string(),
+            error!(
+                "SetRoutes called in wrong state: {:?}, expected Ready",
+                self.state
             );
+            return;
         }
 
-        let transport_rx = self
-            .transport_rx
-            .take()
-            .ok_or_else(|| "Transport receiver already transferred".to_string())?;
+        info!("Transitioning to Proxy state with {} routes", msg.0.len());
+        self.state = ActorState::Proxy { routes: msg.0 };
+    }
+}
 
-        // Stop the actor since transport is being transferred
-        ctx.stop();
+impl Handler<GetTransportTx> for HelloActor {
+    type Result = MessageResult<GetTransportTx>;
 
-        Ok(TransportHandles {
-            transport_tx: self.transport_tx.clone(),
-            transport_rx,
-        })
+    fn handle(&mut self, _msg: GetTransportTx, _ctx: &mut Context<Self>) -> Self::Result {
+        MessageResult(self.transport_tx.clone())
     }
 }
 

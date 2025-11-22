@@ -3,23 +3,11 @@
 //! Components implement this trait to provide Room<T> instances per peer.
 //! Router orchestrates creation and enforces strict 1:1 room↔component mapping.
 
-use actix::Recipient;
 use tokio::sync::mpsc;
 use zznet_api::types::{PeerId, Role, RoomId};
 
-/// Message type for inbound room payloads.
-///
-/// Room actors receive this message when data arrives from a peer.
-/// The payload contains raw bytes that the room actor deserializes.
-#[derive(actix::Message)]
-#[rtype(result = "()")]
-pub struct InboundRoomPayload {
-    /// The serialized message payload.
-    pub payload: Vec<u8>,
-}
-
-/// Alias for the recipient type used by Router ↔ RoomActor wiring.
-pub type RoomInboundRecipient = Recipient<InboundRoomPayload>;
+// Re-export for backward compatibility
+pub use zznet_api::messages::{InboundRoomPayload, RoomInboundRecipient};
 
 /// Actor message for creating a room (if using Actix wrapper).
 ///
