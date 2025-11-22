@@ -2,7 +2,7 @@
 //!
 //! This actor is the bridge between the transport layer and the session layer.
 //! It spawns a `HelloActor` for each new connection, receives `HandshakeComplete`
-//! notifications, and then wires the authenticated peer into the `RouterActor`.
+//! notifications, and then wires the authenticated peer into the handover recipient.
 
 use crate::actor::{HelloActor, HelloConfig, start_hello_actor_with_session_manager};
 use crate::session_messages::HandshakeComplete;
@@ -16,10 +16,10 @@ use zznet_api::types::{PeerId, Role, RoomId};
 ///
 /// A `ConnectionManager` is required for any service that accepts inbound
 /// connections. It ensures that every peer is authenticated and authorized
-/// before being passed to the `RouterActor`.
+/// before being passed to the peer registry.
 pub struct ConnectionManager {
-    /// The target actor for OnPeerConnected messages
-    on_peer_connected: Recipient<OnPeerConnected>,
+    /// The target recipient for OnPeerConnected messages
+    handover_recipient: Recipient<OnPeerConnected>,
     /// A map of `PeerId` to `HelloActor` address.
     hello_actors: HashMap<PeerId, Addr<HelloActor>>,
     /// The role of this service.
@@ -31,12 +31,12 @@ pub struct ConnectionManager {
 impl ConnectionManager {
     /// Creates a new `ConnectionManager`.
     pub fn new(
-        on_peer_connected: Recipient<OnPeerConnected>,
+        handover_recipient: Recipient<OnPeerConnected>,
         our_role: String,
         allowed_roles: HashSet<Role>,
     ) -> Self {
         Self {
-            on_peer_connected,
+            handover_recipient,
             hello_actors: HashMap::new(),
             our_role,
             allowed_roles,
@@ -137,8 +137,8 @@ impl Handler<HandshakeComplete> for ConnectionManager {
             msg.peer_role_str
         );
 
-        // Get the router address and hello actor for the async task
-        let router_addr = self.on_peer_connected.clone();
+        // Get the handover recipient and hello actor for the async task
+        let handover_recipient = self.handover_recipient.clone();
         let hello_actor = msg.hello_actor.clone();
 
         // Spawn an async task to set up the data plane proxy
@@ -160,8 +160,8 @@ impl Handler<HandshakeComplete> for ConnectionManager {
                 }
             };
 
-            // Send OnPeerConnected to RouterActor to create rooms and get routing table
-            let connect_result = router_addr
+            // Send OnPeerConnected to handover recipient to create rooms and get routing table
+            let connect_result = handover_recipient
                 .send(OnPeerConnected {
                     peer_id: peer_id_api.clone(),
                     role: role.clone(),
@@ -185,12 +185,12 @@ impl Handler<HandshakeComplete> for ConnectionManager {
                     hello_actor.do_send(crate::actor::SetRoutes(routes));
                 }
                 Ok(Err(error_msg)) => {
-                    tracing::error!("RouterActor rejected peer {}: {}", peer_id, error_msg);
+                    tracing::error!("Peer registry rejected peer {}: {}", peer_id, error_msg);
                     hello_actor.do_send(crate::actor::Disconnect);
                 }
                 Err(e) => {
                     tracing::error!(
-                        "Failed to send to RouterActor for peer {}: {:?}",
+                        "Failed to send to peer registry for peer {}: {:?}",
                         peer_id,
                         e
                     );
