@@ -17,6 +17,7 @@ workspace = true
 [dependencies]
 actix.workspace = true
 tokio.workspace = true
+tokio-stream.workspace = true
 serde.workspace = true
 ron.workspace = true
 tracing.workspace = true

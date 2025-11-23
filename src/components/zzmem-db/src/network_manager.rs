@@ -10,7 +10,8 @@ use zznet_room::RoomActor;
 use zznet_router::RouterActor;
 
 use crate::actor::MemDBActor;
-use crate::network_actor::MemDBNetworkActor;
+use crate::events::MemDBEvent;
+use crate::network_actor::{MemDBNetworkActor, SetRoomActor};
 use crate::network_messages::MemDBMessage;
 use crate::permissions::MemDBPermissions;
 
@@ -18,6 +19,7 @@ use crate::permissions::MemDBPermissions;
 pub(crate) struct MemDBRoomFactory {
     main_actor: Addr<MemDBActor>,
     _manager: Addr<MemDBNetworkManager>,
+    event_bus: tokio::sync::broadcast::Sender<MemDBEvent>,
     permissions_map: HashMap<String, MemDBPermissions>,
 }
 
@@ -26,11 +28,13 @@ impl MemDBRoomFactory {
     pub(crate) fn new(
         main_actor: Addr<MemDBActor>,
         manager: Addr<MemDBNetworkManager>,
+        event_bus: tokio::sync::broadcast::Sender<MemDBEvent>,
         permissions_map: HashMap<String, MemDBPermissions>,
     ) -> Self {
         Self {
             main_actor,
             _manager: manager,
+            event_bus,
             permissions_map,
         }
     }
@@ -63,7 +67,12 @@ impl zznet_router::RoomFactory for MemDBRoomFactory {
             .unwrap_or_default();
 
         // Create NetworkActor
-        let net = MemDBNetworkActor::new(peer_id.clone(), perms, self.main_actor.clone());
+        let net = MemDBNetworkActor::new(
+            peer_id.clone(),
+            perms,
+            self.main_actor.clone(),
+            self.event_bus.subscribe(),
+        );
         let net_addr = net.start();
 
         // Create RoomActor with NetworkActor's recipient
@@ -74,19 +83,23 @@ impl zznet_router::RoomFactory for MemDBRoomFactory {
         );
         let room_addr = room.start();
 
-        // No wiring needed - MemDBNetworkActor doesn't need room_actor reference
+        // Provide the RoomActor address to the NetworkActor for outbound sends
+        net_addr.do_send(SetRoomActor(room_addr.clone()));
 
         Ok(Some(room_addr.recipient()))
     }
 }
 
 /// `MemDBNetworkManager` supervises peer lifecycle and registration.
-pub struct MemDBNetworkManager {
+pub(crate) struct MemDBNetworkManager {
     /// Reference to the MainActor for business logic
     main_actor: Addr<MemDBActor>,
 
     /// RouterActor for data-plane message routing
     router_actor: Addr<RouterActor>,
+
+    /// Event bus for outbound notifications from MainActor
+    event_bus: tokio::sync::broadcast::Sender<MemDBEvent>,
 
     /// Permissions map for role-to-permissions translation
     permissions_map: HashMap<String, MemDBPermissions>,
@@ -97,6 +110,7 @@ impl Clone for MemDBNetworkManager {
         Self {
             main_actor: self.main_actor.clone(),
             router_actor: self.router_actor.clone(),
+            event_bus: self.event_bus.clone(),
             permissions_map: self.permissions_map.clone(),
         }
     }
@@ -104,14 +118,16 @@ impl Clone for MemDBNetworkManager {
 
 impl MemDBNetworkManager {
     /// Create a new `MemDBNetworkManager`.
-    pub fn new(
+    pub(crate) fn new(
         main_actor: Addr<MemDBActor>,
         router_actor: Addr<RouterActor>,
+        event_bus: tokio::sync::broadcast::Sender<MemDBEvent>,
         permissions_map: HashMap<String, MemDBPermissions>,
     ) -> Self {
         Self {
             main_actor,
             router_actor,
+            event_bus,
             permissions_map,
         }
     }
@@ -127,6 +143,7 @@ impl Actor for MemDBNetworkManager {
         let factory = std::sync::Arc::new(MemDBRoomFactory::new(
             self.main_actor.clone(),
             ctx.address(),
+            self.event_bus.clone(),
             self.permissions_map.clone(),
         ));
         let rooms = vec![RoomId::from("memdb")];
@@ -136,31 +153,5 @@ impl Actor for MemDBNetworkManager {
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         tracing::debug!("MemDBNetworkManager stopped");
-    }
-}
-
-// Batch transmission handler: broadcast prepared batches to Database peers.
-
-impl Handler<crate::internal_messages::BatchReadyToSend> for MemDBNetworkManager {
-    type Result = ();
-
-    fn handle(
-        &mut self,
-        msg: crate::internal_messages::BatchReadyToSend,
-        _ctx: &mut Context<Self>,
-    ) -> Self::Result {
-        // Prepare network message and log readiness; broadcasting via RouterActor is TODO.
-        let results_count = msg.results.len();
-        let _network_msg = MemDBMessage::SubmitBatch {
-            sender_peer_id: "collector".to_string(),
-            timestamp_ms: msg.timestamp_ms,
-            results: msg.results,
-        };
-
-        tracing::info!(
-            "Batch transmission prepared: timestamp={}, results_count={}",
-            msg.timestamp_ms,
-            results_count
-        );
     }
 }

@@ -105,25 +105,3 @@ pub struct InboundQueryResponse {
     /// The query results
     pub results: Vec<StoredPingResult>,
 }
-
-// ============================================================================
-// Outbound batch notification from MainActor
-// ============================================================================
-// When MainActor has a batch ready to send to Database peers,
-// it creates a SubmitBatch network message that should be sent to all Database peers.
-// For Collector role: MainActor is ready to send batch
-// NetworkActors that have Database peers can listen for this and route to their RoomActors
-
-/// Notification that MainActor has a batch ready to send (Collector role only)
-///
-/// Used for Collector→Database batch transmission
-/// When MainActor has buffered enough results, it sends this message to NetworkManager
-/// which broadcasts it to all connected Database peers via RoomActor
-#[derive(Message, Debug, Clone)]
-#[rtype(result = "()")]
-pub struct BatchReadyToSend {
-    /// Timestamp when the batch was created
-    pub timestamp_ms: u64,
-    /// The ping results ready to send
-    pub results: Vec<crate::network_messages::PingResult>,
-}

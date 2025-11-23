@@ -2,17 +2,19 @@
 //!
 //! The Translator Actor in the three-actor pattern. Responsibilities:
 //! - Receive typed IntentConfigNetworkMsg from RoomActor<T>
-//! - Translate network messages to domain messages for MainActor (via Manager)
+//! - Translate network messages to domain messages for MainActor
 //! - Store peer's Role and handle authorization checks
 //!
 //! Lifecycle: One NetworkActor per connected peer, managed by NetworkManager
 
+use crate::actor::IntentConfigActor;
 use crate::events::IntentConfigEvent;
 use crate::internal_messages::{InboundConfigChangeRequest, InboundGetConfigRequest};
 use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permissions::IntentConfigPermissions;
 use actix::prelude::*;
-use tokio::sync::broadcast::error::RecvError;
+use std::net::IpAddr;
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use zznet_api::PeerId;
 use zznet_room::RoomActor;
 
@@ -55,8 +57,8 @@ pub(crate) struct IntentConfigNetworkActor {
     /// Permissions of this peer (for authorization checks)
     permissions: IntentConfigPermissions,
 
-    /// Address of the NetworkManager (for inbound request forwarding)
-    manager: Addr<crate::network_manager::IntentConfigNetworkManager>,
+    /// Address of the MainActor for directly forwarding inbound messages
+    main_actor: Addr<IntentConfigActor>,
 
     /// Address of the RoomActor (for sending to peer)
     /// Optional, set via SetRoomActor message after creation
@@ -68,7 +70,7 @@ pub(crate) struct IntentConfigNetworkActor {
 
     /// Buffer for ConfigUpdate messages while room_actor is not yet set
     /// Used to handle startup race condition where messages arrive before SetRoomActor
-    pending_updates: Vec<(Vec<std::net::IpAddr>, u64)>,
+    pending_updates: Vec<(Vec<IpAddr>, u64)>,
 }
 
 impl IntentConfigNetworkActor {
@@ -78,16 +80,35 @@ impl IntentConfigNetworkActor {
     pub(crate) fn new(
         peer_id: PeerId,
         permissions: IntentConfigPermissions,
-        manager: Addr<crate::network_manager::IntentConfigNetworkManager>,
+        main_actor: Addr<IntentConfigActor>,
         event_rx: tokio::sync::broadcast::Receiver<IntentConfigEvent>,
     ) -> Self {
         Self {
             peer_id,
             permissions,
-            manager,
+            main_actor,
             room_actor: None,
             event_rx,
             pending_updates: Vec::new(),
+        }
+    }
+
+    fn publish_config_update(&mut self, targets: Vec<IpAddr>, ping_rate_pps: u64) {
+        if !self.permissions.can_read_config {
+            log::debug!(
+                "Peer {} not authorized to read config, skipping broadcast",
+                self.peer_id
+            );
+            return;
+        }
+
+        if let Some(room) = &self.room_actor {
+            room.do_send(IntentConfigNetworkMsg::ConfigUpdate {
+                targets,
+                ping_rate_pps,
+            });
+        } else {
+            self.pending_updates.push((targets, ping_rate_pps));
         }
     }
 }
@@ -101,46 +122,7 @@ impl Actor for IntentConfigNetworkActor {
             self.peer_id
         );
 
-        // Spawn event listener task
-        // Each NetworkActor subscribes to config change events
-        let mut rx = self.event_rx.resubscribe();
-        let peer_id = self.peer_id.clone();
-        let addr = ctx.address();
-
-        ctx.spawn(
-            async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(event) => {
-                            match event {
-                                IntentConfigEvent::ConfigChanged(config) => {
-                                    log::debug!("Peer {} received config change event", peer_id);
-                                    // Send to self to handle with room_actor check
-                                    addr.do_send(IntentConfigNetworkMsg::ConfigUpdate {
-                                        targets: config.targets,
-                                        ping_rate_pps: config.ping_rate_pps,
-                                    });
-                                }
-                            }
-                        }
-                        Err(RecvError::Lagged(skipped)) => {
-                            // Log lag but continue receiving updates
-                            log::warn!(
-                                "Peer {} lagged on config events, skipped {} updates",
-                                peer_id,
-                                skipped
-                            );
-                        }
-                        Err(RecvError::Closed) => {
-                            // Broadcast sender dropped, unsubscribe
-                            log::debug!("Event listener stopped for peer {}", peer_id);
-                            break;
-                        }
-                    }
-                }
-            }
-            .into_actor(self),
-        );
+        ctx.add_stream(BroadcastStream::new(self.event_rx.resubscribe()));
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -163,16 +145,39 @@ impl Handler<SetRoomActor> for IntentConfigNetworkActor {
         log::debug!("Setting room_actor for peer: {}", self.peer_id);
         self.room_actor = Some(msg.0.clone());
 
-        // Drain any pending messages that arrived before room_actor was set
-        for (targets, ping_rate_pps) in self.pending_updates.drain(..) {
-            if let Some(ref room) = self.room_actor {
-                log::debug!("Sending buffered config update to peer {}", self.peer_id);
-                room.do_send(IntentConfigNetworkMsg::ConfigUpdate {
-                    targets,
-                    ping_rate_pps,
-                });
+        let pending = std::mem::take(&mut self.pending_updates);
+        for (targets, ping_rate_pps) in pending {
+            log::debug!("Sending buffered config update to peer {}", self.peer_id);
+            self.publish_config_update(targets, ping_rate_pps);
+        }
+    }
+}
+
+impl StreamHandler<Result<IntentConfigEvent, BroadcastStreamRecvError>>
+    for IntentConfigNetworkActor
+{
+    fn handle(
+        &mut self,
+        item: Result<IntentConfigEvent, BroadcastStreamRecvError>,
+        _ctx: &mut Context<Self>,
+    ) {
+        match item {
+            Ok(IntentConfigEvent::ConfigChanged(config)) => {
+                log::debug!("Peer {} received config change event", self.peer_id);
+                self.publish_config_update(config.targets, config.ping_rate_pps);
+            }
+            Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                log::warn!(
+                    "Peer {} lagged on config events, skipped {} updates",
+                    self.peer_id,
+                    skipped
+                );
             }
         }
+    }
+
+    fn finished(&mut self, _ctx: &mut Context<Self>) {
+        log::debug!("Event stream finished for peer {}", self.peer_id);
     }
 }
 
@@ -196,18 +201,7 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigNetworkActor {
                 targets,
                 ping_rate_pps,
             } => {
-                if let Some(ref room) = self.room_actor {
-                    log::debug!("Sending config update to peer {}", self.peer_id);
-                    room.do_send(IntentConfigNetworkMsg::ConfigUpdate {
-                        targets,
-                        ping_rate_pps,
-                    });
-                } else {
-                    log::warn!(
-                        "Cannot send config update to peer {} - room_actor not yet set",
-                        self.peer_id
-                    );
-                }
+                self.publish_config_update(targets, ping_rate_pps);
             }
 
             IntentConfigNetworkMsg::RequestConfigChange {
@@ -237,8 +231,8 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigNetworkActor {
                     self.peer_id
                 );
 
-                // Translate to domain message and forward to Manager
-                self.manager.do_send(InboundConfigChangeRequest {
+                // Translate to domain message and forward directly to MainActor
+                self.main_actor.do_send(InboundConfigChangeRequest {
                     peer_id: PeerId::from(sender_peer_id.as_str()),
                     targets,
                     ping_rate_pps,
@@ -257,28 +251,31 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigNetworkActor {
                     return;
                 }
 
-                // Forward to Manager for processing
-                let manager = self.manager.clone();
+                // Forward directly to MainActor for processing
+                let main_actor = self.main_actor.clone();
                 let peer_id = self.peer_id.clone();
+                let room = self.room_actor.clone();
 
                 let fut = async move {
-                    let config = manager
+                    let config = main_actor
                         .send(InboundGetConfigRequest {
                             peer_id: peer_id.clone(),
                         })
                         .await;
 
                     match config {
-                        Ok(_config) => {
-                            log::debug!("Got config from Manager for peer: {}", peer_id);
-                            // CurrentConfig response deferred until Room<T> send API is available
-                            log::warn!(
-                                "CurrentConfig send not implemented - Room<T> integration pending"
-                            );
+                        Ok(current) => {
+                            log::debug!("Got config from MainActor for peer: {}", peer_id);
+                            if let Some(room) = room {
+                                room.do_send(IntentConfigNetworkMsg::CurrentConfig {
+                                    targets: current.targets,
+                                    ping_rate_pps: current.ping_rate_pps,
+                                });
+                            }
                         }
                         Err(e) => {
                             log::error!(
-                                "Failed to get config from Manager for peer {}: {}",
+                                "Failed to get config from MainActor for peer {}: {}",
                                 peer_id,
                                 e
                             );

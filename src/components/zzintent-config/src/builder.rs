@@ -123,6 +123,7 @@ impl IntentConfigBuilder {
             actor.get_config().persist_config
         );
 
+        let event_bus = actor.event_bus();
         let actor_addr = actor.start();
 
         if let Some(router_actor) = self.router_actor.take() {
@@ -136,6 +137,7 @@ impl IntentConfigBuilder {
             let _network_manager = crate::network_manager::IntentConfigNetworkManager::new(
                 actor_addr.clone(),
                 router_actor,
+                event_bus,
                 permissions_map,
             )
             .start();

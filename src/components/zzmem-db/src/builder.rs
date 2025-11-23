@@ -62,8 +62,10 @@ impl MemDBBuilder {
     ///
     /// Returns the address of the MainActor.
     pub fn build(self) -> Addr<MemDBActor> {
-        // Create and start the MainActor first
-        let actor_addr = MemDBActor::create(move |_ctx| MemDBActor::new(self.config));
+        // Instantiate the MainActor so we can clone its event bus before starting it
+        let actor = MemDBActor::new(self.config);
+        let event_bus = actor.event_bus();
+        let actor_addr = actor.start();
 
         // Create NetworkManager if we have RouterActor
         if let Some(router_actor) = self.router_actor {
@@ -72,6 +74,7 @@ impl MemDBBuilder {
             let network_manager = crate::network_manager::MemDBNetworkManager::new(
                 actor_addr.clone(),
                 router_actor,
+                event_bus,
                 self.permissions_map,
             );
 

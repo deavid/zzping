@@ -13,7 +13,7 @@ use crate::{
 };
 use actix::prelude::*;
 use log::debug;
-use tokio::sync::broadcast::error::RecvError;
+use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use zznet_api::PeerId;
 use zznet_room::RoomActor;
 
@@ -68,6 +68,40 @@ impl CStateNetworkActor {
             pending_heartbeats: Vec::new(),
         }
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn publish_heartbeat(
+        &mut self,
+        collector_id: String,
+        uptime_secs: u64,
+        pings_sent: u64,
+        pings_received: u64,
+        batches_sent: u64,
+        last_config_update_ms: u64,
+        connection_nonce: u64,
+    ) {
+        if let Some(room) = &self.room_actor {
+            room.do_send(CStateMessage::Heartbeat {
+                collector_id,
+                uptime_secs,
+                pings_sent,
+                pings_received,
+                batches_sent,
+                last_config_update_ms,
+                connection_nonce,
+            });
+        } else {
+            self.pending_heartbeats.push((
+                collector_id,
+                uptime_secs,
+                pings_sent,
+                pings_received,
+                batches_sent,
+                last_config_update_ms,
+                connection_nonce,
+            ));
+        }
+    }
 }
 
 impl Actor for CStateNetworkActor {
@@ -75,58 +109,7 @@ impl Actor for CStateNetworkActor {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         debug!("CStateNetworkActor started for peer: {:?}", self.peer_id);
-
-        // Spawn event listener task for heartbeat broadcasts
-        let mut rx = self.event_rx.resubscribe();
-        let peer_id = self.peer_id.clone();
-        let addr = ctx.address();
-
-        ctx.spawn(
-            async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(event) => {
-                            match event {
-                                CStateEvent::HeartbeatTick {
-                                    collector_id,
-                                    uptime_secs,
-                                    pings_sent,
-                                    pings_received,
-                                    batches_sent,
-                                    last_config_update_ms,
-                                    connection_nonce,
-                                } => {
-                                    debug!("Peer {} received heartbeat event", peer_id);
-                                    // Send to self to handle with room_actor check
-                                    addr.do_send(CStateMessage::Heartbeat {
-                                        collector_id,
-                                        uptime_secs,
-                                        pings_sent,
-                                        pings_received,
-                                        batches_sent,
-                                        last_config_update_ms,
-                                        connection_nonce,
-                                    });
-                                }
-                            }
-                        }
-                        Err(RecvError::Lagged(skipped)) => {
-                            // Log lag but continue receiving updates
-                            debug!(
-                                "Peer {} lagged on heartbeat events, skipped {} updates",
-                                peer_id, skipped
-                            );
-                        }
-                        Err(RecvError::Closed) => {
-                            // Broadcast sender dropped, unsubscribe
-                            debug!("Event listener stopped for peer {}", peer_id);
-                            break;
-                        }
-                    }
-                }
-            }
-            .into_actor(self),
-        );
+        ctx.add_stream(BroadcastStream::new(self.event_rx.resubscribe()));
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -146,7 +129,7 @@ impl Handler<SetRoomActor> for CStateNetworkActor {
         debug!("Setting room_actor for peer {}", self.peer_id);
         self.room_actor = Some(msg.0.clone());
 
-        // Drain any pending messages that arrived before room_actor was set
+        let pending = std::mem::take(&mut self.pending_heartbeats);
         for (
             collector_id,
             uptime_secs,
@@ -155,11 +138,40 @@ impl Handler<SetRoomActor> for CStateNetworkActor {
             batches_sent,
             last_config_update_ms,
             connection_nonce,
-        ) in self.pending_heartbeats.drain(..)
+        ) in pending
         {
-            if let Some(ref room) = self.room_actor {
-                debug!("Sending buffered heartbeat to peer {}", self.peer_id);
-                room.do_send(CStateMessage::Heartbeat {
+            debug!("Sending buffered heartbeat to peer {}", self.peer_id);
+            self.publish_heartbeat(
+                collector_id,
+                uptime_secs,
+                pings_sent,
+                pings_received,
+                batches_sent,
+                last_config_update_ms,
+                connection_nonce,
+            );
+        }
+    }
+}
+
+impl StreamHandler<Result<CStateEvent, BroadcastStreamRecvError>> for CStateNetworkActor {
+    fn handle(
+        &mut self,
+        item: Result<CStateEvent, BroadcastStreamRecvError>,
+        _ctx: &mut Context<Self>,
+    ) {
+        match item {
+            Ok(CStateEvent::HeartbeatTick {
+                collector_id,
+                uptime_secs,
+                pings_sent,
+                pings_received,
+                batches_sent,
+                last_config_update_ms,
+                connection_nonce,
+            }) => {
+                debug!("Peer {:?} received heartbeat tick", self.peer_id);
+                self.publish_heartbeat(
                     collector_id,
                     uptime_secs,
                     pings_sent,
@@ -167,9 +179,22 @@ impl Handler<SetRoomActor> for CStateNetworkActor {
                     batches_sent,
                     last_config_update_ms,
                     connection_nonce,
-                });
+                );
+            }
+            Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                debug!(
+                    "Peer {:?} lagged on heartbeat events, skipped {} updates",
+                    self.peer_id, skipped
+                );
             }
         }
+    }
+
+    fn finished(&mut self, _ctx: &mut Context<Self>) {
+        debug!(
+            "Heartbeat event stream finished for peer {:?}",
+            self.peer_id
+        );
     }
 }
 
@@ -200,26 +225,6 @@ impl Handler<CStateMessage> for CStateNetworkActor {
                 last_config_update_ms,
                 connection_nonce,
             } => {
-                // Buffer the heartbeat if the RoomActor is not yet wired.
-                if self.room_actor.is_none() {
-                    debug!(
-                        "Buffering heartbeat for peer {} (room_actor not yet set)",
-                        self.peer_id
-                    );
-                    self.pending_heartbeats.push((
-                        collector_id,
-                        uptime_secs,
-                        pings_sent,
-                        pings_received,
-                        batches_sent,
-                        last_config_update_ms,
-                        connection_nonce,
-                    ));
-                    return Box::pin(async move {
-                        // Return immediately, buffered message will be sent when room_actor is set
-                    });
-                }
-
                 // Enforce permission: only peers with can_send_heartbeat can send heartbeats
                 if !self.permissions.can_send_heartbeat {
                     debug!(

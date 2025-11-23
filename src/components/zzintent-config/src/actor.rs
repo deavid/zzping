@@ -2,6 +2,7 @@
 //! state and message handling logic.
 
 use crate::events::IntentConfigEvent;
+use crate::internal_messages::{InboundConfigChangeRequest, InboundGetConfigRequest};
 use crate::messages::{
     GetCurrentConfig, GetHealth, IntentConfigData, IntentConfigHealth, Subscribe, Unsubscribe,
     UpdateConfig,
@@ -268,29 +269,10 @@ impl Handler<crate::messages::GetEventBus> for IntentConfigActor {
     }
 }
 
-/// Handler for NetworkConfigChangeRequest from NetworkManager
-///
-/// This message is sent by NetworkManager after it has verified the peer's
-/// authorization to change the configuration. The MainActor is responsible for:
-/// 1. Validating the new configuration
-/// 2. Persisting to disk (Database role only)
-/// 3. Broadcasting to local subscribers
-/// 4. Requesting network broadcast via NetworkManager
-impl Handler<crate::internal_messages::NetworkConfigChangeRequest> for IntentConfigActor {
-    type Result = Result<(), String>;
+impl Handler<InboundConfigChangeRequest> for IntentConfigActor {
+    type Result = ();
 
-    fn handle(
-        &mut self,
-        msg: crate::internal_messages::NetworkConfigChangeRequest,
-        ctx: &mut Context<Self>,
-    ) -> Self::Result {
-        if !msg.authorized {
-            return Err(format!(
-                "Unauthorized config change request from peer {}",
-                msg.peer_id
-            ));
-        }
-
+    fn handle(&mut self, msg: InboundConfigChangeRequest, ctx: &mut Context<Self>) -> Self::Result {
         log::info!(
             "Processing authorized config change from peer {}: targets={:?}, rate={}",
             msg.peer_id,
@@ -306,15 +288,14 @@ impl Handler<crate::internal_messages::NetworkConfigChangeRequest> for IntentCon
 
         // Validate config
         if let Err(e) = new_config.validate() {
-            let error = format!("Invalid configuration: {}", e);
-            log::error!("{}", error);
-            return Err(error);
+            log::error!("Invalid configuration from peer {}: {}", msg.peer_id, e);
+            return;
         }
 
         // Check if config actually changed
         if new_config == self.current_config {
             log::info!("Config unchanged, no action needed");
-            return Ok(());
+            return;
         }
 
         // Update current config
@@ -322,9 +303,12 @@ impl Handler<crate::internal_messages::NetworkConfigChangeRequest> for IntentCon
 
         // Persist config (Database role only)
         if let Err(e) = self.persist_config() {
-            let error = format!("Failed to persist config: {}", e);
-            log::error!("{}", error);
-            return Err(error);
+            log::error!(
+                "Failed to persist config change from peer {}: {}",
+                msg.peer_id,
+                e
+            );
+            return;
         }
 
         // Broadcast to local subscribers
@@ -334,7 +318,15 @@ impl Handler<crate::internal_messages::NetworkConfigChangeRequest> for IntentCon
         self.send_config_update_to_peers(ctx);
 
         log::info!("Config change applied successfully");
-        Ok(())
+    }
+}
+
+impl Handler<InboundGetConfigRequest> for IntentConfigActor {
+    type Result = MessageResult<InboundGetConfigRequest>;
+
+    fn handle(&mut self, msg: InboundGetConfigRequest, _ctx: &mut Context<Self>) -> Self::Result {
+        log::debug!("Serving InboundGetConfigRequest for peer {}", msg.peer_id);
+        MessageResult(self.current_config.clone())
     }
 }
 

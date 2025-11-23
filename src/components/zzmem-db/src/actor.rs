@@ -4,6 +4,7 @@
 //! for in-memory ping result storage and querying.
 
 use crate::config::MemDBConfig;
+use crate::events::MemDBEvent;
 use crate::internal_messages::{
     InboundBatchAck, InboundQuery, InboundQueryResponse, InboundSubmitBatch,
 };
@@ -15,6 +16,7 @@ use crate::storage::StorageBackend;
 use actix::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::sync::broadcast;
 
 /// The MemDBActor handles ping result storage and querying.
 ///
@@ -39,8 +41,8 @@ pub struct MemDBActor {
     /// For Collector role: track the timestamp of the currently outstanding batch
     outstanding_batch: Option<u64>,
 
-    /// Reference to NetworkManager for sending batches to Database peers
-    network_manager: Option<Addr<crate::network_manager::MemDBNetworkManager>>,
+    /// Event bus for broadcasting outbound events to NetworkActors
+    event_tx: broadcast::Sender<MemDBEvent>,
 }
 
 impl Default for MemDBActor {
@@ -62,6 +64,8 @@ impl MemDBActor {
             None
         };
 
+        let (event_tx, _) = broadcast::channel(100);
+
         Self {
             config,
             storage,
@@ -70,16 +74,13 @@ impl MemDBActor {
             failed_batches: Arc::new(AtomicU64::new(0)),
             total_results: Arc::new(AtomicU64::new(0)),
             outstanding_batch: None,
-            network_manager: None,
+            event_tx,
         }
     }
 
-    /// Set the NetworkManager reference (called during startup by the framework)
-    pub fn set_network_manager(
-        &mut self,
-        manager: Addr<crate::network_manager::MemDBNetworkManager>,
-    ) {
-        self.network_manager = Some(manager);
+    /// Get the event bus sender so NetworkActors can subscribe.
+    pub fn event_bus(&self) -> broadcast::Sender<MemDBEvent> {
+        self.event_tx.clone()
     }
 
     /// Store a ping result (used by both roles)
@@ -119,29 +120,52 @@ impl MemDBActor {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        self.outstanding_batch = Some(timestamp_ms);
+        let results_count = results.len();
+        let event_payload = results.clone();
 
-        if let Some(ref manager) = self.network_manager {
-            let batch_msg = crate::internal_messages::BatchReadyToSend {
-                timestamp_ms,
-                results: results.clone(),
-            };
-            manager.do_send(batch_msg);
-            log::info!(
-                "Collector batch transmission initiated (timestamp: {}, results: {})",
-                timestamp_ms,
-                results.len()
-            );
-            self.successful_batches.fetch_add(1, Ordering::Relaxed);
-        } else {
-            log::warn!(
-                "Cannot send batch - NetworkManager not yet configured (timestamp: {})",
-                timestamp_ms
-            );
-            self.failed_batches.fetch_add(1, Ordering::Relaxed);
-            return Err(MemDBError::InternalError(
-                "NetworkManager not configured".to_string(),
-            ));
+        match self.event_tx.send(MemDBEvent::BatchReady {
+            timestamp_ms,
+            results: event_payload,
+        }) {
+            Ok(subscribers) if subscribers > 0 => {
+                self.outstanding_batch = Some(timestamp_ms);
+                log::info!(
+                    "Collector batch published (timestamp: {}, results: {}, subscribers: {})",
+                    timestamp_ms,
+                    results_count,
+                    subscribers
+                );
+                self.successful_batches.fetch_add(1, Ordering::Relaxed);
+            }
+            Ok(_) => {
+                // No live subscribers: re-buffer and signal backpressure so we retry later.
+                self.buffer = results;
+                log::warn!(
+                    "Batch publish skipped – no subscribers available (timestamp: {})",
+                    timestamp_ms
+                );
+                self.failed_batches.fetch_add(1, Ordering::Relaxed);
+                return Err(MemDBError::NetworkError(
+                    "No network subscribers available".to_string(),
+                ));
+            }
+            Err(err) => {
+                let reason = err.to_string();
+                let MemDBEvent::BatchReady {
+                    results: failed_results,
+                    ..
+                } = err.0;
+                self.buffer = failed_results;
+                self.failed_batches.fetch_add(1, Ordering::Relaxed);
+                log::warn!(
+                    "Failed to publish batch event (timestamp: {}): {}",
+                    timestamp_ms,
+                    reason
+                );
+                return Err(MemDBError::InternalError(
+                    "Event bus publish failed".to_string(),
+                ));
+            }
         }
 
         Ok(())

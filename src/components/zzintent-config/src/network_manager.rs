@@ -2,11 +2,8 @@
 //!
 //! The Manager actor in the three-actor pattern.
 
+use crate::actor::IntentConfigActor;
 use crate::events::IntentConfigEvent;
-use crate::internal_messages::{
-    InboundConfigChangeRequest, InboundGetConfigRequest, NetworkConfigChangeRequest,
-};
-use crate::messages::{GetCurrentConfig, IntentConfigData};
 use crate::network_actor::IntentConfigNetworkActor;
 use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permissions::IntentConfigPermissions;
@@ -21,7 +18,8 @@ use zznet_router::RouterActor;
 /// Replaces StandardRoomFactory to resolve circular dependency.
 /// Creates NetworkActor first, then RoomActor, then wires them via SetRoomActor.
 pub(crate) struct IntentConfigRoomFactory {
-    manager: Addr<IntentConfigNetworkManager>,
+    main_actor: Addr<IntentConfigActor>,
+    _manager: Addr<IntentConfigNetworkManager>,
     event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>,
     permissions_map: HashMap<String, IntentConfigPermissions>,
 }
@@ -34,12 +32,14 @@ impl IntentConfigRoomFactory {
     /// * `event_bus` - Event bus sender for broadcasting config changes
     /// * `permissions_map` - Map from role strings to permissions
     pub(crate) fn new(
+        main_actor: Addr<IntentConfigActor>,
         manager: Addr<IntentConfigNetworkManager>,
         event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>,
         permissions_map: HashMap<String, IntentConfigPermissions>,
     ) -> Self {
         Self {
-            manager,
+            main_actor,
+            _manager: manager,
             event_bus,
             permissions_map,
         }
@@ -76,8 +76,8 @@ impl zznet_router::RoomFactory for IntentConfigRoomFactory {
         let net = IntentConfigNetworkActor::new(
             peer_id.clone(),
             perms,
-            self.manager.clone(),
-            self.event_bus.subscribe(), // Each actor gets its own Receiver
+            self.main_actor.clone(),
+            self.event_bus.subscribe(),
         );
         let net_addr = net.start();
 
@@ -112,7 +112,7 @@ impl zznet_router::RoomFactory for IntentConfigRoomFactory {
 /// See `internal_messages.rs` for detailed message flow diagrams.
 pub(crate) struct IntentConfigNetworkManager {
     /// Address of the main business logic actor
-    main_actor: Addr<crate::actor::IntentConfigActor>,
+    main_actor: Addr<IntentConfigActor>,
     /// Event bus for broadcasting config changes to all NetworkActors
     event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>,
     /// RouterActor for data-plane message routing
@@ -135,17 +135,17 @@ impl Clone for IntentConfigNetworkManager {
 impl IntentConfigNetworkManager {
     /// Create a new NetworkManager tied to the provided IntentConfigActor.
     ///
-    /// The event_bus will be created with a default channel. After starting,
-    /// you should call update_event_bus() to set it to the MainActor's actual event_bus.
+    /// The caller must supply the MainActor's event bus so that NetworkActors
+    /// receive real-time config updates without extra wiring.
     pub(crate) fn new(
-        main_actor: Addr<crate::actor::IntentConfigActor>,
+        main_actor: Addr<IntentConfigActor>,
         router_actor: Addr<RouterActor>,
+        event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>,
         permissions_map: HashMap<String, IntentConfigPermissions>,
     ) -> Self {
-        let (event_tx, _) = tokio::sync::broadcast::channel(100);
         Self {
             main_actor,
-            event_bus: event_tx,
+            event_bus,
             router_actor,
             permissions_map,
         }
@@ -164,6 +164,7 @@ impl Actor for IntentConfigNetworkManager {
 
         // Register with router using custom factory
         let factory = std::sync::Arc::new(IntentConfigRoomFactory::new(
+            self.main_actor.clone(),
             ctx.address(),
             self.event_bus.clone(),
             self.permissions_map.clone(),
@@ -180,72 +181,5 @@ impl Actor for IntentConfigNetworkManager {
         log::info!("IntentConfigNetworkManager stopped");
 
         // Actors will be automatically stopped when dropped
-    }
-}
-
-// ============================================================================
-// Handler: InboundConfigChangeRequest (from NetworkActor)
-// ============================================================================
-
-impl Handler<InboundConfigChangeRequest> for IntentConfigNetworkManager {
-    type Result = ();
-
-    fn handle(
-        &mut self,
-        msg: InboundConfigChangeRequest,
-        _ctx: &mut Self::Context,
-    ) -> Self::Result {
-        log::info!("Received config change request from peer: {}", msg.peer_id);
-
-        // Authorization is now handled by NetworkActor (has the Role)
-        // If we receive this message, the peer is already authorized
-
-        let auth_request = NetworkConfigChangeRequest {
-            peer_id: msg.peer_id,
-            targets: msg.targets,
-            ping_rate_pps: msg.ping_rate_pps,
-            authorized: true,
-        };
-
-        if let Err(e) = self.main_actor.try_send(auth_request) {
-            log::error!(
-                "Failed to forward config change request to main actor: {}",
-                e
-            );
-        }
-    }
-}
-
-// ============================================================================
-// Handler: InboundGetConfigRequest (from NetworkActor)
-// ============================================================================
-
-impl Handler<InboundGetConfigRequest> for IntentConfigNetworkManager {
-    type Result = ResponseFuture<IntentConfigData>;
-
-    fn handle(&mut self, msg: InboundGetConfigRequest, _ctx: &mut Self::Context) -> Self::Result {
-        log::debug!("Received GetConfig request from peer: {}", msg.peer_id);
-
-        let main_actor = self.main_actor.clone();
-
-        Box::pin(async move {
-            let result = main_actor.send(GetCurrentConfig).await;
-
-            match result {
-                Ok(config) => {
-                    log::debug!("Returning config to peer: {}", msg.peer_id);
-                    config
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to get config from MainActor for peer {}: {}",
-                        msg.peer_id,
-                        e
-                    );
-                    // Return default config on error
-                    IntentConfigData::default()
-                }
-            }
-        })
     }
 }
