@@ -1,9 +1,10 @@
 //! `ZZNetApplication` implementation for the demo application.
 use crate::{
-    component_a::{ComponentAActor, ComponentANetworkManager, ComponentAPermissions},
+    component_a::{ComponentAActor, ComponentAPermissions},
+    component_a_spec::ComponentASpec,
     component_b::ComponentBActor,
     config::DemoAppConfig,
-    messages::{SetComponentA, SetNetworkManager, StateUpdate, Subscribe},
+    messages::{SetComponentA, StateUpdate, Subscribe},
 };
 use actix::prelude::*;
 use anyhow::Result;
@@ -62,13 +63,21 @@ impl DemoAppService {
         component_a_permissions
             .insert("database".to_string(), ComponentAPermissions::full_access());
 
-        let network_manager = ComponentANetworkManager::new(
-            component_a.clone(),
-            router.clone(),
-            component_a_permissions,
-        )
-        .start();
-        component_a.do_send(SetNetworkManager { network_manager });
+        // Get event bus from ComponentAActor via message
+        let component_a_clone = component_a.clone();
+        let router_clone = router.clone();
+        actix::spawn(async move {
+            if let Ok(event_bus) = component_a_clone.send(crate::messages::GetEventBus).await {
+                let _network_manager =
+                    zznet_component::GenericNetworkManager::<ComponentASpec>::new(
+                        component_a_clone,
+                        router_clone,
+                        event_bus,
+                        component_a_permissions,
+                    )
+                    .start();
+            }
+        });
 
         let component_b = if config.include_component_b {
             let comp_b = ComponentBActor::new().start();

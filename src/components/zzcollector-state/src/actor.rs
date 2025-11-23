@@ -7,7 +7,7 @@
 //! - Timer-based operations
 //!
 //! Network concerns are handled by:
-//! - CStateNetworkManager (peer lifecycle orchestration)
+//! - GenericNetworkManager (peer lifecycle orchestration)
 //! - CStateNetworkActor (per-peer protocol translation)
 
 use crate::{

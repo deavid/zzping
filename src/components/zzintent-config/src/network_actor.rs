@@ -18,17 +18,6 @@ use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 use zznet_api::PeerId;
 use zznet_room::RoomActor;
 
-/// Message to set the room_actor address after NetworkActor creation
-///
-/// Used to resolve circular dependency in factory.
-/// Factory creates NetworkActor first, then RoomActor, then wires them together.
-#[derive(Clone)]
-pub(crate) struct SetRoomActor(pub Addr<RoomActor<IntentConfigNetworkMsg>>);
-
-impl Message for SetRoomActor {
-    type Result = ();
-}
-
 /// IntentConfigNetworkActor - Handles protocol translation for one peer
 ///
 /// This actor exists for the lifetime of a peer connection and handles
@@ -138,10 +127,10 @@ impl Actor for IntentConfigNetworkActor {
 // Handler: SetRoomActor (from Factory)
 // ============================================================================
 
-impl Handler<SetRoomActor> for IntentConfigNetworkActor {
+impl Handler<zznet_component::SetRoomActor<IntentConfigNetworkMsg>> for IntentConfigNetworkActor {
     type Result = ();
 
-    fn handle(&mut self, msg: SetRoomActor, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: zznet_component::SetRoomActor<IntentConfigNetworkMsg>, _ctx: &mut Self::Context) -> Self::Result {
         log::debug!("Setting room_actor for peer: {}", self.peer_id);
         self.room_actor = Some(msg.0.clone());
 

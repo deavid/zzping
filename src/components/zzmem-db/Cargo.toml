@@ -27,6 +27,7 @@ log.workspace = true
 async-trait.workspace = true
 
 zznet-api.workspace = true
+zznet-component.workspace = true
 zznet-room.workspace = true
 zznet-router.workspace = true
 

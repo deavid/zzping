@@ -49,17 +49,6 @@ pub mod permissions {
 
 pub use permissions::ComponentAPermissions;
 
-/// Message to set the room_actor address after NetworkActor creation
-///
-/// Used to resolve circular dependency in factory.
-/// Factory creates NetworkActor first, then RoomActor, then wires them together.
-#[derive(Clone)]
-pub struct SetRoomActor(pub Addr<zznet_room::RoomActor<ComponentAMessage>>);
-
-impl Message for SetRoomActor {
-    type Result = ();
-}
-
 /// Internal message to send ping to room
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -91,80 +80,11 @@ impl Handler<SendPongToRoom> for ComponentANetworkActor {
 }
 
 use crate::messages::{
-    ComponentAMessage, GetCounter, PublishToA, SendPing, SetNetworkManager, StateUpdate, Subscribe,
+    ComponentAMessage, GetCounter, PublishToA, SendPing, StateUpdate, Subscribe,
 };
 use actix::prelude::*;
-use std::collections::HashMap;
 use tracing::info;
 use zznet_api::PeerId;
-use zznet_router::RegisterManager;
-
-/// Custom factory for ComponentA that wires NetworkActor with RoomActor
-///
-/// Replaces StandardRoomFactory to properly wire NetworkActor with RoomActor via SetRoomActor.
-pub struct ComponentARoomFactory {
-    main_actor: Addr<ComponentAActor>,
-    permissions_map: HashMap<String, ComponentAPermissions>,
-}
-
-impl ComponentARoomFactory {
-    /// Create a new ComponentARoomFactory
-    pub fn new(
-        _manager: Addr<ComponentANetworkManager>,
-        main_actor: Addr<ComponentAActor>,
-        permissions_map: HashMap<String, ComponentAPermissions>,
-    ) -> Self {
-        Self {
-            main_actor,
-            permissions_map,
-        }
-    }
-}
-
-impl zznet_router::RoomFactory for ComponentARoomFactory {
-    fn create_room(
-        &self,
-        peer_id: PeerId,
-        role: zznet_api::Role,
-        room_id: zznet_api::RoomId,
-        transport_tx: tokio::sync::mpsc::Sender<zznet_api::TransportFrame>,
-    ) -> Result<Option<zznet_room::RoomInboundRecipient>, String> {
-        // Check if this is our room
-        if room_id.as_str() != "room-a" {
-            return Ok(None);
-        }
-
-        tracing::debug!(
-            "Creating room for peer {} with role {}",
-            peer_id,
-            role.as_str()
-        );
-
-        // Lookup permissions
-        let perms = self
-            .permissions_map
-            .get(role.as_str())
-            .cloned()
-            .unwrap_or_default();
-
-        // Create NetworkActor
-        let net = ComponentANetworkActor::new(peer_id.clone(), perms, self.main_actor.clone());
-        let net_addr = net.start();
-
-        // Create RoomActor
-        let room = zznet_room::RoomActor::new(
-            room_id,
-            transport_tx,
-            net_addr.clone().recipient::<ComponentAMessage>(),
-        );
-        let room_addr = room.start();
-
-        // Wire them together via SetRoomActor message
-        net_addr.do_send(SetRoomActor(room_addr.clone()));
-
-        Ok(Some(room_addr.recipient()))
-    }
-}
 
 /// MainActor for ComponentA - handles business logic and local subscriptions.
 #[derive(Debug)]
@@ -175,8 +95,6 @@ pub struct ComponentAActor {
     data: String,
     /// Local subscribers to state updates
     subscribers: Vec<Recipient<StateUpdate>>,
-    /// NetworkManager for sending network messages
-    network_manager: Option<Addr<ComponentANetworkManager>>,
     /// Event bus sender for broadcasting state changes
     event_tx: tokio::sync::broadcast::Sender<crate::messages::ComponentAEvent>,
 }
@@ -195,14 +113,8 @@ impl ComponentAActor {
             counter: 0,
             data: String::new(),
             subscribers: Vec::new(),
-            network_manager: None,
             event_tx,
         }
-    }
-
-    /// Set the network manager address
-    pub fn set_network_manager(&mut self, addr: Addr<ComponentANetworkManager>) {
-        self.network_manager = Some(addr);
     }
 
     /// Send a pong message over the network
@@ -329,62 +241,6 @@ impl Handler<crate::messages::GetEventBus> for ComponentAActor {
     }
 }
 
-impl Handler<SetNetworkManager> for ComponentAActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: SetNetworkManager, _ctx: &mut Self::Context) -> Self::Result {
-        self.set_network_manager(msg.network_manager);
-    }
-}
-
-/// NetworkManager for ComponentA - orchestrates peer lifecycle and message routing.
-#[derive(Clone)]
-pub struct ComponentANetworkManager {
-    /// Address of the main actor
-    main_actor: Addr<ComponentAActor>,
-    /// Router for room registration
-    router: Addr<zznet_router::RouterActor>,
-    /// Policy map from role strings to component-specific permissions
-    permissions_map: HashMap<String, ComponentAPermissions>,
-}
-
-impl ComponentANetworkManager {
-    /// Create a new NetworkManager
-    pub fn new(
-        main_actor: Addr<ComponentAActor>,
-        router: Addr<zznet_router::RouterActor>,
-        permissions_map: HashMap<String, ComponentAPermissions>,
-    ) -> Self {
-        Self {
-            main_actor,
-            router,
-            permissions_map,
-        }
-    }
-}
-
-impl Actor for ComponentANetworkManager {
-    type Context = Context<Self>;
-
-    fn started(&mut self, ctx: &mut Self::Context) {
-        tracing::debug!("ComponentANetworkManager started");
-
-        // Register with router using the custom ComponentARoomFactory
-        let factory = std::sync::Arc::new(ComponentARoomFactory::new(
-            ctx.address(),
-            self.main_actor.clone(),
-            self.permissions_map.clone(),
-        ));
-        let rooms = vec![zznet_api::RoomId::from("room-a")];
-        let register_msg = RegisterManager { factory, rooms };
-        self.router.do_send(register_msg);
-    }
-
-    fn stopped(&mut self, _ctx: &mut Self::Context) {
-        tracing::debug!("ComponentANetworkManager stopped");
-    }
-}
-
 /// NetworkActor for ComponentA - handles per-peer protocol translation.
 pub struct ComponentANetworkActor {
     /// Peer this actor handles
@@ -403,6 +259,7 @@ impl ComponentANetworkActor {
         peer_id: PeerId,
         permissions: ComponentAPermissions,
         main_actor: Addr<ComponentAActor>,
+        _event_rx: tokio::sync::broadcast::Receiver<crate::messages::ComponentAEvent>,
     ) -> Self {
         Self {
             peer_id,
@@ -452,10 +309,14 @@ impl Actor for ComponentANetworkActor {
     }
 }
 
-impl Handler<SetRoomActor> for ComponentANetworkActor {
+impl Handler<zznet_component::SetRoomActor<ComponentAMessage>> for ComponentANetworkActor {
     type Result = ();
 
-    fn handle(&mut self, msg: SetRoomActor, _ctx: &mut Self::Context) {
+    fn handle(
+        &mut self,
+        msg: zznet_component::SetRoomActor<ComponentAMessage>,
+        _ctx: &mut Self::Context,
+    ) {
         self.room_actor = Some(msg.0);
     }
 }

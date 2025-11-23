@@ -59,7 +59,7 @@ impl IntentConfigBuilder {
 
     /// Set the RouterActor for data-plane operations.
     ///
-    /// This is required for the IntentConfigNetworkManager to communicate
+    /// This is required for the GenericNetworkManager to communicate
     /// with peers for configuration updates.
     pub fn router(mut self, router_actor: Addr<RouterActor>) -> Self {
         self.router_actor = Some(router_actor);
@@ -97,10 +97,10 @@ impl IntentConfigBuilder {
     ///
     /// Builds the three-actor system:
     /// - IntentConfigActor (Main Actor - business logic)
-    /// - IntentConfigNetworkManager (Manager Actor - peer lifecycle)
+    /// - GenericNetworkManager (Manager Actor - peer lifecycle, using generic machinery)
     /// - IntentConfigNetworkActor (Per-peer translator, created by Manager)
     ///
-    /// NetworkManager also owns the RoomActor<T> instances that serialize messages
+    /// The GenericNetworkManager owns the RoomActor<T> instances that serialize messages
     /// for each peer and wires them to the translators.
     ///
     /// # Errors
@@ -127,22 +127,21 @@ impl IntentConfigBuilder {
         let actor_addr = actor.start();
 
         if let Some(router_actor) = self.router_actor.take() {
-            log::info!("Creating IntentConfigNetworkManager for three-actor pattern");
+            log::info!("Creating GenericNetworkManager for three-actor pattern");
 
             let permissions_map = self.permissions_map.take().unwrap_or_else(|| {
                 log::warn!("No permissions_map provided - all peer connections will be denied");
                 HashMap::new()
             });
 
-            let _network_manager = crate::network_manager::IntentConfigNetworkManager::new(
-                actor_addr.clone(),
-                router_actor,
-                event_bus,
-                permissions_map,
+            let _network_manager = zznet_component::GenericNetworkManager::<
+                crate::spec::IntentConfigSpec,
+            >::new(
+                actor_addr.clone(), router_actor, event_bus, permissions_map
             )
             .start();
 
-            log::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
+            log::info!("✓ Three-actor system initialized (MainActor + GenericNetworkManager)");
         } else {
             log::debug!("No Router - NetworkManager not created (standalone mode)");
         }

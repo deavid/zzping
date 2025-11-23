@@ -1,0 +1,23 @@
+[package]
+name = "zznet-component"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+# Workspace-wide linting
+[lints]
+workspace = true
+
+[dependencies]
+actix = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+log = { workspace = true }
+
+# Network infrastructure
+zznet-api = { workspace = true }
+zznet-room = { workspace = true }
+zznet-router = { workspace = true }

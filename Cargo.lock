@@ -2208,6 +2208,7 @@ dependencies = [
  "tracing",
  "uuid",
  "zznet-api",
+ "zznet-component",
  "zznet-room",
  "zznet-router",
 ]
@@ -2229,6 +2230,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "zznet-api",
+ "zznet-component",
  "zznet-room",
  "zznet-router",
 ]
@@ -2249,6 +2251,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "zznet-api",
+ "zznet-component",
  "zznet-room",
  "zznet-router",
 ]
@@ -2264,6 +2267,19 @@ dependencies = [
  "serde",
  "thiserror 2.0.17",
  "tokio",
+]
+
+[[package]]
+name = "zznet-component"
+version = "0.3.0-dev"
+dependencies = [
+ "actix",
+ "log",
+ "tokio",
+ "tracing",
+ "zznet-api",
+ "zznet-room",
+ "zznet-router",
 ]
 
 [[package]]
@@ -2285,6 +2301,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "zznet-api",
+ "zznet-component",
  "zznet-hello",
  "zznet-room",
  "zznet-router",

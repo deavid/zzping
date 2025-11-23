@@ -2,7 +2,7 @@
 //!
 //! These messages are used for communication between:
 //! - CStateActor (MainActor) - Business logic
-//! - CStateNetworkManager - Peer lifecycle orchestration
+//! - GenericNetworkManager - Peer lifecycle orchestration
 //! - CStateNetworkActor - Per-peer protocol translation
 //!
 //! These are INTERNAL messages and are NOT sent over the network.

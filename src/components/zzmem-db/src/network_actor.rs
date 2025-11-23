@@ -28,14 +28,6 @@ use crate::events::MemDBEvent;
 use crate::network_messages::{MemDBMessage, PingResult};
 use crate::permissions::MemDBPermissions;
 
-/// Message to set the room_actor address after NetworkActor creation.
-#[derive(Clone)]
-pub(crate) struct SetRoomActor(pub Addr<RoomActor<MemDBMessage>>);
-
-impl Message for SetRoomActor {
-    type Result = ();
-}
-
 /// NetworkActor handles protocol translation for a single peer.
 ///
 /// One NetworkActor is created per connected peer. It:
@@ -123,10 +115,14 @@ impl Actor for MemDBNetworkActor {
 // Room wiring
 // ============================================================================
 
-impl Handler<SetRoomActor> for MemDBNetworkActor {
+impl Handler<zznet_component::SetRoomActor<MemDBMessage>> for MemDBNetworkActor {
     type Result = ();
 
-    fn handle(&mut self, msg: SetRoomActor, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(
+        &mut self,
+        msg: zznet_component::SetRoomActor<MemDBMessage>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
         self.room_actor = Some(msg.0.clone());
 
         let pending = std::mem::take(&mut self.pending_batches);

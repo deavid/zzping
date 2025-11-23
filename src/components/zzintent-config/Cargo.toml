@@ -28,6 +28,7 @@ ron = { workspace = true }
 rmp-serde = { workspace = true }
 
 # Network infrastructure
+zznet-component = { workspace = true }
 zznet-room = { workspace = true }
 zznet-router = { workspace = true }
 zznet-api = { workspace = true }

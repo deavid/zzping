@@ -2,7 +2,7 @@
 //!
 //! This builder creates the three-actor system:
 //! 1. MemDBActor (MainActor - business logic)
-//! 2. MemDBNetworkManager (Manager - peer lifecycle and routing)
+//! 2. GenericNetworkManager (Manager - peer lifecycle and routing)
 //! 3. MemDBNetworkActor (per-peer, created by Manager)
 
 use crate::{actor::MemDBActor, config::MemDBConfig, permissions::MemDBPermissions};
@@ -57,7 +57,7 @@ impl MemDBBuilder {
     ///
     /// This creates the complete three-actor system:
     /// - MemDBActor (business logic, zero network dependencies)
-    /// - MemDBNetworkManager (orchestrates peer lifecycle)
+    /// - GenericNetworkManager (orchestrates peer lifecycle)
     /// - MemDBNetworkActor instances (created per peer by NetworkManager)
     ///
     /// Returns the address of the MainActor.
@@ -69,18 +69,18 @@ impl MemDBBuilder {
 
         // Create NetworkManager if we have RouterActor
         if let Some(router_actor) = self.router_actor {
-            tracing::info!("Creating MemDBNetworkManager for three-actor pattern");
+            tracing::info!("Creating GenericNetworkManager for three-actor pattern");
 
-            let network_manager = crate::network_manager::MemDBNetworkManager::new(
-                actor_addr.clone(),
-                router_actor,
-                event_bus,
-                self.permissions_map,
-            );
+            let _network_manager =
+                zznet_component::GenericNetworkManager::<crate::spec::MemDBSpec>::new(
+                    actor_addr.clone(),
+                    router_actor,
+                    event_bus,
+                    self.permissions_map,
+                )
+                .start();
 
-            let _network_manager = network_manager.start();
-
-            tracing::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
+            tracing::info!("✓ Three-actor system initialized (MainActor + GenericNetworkManager)");
         } else {
             tracing::debug!("No Router - NetworkManager not created (standalone mode)");
         }

@@ -2,7 +2,7 @@
 //!
 //! This module defines the messages used for communication between:
 //! - MainActor (MemDBActor): Pure business logic
-//! - NetworkManager (MemDBNetworkManager): Peer lifecycle and routing
+//! - NetworkManager (GenericNetworkManager): Peer lifecycle and routing
 //! - NetworkActor (MemDBNetworkActor): Per-peer protocol translation
 //!
 //! ## Message Flow

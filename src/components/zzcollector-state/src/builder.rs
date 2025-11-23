@@ -2,7 +2,7 @@
 //!
 //! This builder creates the three-actor system:
 //! 1. CStateActor (MainActor - business logic)
-//! 2. CStateNetworkManager (Manager - peer lifecycle and routing)
+//! 2. GenericNetworkManager (Manager - peer lifecycle and routing)
 //! 3. CStateNetworkActor (per-peer, created by Manager)
 
 use crate::{actor::CStateActor, config::CStateConfig, permissions::CStatePermissions};
@@ -55,7 +55,7 @@ impl CStateBuilder {
     ///
     /// This creates the complete three-actor system:
     /// - CStateActor (business logic, zero network dependencies)
-    /// - CStateNetworkManager (orchestrates peer lifecycle)
+    /// - GenericNetworkManager (orchestrates peer lifecycle)
     /// - CStateNetworkActor instances (created per peer by NetworkManager)
     ///
     /// Returns the address of the MainActor.
@@ -70,24 +70,23 @@ impl CStateBuilder {
 
         // Create NetworkManager if we have RouterActor
         if let Some(router_actor) = self.router_actor {
-            log::info!("Creating CStateNetworkManager for three-actor pattern");
+            log::info!("Creating GenericNetworkManager for three-actor pattern");
 
             let permissions_map = self.permissions_map.unwrap_or_else(|| {
                 log::warn!("No permissions_map provided - all peer connections will be denied");
                 HashMap::new()
             });
 
-            // Pass event_bus from MainActor to NetworkManager
-            let network_manager = crate::network_manager::CStateNetworkManager::new(
-                actor_addr.clone(),
-                router_actor,
-                event_bus,
-                permissions_map,
-            );
+            let _network_manager =
+                zznet_component::GenericNetworkManager::<crate::spec::CStateSpec>::new(
+                    actor_addr.clone(),
+                    router_actor,
+                    event_bus,
+                    permissions_map,
+                )
+                .start();
 
-            let _network_manager = network_manager.start();
-
-            log::info!("✓ Three-actor system initialized (MainActor + NetworkManager)");
+            log::info!("✓ Three-actor system initialized (MainActor + GenericNetworkManager)");
         } else {
             log::debug!("No Router - NetworkManager not created (standalone mode)");
         }

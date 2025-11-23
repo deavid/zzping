@@ -7,8 +7,6 @@ use serde::{Deserialize, Serialize};
 use zznet_api::RoomId;
 use zznet_room::{DeserializationError, RoomMessageTrait, SerializationError};
 
-use crate::component_a::ComponentANetworkManager;
-
 /// Enum for messages handled by ComponentA's RoomActor.
 /// These messages are sent over the network.
 #[derive(Serialize, Deserialize, Message, Debug, Clone)]
@@ -75,7 +73,8 @@ pub struct StateUpdate {
 }
 
 /// Event for ComponentA state changes
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Message)]
+#[rtype(result = "()")]
 pub enum ComponentAEvent {
     /// State changed with new counter and data
     StateChanged {
@@ -117,12 +116,4 @@ pub struct Subscribe {
 pub struct SetComponentA {
     /// The address of the ComponentA actor.
     pub component_a: Addr<crate::component_a::ComponentAActor>,
-}
-
-/// A message to set the address of the NetworkManager in ComponentA.
-#[derive(Message, Clone)]
-#[rtype(result = "()")]
-pub struct SetNetworkManager {
-    /// The address of the ComponentANetworkManager actor.
-    pub network_manager: Addr<ComponentANetworkManager>,
 }
