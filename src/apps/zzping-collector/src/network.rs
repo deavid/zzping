@@ -1,14 +1,29 @@
 //! Manages outgoing client connections to a remote zznet server.
 
-use crate::service::StartedComponents;
 use actix::Actor;
 use std::time::Duration;
+use zzintent_config::actor::IntentConfigActor;
+use zzmem_db::actor::MemDBActor;
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportClient;
 use zznet_hello::actor::HelloConfig;
 use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
+use zznet_router::RouterActor;
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
+use zzpinger::scheduler::PingerSchedulerActor;
+
+/// Started components (running actors)
+pub struct StartedComponents {
+    /// Address of the running IntentConfig actor.
+    pub intent_config: actix::Addr<IntentConfigActor>,
+    /// Address of the running Pinger scheduler actor.
+    pub pinger: actix::Addr<PingerSchedulerActor>,
+    /// Address of the running MemDB actor.
+    pub memdb_addr: actix::Addr<MemDBActor>,
+    /// RouterActor for data-plane message routing.
+    pub router_actor: actix::Addr<RouterActor>,
+}
 
 /// Network initialization and operation errors.
 #[derive(Debug, thiserror::Error)]

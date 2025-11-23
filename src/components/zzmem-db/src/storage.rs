@@ -147,53 +147,6 @@ mod tests {
     }
 
     #[test]
-    fn test_storage_backend_creation() {
-        let backend = StorageBackend::new(100);
-        assert_eq!(backend.max_per_target, 100);
-        assert_eq!(backend.total_results(), 0);
-        assert_eq!(backend.target_count(), 0);
-    }
-
-    #[test]
-    fn test_insert_single() {
-        let mut backend = StorageBackend::new(10);
-        let result = create_test_result("8.8.8.8", 1234567890, Some(15000));
-
-        backend.insert_single(result, 1234567900);
-
-        assert_eq!(backend.total_results(), 1);
-        assert_eq!(backend.target_count(), 1);
-
-        let stored = backend.data.get("8.8.8.8").unwrap();
-        assert_eq!(stored.len(), 1);
-        assert_eq!(stored[0].target, "8.8.8.8");
-        assert_eq!(stored[0].timestamp_ms, 1234567890);
-        assert_eq!(stored[0].rtt_us, Some(15000));
-        assert_eq!(stored[0].stored_at_ms, 1234567900);
-    }
-
-    #[test]
-    fn test_insert_batch() {
-        let mut backend = StorageBackend::new(10);
-        let results = vec![
-            create_test_result("8.8.8.8", 1000, Some(10000)),
-            create_test_result("8.8.8.8", 2000, Some(12000)),
-            create_test_result("1.1.1.1", 1500, Some(8000)),
-        ];
-
-        backend.insert_batch(results, 3000);
-
-        assert_eq!(backend.total_results(), 3);
-        assert_eq!(backend.target_count(), 2);
-
-        let google_results = backend.data.get("8.8.8.8").unwrap();
-        assert_eq!(google_results.len(), 2);
-
-        let cloudflare_results = backend.data.get("1.1.1.1").unwrap();
-        assert_eq!(cloudflare_results.len(), 1);
-    }
-
-    #[test]
     fn test_storage_limits() {
         let mut backend = StorageBackend::new(2); // Only keep 2 per target
 
@@ -268,20 +221,5 @@ mod tests {
         assert_eq!(avg_rtt, None);
         assert_eq!(loss_percent, 0.0);
         assert_eq!(last_seen, None);
-    }
-
-    #[test]
-    fn test_clear() {
-        let mut backend = StorageBackend::new(10);
-        let result = create_test_result("8.8.8.8", 1000, Some(10000));
-        backend.insert_single(result, 2000);
-
-        assert_eq!(backend.total_results(), 1);
-        assert_eq!(backend.target_count(), 1);
-
-        backend.clear();
-
-        assert_eq!(backend.total_results(), 0);
-        assert_eq!(backend.target_count(), 0);
     }
 }

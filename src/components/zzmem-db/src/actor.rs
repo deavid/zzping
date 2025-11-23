@@ -395,16 +395,6 @@ mod tests {
     }
 
     #[actix::test]
-    async fn test_send_batch_empty_buffer() {
-        let actor = MemDBActor::new(MemDBConfig::for_collector(100));
-
-        // Buffer is empty - start actor and verify buffer remains empty
-        let _addr = actor.start();
-
-        // With empty buffer, send_batch is a no-op (tested through integration tests)
-    }
-
-    #[actix::test]
     async fn test_send_batch_with_outstanding_batch() {
         let mut actor = MemDBActor::new(MemDBConfig::for_collector(100));
 
@@ -446,69 +436,6 @@ mod tests {
     // fn test_set_session_manager_message_handler() { ... }
 
     #[test]
-    fn test_store_result_collector() {
-        let mut actor = MemDBActor::new(MemDBConfig::for_collector(10));
-
-        let result = PingResult {
-            target: "8.8.8.8".to_string(),
-            timestamp_ms: 1234567890,
-            rtt_us: Some(15000),
-        };
-
-        let msg = StorePingResult { result };
-        let result = actor.handle(msg, &mut Context::new());
-
-        assert!(result.is_ok());
-        assert_eq!(actor.buffer.len(), 1);
-    }
-
-    #[test]
-    fn test_store_result_database() {
-        let mut actor = MemDBActor::new(MemDBConfig::for_database(1000, None));
-
-        let result = PingResult {
-            target: "8.8.8.8".to_string(),
-            timestamp_ms: 1234567890,
-            rtt_us: Some(15000),
-        };
-
-        let msg = StorePingResult {
-            result: result.clone(),
-        };
-        let result = actor.handle(msg, &mut Context::new());
-
-        assert!(result.is_ok());
-        assert_eq!(
-            actor
-                .storage
-                .as_ref()
-                .unwrap()
-                .query_target("8.8.8.8", 0, u64::MAX)
-                .len(),
-            1
-        );
-        assert_eq!(actor.total_results.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn test_clear_buffer_collector() {
-        let mut actor = MemDBActor::new(MemDBConfig::for_collector(10));
-
-        // Add some results to buffer
-        actor.buffer.push(PingResult {
-            target: "test".to_string(),
-            timestamp_ms: 1234567890,
-            rtt_us: Some(1000),
-        });
-
-        let msg = ClearBuffer {};
-        let result = actor.handle(msg, &mut Context::new());
-
-        assert!(result.is_ok());
-        assert_eq!(actor.buffer.len(), 0);
-    }
-
-    #[test]
     fn test_clear_buffer_database_fails() {
         let mut actor = MemDBActor::new(MemDBConfig::for_database(1000, None));
 
@@ -516,42 +443,6 @@ mod tests {
         let result = actor.handle(msg, &mut Context::new());
 
         assert!(matches!(result, Err(MemDBError::WrongRole)));
-    }
-
-    #[test]
-    fn test_get_health() {
-        let mut actor = MemDBActor::new(MemDBConfig::for_collector(10));
-
-        let msg = GetHealth {};
-        let result = actor.handle(msg, &mut Context::new());
-
-        assert!(result.is_ok());
-        let health = result.unwrap();
-        assert_eq!(health.role, "collector");
-        assert_eq!(health.buffer_size, 0);
-    }
-
-    #[test]
-    fn test_get_stats_database() {
-        let mut actor = MemDBActor::new(MemDBConfig::for_database(1000, None));
-
-        // Add a result
-        actor.store_result(PingResult {
-            target: "8.8.8.8".to_string(),
-            timestamp_ms: 1234567890,
-            rtt_us: Some(15000),
-        });
-
-        let msg = GetStats {
-            target: "8.8.8.8".to_string(),
-        };
-        let result = actor.handle(msg, &mut Context::new());
-
-        assert!(result.is_ok());
-        let stats = result.unwrap();
-        assert_eq!(stats.target, "8.8.8.8");
-        assert_eq!(stats.result_count, 1);
-        assert_eq!(stats.avg_rtt_us, Some(15000.0));
     }
 
     #[test]

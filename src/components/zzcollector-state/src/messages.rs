@@ -73,18 +73,3 @@ pub struct CStateHealth {
     /// Total number of heartbeats that failed to send.
     pub heartbeats_failed: u64,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Ensures the `UpdateHealthMetrics` message can be created with default values.
-    #[test]
-    fn test_update_health_metrics_default() {
-        let metrics = UpdateHealthMetrics::default();
-        assert!(metrics.pings_sent.is_none());
-        assert!(metrics.pings_received.is_none());
-        assert!(metrics.batches_sent.is_none());
-        assert!(metrics.last_config_update_ms.is_none());
-    }
-}

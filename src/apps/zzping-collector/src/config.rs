@@ -1,5 +1,6 @@
 //! Configuration structures and loading.
 
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 /// Collector application configuration.
@@ -37,6 +38,18 @@ pub struct CollectorTlsConfig {
     pub client_cert_path: String,
     /// Client private key
     pub client_key_path: String,
+}
+
+impl CollectorTlsConfig {
+    /// Converts this configuration into the transport layer's TLS configuration.
+    pub fn to_transport_config(&self) -> Result<zznet_transport_tcp::config::TlsConfig> {
+        Ok(zznet_transport_tcp::config::TlsConfig::new(
+            &self.client_cert_path,
+            &self.client_key_path,
+            Some(&self.ca_cert_path),
+            "zzping-mesh".into(),
+        ))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

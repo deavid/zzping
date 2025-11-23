@@ -72,6 +72,24 @@ pub struct TlsConfig {
 }
 
 impl TlsConfig {
+    /// Helper to construct TlsConfig from paths
+    pub fn new(
+        cert_path: &str,
+        key_path: &str,
+        ca_cert_path: Option<&str>,
+        server_name: String,
+    ) -> Self {
+        Self {
+            cert: TlsCertAndKey {
+                pem_path: std::path::PathBuf::from(cert_path),
+                key_path: std::path::PathBuf::from(key_path),
+            },
+            ca_cert_path: ca_cert_path.map(std::path::PathBuf::from),
+            add_native_ca_certs: false,
+            server_name,
+        }
+    }
+
     /// Constructs a rustls ClientConfig with mutual TLS.
     pub(crate) fn build_client_config(&self) -> Result<rustls::ClientConfig, TlsError> {
         let root_store = self.build_root_store()?;

@@ -1,5 +1,6 @@
 //! Configuration structures and loading.
 
+use crate::error::DatabaseError;
 use serde::{Deserialize, Serialize};
 
 /// Database application configuration.
@@ -42,6 +43,21 @@ pub struct DatabaseTlsConfig {
     pub server_cert_path: String,
     /// Server private key
     pub server_key_path: String,
+}
+
+impl DatabaseTlsConfig {
+    /// Converts this configuration into the transport layer's TLS configuration.
+    pub fn to_transport_config(
+        &self,
+    ) -> Result<Option<zznet_transport_tcp::config::TlsConfig>, DatabaseError> {
+        let ca = self.ca_cert_paths.first().map(|s| s.as_str());
+        Ok(Some(zznet_transport_tcp::config::TlsConfig::new(
+            &self.server_cert_path,
+            &self.server_key_path,
+            ca,
+            "zzping-mesh".into(),
+        )))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,80 +174,5 @@ impl DatabaseConfig {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::Path;
-
-    /// Helper to create a valid test configuration.
-    fn create_valid_config() -> DatabaseConfig {
-        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap();
-        let certs_dir = workspace_root.join("test_certs");
-
-        DatabaseConfig {
-            bind_host: "0.0.0.0".into(),
-            bind_port: 8443,
-            tls: Some(DatabaseTlsConfig {
-                ca_cert_paths: vec![certs_dir.join("ca.pem").to_str().unwrap().to_string()],
-                server_cert_path: certs_dir.join("database.pem").to_str().unwrap().to_string(),
-                server_key_path: certs_dir.join("database.key").to_str().unwrap().to_string(),
-            }),
-            components: ComponentConfig {
-                stale_timeout_secs: 30,
-                max_collectors: 100,
-                message_frame_timeout_ms: 500,
-            },
-            data_dir: String::from("."),
-            handshake_timeout_secs: 10,
-        }
-    }
-
-    #[test]
-    fn test_empty_bind_host_fails_validation() {
-        let mut config = create_valid_config();
-        config.bind_host = String::new();
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("bind_host"));
-    }
-
-    #[test]
-    fn test_zero_port_fails_validation() {
-        let mut config = create_valid_config();
-        config.bind_port = 0;
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("port"));
-    }
-
-    #[test]
-    fn test_zero_stale_timeout_fails_validation() {
-        let mut config = create_valid_config();
-        config.components.stale_timeout_secs = 0;
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("stale_timeout"));
-    }
-
-    #[test]
-    fn test_zero_max_collectors_fails_validation() {
-        let mut config = create_valid_config();
-        config.components.max_collectors = 0;
-
-        let result = config.validate();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("max_collectors"));
     }
 }

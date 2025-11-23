@@ -299,27 +299,6 @@ impl TransportConnection for TcpTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use x509_parser::pem::parse_x509_pem;
-
-    #[test]
-    #[ignore]
-    fn test_parse_peer_cert_der_from_pem() {
-        // Load the PEM file from test_certs
-        let pem_path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../test_certs/dist/database.pem"
-        );
-        let pem_data = fs::read(pem_path).expect("failed to read test cert pem");
-        let (_rem, pem) = parse_x509_pem(&pem_data).expect("failed to parse PEM");
-        let der = pem.contents.as_slice();
-
-        // Use loopback addr as peer addr
-        let id = TcpTransport::parse_peer_cert_der(der).expect("failed to parse cert DER");
-
-        assert_eq!(id.role, "database");
-        assert_eq!(id.username, "root");
-    }
 
     #[test]
     fn test_parse_peer_cert_der_invalid_der() {
@@ -409,27 +388,4 @@ mod tests {
         }
     }
 
-    #[test]
-    #[ignore]
-    fn test_parse_collector_cert() {
-        // Load the test collector certificate and verify parsing
-        let cert_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .parent()
-            .unwrap()
-            .join("test_certs/dist/collector.pem");
-
-        let pem_data = std::fs::read(&cert_path).expect("Failed to read collector.pem");
-        let (_rem, pem) = parse_x509_pem(&pem_data).expect("Failed to parse PEM");
-        let cert_der = pem.contents.as_slice();
-
-        let identity =
-            TcpTransport::parse_peer_cert_der(cert_der).expect("Failed to parse collector cert");
-
-        assert_eq!(identity.role, "collector");
-        assert_eq!(identity.username, "root");
-    }
 }

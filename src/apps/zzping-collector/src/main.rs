@@ -8,7 +8,7 @@ use clap::Parser;
 use surge_ping::{Client, ConfigBuilder};
 use tracing_subscriber::EnvFilter;
 use zzping_collector::config::CollectorConfig;
-use zzping_collector::service::convert_tls_config;
+use zzping_collector::network::StartedComponents;
 use zzpinger::mock::MockPingerClient;
 
 #[derive(Parser, Debug)]
@@ -83,7 +83,7 @@ async fn main() -> Result<()> {
 
     let tls_cfg = if let Some(tls) = &config.tls {
         tracing::info!("TLS enabled - using mTLS connection");
-        Some(convert_tls_config(tls)?)
+        Some(tls.to_transport_config()?)
     } else {
         tracing::warn!("TLS disabled - using plain TCP connection");
         None
@@ -100,7 +100,7 @@ async fn main() -> Result<()> {
         handshake_timeout,
     )?;
 
-    let started_components = zzping_collector::service::StartedComponents {
+    let started_components = StartedComponents {
         intent_config: intent_addr,
         pinger: pinger_addr,
         memdb_addr,

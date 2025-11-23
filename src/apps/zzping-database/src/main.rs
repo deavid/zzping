@@ -8,7 +8,6 @@ use clap::Parser;
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 use zzping_database::config::DatabaseConfig;
-use zzping_database::service::build_transport_tls_config;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -70,7 +69,7 @@ async fn main() -> Result<()> {
     let _cstate_addr = cstate_builder.router(router_actor.clone()).build();
 
     let tls_cfg = if let Some(tls) = &config.tls {
-        build_transport_tls_config(tls)?
+        tls.to_transport_config()?
     } else {
         None
     };

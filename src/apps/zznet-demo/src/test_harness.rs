@@ -14,21 +14,11 @@ pub async fn spawn_demo_service(
     // Create the service directly (no builder needed)
     let service = DemoAppService::new(config.clone()).unwrap();
     let comp_a_addr = service.component_a.clone();
-    (service, comp_a_addr)
-}
-
-/// Spawn the demo service. Returns the spawned demo service handles.
-pub async fn spawn_demo_service_with_builder(
-    config: DemoAppConfig,
-) -> (DemoAppService, Addr<crate::component_a::ComponentAActor>) {
-    // Create the service directly
-    let service = DemoAppService::new(config.clone()).unwrap();
-    let comp_a_addr = service.component_a.clone();
 
     (service, comp_a_addr)
 }
 
-/// Connects two `DemoAppService` instances using a mock transport.
+/// Wires two demo services together using a mock transport for integration testing.
 pub async fn connect_services(
     service_a: &DemoAppService,
     config_a: &DemoAppConfig,
