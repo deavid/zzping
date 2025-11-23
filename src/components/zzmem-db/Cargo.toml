@@ -31,4 +31,3 @@ zznet-router.workspace = true
 
 [dev-dependencies]
 ntest.workspace = true
-zzping-test-utils = { path = "../../test-utils/zzping-test-utils" }

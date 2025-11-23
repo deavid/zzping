@@ -29,4 +29,3 @@ zznet-router = { workspace = true }
 [dev-dependencies]
 ntest = { workspace = true }
 tempfile = { workspace = true }
-zzping-test-utils = { workspace = true }

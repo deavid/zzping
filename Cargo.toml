@@ -6,8 +6,6 @@ members = [
     # "src/old/apps/zzping-cli",
     # "src/old/apps/zzping-gui",
 
-    "src/test-utils/zzping-test-utils",
-
     "src/net/zznet-api",
     "src/net/zznet-hello",
     "src/net/zznet-room",
@@ -38,11 +36,6 @@ description = "Tools to monitor home network latency and packet loss"
 # ...   and instead use "cratename.workspace = true" to refer to it.
 
 # Internal dependencies
-# zzping-lib = { path = "src/old/common/zzping-lib" }
-# zzping-proto = { path = "src/old/common/zzping-proto" }
-
-zzping-test-utils = { path = "src/test-utils/zzping-test-utils" }
-
 zznet-api = { path = "src/net/zznet-api" }
 zznet-hello = { path = "src/net/zznet-hello" }
 zznet-room = { path = "src/net/zznet-room" }

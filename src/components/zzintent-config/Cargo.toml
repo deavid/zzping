@@ -39,4 +39,3 @@ permissions = []
 [dev-dependencies]
 tempfile = { workspace = true }
 zznet-room = { workspace = true }
-zzping-test-utils = { workspace = true }

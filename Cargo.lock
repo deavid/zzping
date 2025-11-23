@@ -2209,7 +2209,6 @@ dependencies = [
  "zznet-api",
  "zznet-room",
  "zznet-router",
- "zzping-test-utils",
 ]
 
 [[package]]
@@ -2231,7 +2230,6 @@ dependencies = [
  "zznet-api",
  "zznet-room",
  "zznet-router",
- "zzping-test-utils",
 ]
 
 [[package]]
@@ -2251,7 +2249,6 @@ dependencies = [
  "zznet-api",
  "zznet-room",
  "zznet-router",
- "zzping-test-utils",
 ]
 
 [[package]]
@@ -2289,7 +2286,6 @@ dependencies = [
  "zznet-hello",
  "zznet-room",
  "zznet-router",
- "zzping-test-utils",
 ]
 
 [[package]]
@@ -2424,15 +2420,6 @@ dependencies = [
  "zznet-transport-tcp",
  "zzping-collector",
  "zzpinger",
-]
-
-[[package]]
-name = "zzping-test-utils"
-version = "0.3.0-dev"
-dependencies = [
- "tokio",
- "zznet-api",
- "zznet-room",
 ]
 
 [[package]]
