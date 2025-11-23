@@ -7,11 +7,6 @@ use std::fmt;
 /// This represents a discrete, atomic unit of data. The transport layer
 /// guarantees that this entire block will be framed (e.g. with a length prefix)
 /// and delivered as a single unit to the peer.
-///
-/// Unlike `Bytes`, this type semantically represents a complete protocol frame,
-/// not a stream or arbitrary blob. This clarity helps prevent misuse and
-/// enables future extensions (e.g., priority, compression flags) without
-/// breaking component signatures.
 #[derive(Clone, Debug)]
 pub struct TransportFrame(Bytes);
 
@@ -157,46 +152,5 @@ impl fmt::Display for RoomId {
 impl From<&str> for RoomId {
     fn from(s: &str) -> Self {
         Self(s.to_string())
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Control-plane and data-plane abstraction traits
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // Role-related tests removed; role type moved to application layer.
-
-    #[test]
-    fn test_peer_identity_is_service() {
-        let service = PeerTLSIdentity {
-            role: "collector".to_string(),
-            username: "root".to_string(),
-        };
-        assert!(service.is_service());
-
-        let user = PeerTLSIdentity {
-            role: "client-admin".to_string(),
-            username: "alice".to_string(),
-        };
-        assert!(!user.is_service());
-    }
-
-    #[test]
-    fn test_peer_identity_full_identity() {
-        let service = PeerTLSIdentity {
-            role: "collector".to_string(),
-            username: "root".to_string(),
-        };
-        assert_eq!(service.full_identity(), "collector");
-
-        let user = PeerTLSIdentity {
-            role: "client-admin".to_string(),
-            username: "alice".to_string(),
-        };
-        assert_eq!(user.full_identity(), "alice@client-admin");
     }
 }

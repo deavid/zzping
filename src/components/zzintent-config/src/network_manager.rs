@@ -20,7 +20,7 @@ use zznet_router::RouterActor;
 ///
 /// Replaces StandardRoomFactory to resolve circular dependency.
 /// Creates NetworkActor first, then RoomActor, then wires them via SetRoomActor.
-pub struct IntentConfigRoomFactory {
+pub(crate) struct IntentConfigRoomFactory {
     manager: Addr<IntentConfigNetworkManager>,
     event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>,
     permissions_map: HashMap<String, IntentConfigPermissions>,
@@ -33,7 +33,7 @@ impl IntentConfigRoomFactory {
     /// * `manager` - Address of the NetworkManager for registration
     /// * `event_bus` - Event bus sender for broadcasting config changes
     /// * `permissions_map` - Map from role strings to permissions
-    pub fn new(
+    pub(crate) fn new(
         manager: Addr<IntentConfigNetworkManager>,
         event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>,
         permissions_map: HashMap<String, IntentConfigPermissions>,
@@ -110,7 +110,7 @@ impl zznet_router::RoomFactory for IntentConfigRoomFactory {
 ///
 /// # Message Flow
 /// See `internal_messages.rs` for detailed message flow diagrams.
-pub struct IntentConfigNetworkManager {
+pub(crate) struct IntentConfigNetworkManager {
     /// Address of the main business logic actor
     main_actor: Addr<crate::actor::IntentConfigActor>,
     /// Event bus for broadcasting config changes to all NetworkActors
@@ -137,7 +137,7 @@ impl IntentConfigNetworkManager {
     ///
     /// The event_bus will be created with a default channel. After starting,
     /// you should call update_event_bus() to set it to the MainActor's actual event_bus.
-    pub fn new(
+    pub(crate) fn new(
         main_actor: Addr<crate::actor::IntentConfigActor>,
         router_actor: Addr<RouterActor>,
         permissions_map: HashMap<String, IntentConfigPermissions>,
@@ -149,16 +149,6 @@ impl IntentConfigNetworkManager {
             router_actor,
             permissions_map,
         }
-    }
-
-    /// Update the event bus to use the one from MainActor
-    pub fn set_event_bus(&mut self, event_bus: tokio::sync::broadcast::Sender<IntentConfigEvent>) {
-        self.event_bus = event_bus;
-    }
-
-    /// Get the permissions map (for testing)
-    pub fn permissions_map(&self) -> &HashMap<String, IntentConfigPermissions> {
-        &self.permissions_map
     }
 }
 

@@ -21,14 +21,14 @@ use zznet_room::actor::RoomActor;
 ///
 /// Used to resolve circular dependency in factory.
 #[derive(Clone)]
-pub struct SetRoomActor(pub Addr<RoomActor<CStateMessage>>);
+pub(crate) struct SetRoomActor(pub Addr<RoomActor<CStateMessage>>);
 
 impl Message for SetRoomActor {
     type Result = ();
 }
 
 /// Per-peer NetworkActor that handles protocol translation.
-pub struct CStateNetworkActor {
+pub(crate) struct CStateNetworkActor {
     /// The peer ID this actor manages.
     peer_id: PeerId,
 
@@ -37,10 +37,6 @@ pub struct CStateNetworkActor {
 
     /// Link to MainActor for forwarding inbound messages.
     main_actor: Addr<crate::actor::CStateActor>,
-
-    /// Link to NetworkManager for error reporting (reserved for future use).
-    #[allow(dead_code)]
-    manager: Addr<crate::network_manager::CStateNetworkManager>,
 
     /// Address of the RoomActor (for sending to peer)
     /// Optional, set via SetRoomActor message after creation
@@ -57,18 +53,16 @@ pub struct CStateNetworkActor {
 
 impl CStateNetworkActor {
     /// Creates a new CStateNetworkActor for a specific peer.
-    pub fn new(
+    pub(crate) fn new(
         peer_id: PeerId,
         permissions: crate::permissions::CStatePermissions,
         main_actor: Addr<crate::actor::CStateActor>,
-        manager: Addr<crate::network_manager::CStateNetworkManager>,
         event_rx: tokio::sync::broadcast::Receiver<CStateEvent>,
     ) -> Self {
         Self {
             peer_id,
             permissions,
             main_actor,
-            manager,
             room_actor: None,
             event_rx,
             pending_heartbeats: Vec::new(),

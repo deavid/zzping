@@ -25,9 +25,9 @@ use zznet_router::{RoomFactory, RouterActor};
 /// Creates NetworkActors with event bus subscriptions and wires them to RoomActors
 /// after creation to resolve circular dependencies (NetworkActor needs RoomActor,
 /// RoomActor needs NetworkActor recipient).
-pub struct CStateRoomFactory {
+pub(crate) struct CStateRoomFactory {
     main_actor: Addr<crate::actor::CStateActor>,
-    manager: Addr<CStateNetworkManager>,
+    _manager: Addr<CStateNetworkManager>,
     event_bus: tokio::sync::broadcast::Sender<crate::events::CStateEvent>,
     permissions_map: HashMap<String, CStatePermissions>,
 }
@@ -40,15 +40,15 @@ impl CStateRoomFactory {
     /// * `manager` - Address of the NetworkManager for registration
     /// * `event_bus` - Event bus sender for broadcasting config changes
     /// * `permissions_map` - Map from role strings to permissions
-    pub fn new(
+    pub(crate) fn new(
         main_actor: Addr<crate::actor::CStateActor>,
-        manager: Addr<CStateNetworkManager>,
+        _manager: Addr<CStateNetworkManager>,
         event_bus: tokio::sync::broadcast::Sender<crate::events::CStateEvent>,
         permissions_map: HashMap<String, CStatePermissions>,
     ) -> Self {
         Self {
             main_actor,
-            manager,
+            _manager,
             event_bus,
             permissions_map,
         }
@@ -94,7 +94,6 @@ impl RoomFactory for CStateRoomFactory {
             peer_id.clone(),
             permissions,
             self.main_actor.clone(),
-            self.manager.clone(),
             event_rx,
         );
         let network_addr = network_actor.start();
@@ -120,7 +119,7 @@ impl RoomFactory for CStateRoomFactory {
 /// - Register Room<CStateMessage> with Router
 /// - Route outbound messages to appropriate NetworkActors
 /// - Handle peer disconnection cleanup
-pub struct CStateNetworkManager {
+pub(crate) struct CStateNetworkManager {
     /// The router actor for sending messages
     router: Addr<RouterActor>,
     /// The main actor for handling internal messages
@@ -144,7 +143,7 @@ impl Clone for CStateNetworkManager {
 
 impl CStateNetworkManager {
     /// Creates a new CStateNetworkManager.
-    pub fn new(
+    pub(crate) fn new(
         main_actor: Addr<crate::actor::CStateActor>,
         router: Addr<RouterActor>,
         event_bus: tokio::sync::broadcast::Sender<crate::events::CStateEvent>,
@@ -156,11 +155,6 @@ impl CStateNetworkManager {
             event_bus,
             permissions_map,
         }
-    }
-
-    /// Get the permissions map (for testing)
-    pub fn permissions_map(&self) -> &HashMap<String, CStatePermissions> {
-        &self.permissions_map
     }
 }
 

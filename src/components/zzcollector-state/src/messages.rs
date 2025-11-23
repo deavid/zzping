@@ -1,10 +1,8 @@
 //! Defines the internal messages used by the `CStateActor`.
 
-use crate::network_messages::CStateMessage;
 use crate::state::CollectorStateData;
 use actix::Message;
 use thiserror::Error;
-use zznet_api::types::PeerId;
 
 /// A comprehensive error type for the `zzcollector-state` component.
 #[derive(Error, Debug)]
@@ -28,17 +26,6 @@ pub enum CStateError {
     /// Returned on network send failures.
     #[error("Failed to send message to peer: {0}")]
     SendError(String),
-}
-
-/// Wraps a network message with the sender's PeerId.
-/// This is sent from the network layer to the actor.
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct WrappedCStateMessage {
-    /// The peer ID of the sender.
-    pub peer_id: PeerId,
-    /// The network message.
-    pub message: CStateMessage,
 }
 
 /// Command to update health metrics from other components.

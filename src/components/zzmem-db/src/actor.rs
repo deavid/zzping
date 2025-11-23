@@ -82,22 +82,6 @@ impl MemDBActor {
         self.network_manager = Some(manager);
     }
 
-    /// Deprecated: use `new()` with config instead
-    #[allow(deprecated)]
-    #[deprecated(since = "0.1.0", note = "use `new()` with MemDBConfig instead")]
-    pub fn new_with_role(_role: ()) -> Self {
-        // Stub for backward compatibility - tests should use config directly
-        panic!("new_with_role() is no longer supported - use MemDBConfig directly with new()")
-    }
-
-    /// Deprecated: use config properties directly instead
-    #[allow(deprecated)]
-    #[deprecated(since = "0.1.0", note = "access config directly or use config methods")]
-    pub fn role(&self) -> () {
-        // Stub for backward compatibility
-        panic!("role() is no longer available - use config properties instead")
-    }
-
     /// Store a ping result (used by both roles)
     fn store_result(&mut self, result: PingResult) {
         if let Some(storage) = &mut self.storage {
@@ -393,7 +377,6 @@ impl Handler<GetStats> for MemDBActor {
 /// Handles incoming network messages from other MemDB peers.
 /// The behavior depends on the actor's role:
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use zznet_api::types::PeerId;
 

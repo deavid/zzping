@@ -21,7 +21,7 @@ use zznet_room::actor::RoomActor;
 /// Used to resolve circular dependency in factory.
 /// Factory creates NetworkActor first, then RoomActor, then wires them together.
 #[derive(Clone)]
-pub struct SetRoomActor(pub Addr<RoomActor<IntentConfigNetworkMsg>>);
+pub(crate) struct SetRoomActor(pub Addr<RoomActor<IntentConfigNetworkMsg>>);
 
 impl Message for SetRoomActor {
     type Result = ();
@@ -48,7 +48,7 @@ impl Message for SetRoomActor {
 ///
 /// # Message Flow
 /// See `internal_messages.rs` for detailed message flow diagrams.
-pub struct IntentConfigNetworkActor {
+pub(crate) struct IntentConfigNetworkActor {
     /// ID of the peer this actor represents
     peer_id: PeerId,
 
@@ -75,7 +75,7 @@ impl IntentConfigNetworkActor {
     /// Create a new NetworkActor for a specific peer
     ///
     /// Note: room_actor must be set via SetRoomActor message after creation
-    pub fn new(
+    pub(crate) fn new(
         peer_id: PeerId,
         permissions: IntentConfigPermissions,
         manager: Addr<crate::network_manager::IntentConfigNetworkManager>,
@@ -89,11 +89,6 @@ impl IntentConfigNetworkActor {
             event_rx,
             pending_updates: Vec::new(),
         }
-    }
-
-    /// Get the peer ID this actor represents
-    pub fn peer_id(&self) -> &PeerId {
-        &self.peer_id
     }
 }
 

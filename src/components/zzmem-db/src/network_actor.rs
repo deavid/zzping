@@ -22,7 +22,6 @@ use actix::prelude::*;
 use zznet_api::types::PeerId;
 
 use crate::actor::MemDBActor;
-use crate::network_manager::MemDBNetworkManager;
 use crate::network_messages::MemDBMessage;
 use crate::permissions::MemDBPermissions;
 
@@ -42,10 +41,6 @@ pub struct MemDBNetworkActor {
 
     /// Reference to MainActor for forwarding inbound messages
     main_actor: Addr<MemDBActor>,
-
-    /// Reference to NetworkManager (reserved for future error reporting)
-    #[allow(dead_code)]
-    manager: Addr<MemDBNetworkManager>,
 }
 
 impl MemDBNetworkActor {
@@ -54,13 +49,11 @@ impl MemDBNetworkActor {
         peer_id: PeerId,
         permissions: MemDBPermissions,
         main_actor: Addr<MemDBActor>,
-        manager: Addr<MemDBNetworkManager>,
     ) -> Self {
         Self {
             peer_id,
             _permissions: permissions,
             main_actor,
-            manager,
         }
     }
 }

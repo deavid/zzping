@@ -77,7 +77,6 @@ use std::time::Duration;
 
 /// Check if both database and collector have reached the desired state
 /// Returns true if handshake is complete on both sides, false otherwise
-#[allow(dead_code)]
 fn check_handshake_complete(db_stdout: &str, collector_stdout: &str) -> bool {
     // Both must have completed the HELLO handshake
     db_stdout.contains("Handshake complete") && collector_stdout.contains("Handshake complete")

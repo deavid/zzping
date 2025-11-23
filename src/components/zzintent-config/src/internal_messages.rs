@@ -10,7 +10,7 @@ use zznet_api::types::PeerId;
 /// Peer-initiated request to change intent configuration.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
-pub struct InboundConfigChangeRequest {
+pub(crate) struct InboundConfigChangeRequest {
     /// The ID of the peer making the request
     pub peer_id: PeerId,
     /// The target IP addresses for ping
@@ -22,7 +22,7 @@ pub struct InboundConfigChangeRequest {
 /// Peer request to fetch the current intent configuration.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "IntentConfigData")]
-pub struct InboundGetConfigRequest {
+pub(crate) struct InboundGetConfigRequest {
     /// The ID of the peer making the request
     pub peer_id: PeerId,
 }

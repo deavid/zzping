@@ -50,7 +50,7 @@ fn generate_connection_nonce() -> u64 {
 
 /// Contains the state specific to a `Database` role instance.
 #[derive(Debug)]
-pub struct DatabaseStateData {
+pub(crate) struct DatabaseStateData {
     /// A map of tracked collectors, keyed by their collector ID.
     pub collectors: HashMap<String, TrackedCollector>,
     /// The number of seconds without a heartbeat before a collector is considered stale.
@@ -71,7 +71,7 @@ impl Default for DatabaseStateData {
 
 /// Represents a collector being tracked by the database.
 #[derive(Debug, Clone)]
-pub struct TrackedCollector {
+pub(crate) struct TrackedCollector {
     /// The unique ID of the collector.
     pub id: String,
     /// The timestamp of the last heartbeat received from this collector.
@@ -86,13 +86,11 @@ pub struct TrackedCollector {
     pub batches_sent: u64,
     /// The connection nonce of the collector.
     pub connection_nonce: u64,
-    /// The peer ID of the collector.
-    pub peer_id: String,
 }
 
 impl TrackedCollector {
     /// Creates a new TrackedCollector.
-    pub fn new(id: String, connection_nonce: u64) -> Self {
+    pub(crate) fn new(id: String, connection_nonce: u64) -> Self {
         Self {
             id,
             last_seen_ms: std::time::SystemTime::now()
@@ -104,12 +102,11 @@ impl TrackedCollector {
             pings_received: 0,
             batches_sent: 0,
             connection_nonce,
-            peer_id: String::new(),
         }
     }
 
     /// Updates the collector's heartbeat information.
-    pub fn update_heartbeat(
+    pub(crate) fn update_heartbeat(
         &mut self,
         uptime_secs: u64,
         pings_sent: u64,

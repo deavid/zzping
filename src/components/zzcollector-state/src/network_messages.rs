@@ -8,12 +8,12 @@ use zznet_api::types::RoomId;
 use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
 
 /// The name of the room used for collector state communication.
-pub const CSTATE_ROOM: &str = "cstate";
+pub(crate) const CSTATE_ROOM: &str = "cstate";
 
 /// Enum representing all possible messages for the collector state room.
 #[derive(Clone, Debug, Message, Serialize, Deserialize, PartialEq)]
 #[rtype(result = "()")]
-pub enum CStateMessage {
+pub(crate) enum CStateMessage {
     /// Collector -> Database: Register and report health.
     Heartbeat {
         /// The unique ID of the collector.

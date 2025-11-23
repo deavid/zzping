@@ -12,9 +12,6 @@ use tokio::sync::mpsc;
 ///
 /// Implementations provide framed I/O for higher-level protocols.
 ///
-/// Framing: 4-byte big-endian length prefix, payload follows; zero-length frames
-/// are valid; implementations should enforce a maximum frame size.
-///
 /// Identity: TLS-backed connections expose a verified `peer_tls_identity`;
 /// raw transports may not provide cryptographic identity — use higher-layer
 /// validation for application-level trust decisions.
@@ -63,30 +60,4 @@ pub trait TransportServer: Send {
 pub trait TransportClient: Send {
     /// Establish a new connection to the configured server.
     async fn connect(&self) -> Result<Box<dyn TransportConnection>, TransportError>;
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // These tests verify that the traits are object-safe and can be used
-    // as trait objects (Box<dyn Trait>).
-
-    #[test]
-    fn test_transport_connection_is_object_safe() {
-        // This test compiles if TransportConnection is object-safe
-        fn _takes_boxed(_conn: Box<dyn TransportConnection>) {}
-    }
-
-    #[test]
-    fn test_transport_server_is_object_safe() {
-        // This test compiles if TransportServer is object-safe
-        fn _takes_boxed(_server: Box<dyn TransportServer>) {}
-    }
-
-    #[test]
-    fn test_transport_client_is_object_safe() {
-        // This test compiles if TransportClient is object-safe
-        fn _takes_boxed(_client: Box<dyn TransportClient>) {}
-    }
 }

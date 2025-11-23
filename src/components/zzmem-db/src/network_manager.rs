@@ -17,7 +17,7 @@ use crate::permissions::MemDBPermissions;
 /// Factory that creates per-peer NetworkActors and RoomActors for MemDB.
 pub struct MemDBRoomFactory {
     main_actor: Addr<MemDBActor>,
-    manager: Addr<MemDBNetworkManager>,
+    _manager: Addr<MemDBNetworkManager>,
     permissions_map: HashMap<String, MemDBPermissions>,
 }
 
@@ -30,7 +30,7 @@ impl MemDBRoomFactory {
     ) -> Self {
         Self {
             main_actor,
-            manager,
+            _manager: manager,
             permissions_map,
         }
     }
@@ -63,12 +63,7 @@ impl zznet_router::RoomFactory for MemDBRoomFactory {
             .unwrap_or_default();
 
         // Create NetworkActor
-        let net = MemDBNetworkActor::new(
-            peer_id.clone(),
-            perms,
-            self.main_actor.clone(),
-            self.manager.clone(),
-        );
+        let net = MemDBNetworkActor::new(peer_id.clone(), perms, self.main_actor.clone());
         let net_addr = net.start();
 
         // Create RoomActor with NetworkActor's recipient
