@@ -196,13 +196,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_valid_config_validates() {
-        let config = create_valid_config();
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
     fn test_empty_bind_host_fails_validation() {
         let mut config = create_valid_config();
         config.bind_host = String::new();

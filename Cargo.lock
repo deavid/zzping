@@ -2418,7 +2418,6 @@ dependencies = [
  "zznet-room",
  "zznet-router",
  "zznet-transport-tcp",
- "zzping-collector",
  "zzpinger",
 ]
 

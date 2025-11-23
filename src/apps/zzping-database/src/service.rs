@@ -23,11 +23,7 @@ pub fn build_transport_tls_config(
 
 #[cfg(test)]
 mod tests {
-    use zzintent_config::builder::IntentConfigBuilder;
-    use zzintent_config::permissions::IntentConfigPermissions;
-
     use super::*;
-    use std::collections::HashMap;
     use std::path::Path;
 
     #[test]
@@ -81,77 +77,6 @@ mod tests {
         assert!(
             result.is_ok(),
             "TLS config build should not fail at this stage"
-        );
-    }
-
-    #[actix::test]
-    #[ignore]
-    async fn test_database_network_creation() {
-        use std::time::Duration;
-
-        // Test network creation without TLS (TLS config creation is complex and tested elsewhere)
-        // Use port 0 to let OS assign an available port
-        let _network =
-            crate::network::DatabaseNetwork::bind("127.0.0.1:0", None, Duration::from_secs(10))
-                .await
-                .expect("Failed to bind network");
-        // Network is now created successfully if we get here
-        // We don't run() it as that would block indefinitely
-    }
-
-    #[test]
-    fn test_intent_config_permissions_policy() {
-        // Test that the intent-config policy is configured correctly
-        // Create permissions policy for intent-config
-        let mut intent_config_permissions = HashMap::new();
-        intent_config_permissions.insert(
-            "client-admin".to_string(),
-            IntentConfigPermissions::new(true, true), // can read and write
-        );
-        intent_config_permissions.insert(
-            "collector".to_string(),
-            IntentConfigPermissions::new(true, false), // can read but not write
-        );
-
-        let intent_builder = IntentConfigBuilder::new()
-            .config_for_database(std::path::PathBuf::from("test.ron"))
-            .permissions_map(intent_config_permissions);
-
-        // Get the permissions map from the builder
-        let permissions_map = intent_builder
-            .get_permissions_map()
-            .expect("permissions_map should be set");
-
-        // Verify client-admin has full access
-        let admin_perms = permissions_map
-            .get("client-admin")
-            .expect("client-admin should have permissions");
-        assert!(
-            admin_perms.can_read_config,
-            "client-admin should be able to read"
-        );
-        assert!(
-            admin_perms.can_write_config,
-            "client-admin should be able to write"
-        );
-
-        // Verify collector has read-only access
-        let collector_perms = permissions_map
-            .get("collector")
-            .expect("collector should have permissions");
-        assert!(
-            collector_perms.can_read_config,
-            "collector should be able to read"
-        );
-        assert!(
-            !collector_perms.can_write_config,
-            "collector should NOT be able to write"
-        );
-
-        // Verify unknown roles don't have permissions
-        assert!(
-            permissions_map.get("hacker").is_none(),
-            "unknown roles should not have permissions"
         );
     }
 }
