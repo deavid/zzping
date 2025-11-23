@@ -12,7 +12,6 @@
 //!
 
 mod actor;
-mod room_manager;
 mod room_message_trait;
 
 pub use actor::RoomActor;

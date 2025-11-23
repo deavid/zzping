@@ -64,13 +64,6 @@ impl TcpTransportServer {
         })
     }
 
-    /// Create a plain TCP server (no encryption).
-    #[deprecated(note = "use TcpTransportServer(addr, None) instead")]
-    pub async fn plain(addr: &str) -> Result<Self, TransportError> {
-        debug!("Creating plain TCP server (no encryption) on {}", addr);
-        Self::new(addr, None).await
-    }
-
     /// Get the local address the server is bound to.
     pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
         self.listener.local_addr().map_err(TransportError::IoError)
