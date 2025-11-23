@@ -63,9 +63,7 @@ impl Handler<SendPingToRoom> for ComponentANetworkActor {
     type Result = ();
 
     fn handle(&mut self, msg: SendPingToRoom, _ctx: &mut Self::Context) {
-        if let Some(room_actor) = &self.room_actor {
-            room_actor.do_send(ComponentAMessage::Ping((msg.0, msg.1)));
-        }
+        self.room_actor.do_send(ComponentAMessage::Ping((msg.0, msg.1)));
     }
 }
 
@@ -73,9 +71,7 @@ impl Handler<SendPongToRoom> for ComponentANetworkActor {
     type Result = ();
 
     fn handle(&mut self, msg: SendPongToRoom, _ctx: &mut Self::Context) {
-        if let Some(room_actor) = &self.room_actor {
-            room_actor.do_send(ComponentAMessage::Pong((msg.0, msg.1)));
-        }
+        self.room_actor.do_send(ComponentAMessage::Pong((msg.0, msg.1)));
     }
 }
 
@@ -83,6 +79,7 @@ use crate::messages::{
     ComponentAMessage, GetCounter, PublishToA, SendPing, StateUpdate, Subscribe,
 };
 use actix::prelude::*;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::info;
 use zznet_api::PeerId;
 
@@ -250,7 +247,9 @@ pub struct ComponentANetworkActor {
     /// Main actor address
     main_actor: Addr<ComponentAActor>,
     /// Room actor for outbound messages
-    room_actor: Option<Addr<zznet_room::RoomActor<ComponentAMessage>>>,
+    room_actor: Addr<zznet_room::RoomActor<ComponentAMessage>>,
+    /// Event bus receiver for outbound events from MainActor
+    event_rx: tokio::sync::broadcast::Receiver<crate::messages::ComponentAEvent>,
 }
 
 impl ComponentANetworkActor {
@@ -259,13 +258,15 @@ impl ComponentANetworkActor {
         peer_id: PeerId,
         permissions: ComponentAPermissions,
         main_actor: Addr<ComponentAActor>,
-        _event_rx: tokio::sync::broadcast::Receiver<crate::messages::ComponentAEvent>,
+        event_rx: tokio::sync::broadcast::Receiver<crate::messages::ComponentAEvent>,
+        room_actor: Addr<zznet_room::RoomActor<ComponentAMessage>>,
     ) -> Self {
         Self {
             peer_id,
             permissions,
             main_actor,
-            room_actor: None,
+            room_actor,
+            event_rx,
         }
     }
 }
@@ -279,26 +280,10 @@ impl Actor for ComponentANetworkActor {
             self.peer_id
         );
 
-        // Subscribe to events from main actor
-        let main_actor = self.main_actor.clone();
-        let addr = ctx.address();
-        actix::spawn(async move {
-            if let Ok(event_tx) = main_actor.send(crate::messages::GetEventBus).await {
-                let mut event_rx = event_tx.subscribe();
-                while let Ok(event) = event_rx.recv().await {
-                    match event {
-                        crate::messages::ComponentAEvent::StateChanged { counter, data } => {
-                            // Send message to self to send to room
-                            let _ = addr.send(SendPingToRoom(counter, data)).await;
-                        }
-                        crate::messages::ComponentAEvent::Pong { counter, data } => {
-                            // Send Pong to room
-                            let _ = addr.send(SendPongToRoom(counter, data)).await;
-                        }
-                    }
-                }
-            }
-        });
+        // Subscribe to events from main actor using add_stream
+        ctx.add_stream(tokio_stream::wrappers::BroadcastStream::new(
+            self.event_rx.resubscribe(),
+        ));
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -309,15 +294,41 @@ impl Actor for ComponentANetworkActor {
     }
 }
 
-impl Handler<zznet_component::SetRoomActor<ComponentAMessage>> for ComponentANetworkActor {
-    type Result = ();
-
+/// Handle events from the event bus
+impl StreamHandler<Result<crate::messages::ComponentAEvent, BroadcastStreamRecvError>>
+    for ComponentANetworkActor
+{
     fn handle(
         &mut self,
-        msg: zznet_component::SetRoomActor<ComponentAMessage>,
-        _ctx: &mut Self::Context,
+        item: Result<crate::messages::ComponentAEvent, BroadcastStreamRecvError>,
+        _ctx: &mut Context<Self>,
     ) {
-        self.room_actor = Some(msg.0);
+        match item {
+            Ok(crate::messages::ComponentAEvent::StateChanged { counter, data }) => {
+                // Send Ping to room
+                self.room_actor
+                    .do_send(ComponentAMessage::Ping((counter, data)));
+            }
+            Ok(crate::messages::ComponentAEvent::Pong { counter, data }) => {
+                // Send Pong to room
+                self.room_actor
+                    .do_send(ComponentAMessage::Pong((counter, data)));
+            }
+            Err(BroadcastStreamRecvError::Lagged(skipped)) => {
+                tracing::warn!(
+                    "Peer {:?} lagged on ComponentA event stream; skipped {} events",
+                    self.peer_id,
+                    skipped
+                );
+            }
+        }
+    }
+
+    fn finished(&mut self, _ctx: &mut Context<Self>) {
+        tracing::debug!(
+            "Event bus stream finished for peer {:?}",
+            self.peer_id
+        );
     }
 }
 

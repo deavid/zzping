@@ -10,12 +10,10 @@
 //! use `GenericNetworkManager` and `GenericRoomFactory` to handle all the boilerplate
 //! of peer management, room creation, and actor wiring.
 
-mod messages;
 mod network_manager;
 mod room_factory;
 mod traits;
 
-pub use messages::SetRoomActor;
 pub use network_manager::GenericNetworkManager;
 pub use room_factory::GenericRoomFactory;
 pub use traits::NetComponent;

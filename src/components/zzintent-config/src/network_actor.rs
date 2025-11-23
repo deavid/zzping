@@ -50,35 +50,28 @@ pub(crate) struct IntentConfigNetworkActor {
     main_actor: Addr<IntentConfigActor>,
 
     /// Address of the RoomActor (for sending to peer)
-    /// Optional, set via SetRoomActor message after creation
-    room_actor: Option<Addr<RoomActor<IntentConfigNetworkMsg>>>,
+    room_actor: Addr<RoomActor<IntentConfigNetworkMsg>>,
 
     /// Event bus receiver for config changes
     /// RAII-based subscription that auto-unsubscribes when dropped
     event_rx: tokio::sync::broadcast::Receiver<IntentConfigEvent>,
-
-    /// Buffer for ConfigUpdate messages while room_actor is not yet set
-    /// Used to handle startup race condition where messages arrive before SetRoomActor
-    pending_updates: Vec<(Vec<IpAddr>, u64)>,
 }
 
 impl IntentConfigNetworkActor {
     /// Create a new NetworkActor for a specific peer
-    ///
-    /// Note: room_actor must be set via SetRoomActor message after creation
     pub(crate) fn new(
         peer_id: PeerId,
         permissions: IntentConfigPermissions,
         main_actor: Addr<IntentConfigActor>,
         event_rx: tokio::sync::broadcast::Receiver<IntentConfigEvent>,
+        room_actor: Addr<RoomActor<IntentConfigNetworkMsg>>,
     ) -> Self {
         Self {
             peer_id,
             permissions,
             main_actor,
-            room_actor: None,
+            room_actor,
             event_rx,
-            pending_updates: Vec::new(),
         }
     }
 
@@ -91,14 +84,11 @@ impl IntentConfigNetworkActor {
             return;
         }
 
-        if let Some(room) = &self.room_actor {
-            room.do_send(IntentConfigNetworkMsg::ConfigUpdate {
+        self.room_actor
+            .do_send(IntentConfigNetworkMsg::ConfigUpdate {
                 targets,
                 ping_rate_pps,
             });
-        } else {
-            self.pending_updates.push((targets, ping_rate_pps));
-        }
     }
 }
 
@@ -124,23 +114,8 @@ impl Actor for IntentConfigNetworkActor {
 }
 
 // ============================================================================
-// Handler: SetRoomActor (from Factory)
+// Event Stream Handler
 // ============================================================================
-
-impl Handler<zznet_component::SetRoomActor<IntentConfigNetworkMsg>> for IntentConfigNetworkActor {
-    type Result = ();
-
-    fn handle(&mut self, msg: zznet_component::SetRoomActor<IntentConfigNetworkMsg>, _ctx: &mut Self::Context) -> Self::Result {
-        log::debug!("Setting room_actor for peer: {}", self.peer_id);
-        self.room_actor = Some(msg.0.clone());
-
-        let pending = std::mem::take(&mut self.pending_updates);
-        for (targets, ping_rate_pps) in pending {
-            log::debug!("Sending buffered config update to peer {}", self.peer_id);
-            self.publish_config_update(targets, ping_rate_pps);
-        }
-    }
-}
 
 impl StreamHandler<Result<IntentConfigEvent, BroadcastStreamRecvError>>
     for IntentConfigNetworkActor
@@ -243,7 +218,7 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigNetworkActor {
                 // Forward directly to MainActor for processing
                 let main_actor = self.main_actor.clone();
                 let peer_id = self.peer_id.clone();
-                let room = self.room_actor.clone();
+                let room_actor = self.room_actor.clone();
 
                 let fut = async move {
                     let config = main_actor
@@ -255,12 +230,10 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigNetworkActor {
                     match config {
                         Ok(current) => {
                             log::debug!("Got config from MainActor for peer: {}", peer_id);
-                            if let Some(room) = room {
-                                room.do_send(IntentConfigNetworkMsg::CurrentConfig {
-                                    targets: current.targets,
-                                    ping_rate_pps: current.ping_rate_pps,
-                                });
-                            }
+                            room_actor.do_send(IntentConfigNetworkMsg::CurrentConfig {
+                                targets: current.targets,
+                                ping_rate_pps: current.ping_rate_pps,
+                            });
                         }
                         Err(e) => {
                             log::error!(

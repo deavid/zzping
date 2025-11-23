@@ -24,7 +24,8 @@ impl zznet_component::NetComponent for ComponentASpec {
         permissions: Self::Permissions,
         main_actor: Addr<Self::MainActor>,
         event_rx: tokio::sync::broadcast::Receiver<Self::Event>,
+        room_actor: Addr<zznet_room::RoomActor<Self::NetworkMsg>>,
     ) -> Self::NetworkActor {
-        ComponentANetworkActor::new(peer_id, permissions, main_actor, event_rx)
+        ComponentANetworkActor::new(peer_id, permissions, main_actor, event_rx, room_actor)
     }
 }

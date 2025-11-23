@@ -1,7 +1,7 @@
 //! The `NetComponent` trait - contract for components using the generic system.
 
-use crate::messages::SetRoomActor;
 use actix::prelude::*;
+use zznet_room::RoomActor;
 
 /// Trait that defines the types and behavior of a network component.
 ///
@@ -63,25 +63,28 @@ pub trait NetComponent: Sized + 'static {
     /// The per-peer translator actor.
     ///
     /// This actor translates between network messages and domain messages.
-    /// It must handle the component's NetworkMsg and the SetRoomActor message.
+    /// It must handle the component's NetworkMsg.
     /// The actor must use actix::Context as its context type.
     type NetworkActor: Actor<Context = actix::Context<Self::NetworkActor>>
-        + Handler<Self::NetworkMsg>
-        + Handler<SetRoomActor<Self::NetworkMsg>>;
+        + Handler<Self::NetworkMsg>;
 
     /// Constructor for the NetworkActor.
     ///
     /// This is called by the factory when a new peer joins the room.
+    /// The room_actor is provided immediately, ensuring the NetworkActor
+    /// is fully wired from construction.
     ///
     /// # Arguments
     /// - `peer_id`: The ID of the connecting peer
     /// - `permissions`: The permissions granted to this peer
     /// - `main_actor`: Address of the MainActor for forwarding domain messages
     /// - `event_rx`: Receiver for subscribing to events from the MainActor
+    /// - `room_actor`: Address of the RoomActor for sending outbound messages
     fn build_network_actor(
         peer_id: zznet_api::PeerId,
         permissions: Self::Permissions,
         main_actor: Addr<Self::MainActor>,
         event_rx: tokio::sync::broadcast::Receiver<Self::Event>,
+        room_actor: Addr<RoomActor<Self::NetworkMsg>>,
     ) -> Self::NetworkActor;
 }

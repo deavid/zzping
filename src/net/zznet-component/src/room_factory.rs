@@ -1,6 +1,5 @@
 //! Generic RoomFactory implementation.
 
-use crate::messages::SetRoomActor;
 use crate::traits::NetComponent;
 use actix::prelude::*;
 use std::collections::HashMap;
@@ -73,26 +72,41 @@ impl<C: NetComponent> zznet_router::RoomFactory for GenericRoomFactory<C> {
             .cloned()
             .unwrap_or_default();
 
-        // Create NetworkActor without room_actor (resolves circular dependency)
-        let net = C::build_network_actor(
-            peer_id.clone(),
-            perms,
-            self.main_actor.clone(),
-            self.event_bus.subscribe(),
-        );
-        let net_addr = net.start();
+        // Clone data needed for the closure
+        let peer_id_clone = peer_id.clone();
+        let main_actor_clone = self.main_actor.clone();
+        let event_rx = self.event_bus.subscribe();
+        let perms_clone = perms;
 
-        // Create RoomActor with NetworkActor's recipient
-        let room = RoomActor::new(
-            room_id,
-            transport_tx,
-            net_addr.clone().recipient::<C::NetworkMsg>(),
-        );
-        let room_addr = room.start();
+        // Setup channel to retrieve RoomActor recipient from inside the closure
+        let (tx, rx) = std::sync::mpsc::channel();
 
-        // Wire them together via SetRoomActor message
-        net_addr.do_send(SetRoomActor(room_addr.clone()));
+        // Create NetworkActor using Actor::create to access context before construction
+        let _net_addr = C::NetworkActor::create(move |ctx| {
+            // Get NetworkActor's address immediately from context
+            let net_recipient = ctx.address().recipient();
 
-        Ok(Some(room_addr.recipient()))
+            // Create and start RoomActor, wiring it to the NetworkActor
+            let room_actor = RoomActor::new(room_id, transport_tx, net_recipient).start();
+
+            // Send RoomActor's recipient back to the factory
+            let _ = tx.send(room_actor.clone().recipient());
+
+            // Construct NetworkActor with room_actor already wired
+            C::build_network_actor(
+                peer_id_clone,
+                perms_clone,
+                main_actor_clone,
+                event_rx,
+                room_actor,
+            )
+        });
+
+        // Retrieve the room recipient to return to the Router
+        let room_recipient = rx
+            .recv()
+            .map_err(|e| format!("Failed to create RoomActor: {}", e))?;
+
+        Ok(Some(room_recipient))
     }
 }

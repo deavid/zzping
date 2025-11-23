@@ -46,13 +46,10 @@ pub(crate) struct MemDBNetworkActor {
     main_actor: Addr<MemDBActor>,
 
     /// Reference to the RoomActor for outbound messaging
-    room_actor: Option<Addr<RoomActor<MemDBMessage>>>,
+    room_actor: Addr<RoomActor<MemDBMessage>>,
 
     /// Broadcast subscription for outbound events from MainActor
     event_rx: tokio::sync::broadcast::Receiver<MemDBEvent>,
-
-    /// Pending batches emitted before the room actor is wired
-    pending_batches: Vec<(u64, Vec<PingResult>)>,
 }
 
 impl MemDBNetworkActor {
@@ -62,14 +59,14 @@ impl MemDBNetworkActor {
         permissions: MemDBPermissions,
         main_actor: Addr<MemDBActor>,
         event_rx: tokio::sync::broadcast::Receiver<MemDBEvent>,
+        room_actor: Addr<RoomActor<MemDBMessage>>,
     ) -> Self {
         Self {
             peer_id,
             permissions,
             main_actor,
-            room_actor: None,
+            room_actor,
             event_rx,
-            pending_batches: Vec::new(),
         }
     }
 
@@ -82,19 +79,11 @@ impl MemDBNetworkActor {
             return;
         }
 
-        if let Some(room) = &self.room_actor {
-            room.do_send(MemDBMessage::SubmitBatch {
-                sender_peer_id: String::new(),
-                timestamp_ms,
-                results,
-            });
-        } else {
-            tracing::debug!(
-                "RoomActor not yet set for peer {}, buffering batch",
-                self.peer_id
-            );
-            self.pending_batches.push((timestamp_ms, results));
-        }
+        self.room_actor.do_send(MemDBMessage::SubmitBatch {
+            sender_peer_id: String::new(),
+            timestamp_ms,
+            results,
+        });
     }
 }
 
@@ -112,25 +101,8 @@ impl Actor for MemDBNetworkActor {
 }
 
 // ============================================================================
-// Room wiring
+// Event Stream Handler
 // ============================================================================
-
-impl Handler<zznet_component::SetRoomActor<MemDBMessage>> for MemDBNetworkActor {
-    type Result = ();
-
-    fn handle(
-        &mut self,
-        msg: zznet_component::SetRoomActor<MemDBMessage>,
-        _ctx: &mut Self::Context,
-    ) -> Self::Result {
-        self.room_actor = Some(msg.0.clone());
-
-        let pending = std::mem::take(&mut self.pending_batches);
-        for (timestamp_ms, results) in pending {
-            self.enqueue_batch(timestamp_ms, results);
-        }
-    }
-}
 
 impl StreamHandler<Result<MemDBEvent, BroadcastStreamRecvError>> for MemDBNetworkActor {
     fn handle(
@@ -197,12 +169,10 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                                 "Batch accepted: {} results",
                                 ack_response.received_count
                             );
-                            if let Some(room) = room_actor {
-                                room.do_send(MemDBMessage::BatchAck {
-                                    received_count: ack_response.received_count,
-                                    timestamp_ms: ack_response.timestamp_ms,
-                                });
-                            }
+                            room_actor.do_send(MemDBMessage::BatchAck {
+                                received_count: ack_response.received_count,
+                                timestamp_ms: ack_response.timestamp_ms,
+                            });
                         }
                         Ok(Err(e)) => {
                             tracing::warn!("Batch rejected: {}", e);
@@ -231,9 +201,7 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                     match main_actor.send(request).await {
                         Ok(Ok(results)) => {
                             tracing::debug!("Query returned {} results", results.len());
-                            if let Some(room) = room_actor {
-                                room.do_send(MemDBMessage::QueryResponse { results });
-                            }
+                            room_actor.do_send(MemDBMessage::QueryResponse { results });
                         }
                         Ok(Err(e)) => {
                             tracing::warn!("Query rejected: {}", e);

@@ -30,7 +30,8 @@ impl zznet_component::NetComponent for IntentConfigSpec {
         permissions: Self::Permissions,
         main_actor: Addr<Self::MainActor>,
         event_rx: tokio::sync::broadcast::Receiver<Self::Event>,
+        room_actor: Addr<zznet_room::RoomActor<Self::NetworkMsg>>,
     ) -> Self::NetworkActor {
-        IntentConfigNetworkActor::new(peer_id, permissions, main_actor, event_rx)
+        IntentConfigNetworkActor::new(peer_id, permissions, main_actor, event_rx, room_actor)
     }
 }

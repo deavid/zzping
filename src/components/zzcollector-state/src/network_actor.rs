@@ -29,16 +29,11 @@ pub(crate) struct CStateNetworkActor {
     main_actor: Addr<crate::actor::CStateActor>,
 
     /// Address of the RoomActor (for sending to peer)
-    /// Optional, set via SetRoomActor message after creation
-    room_actor: Option<Addr<RoomActor<CStateMessage>>>,
+    room_actor: Addr<RoomActor<CStateMessage>>,
 
     /// Event bus receiver for heartbeat broadcasts
     /// RAII-based subscription that auto-unsubscribes when dropped
     event_rx: tokio::sync::broadcast::Receiver<CStateEvent>,
-
-    /// Buffer for Heartbeat messages while room_actor is not yet set
-    /// Buffer used to handle startup race conditions where messages arrive before the RoomActor is wired.
-    pending_heartbeats: Vec<(String, u64, u64, u64, u64, u64, u64)>,
 }
 
 impl CStateNetworkActor {
@@ -48,14 +43,14 @@ impl CStateNetworkActor {
         permissions: crate::permissions::CStatePermissions,
         main_actor: Addr<crate::actor::CStateActor>,
         event_rx: tokio::sync::broadcast::Receiver<CStateEvent>,
+        room_actor: Addr<RoomActor<CStateMessage>>,
     ) -> Self {
         Self {
             peer_id,
             permissions,
             main_actor,
-            room_actor: None,
+            room_actor,
             event_rx,
-            pending_heartbeats: Vec::new(),
         }
     }
 
@@ -70,27 +65,15 @@ impl CStateNetworkActor {
         last_config_update_ms: u64,
         connection_nonce: u64,
     ) {
-        if let Some(room) = &self.room_actor {
-            room.do_send(CStateMessage::Heartbeat {
-                collector_id,
-                uptime_secs,
-                pings_sent,
-                pings_received,
-                batches_sent,
-                last_config_update_ms,
-                connection_nonce,
-            });
-        } else {
-            self.pending_heartbeats.push((
-                collector_id,
-                uptime_secs,
-                pings_sent,
-                pings_received,
-                batches_sent,
-                last_config_update_ms,
-                connection_nonce,
-            ));
-        }
+        self.room_actor.do_send(CStateMessage::Heartbeat {
+            collector_id,
+            uptime_secs,
+            pings_sent,
+            pings_received,
+            batches_sent,
+            last_config_update_ms,
+            connection_nonce,
+        });
     }
 }
 
@@ -109,44 +92,8 @@ impl Actor for CStateNetworkActor {
 }
 
 // ============================================================================
-// SetRoomActor Handler
+// Event Stream Handler
 // ============================================================================
-
-impl Handler<zznet_component::SetRoomActor<CStateMessage>> for CStateNetworkActor {
-    type Result = ();
-
-    fn handle(
-        &mut self,
-        msg: zznet_component::SetRoomActor<CStateMessage>,
-        _ctx: &mut Context<Self>,
-    ) -> Self::Result {
-        debug!("Setting room_actor for peer {}", self.peer_id);
-        self.room_actor = Some(msg.0.clone());
-
-        let pending = std::mem::take(&mut self.pending_heartbeats);
-        for (
-            collector_id,
-            uptime_secs,
-            pings_sent,
-            pings_received,
-            batches_sent,
-            last_config_update_ms,
-            connection_nonce,
-        ) in pending
-        {
-            debug!("Sending buffered heartbeat to peer {}", self.peer_id);
-            self.publish_heartbeat(
-                collector_id,
-                uptime_secs,
-                pings_sent,
-                pings_received,
-                batches_sent,
-                last_config_update_ms,
-                connection_nonce,
-            );
-        }
-    }
-}
 
 impl StreamHandler<Result<CStateEvent, BroadcastStreamRecvError>> for CStateNetworkActor {
     fn handle(
@@ -225,12 +172,11 @@ impl Handler<CStateMessage> for CStateNetworkActor {
                         "Peer {:?} attempted to send heartbeat without permission",
                         peer_id
                     );
+                    let room_actor_clone = room_actor.clone();
                     let fut = async move {
-                        if let Some(room) = room_actor {
-                            room.do_send(CStateMessage::Unauthorized {
-                                reason: "Not authorized to send heartbeats".to_string(),
-                            });
-                        }
+                        room_actor_clone.do_send(CStateMessage::Unauthorized {
+                            reason: "Not authorized to send heartbeats".to_string(),
+                        });
                     };
                     return Box::pin(fut);
                 }
@@ -250,22 +196,18 @@ impl Handler<CStateMessage> for CStateNetworkActor {
                     match main_actor.send(request).await {
                         Ok(Ok(ack_response)) => {
                             debug!("Heartbeat accepted for peer {}", peer_id);
-                            if let Some(room) = room_actor {
-                                if let Some(reason) = ack_response.rejection {
-                                    room.do_send(CStateMessage::RegistrationRejected { reason });
-                                } else {
-                                    room.do_send(CStateMessage::HeartbeatAck {
-                                        timestamp_ms: ack_response.timestamp_ms,
-                                        server_time_ms: ack_response.server_time_ms,
-                                    });
-                                }
+                            if let Some(reason) = ack_response.rejection {
+                                room_actor.do_send(CStateMessage::RegistrationRejected { reason });
+                            } else {
+                                room_actor.do_send(CStateMessage::HeartbeatAck {
+                                    timestamp_ms: ack_response.timestamp_ms,
+                                    server_time_ms: ack_response.server_time_ms,
+                                });
                             }
                         }
                         Ok(Err(e)) => {
                             debug!("Heartbeat rejected: {}", e);
-                            if let Some(room) = room_actor {
-                                room.do_send(CStateMessage::Unauthorized { reason: e });
-                            }
+                            room_actor.do_send(CStateMessage::Unauthorized { reason: e });
                         }
                         Err(e) => {
                             debug!("MainActor error: {}", e);
@@ -295,12 +237,11 @@ impl Handler<CStateMessage> for CStateNetworkActor {
                         "Peer {:?} attempted to query collectors without permission",
                         peer_id
                     );
+                    let room_actor_clone = room_actor.clone();
                     let fut = async move {
-                        if let Some(room) = room_actor {
-                            room.do_send(CStateMessage::Unauthorized {
-                                reason: "Not authorized to query collectors".to_string(),
-                            });
-                        }
+                        room_actor_clone.do_send(CStateMessage::Unauthorized {
+                            reason: "Not authorized to query collectors".to_string(),
+                        });
                     };
                     return Box::pin(fut);
                 }
@@ -313,15 +254,11 @@ impl Handler<CStateMessage> for CStateNetworkActor {
                     match main_actor.send(request).await {
                         Ok(Ok(collectors)) => {
                             debug!("Query returned {} collectors", collectors.len());
-                            if let Some(room) = room_actor {
-                                room.do_send(CStateMessage::CollectorList { collectors });
-                            }
+                            room_actor.do_send(CStateMessage::CollectorList { collectors });
                         }
                         Ok(Err(e)) => {
                             debug!("Query rejected: {}", e);
-                            if let Some(room) = room_actor {
-                                room.do_send(CStateMessage::Unauthorized { reason: e });
-                            }
+                            room_actor.do_send(CStateMessage::Unauthorized { reason: e });
                         }
                         Err(e) => {
                             debug!("MainActor error: {}", e);
