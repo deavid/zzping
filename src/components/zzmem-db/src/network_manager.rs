@@ -5,8 +5,8 @@
 
 use actix::prelude::*;
 use std::collections::HashMap;
-use zznet_api::types::{PeerId, RoomId};
-use zznet_room::actor::RoomActor;
+use zznet_api::{PeerId, RoomId};
+use zznet_room::RoomActor;
 use zznet_router::RouterActor;
 
 use crate::actor::MemDBActor;
@@ -15,7 +15,7 @@ use crate::network_messages::MemDBMessage;
 use crate::permissions::MemDBPermissions;
 
 /// Factory that creates per-peer NetworkActors and RoomActors for MemDB.
-pub struct MemDBRoomFactory {
+pub(crate) struct MemDBRoomFactory {
     main_actor: Addr<MemDBActor>,
     _manager: Addr<MemDBNetworkManager>,
     permissions_map: HashMap<String, MemDBPermissions>,
@@ -23,7 +23,7 @@ pub struct MemDBRoomFactory {
 
 impl MemDBRoomFactory {
     /// Create a new `MemDBRoomFactory`.
-    pub fn new(
+    pub(crate) fn new(
         main_actor: Addr<MemDBActor>,
         manager: Addr<MemDBNetworkManager>,
         permissions_map: HashMap<String, MemDBPermissions>,
@@ -40,10 +40,10 @@ impl zznet_router::RoomFactory for MemDBRoomFactory {
     fn create_room(
         &self,
         peer_id: PeerId,
-        role: zznet_api::types::Role,
+        role: zznet_api::Role,
         room_id: RoomId,
-        transport_tx: tokio::sync::mpsc::Sender<zznet_api::types::TransportFrame>,
-    ) -> Result<Option<zznet_room::room_manager::RoomInboundRecipient>, String> {
+        transport_tx: tokio::sync::mpsc::Sender<zznet_api::TransportFrame>,
+    ) -> Result<Option<zznet_room::RoomInboundRecipient>, String> {
         // Check if this is our room
         if room_id.as_str() != "memdb" {
             return Ok(None);

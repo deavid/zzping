@@ -11,11 +11,10 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use tokio_stream::wrappers::ReceiverStream;
-use zznet_api::error::TransportError;
-use zznet_api::messages::InboundRoomPayload;
-use zznet_api::protocol::{Frame, HandshakeFrame, RoomFrame};
-use zznet_api::transport::TransportConnection;
-use zznet_api::types::{RoomId, TransportFrame};
+use zznet_api::{
+    Frame, HandshakeFrame, InboundRoomPayload, RoomFrame, RoomId, TransportConnection,
+    TransportError, TransportFrame,
+};
 
 // The HELLO protocol is application-agnostic; it uses a role string, not a concrete enum.
 use crate::error::HelloError;
@@ -56,8 +55,8 @@ pub(crate) enum ActorState {
     /// Proxying frames to rooms (data plane active).
     Proxy {
         routes: std::collections::HashMap<
-            zznet_api::types::RoomId,
-            actix::Recipient<zznet_api::messages::InboundRoomPayload>,
+            zznet_api::RoomId,
+            actix::Recipient<zznet_api::InboundRoomPayload>,
         >,
     },
     /// Terminal state after failure or closure.
@@ -101,8 +100,8 @@ pub(crate) struct Disconnect;
 #[rtype(result = "()")]
 pub(crate) struct SetRoutes(
     pub  std::collections::HashMap<
-        zznet_api::types::RoomId,
-        actix::Recipient<zznet_api::messages::InboundRoomPayload>,
+        zznet_api::RoomId,
+        actix::Recipient<zznet_api::InboundRoomPayload>,
     >,
 );
 
@@ -112,7 +111,7 @@ pub(crate) struct SetRoutes(
 pub(crate) struct GetTransportTx;
 
 /// Manages a connection's lifecycle using the HELLO protocol.
-pub(crate) struct HelloActor {
+pub struct HelloActor {
     /// Connection configuration.
     config: HelloConfig,
     /// The HELLO protocol state machine.
@@ -126,7 +125,7 @@ pub(crate) struct HelloActor {
     peer_role: Option<String>,
     /// TLS peer identity from transport (None for plain TCP).
     /// Used to validate that HELLO role matches certificate CN when TLS is enabled.
-    tls_peer_identity: Option<zznet_api::types::PeerTLSIdentity>,
+    tls_peer_identity: Option<zznet_api::PeerTLSIdentity>,
     /// Sender to transport for outbound frames.
     transport_tx: mpsc::Sender<TransportFrame>,
     /// Optional handshake recipient (for integration with higher layer). - FIXME: Why is this optional? it doesn't make sense
@@ -139,7 +138,7 @@ impl HelloActor {
     /// This is private - use `start_hello_actor()` to properly create and start the actor.
     fn new(
         config: HelloConfig,
-        tls_peer_identity: Option<zznet_api::types::PeerTLSIdentity>,
+        tls_peer_identity: Option<zznet_api::PeerTLSIdentity>,
         transport_tx: mpsc::Sender<TransportFrame>,
         transport_rx: mpsc::Receiver<Result<TransportFrame, TransportError>>,
     ) -> Self {
@@ -376,7 +375,7 @@ impl HelloActor {
         self.state = ActorState::Failed;
 
         // Try to send error frame to peer
-        if let Ok(error_frame) = Frame::Handshake(zznet_api::protocol::HandshakeFrame::Error {
+        if let Ok(error_frame) = Frame::Handshake(zznet_api::HandshakeFrame::Error {
             message: error.to_string(),
         })
         .serialize()

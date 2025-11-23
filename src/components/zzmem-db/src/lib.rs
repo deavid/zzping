@@ -1,14 +1,19 @@
 //! In-memory ping database component for ZZPing.
 
-pub mod actor;
-pub mod builder;
-pub mod config;
-pub mod internal_messages;
-pub mod messages;
-pub mod network_actor;
-pub mod network_manager;
-pub mod network_messages;
-pub mod permissions;
-pub mod storage;
+mod actor;
+mod builder;
+mod config;
+mod internal_messages;
+mod messages;
+mod network_actor;
+mod network_manager;
+mod network_messages;
+mod permissions;
+mod storage;
 
+pub use actor::MemDBActor;
+pub use builder::MemDBBuilder;
+pub use config::MemDBConfig;
+pub use messages::*;
+pub use network_messages::*;
 pub use permissions::MemDBPermissions;

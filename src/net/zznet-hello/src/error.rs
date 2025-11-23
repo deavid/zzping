@@ -3,7 +3,7 @@
 //! These errors are fatal and should result in connection termination.
 
 use thiserror::Error;
-use zznet_api::error::TransportError;
+use zznet_api::TransportError;
 
 /// Represents failures in the HELLO handshake process.
 #[derive(Error, Debug)]

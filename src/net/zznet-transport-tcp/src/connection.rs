@@ -10,9 +10,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error};
 use x509_parser::prelude::*;
 
-use zznet_api::error::TransportError;
-use zznet_api::transport::TransportConnection;
-use zznet_api::types::{PeerTLSIdentity, TransportFrame};
+use zznet_api::{PeerTLSIdentity, TransportConnection, TransportError, TransportFrame};
 
 use crate::framing;
 
@@ -54,7 +52,7 @@ impl TcpTransport {
     pub(crate) fn tls_client(
         stream: tokio_rustls::client::TlsStream<TcpStream>,
         peer_addr: SocketAddr,
-    ) -> Result<Self, zznet_api::error::TransportError> {
+    ) -> Result<Self, zznet_api::TransportError> {
         debug!("Created TLS client transport for {}", peer_addr);
         let peer_identity = Some(Self::extract_identity_from_tls_client(&stream)?);
         Ok(TcpTransport {
@@ -68,7 +66,7 @@ impl TcpTransport {
     pub(crate) fn tls_server(
         stream: tokio_rustls::server::TlsStream<TcpStream>,
         peer_addr: SocketAddr,
-    ) -> Result<Self, zznet_api::error::TransportError> {
+    ) -> Result<Self, zznet_api::TransportError> {
         debug!("Created TLS server transport for {}", peer_addr);
         let peer_identity = Some(Self::extract_identity_from_tls_server(&stream)?);
         Ok(TcpTransport {
@@ -387,5 +385,4 @@ mod tests {
             }
         }
     }
-
 }

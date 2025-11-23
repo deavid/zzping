@@ -1,6 +1,5 @@
 use thiserror::Error;
-use zznet_api::types::PeerId;
-use zznet_api::types::RoomId;
+use zznet_api::{PeerId, RoomId};
 
 /// Errors that can occur in session/peer management
 #[derive(Debug, Error)]

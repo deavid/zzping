@@ -9,7 +9,7 @@ use surge_ping::{Client, ConfigBuilder};
 use tracing_subscriber::EnvFilter;
 use zzping_collector::config::CollectorConfig;
 use zzping_collector::network::StartedComponents;
-use zzpinger::mock::MockPingerClient;
+use zzpinger::MockPingerClient;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -51,20 +51,19 @@ async fn main() -> Result<()> {
 
     let router = zznet_router::RouterActor::new(vec![]).start();
 
-    let intent_builder =
-        zzintent_config::builder::IntentConfigBuilder::new().config_for_collector();
+    let intent_builder = zzintent_config::IntentConfigBuilder::new().config_for_collector();
     let intent_addr = intent_builder.router(router.clone()).start()?;
 
-    let memdb_builder = zzmem_db::builder::MemDBBuilder::new(
-        zzmem_db::config::MemDBConfig::for_collector(config.components.memdb_batch_size),
-    );
+    let memdb_builder = zzmem_db::MemDBBuilder::new(zzmem_db::MemDBConfig::for_collector(
+        config.components.memdb_batch_size,
+    ));
     let memdb_addr = memdb_builder.router(router.clone()).build();
-    let memdb_recipient: actix::Recipient<zzmem_db::messages::StorePingResult> =
+    let memdb_recipient: actix::Recipient<zzmem_db::StorePingResult> =
         memdb_addr.clone().recipient();
 
-    let pinger_builder = zzpinger::builder::PingerBuilder {
+    let pinger_builder = zzpinger::PingerBuilder {
         clock: None,
-        spawn_strategy: zzpinger::builder::SpawnStrategy::NewArbiter,
+        spawn_strategy: zzpinger::SpawnStrategy::NewArbiter,
     };
     let pinger_addr = match config.components.pinger_backend {
         zzping_collector::config::PingerBackend::Real => {

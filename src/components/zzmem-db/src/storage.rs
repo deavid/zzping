@@ -11,7 +11,7 @@ use std::collections::HashMap;
 ///
 /// This struct manages the in-memory storage of ping results with
 /// configurable limits per target.
-pub struct StorageBackend {
+pub(crate) struct StorageBackend {
     /// Storage: target -> list of stored results
     data: HashMap<String, Vec<StoredPingResult>>,
     /// Maximum number of results to keep per target
@@ -20,7 +20,7 @@ pub struct StorageBackend {
 
 impl StorageBackend {
     /// Create a new storage backend with the specified limit per target.
-    pub fn new(max_per_target: usize) -> Self {
+    pub(crate) fn new(max_per_target: usize) -> Self {
         Self {
             data: HashMap::new(),
             max_per_target,
@@ -31,7 +31,7 @@ impl StorageBackend {
     ///
     /// Converts PingResult to StoredPingResult, adds storage timestamp,
     /// and enforces storage limits.
-    pub fn insert_batch(&mut self, results: Vec<PingResult>, batch_timestamp_ms: u64) {
+    pub(crate) fn insert_batch(&mut self, results: Vec<PingResult>, batch_timestamp_ms: u64) {
         for result in results {
             self.insert_single(result, batch_timestamp_ms);
         }
@@ -58,7 +58,12 @@ impl StorageBackend {
     ///
     /// Returns all results for the target that fall within [from_ms, to_ms].
     /// Results are sorted by timestamp (oldest first).
-    pub fn query_target(&self, target: &str, from_ms: u64, to_ms: u64) -> Vec<StoredPingResult> {
+    pub(crate) fn query_target(
+        &self,
+        target: &str,
+        from_ms: u64,
+        to_ms: u64,
+    ) -> Vec<StoredPingResult> {
         let mut results = self
             .data
             .get(target)
@@ -79,7 +84,7 @@ impl StorageBackend {
     /// Get statistics for a target.
     ///
     /// Returns (result_count, avg_rtt_us, packet_loss_percent, last_seen_ms).
-    pub fn get_target_stats(&self, target: &str) -> (usize, Option<f64>, f64, Option<u64>) {
+    pub(crate) fn get_target_stats(&self, target: &str) -> (usize, Option<f64>, f64, Option<u64>) {
         let results = self.data.get(target).map(|r| r.as_slice()).unwrap_or(&[]);
 
         let total_count = results.len();
@@ -116,21 +121,6 @@ impl StorageBackend {
             let excess = results.len() - self.max_per_target;
             results.drain(0..excess);
         }
-    }
-
-    /// Get the total number of results across all targets.
-    pub fn total_results(&self) -> usize {
-        self.data.values().map(|results| results.len()).sum()
-    }
-
-    /// Get the number of targets being tracked.
-    pub fn target_count(&self) -> usize {
-        self.data.len()
-    }
-
-    /// Clear all data (for testing or reset).
-    pub fn clear(&mut self) {
-        self.data.clear();
     }
 }
 

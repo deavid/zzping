@@ -1,7 +1,11 @@
 //! TCP/TLS transport implementation for zznet.
 
-pub mod client;
-pub mod config;
-pub mod connection;
-pub mod framing;
-pub mod server;
+mod client;
+mod config;
+mod connection;
+mod framing;
+mod server;
+
+pub use client::TcpTransportClient;
+pub use config::*;
+pub use server::TcpTransportServer;

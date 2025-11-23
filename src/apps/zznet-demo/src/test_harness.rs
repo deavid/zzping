@@ -3,9 +3,9 @@
 use crate::config::DemoAppConfig;
 use crate::service::DemoAppService;
 use actix::Addr;
-use zznet_api::mock::create_mock_pair;
-use zznet_hello::actor::HelloConfig;
-use zznet_hello::connection_manager::HandleTransport;
+use zznet_api::create_mock_pair;
+use zznet_hello::HandleTransport;
+use zznet_hello::HelloConfig;
 
 /// Spawns a `DemoAppService` and returns the service and the address of ComponentA.
 pub async fn spawn_demo_service(

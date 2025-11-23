@@ -3,9 +3,7 @@
 use crate::room_message_trait::RoomMessageTrait;
 use actix::prelude::*;
 use tokio::sync::mpsc;
-use zznet_api::messages::InboundRoomPayload;
-use zznet_api::protocol::{Frame, RoomFrame};
-use zznet_api::types::{RoomId, TransportFrame};
+use zznet_api::{Frame, InboundRoomPayload, RoomFrame, RoomId, TransportFrame};
 
 /// Actix actor that centralizes (de-)serialization for a network room.
 ///

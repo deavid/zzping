@@ -9,8 +9,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info};
 
-use zznet_api::error::TransportError;
-use zznet_api::transport::TransportServer;
+use zznet_api::{TransportError, TransportServer};
 
 use crate::config::TlsConfig;
 use crate::connection::TcpTransport;
@@ -80,9 +79,7 @@ impl TcpTransportServer {
 
 #[async_trait]
 impl TransportServer for TcpTransportServer {
-    async fn accept(
-        &mut self,
-    ) -> Result<Box<dyn zznet_api::transport::TransportConnection>, TransportError> {
+    async fn accept(&mut self) -> Result<Box<dyn zznet_api::TransportConnection>, TransportError> {
         debug!("Waiting for incoming connection");
 
         let (tcp_stream, peer_addr) = self.listener.accept().await.map_err(|e| {

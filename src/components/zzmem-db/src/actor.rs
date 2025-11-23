@@ -378,7 +378,7 @@ impl Handler<GetStats> for MemDBActor {
 /// The behavior depends on the actor's role:
 #[cfg(test)]
 mod tests {
-    use zznet_api::types::PeerId;
+    use zznet_api::PeerId;
 
     use super::*;
 

@@ -54,7 +54,7 @@ pub use permissions::ComponentAPermissions;
 /// Used to resolve circular dependency in factory.
 /// Factory creates NetworkActor first, then RoomActor, then wires them together.
 #[derive(Clone)]
-pub struct SetRoomActor(pub Addr<zznet_room::actor::RoomActor<ComponentAMessage>>);
+pub struct SetRoomActor(pub Addr<zznet_room::RoomActor<ComponentAMessage>>);
 
 impl Message for SetRoomActor {
     type Result = ();
@@ -96,7 +96,7 @@ use crate::messages::{
 use actix::prelude::*;
 use std::collections::HashMap;
 use tracing::info;
-use zznet_api::types::PeerId;
+use zznet_api::PeerId;
 use zznet_router::RegisterManager;
 
 /// Custom factory for ComponentA that wires NetworkActor with RoomActor
@@ -125,10 +125,10 @@ impl zznet_router::RoomFactory for ComponentARoomFactory {
     fn create_room(
         &self,
         peer_id: PeerId,
-        role: zznet_api::types::Role,
-        room_id: zznet_api::types::RoomId,
-        transport_tx: tokio::sync::mpsc::Sender<zznet_api::types::TransportFrame>,
-    ) -> Result<Option<zznet_room::room_manager::RoomInboundRecipient>, String> {
+        role: zznet_api::Role,
+        room_id: zznet_api::RoomId,
+        transport_tx: tokio::sync::mpsc::Sender<zznet_api::TransportFrame>,
+    ) -> Result<Option<zznet_room::RoomInboundRecipient>, String> {
         // Check if this is our room
         if room_id.as_str() != "room-a" {
             return Ok(None);
@@ -152,7 +152,7 @@ impl zznet_router::RoomFactory for ComponentARoomFactory {
         let net_addr = net.start();
 
         // Create RoomActor
-        let room = zznet_room::actor::RoomActor::new(
+        let room = zznet_room::RoomActor::new(
             room_id,
             transport_tx,
             net_addr.clone().recipient::<ComponentAMessage>(),
@@ -375,7 +375,7 @@ impl Actor for ComponentANetworkManager {
             self.main_actor.clone(),
             self.permissions_map.clone(),
         ));
-        let rooms = vec![zznet_api::types::RoomId::from("room-a")];
+        let rooms = vec![zznet_api::RoomId::from("room-a")];
         let register_msg = RegisterManager { factory, rooms };
         self.router.do_send(register_msg);
     }
@@ -394,7 +394,7 @@ pub struct ComponentANetworkActor {
     /// Main actor address
     main_actor: Addr<ComponentAActor>,
     /// Room actor for outbound messages
-    room_actor: Option<Addr<zznet_room::actor::RoomActor<ComponentAMessage>>>,
+    room_actor: Option<Addr<zznet_room::RoomActor<ComponentAMessage>>>,
 }
 
 impl ComponentANetworkActor {

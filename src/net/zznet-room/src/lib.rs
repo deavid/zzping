@@ -11,6 +11,10 @@
 //! - Delivers to a local component handler
 //!
 
-pub mod actor;
-pub mod room_manager;
-pub mod room_message_trait;
+mod actor;
+mod room_manager;
+mod room_message_trait;
+
+pub use actor::RoomActor;
+pub use room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
+pub use zznet_api::RoomInboundRecipient;

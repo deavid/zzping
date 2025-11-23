@@ -5,8 +5,8 @@
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use zznet_api::types::RoomId;
-use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
+use zznet_api::RoomId;
+use zznet_room::{DeserializationError, RoomMessageTrait, SerializationError};
 
 /// Network messages for the intent-config room.
 #[derive(Clone, Debug, Message, Serialize, Deserialize, PartialEq)]

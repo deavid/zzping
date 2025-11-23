@@ -52,20 +52,18 @@ async fn main() -> Result<()> {
     let data_dir = std::path::PathBuf::from(&config.data_dir);
     let config_path = data_dir.join("intent.ron");
     let intent_builder =
-        zzintent_config::builder::IntentConfigBuilder::new().config_for_database(config_path);
+        zzintent_config::IntentConfigBuilder::new().config_for_database(config_path);
     let _intent_addr = intent_builder.router(router_actor.clone()).start()?;
 
-    let memdb_builder = zzmem_db::builder::MemDBBuilder::new(
-        zzmem_db::config::MemDBConfig::for_database(10000, None),
-    );
+    let memdb_builder =
+        zzmem_db::MemDBBuilder::new(zzmem_db::MemDBConfig::for_database(10000, None));
     let _memdb_addr = memdb_builder.router(router_actor.clone()).build();
 
-    let cstate_builder = zzcollector_state::builder::CStateBuilder::new(
-        zzcollector_state::config::CStateConfig::for_database(
+    let cstate_builder =
+        zzcollector_state::CStateBuilder::new(zzcollector_state::CStateConfig::for_database(
             config.components.stale_timeout_secs,
             Some(config.components.max_collectors),
-        ),
-    );
+        ));
     let _cstate_addr = cstate_builder.router(router_actor.clone()).build();
 
     let tls_cfg = if let Some(tls) = &config.tls {

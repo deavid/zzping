@@ -10,7 +10,7 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use zzmem_db::messages::StorePingResult;
+use zzmem_db::StorePingResult;
 
 // --- Mock Infrastructure ---
 
@@ -147,7 +147,7 @@ impl Handler<ClearReceived> for MockMemDB {
 }
 
 impl Handler<StorePingResult> for MockMemDB {
-    type Result = ResponseActFuture<Self, Result<(), zzmem_db::messages::MemDBError>>;
+    type Result = ResponseActFuture<Self, Result<(), zzmem_db::MemDBError>>;
 
     fn handle(&mut self, msg: StorePingResult, _ctx: &mut Self::Context) -> Self::Result {
         let blocked = self.blocked.load(Ordering::Relaxed);

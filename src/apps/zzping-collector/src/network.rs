@@ -2,16 +2,16 @@
 
 use actix::Actor;
 use std::time::Duration;
-use zzintent_config::actor::IntentConfigActor;
-use zzmem_db::actor::MemDBActor;
-use zznet_api::error::TransportError;
-use zznet_api::transport::TransportClient;
-use zznet_hello::actor::HelloConfig;
-use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
+use zzintent_config::IntentConfigActor;
+use zzmem_db::MemDBActor;
+use zznet_api::TransportClient;
+use zznet_api::TransportError;
+use zznet_hello::HelloConfig;
+use zznet_hello::{ConnectionManager, HandleTransport};
 use zznet_router::RouterActor;
-use zznet_transport_tcp::client::TcpTransportClient;
-use zznet_transport_tcp::config::TlsConfig;
-use zzpinger::scheduler::PingerSchedulerActor;
+use zznet_transport_tcp::TcpTransportClient;
+use zznet_transport_tcp::TlsConfig;
+use zzpinger::PingerSchedulerActor;
 
 /// Started components (running actors)
 pub struct StartedComponents {
@@ -75,8 +75,8 @@ impl CollectorNetwork {
 
         // Build allowed roles set for HELLO authentication
         let mut allowed_roles = std::collections::HashSet::new();
-        allowed_roles.insert(zznet_api::types::Role::new("database"));
-        allowed_roles.insert(zznet_api::types::Role::new("collector"));
+        allowed_roles.insert(zznet_api::Role::new("database"));
+        allowed_roles.insert(zznet_api::Role::new("collector"));
 
         // Step 2: Components are ready (peer_manager no longer needed by ConnectionManager)
 

@@ -2,8 +2,8 @@
 
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use zznet_api::types::{PeerId, Role, RoomId, TransportFrame};
-use zznet_room::room_manager::RoomInboundRecipient;
+use zznet_api::{PeerId, Role, RoomId, TransportFrame};
+use zznet_room::RoomInboundRecipient;
 
 /// Creates room actors synchronously during peer connection on the Router thread.
 pub trait RoomFactory: Send + Sync {

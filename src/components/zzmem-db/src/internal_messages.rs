@@ -26,7 +26,7 @@
 
 use crate::network_messages::{PingResult, StoredPingResult};
 use actix::prelude::*;
-use zznet_api::types::PeerId;
+use zznet_api::PeerId;
 
 // ============================================================================
 // INBOUND MESSAGES (Network → MainActor) - Request/Reply Pattern

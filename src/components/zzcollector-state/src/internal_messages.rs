@@ -9,7 +9,7 @@
 
 use crate::network_messages::CollectorInfo;
 use actix::prelude::*;
-use zznet_api::types::PeerId;
+use zznet_api::PeerId;
 
 // ============================================================================
 // Inbound Messages (NetworkActor → MainActor)

@@ -13,8 +13,8 @@ use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permissions::IntentConfigPermissions;
 use actix::prelude::*;
 use tokio::sync::broadcast::error::RecvError;
-use zznet_api::types::PeerId;
-use zznet_room::actor::RoomActor;
+use zznet_api::PeerId;
+use zznet_room::RoomActor;
 
 /// Message to set the room_actor address after NetworkActor creation
 ///

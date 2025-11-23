@@ -42,8 +42,8 @@ pub struct CollectorTlsConfig {
 
 impl CollectorTlsConfig {
     /// Converts this configuration into the transport layer's TLS configuration.
-    pub fn to_transport_config(&self) -> Result<zznet_transport_tcp::config::TlsConfig> {
-        Ok(zznet_transport_tcp::config::TlsConfig::new(
+    pub fn to_transport_config(&self) -> Result<zznet_transport_tcp::TlsConfig> {
+        Ok(zznet_transport_tcp::TlsConfig::new(
             &self.client_cert_path,
             &self.client_key_path,
             Some(&self.ca_cert_path),

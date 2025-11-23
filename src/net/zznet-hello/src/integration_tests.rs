@@ -10,7 +10,7 @@ mod hello_session_integration {
     use actix::prelude::*;
     use std::time::Duration;
     use tokio::sync::mpsc;
-    use zznet_api::mock::create_mock_pair;
+    use zznet_api::create_mock_pair;
 
     /// Mock SessionManager Actor that receives HandshakeComplete messages
     struct MockSessionManager {
@@ -97,7 +97,7 @@ mod hello_session_integration {
 
     #[actix::test]
     async fn test_tls_validation_rejects_mismatched_cn() {
-        use zznet_api::types::PeerTLSIdentity;
+        use zznet_api::PeerTLSIdentity;
 
         // Create mock transports with TLS identity
         let (mut client_transport, server_transport) = create_mock_pair("test-tls-reject");
@@ -162,7 +162,7 @@ mod hello_session_integration {
 
     #[actix::test]
     async fn test_tls_validation_accepts_matching_cn() {
-        use zznet_api::types::PeerTLSIdentity;
+        use zznet_api::PeerTLSIdentity;
 
         // Create mock transports with TLS identity
         let (mut client_transport, mut server_transport) = create_mock_pair("test-tls-accept");

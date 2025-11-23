@@ -12,8 +12,8 @@ use crate::network_messages::IntentConfigNetworkMsg;
 use crate::permissions::IntentConfigPermissions;
 use actix::prelude::*;
 use std::collections::HashMap;
-use zznet_api::types::{PeerId, RoomId};
-use zznet_room::actor::RoomActor;
+use zznet_api::{PeerId, RoomId};
+use zznet_room::RoomActor;
 use zznet_router::RouterActor;
 
 /// Custom factory for IntentConfig that passes event_bus to NetworkActors
@@ -50,10 +50,10 @@ impl zznet_router::RoomFactory for IntentConfigRoomFactory {
     fn create_room(
         &self,
         peer_id: PeerId,
-        role: zznet_api::types::Role,
+        role: zznet_api::Role,
         room_id: RoomId,
-        transport_tx: tokio::sync::mpsc::Sender<zznet_api::types::TransportFrame>,
-    ) -> Result<Option<zznet_room::room_manager::RoomInboundRecipient>, String> {
+        transport_tx: tokio::sync::mpsc::Sender<zznet_api::TransportFrame>,
+    ) -> Result<Option<zznet_room::RoomInboundRecipient>, String> {
         // Check if this is our room
         if room_id.as_str() != "intent-config" {
             return Ok(None);

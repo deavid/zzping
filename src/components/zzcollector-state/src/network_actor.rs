@@ -14,8 +14,8 @@ use crate::{
 use actix::prelude::*;
 use log::debug;
 use tokio::sync::broadcast::error::RecvError;
-use zznet_api::types::PeerId;
-use zznet_room::actor::RoomActor;
+use zznet_api::PeerId;
+use zznet_room::RoomActor;
 
 /// Message to set the room_actor address after NetworkActor creation
 ///

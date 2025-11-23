@@ -5,8 +5,7 @@
 
 use crate::router::Router;
 use actix::prelude::*;
-use zznet_api::messages::OnPeerConnected;
-use zznet_api::types::RoomId;
+use zznet_api::{OnPeerConnected, RoomId};
 
 /// RouterActor - Actix wrapper for Router
 ///
@@ -62,10 +61,7 @@ impl Handler<RegisterManager> for RouterActor {
 
 impl Handler<OnPeerConnected> for RouterActor {
     type Result = Result<
-        std::collections::HashMap<
-            zznet_api::types::RoomId,
-            zznet_api::messages::RoomInboundRecipient,
-        >,
+        std::collections::HashMap<zznet_api::RoomId, zznet_api::RoomInboundRecipient>,
         String,
     >;
 

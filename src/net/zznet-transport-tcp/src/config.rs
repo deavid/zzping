@@ -3,9 +3,6 @@
 //! This module provides TLS configuration with mutual authentication,
 //! role-based certificate selection, and CA validation.
 
-use rustls;
-use rustls_native_certs;
-use rustls_pemfile;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;

@@ -4,8 +4,8 @@
 
 use actix::{Addr, Message, Recipient};
 use serde::{Deserialize, Serialize};
-use zznet_api::types::RoomId;
-use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
+use zznet_api::RoomId;
+use zznet_room::{DeserializationError, RoomMessageTrait, SerializationError};
 
 use crate::component_a::ComponentANetworkManager;
 

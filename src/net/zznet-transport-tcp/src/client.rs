@@ -10,8 +10,7 @@ use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 use tracing::{debug, error, info};
 
-use zznet_api::error::TransportError;
-use zznet_api::transport::TransportClient;
+use zznet_api::{TransportClient, TransportError};
 
 use crate::config::TlsConfig;
 use crate::connection::TcpTransport;
@@ -63,9 +62,7 @@ impl TcpTransportClient {
 
 #[async_trait]
 impl TransportClient for TcpTransportClient {
-    async fn connect(
-        &self,
-    ) -> Result<Box<dyn zznet_api::transport::TransportConnection>, TransportError> {
+    async fn connect(&self) -> Result<Box<dyn zznet_api::TransportConnection>, TransportError> {
         info!("Connecting to {}", self.addr);
 
         // Parse the address

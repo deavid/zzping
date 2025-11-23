@@ -28,7 +28,7 @@ pub trait Clock: Send + Sync + 'static {
 
 /// Default system clock.
 #[derive(Clone, Default)]
-pub struct SystemClock;
+pub(crate) struct SystemClock;
 
 impl Clock for SystemClock {
     fn now(&self) -> std::time::SystemTime {

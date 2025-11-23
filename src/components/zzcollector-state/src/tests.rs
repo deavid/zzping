@@ -4,7 +4,7 @@ use crate::{
     internal_messages::{InboundHeartbeat, InboundHeartbeatAck, InboundQueryCollectors},
     messages::{GetCollectorState, UpdateHealthMetrics},
 };
-use zznet_api::types::PeerId;
+use zznet_api::PeerId;
 
 #[actix::test]
 async fn test_database_role_sends_ack_and_query_response() {

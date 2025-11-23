@@ -5,7 +5,7 @@
 
 use std::error::Error as StdError;
 use std::fmt;
-use zznet_api::types::RoomId;
+use zznet_api::RoomId;
 
 /// Error during message serialization
 #[derive(Debug)]

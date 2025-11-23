@@ -1,8 +1,8 @@
 //! Manages the state and health of a collector instance.
 
 mod actor;
-pub mod builder;
-pub mod config;
+mod builder;
+mod config;
 mod events;
 mod internal_messages;
 mod messages;
@@ -14,3 +14,9 @@ mod state;
 
 #[cfg(test)]
 mod tests;
+
+pub use actor::CStateActor;
+pub use builder::CStateBuilder;
+pub use config::CStateConfig;
+pub use messages::*;
+pub use permissions::CStatePermissions;

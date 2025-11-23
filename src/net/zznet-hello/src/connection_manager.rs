@@ -8,9 +8,7 @@ use crate::actor::{HelloActor, HelloConfig, start_hello_actor_with_handshake_rec
 use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
-use zznet_api::messages::OnPeerConnected;
-use zznet_api::transport::TransportConnection;
-use zznet_api::types::{PeerId, Role, RoomId};
+use zznet_api::{OnPeerConnected, PeerId, Role, RoomId, TransportConnection};
 
 /// Coordinates `HelloActor`s and authorizes peers.
 ///
@@ -72,7 +70,7 @@ impl Actor for ConnectionManager {
 #[rtype(result = "Result<(), String>")]
 pub struct HandleTransport {
     /// The transport connection to manage.
-    pub transport: Box<dyn zznet_api::transport::TransportConnection>,
+    pub transport: Box<dyn zznet_api::TransportConnection>,
     /// The `HelloActor` configuration for this connection.
     pub config: crate::actor::HelloConfig,
 }
@@ -144,7 +142,7 @@ impl Handler<HandshakeComplete> for ConnectionManager {
         // Spawn an async task to set up the data plane proxy
         // CRITICAL: Use actix::spawn to ensure task runs within Actix LocalSet
         actix::spawn(async move {
-            let peer_id_api = zznet_api::types::PeerId::from(peer_id.as_str());
+            let peer_id_api = zznet_api::PeerId::from(peer_id.as_str());
 
             // Get transport_tx from HelloActor
             let transport_tx = match hello_actor.send(crate::actor::GetTransportTx).await {

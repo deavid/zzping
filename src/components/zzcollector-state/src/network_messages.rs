@@ -4,8 +4,8 @@
 
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
-use zznet_api::types::RoomId;
-use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, SerializationError};
+use zznet_api::RoomId;
+use zznet_room::{DeserializationError, RoomMessageTrait, SerializationError};
 
 /// The name of the room used for collector state communication.
 pub(crate) const CSTATE_ROOM: &str = "cstate";

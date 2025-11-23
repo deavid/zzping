@@ -7,8 +7,8 @@ use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch};
-use zzmem_db::messages::StorePingResult;
-use zzmem_db::network_messages::PingResult;
+use zzmem_db::PingResult;
+use zzmem_db::StorePingResult;
 
 use crate::messages::{PingEvent, PingState, SchedulePings, UpdateCState, UpdateIntentConfig};
 use crate::traits::{Clock, SystemClock};

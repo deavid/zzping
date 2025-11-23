@@ -3,7 +3,7 @@
 use crate::messages::IntentConfigData;
 use actix::prelude::*;
 use std::net::IpAddr;
-use zznet_api::types::PeerId;
+use zznet_api::PeerId;
 
 // Messages: NetworkActor → NetworkManager
 

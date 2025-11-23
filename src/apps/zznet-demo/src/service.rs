@@ -8,8 +8,8 @@ use crate::{
 use actix::prelude::*;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
-use zznet_api::types::{Role, RoomId};
-use zznet_hello::connection_manager::ConnectionManager;
+use zznet_api::{Role, RoomId};
+use zznet_hello::ConnectionManager;
 use zznet_router::RouterActor;
 
 /// Demo service that implements `ZZNetApplication`.

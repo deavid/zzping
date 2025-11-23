@@ -49,9 +49,9 @@ impl DatabaseTlsConfig {
     /// Converts this configuration into the transport layer's TLS configuration.
     pub fn to_transport_config(
         &self,
-    ) -> Result<Option<zznet_transport_tcp::config::TlsConfig>, DatabaseError> {
+    ) -> Result<Option<zznet_transport_tcp::TlsConfig>, DatabaseError> {
         let ca = self.ca_cert_paths.first().map(|s| s.as_str());
-        Ok(Some(zznet_transport_tcp::config::TlsConfig::new(
+        Ok(Some(zznet_transport_tcp::TlsConfig::new(
             &self.server_cert_path,
             &self.server_key_path,
             ca,

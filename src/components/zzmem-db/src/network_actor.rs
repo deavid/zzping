@@ -19,7 +19,7 @@
 //!    - Handles protocol-level concerns
 
 use actix::prelude::*;
-use zznet_api::types::PeerId;
+use zznet_api::PeerId;
 
 use crate::actor::MemDBActor;
 use crate::network_messages::MemDBMessage;
@@ -32,7 +32,7 @@ use crate::permissions::MemDBPermissions;
 /// - Enforces component-specific permissions for authorization
 /// - Sends network messages on behalf of MainActor
 /// - Provides per-peer context (peer_id) to all messages
-pub struct MemDBNetworkActor {
+pub(crate) struct MemDBNetworkActor {
     /// The peer ID this actor represents
     peer_id: PeerId,
 
@@ -45,7 +45,7 @@ pub struct MemDBNetworkActor {
 
 impl MemDBNetworkActor {
     /// Create a new NetworkActor for the given peer.
-    pub fn new(
+    pub(crate) fn new(
         peer_id: PeerId,
         permissions: MemDBPermissions,
         main_actor: Addr<MemDBActor>,
