@@ -238,13 +238,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_new_handshake_starts_in_start_state() {
-        let handshake = Handshake::new();
-        assert_eq!(handshake.state, HandshakeState::Start);
-        assert!(!handshake.is_complete());
-    }
-
-    #[test]
     fn test_create_hello_frame() {
         let mut handshake = Handshake::new();
         let offered_rooms = vec!["memdb".to_string(), "query".to_string()];

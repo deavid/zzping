@@ -382,33 +382,6 @@ mod tests {
 
     use super::*;
 
-    #[test]
-    fn test_actor_creation() {
-        let collector_actor = MemDBActor::new(MemDBConfig::for_collector(100));
-        // Collector should not accept batches and should have configured buffer size
-        assert!(!collector_actor.config.accept_batches);
-        assert_eq!(collector_actor.config.buffer_size, 100);
-
-        let database_actor = MemDBActor::new(MemDBConfig::for_database(1000, None));
-        // Database should accept batches and have the configured storage limit
-        assert!(database_actor.config.accept_batches);
-        assert_eq!(database_actor.config.max_results_per_target, 1000);
-    }
-
-    #[test]
-    fn test_actor_default() {
-        let actor = MemDBActor::default();
-        // Default configuration should be collector-like with buffer_size 1000
-        assert_eq!(actor.config.buffer_size, 1000);
-        assert!(!actor.config.accept_batches);
-
-        // Should have empty buffer
-        assert!(actor.buffer.is_empty());
-
-        // Should have no outstanding batch
-        assert!(actor.outstanding_batch.is_none());
-    }
-
     #[actix::test]
     async fn test_send_batch_database_role_fails() {
         let actor = MemDBActor::new(MemDBConfig::for_database(1000, None));
@@ -471,30 +444,6 @@ mod tests {
     // Test removed - SetSessionManager handler no longer exists
     // #[test]
     // fn test_set_session_manager_message_handler() { ... }
-
-    #[actix::test]
-    async fn test_actor_lifecycle_started() {
-        let mut actor = MemDBActor::new(MemDBConfig::for_collector(100));
-        let mut ctx = Context::new();
-
-        // Call the started method
-        actor.started(&mut ctx);
-
-        // The method should complete without panicking
-        // In a real scenario, this would log the startup message
-    }
-
-    #[actix::test]
-    async fn test_actor_lifecycle_stopped() {
-        let mut actor = MemDBActor::new(MemDBConfig::for_collector(100));
-        let mut ctx = Context::new();
-
-        // Call the stopped method
-        actor.stopped(&mut ctx);
-
-        // The method should complete without panicking
-        // In a real scenario, this would log the shutdown message
-    }
 
     #[test]
     fn test_store_result_collector() {

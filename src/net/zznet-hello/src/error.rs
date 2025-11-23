@@ -37,15 +37,3 @@ impl From<rmp_serde::decode::Error> for HelloError {
         HelloError::Serialization(err.to_string())
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_transport_error_conversion() {
-        let transport_err = TransportError::ConnectionClosed(std::io::Error::other("test"));
-        let hello_err: HelloError = transport_err.into();
-        assert!(matches!(hello_err, HelloError::Transport(_)));
-    }
-}

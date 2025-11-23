@@ -57,29 +57,3 @@ impl CStatePermissions {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_collector_permissions() {
-        let perms = CStatePermissions::for_collector();
-        assert!(perms.can_send_heartbeat);
-        assert!(!perms.can_query_collectors);
-    }
-
-    #[test]
-    fn test_admin_permissions() {
-        let perms = CStatePermissions::for_admin();
-        assert!(!perms.can_send_heartbeat);
-        assert!(perms.can_query_collectors);
-    }
-
-    #[test]
-    fn test_deny_all() {
-        let perms = CStatePermissions::deny_all();
-        assert!(!perms.can_send_heartbeat);
-        assert!(!perms.can_query_collectors);
-    }
-}

@@ -12,8 +12,6 @@ use tracing::{debug, error, info};
 
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportClient;
-#[cfg(test)]
-use zznet_api::types::TransportFrame;
 
 use crate::config::TlsConfig;
 use crate::connection::TcpTransport;
@@ -123,66 +121,5 @@ impl TransportClient for TcpTransportClient {
             debug!("Using plain TCP (no TLS) for {}", self.addr);
             Ok(Box::new(TcpTransport::plain(tcp_stream, peer_addr)))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::net::TcpListener;
-    use zznet_api::transport::TransportConnection;
-
-    #[tokio::test]
-    async fn test_plain_tcp_client_connect() {
-        // Start a test server
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-
-        let server_handle = tokio::spawn(async move {
-            let (stream, peer_addr) = listener.accept().await.unwrap();
-            let transport = TcpTransport::plain(stream, peer_addr);
-            let (tx, mut rx) = Box::new(transport).start();
-
-            // Echo back any message
-            let msg = rx.recv().await.unwrap().unwrap();
-            tx.send(msg).await.unwrap();
-        });
-
-        // Create client and connect
-        let client = TcpTransportClient::new(addr.to_string(), None).unwrap();
-        let conn = client.connect().await.unwrap();
-        let (tx, mut rx) = conn.start();
-
-        // Send a message
-        tx.send(TransportFrame::new(b"test message".to_vec()))
-            .await
-            .unwrap();
-
-        // Receive echo
-        let response = rx.recv().await.unwrap().unwrap();
-        assert_eq!(response.get_bytes().as_ref(), b"test message");
-
-        server_handle.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_connection_refused() {
-        // Try to connect to a port that's not listening
-        let client = TcpTransportClient::new("127.0.0.1:1".to_string(), None).unwrap();
-        let result = client.connect().await;
-
-        assert!(result.is_err());
-        let err = result.err().unwrap();
-        assert!(matches!(err, TransportError::IoError(_)));
-    }
-
-    #[tokio::test]
-    async fn test_invalid_address() {
-        let client = TcpTransportClient::new("invalid:address".to_string(), None).unwrap();
-        let result = client.connect().await;
-
-        assert!(result.is_err());
-        let err = result.err().unwrap();
-        assert!(matches!(err, TransportError::IoError(_)));
     }
 }

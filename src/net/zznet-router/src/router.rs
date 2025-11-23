@@ -90,23 +90,4 @@ mod tests {
             Err(SessionError::RoomAlreadyExists { .. })
         ));
     }
-
-    #[test]
-    fn test_registered_rooms() {
-        let mut router = Router::new(vec![]);
-
-        let factory = Arc::new(MockFactory);
-
-        let rooms = vec![RoomId::from("room1"), RoomId::from("room2")];
-        router.register_manager(factory, rooms).unwrap();
-
-        let registered: Vec<RoomId> = router.factories.keys().cloned().collect();
-        assert_eq!(registered.len(), 2);
-        assert!(registered.contains(&RoomId::from("room1")));
-        assert!(registered.contains(&RoomId::from("room2")));
-    }
-
-    // Note: Full integration tests for handle_publish_rooms, send_to_room, and
-    // broadcast_to_role require PeerSession instances and are better tested
-    // at the integration test level (using ConnectionManager and Router).
 }

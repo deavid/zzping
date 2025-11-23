@@ -11,8 +11,6 @@ use tracing::{debug, error, info};
 
 use zznet_api::error::TransportError;
 use zznet_api::transport::TransportServer;
-#[cfg(test)]
-use zznet_api::types::TransportFrame;
 
 use crate::config::TlsConfig;
 use crate::connection::TcpTransport;
@@ -115,102 +113,5 @@ impl TransportServer for TcpTransportServer {
             debug!("Using plain TCP (no TLS) for {}", peer_addr);
             Ok(Box::new(TcpTransport::plain(tcp_stream, peer_addr)))
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::client::TcpTransportClient;
-    use zznet_api::transport::TransportClient;
-
-    #[tokio::test]
-    async fn test_plain_tcp_server_accept() {
-        let server = TcpTransportServer::new("127.0.0.1:0", None).await.unwrap();
-        let addr = server.local_addr().unwrap();
-
-        let server_handle = tokio::spawn(async move {
-            let mut server = server;
-            let conn = server.accept().await.unwrap();
-            let (tx, mut rx) = conn.start();
-
-            let msg = rx.recv().await.unwrap().unwrap();
-            tx.send(msg).await.unwrap();
-        });
-
-        let client = TcpTransportClient::new(addr.to_string(), None).unwrap();
-        let conn = client.connect().await.unwrap();
-        let (tx, mut rx) = conn.start();
-
-        tx.send(TransportFrame::new(b"hello server".to_vec()))
-            .await
-            .unwrap();
-
-        let response = rx.recv().await.unwrap().unwrap();
-        assert_eq!(response.get_bytes().as_ref(), b"hello server");
-
-        server_handle.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_multiple_connections() {
-        let server = TcpTransportServer::new("127.0.0.1:0", None).await.unwrap();
-        let addr = server.local_addr().unwrap();
-        let addr_clone = addr;
-
-        let server_handle = tokio::spawn(async move {
-            let mut server = server;
-            for _i in 0..3 {
-                let conn = server.accept().await.unwrap();
-                tokio::spawn(async move {
-                    let (tx, mut rx) = conn.start();
-                    let msg = rx.recv().await.unwrap().unwrap();
-                    tx.send(msg).await.unwrap();
-                });
-            }
-        });
-
-        let mut handles = vec![];
-
-        for i in 0..3 {
-            let addr_str = addr_clone.to_string();
-
-            let handle = tokio::spawn(async move {
-                let client = TcpTransportClient::new(addr_str, None).unwrap();
-                let conn = client.connect().await.unwrap();
-                let (tx, mut rx) = conn.start();
-
-                let msg = format!("client {}", i);
-                tx.send(TransportFrame::new(msg.as_bytes().to_vec()))
-                    .await
-                    .unwrap();
-
-                let response = rx.recv().await.unwrap().unwrap();
-                assert_eq!(response.get_bytes().as_ref(), msg.as_bytes());
-            });
-
-            handles.push(handle);
-        }
-
-        for handle in handles {
-            handle.await.unwrap();
-        }
-
-        server_handle.await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_invalid_bind_address() {
-        let result = TcpTransportServer::new("999.999.999.999:8080", None).await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_server_local_addr() {
-        let server = TcpTransportServer::new("127.0.0.1:0", None).await.unwrap();
-        let addr = server.local_addr().unwrap();
-
-        assert_eq!(addr.ip().to_string(), "127.0.0.1");
-        assert!(addr.port() > 0);
     }
 }

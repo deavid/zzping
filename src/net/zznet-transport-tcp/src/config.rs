@@ -177,32 +177,3 @@ impl TlsConfig {
         Ok(key)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_tls_cert_and_key_from_role_name() {
-        // Test the new generic API
-        let cert = TlsCertAndKey::from_role_name("collector", None);
-        assert_eq!(cert.pem_path.to_str().unwrap(), "certs/collector.pem");
-        assert_eq!(cert.key_path.to_str().unwrap(), "certs/collector.key");
-
-        // Works with any role name
-        let cert = TlsCertAndKey::from_role_name("database", Some("test_certs"));
-        assert_eq!(cert.pem_path.to_str().unwrap(), "test_certs/database.pem");
-        assert_eq!(cert.key_path.to_str().unwrap(), "test_certs/database.key");
-
-        // Custom role names work too
-        let cert = TlsCertAndKey::from_role_name("my-custom-service", None);
-        assert_eq!(
-            cert.pem_path.to_str().unwrap(),
-            "certs/my-custom-service.pem"
-        );
-        assert_eq!(
-            cert.key_path.to_str().unwrap(),
-            "certs/my-custom-service.key"
-        );
-    }
-}

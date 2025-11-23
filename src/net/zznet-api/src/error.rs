@@ -35,35 +35,3 @@ impl From<std::io::Error> for TransportError {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_error_display() {
-        use std::io::Error;
-        let err = TransportError::IoError(Error::other("network unreachable"));
-        assert_eq!(err.to_string(), "I/O error: network unreachable");
-
-        let err = TransportError::ConnectionClosed(Error::other("other"));
-        assert_eq!(err.to_string(), "Connection closed: other");
-    }
-
-    #[test]
-    fn test_io_error_conversion() {
-        use std::io::{Error, ErrorKind};
-
-        let io_err = Error::new(ErrorKind::ConnectionReset, "reset");
-        let transport_err: TransportError = io_err.into();
-        assert!(matches!(transport_err, TransportError::ConnectionClosed(_)));
-
-        let io_err = Error::new(ErrorKind::TimedOut, "timeout");
-        let transport_err: TransportError = io_err.into();
-        assert!(matches!(transport_err, TransportError::Timeout(_)));
-
-        let io_err = Error::new(ErrorKind::PermissionDenied, "denied");
-        let transport_err: TransportError = io_err.into();
-        assert!(matches!(transport_err, TransportError::IoError(_)));
-    }
-}

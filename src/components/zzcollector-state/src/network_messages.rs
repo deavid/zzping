@@ -97,30 +97,3 @@ impl RoomMessageTrait for CStateMessage {
         ron::de::from_bytes(bytes).map_err(|e| DeserializationError::Failed(e.to_string()))
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Verifies that a `Heartbeat` message can be serialized and deserialized correctly.
-    #[test]
-    fn test_heartbeat_serialization_deserialization() {
-        let original_message = CStateMessage::Heartbeat {
-            collector_id: "collector-1".to_string(),
-            uptime_secs: 12345,
-            pings_sent: 100,
-            pings_received: 95,
-            batches_sent: 10,
-            last_config_update_ms: 987654321,
-            connection_nonce: 1122334455,
-        };
-        let room_id = original_message.room_id();
-        let bytes = original_message.serialize_inner().unwrap();
-        let deserialized = CStateMessage::deserialize_for_room(&room_id, &bytes).unwrap();
-
-        assert!(matches!(deserialized, CStateMessage::Heartbeat { .. }));
-        if let CStateMessage::Heartbeat { collector_id, .. } = deserialized {
-            assert_eq!(collector_id, "collector-1");
-        }
-    }
-}

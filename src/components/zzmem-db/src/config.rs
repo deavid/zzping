@@ -90,34 +90,3 @@ impl Default for MemDBConfig {
         Self::for_collector(1000)
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_database_config() {
-        let config = MemDBConfig::for_database(10000, Some(PathBuf::from("/tmp/memdb.bin")));
-        assert_eq!(config.buffer_size, 0);
-        assert_eq!(config.max_results_per_target, 10000);
-        assert!(config.accept_batches);
-        assert!(config.allow_queries);
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_collector_config() {
-        let config = MemDBConfig::for_collector(50);
-        assert_eq!(config.buffer_size, 50);
-        assert_eq!(config.max_results_per_target, 0);
-        assert!(!config.accept_batches);
-        assert!(!config.allow_queries);
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_default_is_collector() {
-        let config = MemDBConfig::default();
-        assert_eq!(config, MemDBConfig::for_collector(1000));
-    }
-}

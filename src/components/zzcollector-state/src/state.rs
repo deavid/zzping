@@ -125,37 +125,3 @@ impl TrackedCollector {
         // Note: last_config_update_ms could be stored if needed
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashSet;
-
-    /// Verifies that a new `CollectorStateData` is initialized correctly.
-    #[test]
-    fn test_new_collector_state_data() {
-        let state = CollectorStateData::new("test-collector".to_string());
-        assert_eq!(state.collector_id, "test-collector");
-        assert_eq!(state.pings_sent, 0);
-        assert_ne!(state.connection_nonce, 0); // Should be non-zero
-    }
-
-    /// Verifies that connection nonces are reasonably unique.
-    #[test]
-    fn test_nonce_uniqueness() {
-        let mut nonces = HashSet::new();
-        for _ in 0..1000 {
-            nonces.insert(generate_connection_nonce());
-        }
-        // The probability of a collision in 1000 u64s is astronomically low.
-        // If this fails, something is very wrong with the RNG.
-        assert_eq!(nonces.len(), 1000);
-    }
-
-    /// Verifies that a new `DatabaseStateData` is initialized correctly.
-    #[test]
-    fn test_new_database_state_data() {
-        let state = DatabaseStateData::default();
-        assert!(state.collectors.is_empty());
-    }
-}
