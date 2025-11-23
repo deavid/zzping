@@ -383,18 +383,6 @@ mod tests {
     use super::*;
 
     #[actix::test]
-    async fn test_send_batch_database_role_fails() {
-        let actor = MemDBActor::new(MemDBConfig::for_database(1000, None));
-
-        let _addr = actor.start();
-
-        // Trigger send_batch through a StorePingResult message (which calls send_batch internally for collectors)
-        // But since this is a Database role, send_batch would return WrongRole
-        // We can't directly test send_batch() anymore since it needs Context
-        // Instead, we verify that Database role doesn't buffer (already tested in other tests)
-    }
-
-    #[actix::test]
     async fn test_send_batch_with_outstanding_batch() {
         let mut actor = MemDBActor::new(MemDBConfig::for_collector(100));
 
@@ -411,24 +399,6 @@ mod tests {
         let _addr = actor.start();
 
         // With outstanding batch, send_batch should skip sending (tested through integration tests)
-    }
-
-    #[actix::test]
-    async fn test_send_batch_no_session_manager() {
-        let mut actor = MemDBActor::new(MemDBConfig::for_collector(100));
-
-        // Add a result to buffer
-        actor.buffer.push(PingResult {
-            target: "8.8.8.8".to_string(),
-            timestamp_ms: 1234567890,
-            rtt_us: Some(15000),
-        });
-
-        // No session manager
-
-        let _addr = actor.start();
-
-        // Batch sending now uses NetworkManager (tested through integration tests)
     }
 
     // Test removed - SetSessionManager handler no longer exists
