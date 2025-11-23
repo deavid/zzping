@@ -1,5 +1,6 @@
 //! Provides a public API handle for interacting with the `CStateActor`.
 
+// FIXME: This file is useless. We need to remove this file entirely, the wrapper doesn't do anything useful.
 use crate::actor::CStateActor;
 use crate::messages::{
     CStateError, CStateHealth, GetCollectorState, GetHealth, UpdateHealthMetrics,
@@ -17,7 +18,7 @@ pub struct CStateHandle {
 }
 
 impl CStateHandle {
-    /// Creates a new `CStateHandle`.
+    /// Wraps a raw actor address into a strongly-typed API handle.
     pub fn new(addr: Addr<CStateActor>) -> Self {
         Self { addr }
     }

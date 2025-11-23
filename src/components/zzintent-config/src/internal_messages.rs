@@ -1,29 +1,13 @@
-//! Internal messages for three-actor pattern communication
-//!
-//! These messages are used for communication between:
-//! - IntentConfigActor (Main Actor - business logic)
-//! - IntentConfigNetworkManager (Manager Actor - peer lifecycle)
-//! - IntentConfigNetworkActor (Translator Actor - per-peer protocol)
-//!
-//! These are NOT exposed in the public API - they are internal implementation details
-//! of the three-actor architecture.
+//! Internal messages for the intent-config three-actor implementation.
 
 use crate::messages::IntentConfigData;
 use actix::prelude::*;
 use std::net::IpAddr;
 use zznet_api::types::PeerId;
 
-// ============================================================================
 // Messages: NetworkActor → NetworkManager
-// ============================================================================
 
-/// Inbound config change request from a peer
-///
-/// Sent by NetworkActor when it receives a RequestConfigChange message
-/// from its peer. NetworkManager is responsible for:
-/// 1. Querying PeerManager for authorization (role check)
-/// 2. Forwarding to MainActor if authorized
-/// 3. Sending error response if not authorized
+/// Peer-initiated request to change intent configuration.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct InboundConfigChangeRequest {
@@ -35,10 +19,7 @@ pub struct InboundConfigChangeRequest {
     pub ping_rate_pps: u64,
 }
 
-/// Inbound request to get current configuration
-///
-/// Sent by NetworkActor when it receives a GetConfig message from its peer.
-/// NetworkManager forwards to MainActor for processing.
+/// Peer request to fetch the current intent configuration.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "IntentConfigData")]
 pub struct InboundGetConfigRequest {
@@ -46,18 +27,9 @@ pub struct InboundGetConfigRequest {
     pub peer_id: PeerId,
 }
 
-// ============================================================================
 // Messages: NetworkManager → MainActor
-// ============================================================================
 
-/// Notification that a peer has requested a configuration change
-///
-/// Sent by NetworkManager after authorization check passes.
-/// MainActor is responsible for:
-/// 1. Validating the new configuration
-/// 2. Persisting to disk (Database role)
-/// 3. Broadcasting to local subscribers
-/// 4. Requesting network broadcast via NetworkManager
+/// Notification to MainActor that a peer requested a configuration change.
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "Result<(), String>")]
 pub struct NetworkConfigChangeRequest {

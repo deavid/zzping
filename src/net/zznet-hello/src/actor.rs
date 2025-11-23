@@ -129,7 +129,7 @@ pub(crate) struct HelloActor {
     tls_peer_identity: Option<zznet_api::types::PeerTLSIdentity>,
     /// Sender to transport for outbound frames.
     transport_tx: mpsc::Sender<TransportFrame>,
-    /// Optional SessionManager recipient (for integration with higher layer). - FIXME: Why is this optional? it doesn't make sense
+    /// Optional handshake recipient (for integration with higher layer). - FIXME: Why is this optional? it doesn't make sense
     session_manager: Option<Recipient<HandshakeComplete>>,
     /// Receiver for inbound frames from transport.
     transport_rx: Option<mpsc::Receiver<Result<TransportFrame, TransportError>>>,
@@ -319,7 +319,7 @@ impl HelloActor {
             self.active_rooms = rooms.to_vec();
             self.state = ActorState::Ready;
 
-            // Notify SessionManager if configured
+            // Notify handshake recipient if configured
             if let Some(ref session_mgr) = self.session_manager {
                 if let Some(ref peer_role) = self.peer_role {
                     // TLS VALIDATION: If TLS is enabled, the certificate role (OU) must match the HELLO role
@@ -358,7 +358,7 @@ impl HelloActor {
 
                         session_mgr.do_send(msg);
                         debug!(
-                            "Notified SessionManager of handshake completion for peer {}",
+                            "Notified handshake recipient of handshake completion for peer {}",
                             peer_hostname
                         );
                     } else {
@@ -368,7 +368,7 @@ impl HelloActor {
                     warn!("Handshake complete but peer_role not available");
                 }
             } else {
-                debug!("No SessionManager configured, running standalone");
+                debug!("No handshake recipient configured, running standalone");
             }
         } else {
             error!("Handshake marked complete but no active rooms");
@@ -377,7 +377,6 @@ impl HelloActor {
     }
 
     /// Logs an error, sends an error frame to the peer, and stops the actor.
-    // TODO (Architectural Review): Is sending an Error frame necessary? This adds complexity. Consider simplifying to just log and stop.
     fn handle_error(&mut self, error: HelloError, ctx: &mut Context<Self>) {
         error!("HelloActor fatal error: {}", error);
         self.state = ActorState::Failed;
@@ -531,14 +530,11 @@ impl Handler<GetTransportTx> for HelloActor {
     }
 }
 
-/// Creates and starts a `HelloActor` and its associated I/O task.
-///
-/// This is the primary entry point for creating a `HelloActor`. It wires up the
-/// actor, its I/O task, and the transport, returning the actor's address.
-pub(crate) fn start_hello_actor_with_session_manager(
+/// Starts a HelloActor that will report handshake completion to the provided recipient (usually ConnectionManager).
+pub(crate) fn start_hello_actor_with_handshake_recipient(
     transport: Box<dyn TransportConnection>,
     config: HelloConfig,
-    session_manager: Option<Recipient<HandshakeComplete>>,
+    handshake_recipient: Option<Recipient<HandshakeComplete>>,
 ) -> Addr<HelloActor> {
     let peer_addr = transport.peer_addr();
     // Extract TLS peer identity from transport (if available)
@@ -556,7 +552,7 @@ pub(crate) fn start_hello_actor_with_session_manager(
     let (transport_tx, transport_rx) = transport.start();
 
     let mut actor = HelloActor::new(config, tls_peer_identity, transport_tx, transport_rx);
-    if let Some(sm) = session_manager {
+    if let Some(sm) = handshake_recipient {
         actor = actor.with_session_manager(sm);
     }
 
@@ -631,8 +627,8 @@ mod tests {
             hostname: "host2".to_string(),
         };
 
-        let addr1 = start_hello_actor_with_session_manager(Box::new(conn1), config1, None);
-        let _addr2 = start_hello_actor_with_session_manager(Box::new(conn2), config2, None);
+        let addr1 = start_hello_actor_with_handshake_recipient(Box::new(conn1), config1, None);
+        let _addr2 = start_hello_actor_with_handshake_recipient(Box::new(conn2), config2, None);
 
         // Wait for handshake to complete (both should finish)
         // In reality, they should complete quickly
@@ -656,7 +652,7 @@ mod tests {
         let (conn1, _conn2) = create_mock_pair("test2");
 
         let config = HelloConfig::default();
-        let addr = start_hello_actor_with_session_manager(Box::new(conn1), config, None);
+        let addr = start_hello_actor_with_handshake_recipient(Box::new(conn1), config, None);
 
         // Send disconnect
         addr.do_send(Disconnect);

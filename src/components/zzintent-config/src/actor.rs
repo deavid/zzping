@@ -65,7 +65,7 @@ impl IntentConfigActor {
         log::debug!("Broadcast completed to {} subscribers", sent);
     }
 
-    /// Send ConfigUpdate to all connected peers via SessionManager (Database role only)
+    /// Send ConfigUpdate to all connected peers via network (Database role only)
     /// Convenience method for types that implement PermissionCheck
     fn send_config_update_to_peers(&self, ctx: &mut Context<Self>) {
         self.send_config_update_to_peers_impl(ctx);
@@ -216,7 +216,7 @@ impl Handler<UpdateConfig> for IntentConfigActor {
             // Broadcast locally to subscribers
             self.broadcast_config();
 
-            // Send to network peers via SessionManager
+            // Send to network peers via network layer
             self.send_config_update_to_peers(ctx);
             log::debug!("Config updated locally and sent to network peers");
         }

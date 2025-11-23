@@ -14,7 +14,7 @@ use zznet_room::room_message_trait::{DeserializationError, RoomMessageTrait, Ser
 pub enum MemDBMessage {
     /// Collector → Database: Submit a batch of ping results
     SubmitBatch {
-        /// The peer ID of the sender (filled by SessionManager)
+        /// The peer ID of the sender (filled by the routing layer)
         sender_peer_id: String,
         /// Timestamp when the batch was created (milliseconds since epoch)
         timestamp_ms: u64,
@@ -32,7 +32,7 @@ pub enum MemDBMessage {
 
     /// Admin → Database: Query stored ping data
     Query {
-        /// The peer ID of the sender (filled by SessionManager)
+        /// The peer ID of the sender (filled by the routing layer)
         sender_peer_id: String,
         /// Target host to query
         target: String,

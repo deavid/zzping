@@ -12,16 +12,6 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use zznet_api::types::RoomId;
 
-// create_peer_with_message_capture() removed in Phase 8 (used SessionManager)
-// Tests should create peers and channels directly using PeerSession::new_connected()
-
-// SessionManager-based test utilities removed in Phase 8
-// These functions were deprecated and unused. Tests should use PeerManagerActor directly.
-// Removed functions:
-// - connect_managers_in_memory()
-// - create_and_add_peer()
-// - create_peer_with_message_capture()
-
 /// Return type for MessageCapture creation that bundles the capture handle with connection channels
 pub struct MessageCaptureChannels {
     /// The capture handle used to receive messages from the connected peer.
@@ -37,24 +27,6 @@ pub struct MessageCaptureChannels {
 /// 1. Creating channels
 /// 2. Connecting peer
 /// 3. Waiting for messages with timeout
-///
-/// # Example
-/// ```rust,no_run,ignore
-/// use zzping_test_utils::MessageCaptureChannels;
-/// use zznet_api::types::RoomId;
-///
-/// // Old way (boilerplate):
-/// // let (tx_out, mut rx_out) = mpsc::channel(10);
-/// // let (_tx_in, rx_in) = mpsc::channel(10);
-/// // let pkt = timeout(Duration::from_millis(500), rx_out.recv()).await;
-///
-/// // New way (simple):
-/// async fn example() {
-///     let channels: MessageCaptureChannels = MessageCaptureChannels::new();
-///     let mut capture = channels.capture;
-///     let pkt = capture.recv_default_timeout().await;
-/// }
-/// ```
 pub struct MessageCapture {
     /// Receiver for captured messages. Tests can `.recv()` on this to observe
     /// messages published by the peer under test.
@@ -111,6 +83,3 @@ impl Default for MessageCaptureChannels {
         Self::new()
     }
 }
-
-// create_peer_with_message_capture() removed in Phase 8 (used SessionManager)
-// Tests should create peers and channels directly using PeerSession::new_connected()

@@ -670,7 +670,7 @@ mod tests {
         let batch_timestamp = 1234567890;
         actor.outstanding_batch = Some(batch_timestamp);
 
-        // Phase 5.7: Use internal message instead of MemDBMessage
+        // Use internal message instead of MemDBMessage
         let msg = crate::internal_messages::InboundBatchAck {
             peer_id: PeerId::from("test-peer"),
             received_count: 5,

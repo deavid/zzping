@@ -11,7 +11,7 @@ use zznet_api::types::{PeerId, RoomId};
 /// - Room limit enforcement (max_rooms_per_peer)
 /// - Room query operations
 ///
-/// **Non-Responsibilities** (handled by PeerManager):
+/// **Non-Responsibilities** (handled by ConnectionManager or HelloActor):
 /// - Peer state management
 /// - Peer identity/roles
 /// - Lifecycle events
@@ -34,9 +34,6 @@ impl Router {
     ///
     /// Enforces strict 1:1 room↔component mapping; fails on any collision.
     /// Factories provide Room<T> instances per peer at connection time synchronously.
-    ///
-    /// # Errors
-    /// - `SessionError::RoomAlreadyExists` if any managed room is already registered
     pub(crate) fn register_manager(
         &mut self,
         factory: RoomFactoryRef,
@@ -111,5 +108,5 @@ mod tests {
 
     // Note: Full integration tests for handle_publish_rooms, send_to_room, and
     // broadcast_to_role require PeerSession instances and are better tested
-    // at the SessionManager level during integration testing.
+    // at the integration test level (using ConnectionManager and Router).
 }

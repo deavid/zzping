@@ -4,7 +4,7 @@
 //! It spawns a `HelloActor` for each new connection, receives `HandshakeComplete`
 //! notifications, and then wires the authenticated peer into the handover recipient.
 
-use crate::actor::{HelloActor, HelloConfig, start_hello_actor_with_session_manager};
+use crate::actor::{HelloActor, HelloConfig, start_hello_actor_with_handshake_recipient};
 use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -43,7 +43,7 @@ impl ConnectionManager {
         }
     }
 
-    /// Spawns a `HelloActor` for a new connection.
+    /// Configures the actor to report back to this ConnectionManager upon successful handshake.
     pub(crate) fn spawn_hello_actor(
         &mut self,
         peer_id: PeerId,
@@ -51,8 +51,8 @@ impl ConnectionManager {
         config: HelloConfig,
         ctx: &mut Context<Self>,
     ) -> Addr<HelloActor> {
-        // Use the public API to start HelloActor with SessionManager integration
-        let addr = start_hello_actor_with_session_manager(
+        // Use the public API to start HelloActor with handshake recipient integration
+        let addr = start_hello_actor_with_handshake_recipient(
             transport,
             config,
             Some(ctx.address().recipient()),
@@ -88,7 +88,7 @@ impl Handler<HandleTransport> for ConnectionManager {
             .unwrap_or_else(|| "unknown".to_string());
         let peer_id = PeerId::from(peer_addr.as_str());
 
-        // Spawn HelloActor managed by this ConnectionManager (it will wire to SessionManager)
+        // Spawn HelloActor managed by this ConnectionManager (it will wire to handshake recipient)
         let _addr = self.spawn_hello_actor(peer_id, msg.transport, msg.config, ctx);
         Ok(())
     }

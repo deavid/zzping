@@ -1,7 +1,7 @@
 //! Test: Can current_thread runtime handle concurrent async tasks?
 //! Answer: YES - async tasks interleave on single thread without parallelism
 //!
-//! This validates that we CAN use current_thread runtime for Phase 7 E2E tests
+//! This validates that we CAN use current_thread runtime for E2E tests
 //! because:
 //! - spawn_local() works (needed by Actix actors)
 //! - time mocking works (needed for deterministic tests)

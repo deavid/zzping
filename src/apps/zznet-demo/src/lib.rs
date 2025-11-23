@@ -1,10 +1,6 @@
-//! # zznet-demo
+//! Integration test suite and example implementation for the `zznet` framework.
 //!
-//! Integration tests and examples for the zznet framework.
-//!
-//! This crate contains comprehensive integration tests that exercise the entire
-//! zznet framework stack, demonstrating how components communicate across
-//! mock network connections.
+//! Serves as a reference application exercising the full network stack in an in-memory environment.
 
 pub mod component_a;
 pub mod component_b;

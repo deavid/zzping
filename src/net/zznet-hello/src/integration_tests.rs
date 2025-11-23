@@ -1,6 +1,6 @@
-//! Integration test for HelloActor ↔ SessionManager communication
+//! Integration test for HelloActor ↔ handshake recipient communication
 //!
-//! Tests Phase 4 Task 1: Bidirectional message flow between HelloActor and SessionManager
+//! Tests bidirectional message flow between HelloActor and handshake recipient
 
 #[cfg(test)]
 mod hello_session_integration {
@@ -62,21 +62,21 @@ mod hello_session_integration {
             hostname: "server-host".to_string(),
         };
 
-        // Start client HelloActor with SessionManager integration
-        let client_actor = crate::actor::start_hello_actor_with_session_manager(
+        // Start client HelloActor with handshake recipient integration
+        let client_actor = crate::actor::start_hello_actor_with_handshake_recipient(
             Box::new(client_transport),
             client_config,
             Some(session_manager.recipient()),
         );
 
         // Start server HelloActor
-        let _server_actor = crate::actor::start_hello_actor_with_session_manager(
+        let _server_actor = crate::actor::start_hello_actor_with_handshake_recipient(
             Box::new(server_transport),
             server_config,
             None,
         );
 
-        // Wait for handshake to complete and verify SessionManager was notified
+        // Wait for handshake to complete and verify handshake recipient was notified
         tokio::time::sleep(Duration::from_millis(1)).await;
 
         // Try receiving the HandshakeComplete from the mock session manager
@@ -133,15 +133,15 @@ mod hello_session_integration {
             hostname: "server-host".to_string(),
         };
 
-        // Start client HelloActor with SessionManager integration
-        let client_actor = crate::actor::start_hello_actor_with_session_manager(
+        // Start client HelloActor with handshake recipient integration
+        let client_actor = crate::actor::start_hello_actor_with_handshake_recipient(
             Box::new(client_transport),
             client_config,
             Some(session_manager.recipient()),
         );
 
         // Start server HelloActor
-        let _server_actor = crate::actor::start_hello_actor_with_session_manager(
+        let _server_actor = crate::actor::start_hello_actor_with_handshake_recipient(
             Box::new(server_transport),
             server_config,
             None,
@@ -204,15 +204,15 @@ mod hello_session_integration {
             hostname: "server-host".to_string(),
         };
 
-        // Start client HelloActor with SessionManager integration
-        let client_actor = crate::actor::start_hello_actor_with_session_manager(
+        // Start client HelloActor with handshake recipient integration
+        let client_actor = crate::actor::start_hello_actor_with_handshake_recipient(
             Box::new(client_transport),
             client_config,
             Some(session_manager.recipient()),
         );
 
         // Start server HelloActor
-        let _server_actor = crate::actor::start_hello_actor_with_session_manager(
+        let _server_actor = crate::actor::start_hello_actor_with_handshake_recipient(
             Box::new(server_transport),
             server_config,
             None,

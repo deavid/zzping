@@ -1,4 +1,4 @@
-//! Integration tests for IntentConfig three-actor pattern (Phase 3.9)
+//! Integration tests for IntentConfig three-actor pattern
 //!
 //! These tests focus on comprehensive scenario coverage with fewer, longer tests
 //! that validate end-to-end behavior rather than individual function tests.

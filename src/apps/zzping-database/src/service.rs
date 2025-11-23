@@ -1,39 +1,24 @@
 //! Service orchestration and component lifecycle for the database app.
 //!
-//! This module creates, configures, and runs the database components and
-//! wires them into the network. It centralizes testable orchestration and
-//! provides convenience helpers for starting components in tests or
-//! embedding the database logic into different runtimes.
+//! Creates, configures, and runs the database components and wires them into the network.
 
 use crate::config::DatabaseTlsConfig;
 use crate::error::DatabaseError;
 
-// Room Handler Architecture
-//
-// This application uses the declarative room handler registration pattern provided by
-// `zznet-builder`. Room handlers are defined as factories in `crate::room_handlers` and
-// registered with the `ServerBuilder` in `crate::network`.
-//
-// Pattern:
-//   1. Define RoomHandlerFactory implementations (see `room_handlers.rs`)
-//   2. Register factories with ClientBuilder/ServerBuilder (see `network.rs`)
-//   3. Builders automatically wire handlers on connection/reconnection
-//
-// This approach provides reusable, testable room handler configuration.
-// See `ROOM_REGISTRY_GUIDE.md` for details.
-
-/// Build TLS configuration for the transport layer (TcpTransportServer)
+/// Builds TLS configuration for the transport layer.
 pub fn build_transport_tls_config(
     tls: &DatabaseTlsConfig,
 ) -> Result<Option<zznet_transport_tcp::config::TlsConfig>, DatabaseError> {
     // Use builder helper to construct a transport TLS config from file paths
     let ca = tls.ca_cert_paths.first().map(|s| s.as_str());
-    Ok(Some(zznet_transport_tcp::tls_utils::to_transport_tls_config(
-        &tls.server_cert_path,
-        &tls.server_key_path,
-        ca,
-        "zzping-mesh".into(),
-    )))
+    Ok(Some(
+        zznet_transport_tcp::tls_utils::to_transport_tls_config(
+            &tls.server_cert_path,
+            &tls.server_key_path,
+            ca,
+            "zzping-mesh".into(),
+        ),
+    ))
 }
 
 #[cfg(test)]

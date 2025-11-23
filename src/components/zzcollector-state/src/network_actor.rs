@@ -51,7 +51,7 @@ pub struct CStateNetworkActor {
     event_rx: tokio::sync::broadcast::Receiver<CStateEvent>,
 
     /// Buffer for Heartbeat messages while room_actor is not yet set
-    /// Phase 9: Used to handle startup race condition where messages arrive before SetRoomActor
+    /// Buffer used to handle startup race conditions where messages arrive before the RoomActor is wired.
     pending_heartbeats: Vec<(String, u64, u64, u64, u64, u64, u64)>,
 }
 
@@ -206,7 +206,7 @@ impl Handler<CStateMessage> for CStateNetworkActor {
                 last_config_update_ms,
                 connection_nonce,
             } => {
-                // Phase 9: Buffer if room_actor not yet set
+                // Buffer the heartbeat if the RoomActor is not yet wired.
                 if self.room_actor.is_none() {
                     debug!(
                         "Buffering heartbeat for peer {} (room_actor not yet set)",

@@ -1,18 +1,4 @@
-//! Collector network support for the zzping collector application.
-//!
-//! This module provides `CollectorNetwork`, a small, vision-aligned component that
-//! manages outgoing client connections to a remote zznet server. Responsibilities include:
-//! - creating a TCP transport client (optionally with TLS)
-//! - handing the transport to the `ConnectionManager` which spawns a `HelloActor` and
-//!   performs the HELLO handshake
-//! - integrating with PeerManagerActor so components can auto-register via
-//!   `Room<T>` channels
-//! - performing a simple automatic reconnection loop on failure
-//!
-//! The heavy lifting (per-connection actors, registration and routing) is performed by
-//! `ConnectionManager` and the HELLO protocol actors; `CollectorNetwork` focuses on
-//! establishing transports and mapping HELLO authentication into canonical `Role`s.
-//! See `CollectorNetwork::connect` and `try_connect` for details.
+//! Manages outgoing client connections to a remote zznet server.
 
 use crate::service::StartedComponents;
 use actix::Actor;
@@ -24,7 +10,7 @@ use zznet_hello::connection_manager::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::client::TcpTransportClient;
 use zznet_transport_tcp::config::TlsConfig;
 
-/// Errors that can occur during network initialization and operation.
+/// Network initialization and operation errors.
 #[derive(Debug, thiserror::Error)]
 pub enum NetworkError {
     /// Failed to create the TCP transport client.
@@ -40,13 +26,7 @@ pub enum NetworkError {
     ConnectionManager(String),
 }
 
-/// CollectorNetwork manages client-side connections following the vision architecture.
-///
-/// This implementation:
-/// - Uses TcpTransportClient directly (no ClientBuilder)
-/// - Creates ConnectionManager with PeerManagerActor
-/// - Components auto-register via Room<T> pattern
-/// - NO room_handler_wirer callbacks needed!
+/// Manages client-side connections.
 pub struct CollectorNetwork {
     client: TcpTransportClient,
     reconnect_delay: Duration,
@@ -54,22 +34,14 @@ pub struct CollectorNetwork {
 }
 
 impl CollectorNetwork {
-    /// Create a new CollectorNetwork
-    ///
-    /// Validates TLS configuration immediately.
-    ///
-    /// # Arguments
-    /// * `addr` - the remote server address to connect to (e.g., "127.0.0.1:9001")
-    /// * `tls` - optional TLS configuration
-    /// * `reconnect_delay` - delay between reconnection attempts
-    /// * `handshake_timeout` - timeout for the HELLO handshake protocol
+    /// Creates a new network manager and validates TLS configuration.
     pub fn new(
         addr: &str,
         tls: Option<TlsConfig>,
         reconnect_delay: Duration,
         handshake_timeout: Duration,
     ) -> Result<Self, NetworkError> {
-        // Step 1: Create TCP transport client immediately
+        // Create TCP transport client immediately
         // This validates TLS configuration (certs existence, etc.)
         let client = TcpTransportClient::new(addr.to_string(), tls)?;
 
@@ -80,48 +52,18 @@ impl CollectorNetwork {
         })
     }
 
-    /// Connect to the database server
-    ///
-    /// This is the vision-aligned implementation:
-    /// 1. Create ConnectionManager with PeerManagerActor
-    /// 2. Connect to server
-    /// 3. Hand transport to ConnectionManager via HandleTransport message
-    /// 4. ConnectionManager spawns HelloActor for HELLO handshake
-    /// 5. Messages flow via Room<T> channels (auto-registered by components)
+    /// Establishes connection to the database server and initiates the handshake.
     ///
     /// Automatically reconnects on failure.
-    ///
-    /// # Arguments
-    /// * `components` - Started component actors (contains PeerManagerActor)
     pub async fn connect(&self, components: &StartedComponents) -> Result<(), NetworkError> {
         tracing::info!("Connecting to {}", self.client.addr());
 
-        // Step 1: Build allowed roles set for HELLO authentication
+        // Build allowed roles set for HELLO authentication
         let mut allowed_roles = std::collections::HashSet::new();
         allowed_roles.insert(zznet_api::types::Role::new("database"));
         allowed_roles.insert(zznet_api::types::Role::new("collector"));
 
         // Step 2: Components are ready (peer_manager no longer needed by ConnectionManager)
-
-        // FIXME(audit-blocker-2): Router.register_peer() not wired after HELLO handshake
-        // - ConnectionManager.room_handler_wirer signature was changed to accept PeerChannels
-        // - This allows registration of peer channels with Router after handshake completes
-        // - However, no Router instance is available here (components.router doesn't exist)
-        // - Required: Add router field to StartedComponents, wire registration here, handle disconnect
-        // - Implementation would look like:
-        //   ```
-        //   let app_router = components.router.clone();
-        //   let wirer = Arc::new(move |_pm, channels| {
-        //       Box::pin(async move {
-        //           app_router.register_peer(channels).await
-        //               .map_err(|e| format!("register_peer failed: {:?}", e))
-        //       })
-        //   });
-        //   connection_manager.with_room_handler_wirer(wirer);
-        //   ```
-        // - Note: Current code uses Room<T> pattern which bypasses Router, so this may not be
-        //   critical for functionality, but audit identifies it as a blocker for consistency
-        // - See audit doc section 4.2 for details
 
         let connection_manager = ConnectionManager::new(
             components.router_actor.clone().recipient(),
@@ -173,11 +115,6 @@ impl CollectorNetwork {
         };
 
         // Step 3: Hand transport to ConnectionManager
-        // ConnectionManager will:
-        // 1. Spawn HelloActor for this transport
-        // 2. Run HELLO handshake
-        // 3. Register peer with PeerManagerActor
-        // 4. Route messages to components via Room<T>
         let handle_msg = HandleTransport {
             transport,
             config: hello_config,

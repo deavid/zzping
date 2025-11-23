@@ -17,9 +17,9 @@ pub enum CStateError {
     #[error("Room is not configured.")]
     NotConnected,
 
-    /// Returned when the SessionManager is required but not provided.
-    #[error("SessionManager is not configured.")]
-    SessionManagerMissing,
+    /// Returned when the network connection is required but not configured.
+    #[error("Network connection is not configured.")]
+    NetworkNotConfigured,
 
     /// Returned when a message fails to send to another actor.
     #[error("Actor message send error: {0}")]

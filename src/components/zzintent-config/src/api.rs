@@ -29,7 +29,7 @@ pub trait IntentConfigApi {
 /// This is where we translate the clean method calls into actual Actix messages.
 #[async_trait::async_trait]
 impl IntentConfigApi for Addr<IntentConfigActor> {
-    /// Translates the `update_config` method call into a `do_send` of an `UpdateConfig` message.
+    /// Submits a configuration update asynchronously (fire-and-forget).
     fn update_config(&self, config: IntentConfigData) {
         // `do_send` is used for "tell" patterns where no response is needed.
         self.do_send(UpdateConfig {
@@ -38,7 +38,7 @@ impl IntentConfigApi for Addr<IntentConfigActor> {
         });
     }
 
-    /// Translates the `get_current_config` method call into a `send` of a `GetCurrentConfig` message.
+    /// Requests the current configuration state, awaiting the response.
     async fn get_current_config(&self) -> Result<IntentConfigData> {
         // `send` is used for "ask" patterns. It returns a Future that resolves
         // with the result from the actor's handler.
@@ -47,7 +47,7 @@ impl IntentConfigApi for Addr<IntentConfigActor> {
             .map_err(|e| anyhow!("Failed to send GetCurrentConfig message: {}", e))
     }
 
-    /// Translates the `subscribe` method call into a `send` of a `Subscribe` message.
+    /// Registers a recipient for future updates. Returns a subscription ID.
     async fn subscribe(&self, recipient: Recipient<IntentConfigData>) -> Result<usize> {
         // `send` is used for "ask" patterns. It returns a Future that resolves
         // with the result from the actor's handler.
@@ -56,7 +56,7 @@ impl IntentConfigApi for Addr<IntentConfigActor> {
             .map_err(|e| anyhow!("Failed to send Subscribe message: {}", e))
     }
 
-    /// Translates the `unsubscribe` method call into a `do_send` of an `Unsubscribe` message.
+    /// Cancels a subscription using its ID.
     fn unsubscribe(&self, id: usize) {
         self.do_send(Unsubscribe(id));
     }

@@ -86,7 +86,7 @@ pub struct TrackedCollector {
     pub batches_sent: u64,
     /// The connection nonce of the collector.
     pub connection_nonce: u64,
-    /// The SessionManager peer ID of the collector.
+    /// The peer ID of the collector.
     pub peer_id: String,
 }
 

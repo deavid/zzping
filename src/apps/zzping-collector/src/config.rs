@@ -40,7 +40,7 @@ pub struct CollectorTlsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Type of pinger backend to use.
+/// Selects the pinger implementation.
 pub enum PingerBackend {
     /// Use real ICMP ping via surge_ping (requires raw socket permissions)
     Real,
@@ -49,7 +49,7 @@ pub enum PingerBackend {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Component-specific configuration.
+/// Configuration for internal components.
 pub struct ComponentConfig {
     /// Heartbeat interval in milliseconds for collector state
     pub heartbeat_interval_ms: u64,
@@ -67,12 +67,7 @@ fn default_pinger_backend() -> PingerBackend {
 }
 
 impl ComponentConfig {
-    /// Create component configuration with faster timing suitable for testing/demos.
-    ///
-    /// Uses shorter intervals than production defaults:
-    /// - Heartbeat: 100ms instead of 5000ms
-    /// - Batch size: 5 instead of 50
-    /// - Mock pinger backend for testing
+    /// Creates configuration with millisecond intervals for unit testing.
     pub fn fast_timing() -> Self {
         Self {
             heartbeat_interval_ms: 100,
@@ -83,13 +78,7 @@ impl ComponentConfig {
 }
 
 impl CollectorConfig {
-    /// Create a minimal configuration suitable for testing, demos, or development.
-    ///
-    /// This configuration uses:
-    /// - TCP-only (no TLS)
-    /// - localhost database connection
-    /// - Fast timing intervals for testing
-    /// - Minimal resource usage
+    /// Creates a minimal TCP-only configuration for testing.
     pub fn for_testing(collector_id: impl Into<String>) -> Self {
         Self {
             collector_id: collector_id.into(),

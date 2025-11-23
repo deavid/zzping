@@ -143,7 +143,3 @@ mod tests {
         assert!(result.unwrap_err().contains("unreasonably high"));
     }
 }
-
-// Deprecated message removed in Phase 8 (used SessionManager which no longer exists)
-// ProcessRequestConfigChangeAuth was never actually used in the migration
-// Use NetworkConfigChangeRequest with PeerManagerActor instead

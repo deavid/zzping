@@ -1,25 +1,7 @@
-//! NetworkManager for MemDB component - orchestrates peer lifecycle and message routing.
+//! NetworkManager for MemDB: peer lifecycle and message routing.
 //!
-//! This module implements the NetworkManager actor in the three-actor pattern:
-//! - **MainActor** (MemDBActor): Pure business logic, zero network dependencies
-//! - **NetworkManager** (this file): Peer lifecycle, message routing orchestration
-//! - **NetworkActor**: Per-peer protocol translation
-//!
-//! ## Responsibilities
-//!
-//! 1. **Peer Lifecycle Management**:
-//!    - Spawns MemDBNetworkActor when peer joins
-//!    - Removes NetworkActor when peer leaves
-//!    - Tracks all active peer connections
-//!
-//! 2. **Message Routing**:
-//!    - Routes SendBatchAck to specific collector peer
-//!    - Routes SendQueryResponse to specific admin peer
-//!    - Routes SendSubmitBatch to database peer
-//!
-//! 3. **Room Management**:
-//!    - Stores Room<MemDBMessage> for network communication
-//!    - Provides Room access to NetworkActors
+//! Implements the three-actor pattern: `MemDBActor` (main), `MemDBNetworkManager` (manager),
+//! and `MemDBNetworkActor` (per-peer translator).
 
 use actix::prelude::*;
 use std::collections::HashMap;
@@ -32,10 +14,7 @@ use crate::network_actor::MemDBNetworkActor;
 use crate::network_messages::MemDBMessage;
 use crate::permissions::MemDBPermissions;
 
-/// Custom factory for MemDB that creates NetworkActors with proper wiring
-///
-/// Replaces StandardRoomFactory to follow the three-actor pattern.
-/// Creates NetworkActor first, then RoomActor, no wiring needed (NetworkActor doesn't need room_actor reference).
+/// Factory that creates per-peer NetworkActors and RoomActors for MemDB.
 pub struct MemDBRoomFactory {
     main_actor: Addr<MemDBActor>,
     manager: Addr<MemDBNetworkManager>,
@@ -43,12 +22,7 @@ pub struct MemDBRoomFactory {
 }
 
 impl MemDBRoomFactory {
-    /// Create a new MemDBRoomFactory
-    ///
-    /// # Arguments
-    /// * `main_actor` - Address of the MainActor for business logic
-    /// * `manager` - Address of the NetworkManager for registration
-    /// * `permissions_map` - Map from role strings to permissions
+    /// Create a new `MemDBRoomFactory`.
     pub fn new(
         main_actor: Addr<MemDBActor>,
         manager: Addr<MemDBNetworkManager>,
@@ -111,11 +85,7 @@ impl zznet_router::RoomFactory for MemDBRoomFactory {
     }
 }
 
-/// NetworkManager orchestrates peer lifecycle for MemDB.
-///
-/// Pure lifecycle supervisor - no message routing
-/// - Spawns/removes NetworkActors as peers join/leave
-/// - NetworkActors handle their own request/reply directly
+/// `MemDBNetworkManager` supervises peer lifecycle and registration.
 pub struct MemDBNetworkManager {
     /// Reference to the MainActor for business logic
     main_actor: Addr<MemDBActor>,
@@ -138,8 +108,7 @@ impl Clone for MemDBNetworkManager {
 }
 
 impl MemDBNetworkManager {
-    /// Create a new NetworkManager.
-    /// Pure lifecycle supervisor
+    /// Create a new `MemDBNetworkManager`.
     pub fn new(
         main_actor: Addr<MemDBActor>,
         router_actor: Addr<RouterActor>,
@@ -172,15 +141,10 @@ impl Actor for MemDBNetworkManager {
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         tracing::debug!("MemDBNetworkManager stopped");
-        // Actors will be automatically stopped when dropped
     }
 }
 
-// ============================================================================
-// Batch transmission handler
-// ============================================================================
-// When MainActor has a batch ready to send to Database peers,
-// NetworkManager broadcasts it via RouterActor to all connected Database peers.
+// Batch transmission handler: broadcast prepared batches to Database peers.
 
 impl Handler<crate::internal_messages::BatchReadyToSend> for MemDBNetworkManager {
     type Result = ();
@@ -190,17 +154,14 @@ impl Handler<crate::internal_messages::BatchReadyToSend> for MemDBNetworkManager
         msg: crate::internal_messages::BatchReadyToSend,
         _ctx: &mut Context<Self>,
     ) -> Self::Result {
-        // Phase 9: Batch transmission - create SubmitBatch message for all Database peers
-        // In the full implementation, this would broadcast via RouterActor to all connected peers
+        // Prepare network message and log readiness; broadcasting via RouterActor is TODO.
         let results_count = msg.results.len();
         let _network_msg = MemDBMessage::SubmitBatch {
-            sender_peer_id: "collector".to_string(), // Will be filled by SessionManager
+            sender_peer_id: "collector".to_string(),
             timestamp_ms: msg.timestamp_ms,
             results: msg.results,
         };
 
-        // TODO: Implement broadcast via RouterActor to send to all Database peers
-        // For now, log that batch is ready to transmit
         tracing::info!(
             "Batch transmission prepared: timestamp={}, results_count={}",
             msg.timestamp_ms,

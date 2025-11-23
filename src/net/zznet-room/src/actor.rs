@@ -1,13 +1,11 @@
 //! Generic room actor for centralized (de-)serialization.
 
-// src/net/zznet-room/src/actor.rs
+use crate::room_message_trait::RoomMessageTrait;
 use actix::prelude::*;
 use tokio::sync::mpsc;
 use zznet_api::messages::InboundRoomPayload;
 use zznet_api::protocol::{Frame, RoomFrame};
 use zznet_api::types::{RoomId, TransportFrame};
-
-use crate::room_message_trait::RoomMessageTrait;
 
 /// Actix actor that centralizes (de-)serialization for a network room.
 ///
@@ -104,8 +102,7 @@ where
                         if let Err(error) = transport_tx.try_send(transport_frame) {
                             tracing::error!("RoomActor transport send failed: {:?}", error);
                             ctx.stop();
-                            // FIXME: In reality, stopping the actor has to guarantee that the connection is
-                            // entirely teared down. Currently we have not checked this.
+                            // TODO: Ensure transport connection teardown propagates when this actor stops.
                         }
                     }
                     Err(error) => {

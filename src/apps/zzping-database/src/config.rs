@@ -5,9 +5,6 @@ use serde::{Deserialize, Serialize};
 /// Database application configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// Top-level configuration for the database service.
-///
-/// Holds network, TLS and component tuning parameters. Designed to be
-/// deserialized from a RON file and validated prior to service startup.
 pub struct DatabaseConfig {
     /// Network binding settings
     pub bind_host: String,
@@ -36,10 +33,7 @@ fn default_handshake_timeout_secs() -> u64 {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// TLS material for a mutual-TLS server configuration.
-///
-/// Contains paths to CA(s) for client verification and the server's
-/// certificate and key used to identify this database instance.
+/// TLS configuration for the server.
 pub struct DatabaseTlsConfig {
     /// CA certificates for verifying client certificates (from collectors)
     /// Multiple paths supported to allow certificate rotation (dual-CA)
@@ -51,11 +45,7 @@ pub struct DatabaseTlsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-/// Tunable timeouts and limits for component behavior and resource protection.
-///
-/// These settings control collector state lifetimes, concurrency limits and
-/// per-connection frame timeouts to protect the service under load. Adjust
-/// for testing or production as required.
+/// Timeouts and limits for component behavior.
 pub struct ComponentConfig {
     /// Heartbeat timeout in seconds for collector state tracking
     pub stale_timeout_secs: u64,
@@ -71,18 +61,7 @@ pub struct ComponentConfig {
 }
 
 impl ComponentConfig {
-    /// Create component configuration with faster timing suitable for testing/demos.
-    ///
-    /// Uses shorter intervals than production defaults:
-    /// - Stale timeout: 1s instead of 30s
-    /// - Frame timeout: 100ms instead of 500ms
-    /// - Max collectors: 10 instead of 100
-    ///
-    /// # Example
-    /// ```ignore
-    /// let config = ComponentConfig::fast_timing();
-    /// assert_eq!(config.stale_timeout_secs, 1);
-    /// ```
+    /// Creates configuration with millisecond intervals for unit testing.
     pub fn fast_timing() -> Self {
         Self {
             stale_timeout_secs: 1,
@@ -97,42 +76,19 @@ fn default_message_frame_timeout_ms() -> u64 {
 }
 
 impl DatabaseConfig {
-    /// Create a minimal configuration suitable for testing, demos, or development.
-    ///
-    /// This configuration uses:
-    /// - TCP-only (no TLS)
-    /// - localhost binding
-    /// - OS-assigned port (port 0) for parallel tests
-    /// - Fast timing intervals for testing
-    /// - Minimal resource usage
-    /// - Current directory for data storage
-    ///
-    /// # Example
-    /// ```ignore
-    /// use zzping_database::config::DatabaseConfig;
-    ///
-    /// let config = DatabaseConfig::for_testing();
-    /// assert!(config.tls.is_none()); // No TLS in test mode
-    /// assert_eq!(config.bind_port, 0); // OS assigns port
-    /// ```
+    /// Creates a minimal TCP-only configuration for testing.
     pub fn for_testing() -> Self {
         Self {
             bind_host: "127.0.0.1".into(),
-            bind_port: 58443,
-            tls: None, // TCP-only
+            bind_port: 0, // OS-assigned
+            tls: None,    // TCP-only
             components: ComponentConfig::fast_timing(),
             data_dir: ".".into(),
-            handshake_timeout_secs: 10,
+            handshake_timeout_secs: 1,
         }
     }
 
-    /// Validate configuration values.
-    ///
-    /// Checks all configuration values for validity. Ensures required fields
-    /// are not empty, numeric values are in acceptable ranges, and file paths
-    /// point to existing files.
-    ///
-    /// Fails if any validation check does not pass.
+    /// Checks all configuration values for validity.
     pub fn validate(&self) -> crate::error::Result<()> {
         if self.bind_host.is_empty() {
             return Err(crate::error::DatabaseError::Config(
