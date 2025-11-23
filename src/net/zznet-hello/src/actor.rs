@@ -169,7 +169,6 @@ impl HelloActor {
             self.config.our_role, self.config.offered_rooms
         );
 
-        // Create and send HELLO frame
         match self.handshake.create_hello_frame(
             self.config.our_role.clone(),
             self.config.offered_rooms.clone(),
@@ -178,12 +177,10 @@ impl HelloActor {
             Ok(hello_data) => {
                 self.send_frame_to_transport(hello_data, ctx);
 
-                // Immediately send OFFER frame
                 match self.handshake.create_offer_frame() {
                     Ok(offer_data) => {
                         self.send_frame_to_transport(offer_data, ctx);
 
-                        // Schedule handshake timeout
                         ctx.run_later(self.config.handshake_timeout, |act, ctx| {
                             if act.state == ActorState::Handshaking {
                                 warn!("Handshake timeout after {:?}", act.config.handshake_timeout);
@@ -244,7 +241,6 @@ impl HelloActor {
         routes: HashMap<RoomId, Recipient<InboundRoomPayload>>,
         ctx: &mut Context<Self>,
     ) {
-        // Deserialize the frame
         match Frame::deserialize(&data) {
             Ok(Frame::Room(RoomFrame::Message {
                 to_room,
@@ -257,9 +253,7 @@ impl HelloActor {
                     to_room,
                     payload.len()
                 );
-                // Look up the destination room
                 if let Some(room_recipient) = routes.get(&RoomId::from(to_room.as_str())) {
-                    // Forward payload to room actor
                     room_recipient.do_send(InboundRoomPayload { payload });
                 } else {
                     warn!("No route found for room: {}", to_room);

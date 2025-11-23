@@ -59,7 +59,7 @@ impl Handshake {
         }
     }
 
-    /// Returns `true` if the handshake has completed successfully.
+    /// True if the handshake finished successfully.
     pub(crate) fn is_complete(&self) -> bool {
         matches!(self.state, HandshakeState::Complete { .. })
     }
@@ -77,8 +77,7 @@ impl Handshake {
         self.peer_hostname.as_deref()
     }
 
-    /// Creates the initial `HELLO` frame to be sent to the peer.
-    /// This transitions the state from `Start` to `SentHello`.
+    /// Generates the initial HELLO frame and transitions state.
     pub(crate) fn create_hello_frame(
         &mut self,
         role_str: String,
@@ -106,7 +105,7 @@ impl Handshake {
         }
     }
 
-    /// Creates the `OFFER` frame containing the rooms we wish to use.
+    /// Generates the OFFER frame with local room capabilities.
     pub(crate) fn create_offer_frame(&mut self) -> Result<Vec<u8>, HelloError> {
         match &self.state {
             HandshakeState::SentHello { our_offered_rooms } => {
@@ -122,7 +121,7 @@ impl Handshake {
         }
     }
 
-    /// Processes an incoming frame from the peer to drive the state machine forward.
+    /// Drives the state machine based on the incoming frame type.
     pub(crate) fn process_frame(
         &mut self,
         frame_data: &[u8],

@@ -86,7 +86,6 @@ impl IntentConfigActor {
 
     /// Persist the current configuration to disk (Database role only)
     fn persist_config(&self) -> Result<(), std::io::Error> {
-        // Only Database role has config_file_path
         let config_path = match &self.config.config_file_path {
             Some(path) => path,
             None => {
@@ -99,11 +98,9 @@ impl IntentConfigActor {
 
         log::info!("Persisting config to {:?}", config_path);
 
-        // Serialize config data to RON format
         let config_string = ron::ser::to_string_pretty(&self.current_config, Default::default())
             .map_err(std::io::Error::other)?;
 
-        // Write to file atomically (write to temp file, then rename)
         let temp_path = config_path.with_extension("tmp");
         std::fs::write(&temp_path, config_string)?;
         std::fs::rename(&temp_path, config_path)?;
@@ -165,12 +162,10 @@ impl Actor for IntentConfigActor {
                 );
             }
 
-            // If we loaded a valid config, adopt it
             if let Some(cfg) = loaded_cfg {
                 self.current_config = cfg.clone();
             }
 
-            // Broadcast locally so subscribers get initial state (loaded or default)
             self.broadcast_config();
 
             // Always attempt to persist the current (canonical) config to disk.

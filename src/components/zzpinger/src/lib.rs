@@ -1,7 +1,4 @@
-//! # zzpinger Component
-//!
-//! Executes ICMP pings at precise system-clock-aligned intervals and reports events to MemDB.
-//! Uses a dedicated scheduler actor and a pure-Tokio async backend for high-precision timing.
+//! Executes ICMP pings at precise intervals and reports events to MemDB.
 
 pub mod backend;
 pub mod builder;

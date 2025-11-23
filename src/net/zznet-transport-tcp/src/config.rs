@@ -32,10 +32,7 @@ pub(crate) enum TlsError {
     NoPrivateKey,
 }
 
-/// Certificate and private key paths for a specific component role.
-///
-/// Simplifies certificate management by using role-based naming conventions,
-/// ensuring each component uses its designated security credentials.
+/// Certificate and private key paths.
 #[derive(Debug, Clone)]
 pub struct TlsCertAndKey {
     /// Path to the certificate PEM file.
@@ -75,12 +72,7 @@ pub struct TlsConfig {
 }
 
 impl TlsConfig {
-    /// Builds a rustls ClientConfig with mutual TLS authentication.
-    ///
-    /// The client will:
-    /// - Verify server certificates against CA
-    /// - Present its own certificate for mutual TLS
-    /// - Use configured server name for SNI
+    /// Constructs a rustls ClientConfig with mutual TLS.
     pub(crate) fn build_client_config(&self) -> Result<rustls::ClientConfig, TlsError> {
         let root_store = self.build_root_store()?;
         let (certs, private_key) = self.load_cert_and_key()?;
@@ -92,12 +84,7 @@ impl TlsConfig {
         Ok(config)
     }
 
-    /// Builds a rustls ServerConfig with mutual TLS verification.
-    ///
-    /// The server will:
-    /// - Verify client certificates against CA
-    /// - Present its own certificate
-    /// - Require client authentication
+    /// Constructs a rustls ServerConfig with client verification.
     pub(crate) fn build_server_config(&self) -> Result<rustls::ServerConfig, TlsError> {
         let (certs, key) = self.load_cert_and_key()?;
         let root_store = self.build_root_store()?;

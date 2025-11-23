@@ -52,7 +52,6 @@ impl Default for MemDBActor {
 impl MemDBActor {
     /// Create a new MemDBActor with configuration
     pub fn new(config: MemDBConfig) -> Self {
-        // Validate the configuration
         if let Err(e) = config.validate() {
             panic!("Invalid configuration: {}", e);
         }
@@ -102,7 +101,6 @@ impl MemDBActor {
     /// Store a ping result (used by both roles)
     fn store_result(&mut self, result: PingResult) {
         if let Some(storage) = &mut self.storage {
-            // Database role: use StorageBackend
             let batch_timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_millis() as u64)
@@ -113,7 +111,6 @@ impl MemDBActor {
             log::warn!("Attempted to store result but no storage backend available");
         }
 
-        // Update counters
         self.total_results.fetch_add(1, Ordering::Relaxed);
     }
 
@@ -127,7 +124,6 @@ impl MemDBActor {
             return Ok(()); // Nothing to send
         }
 
-        // Check if we already have an outstanding batch
         if self.outstanding_batch.is_some() {
             log::warn!("Already have outstanding batch, not sending new one");
             return Ok(());
@@ -139,10 +135,8 @@ impl MemDBActor {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // Mark this batch as outstanding
         self.outstanding_batch = Some(timestamp_ms);
 
-        // Send batch to all Database peers via NetworkManager
         if let Some(ref manager) = self.network_manager {
             let batch_msg = crate::internal_messages::BatchReadyToSend {
                 timestamp_ms,
@@ -227,7 +221,6 @@ impl Handler<InboundSubmitBatch> for MemDBActor {
             msg.peer_id
         );
 
-        // Store the batch
         if let Some(storage) = &mut self.storage {
             storage.insert_batch(msg.results, msg.timestamp_ms);
             self.total_results
@@ -235,7 +228,6 @@ impl Handler<InboundSubmitBatch> for MemDBActor {
             self.successful_batches.fetch_add(1, Ordering::Relaxed);
         }
 
-        // Return ack response directly (no NetworkManager needed)
         let ack_timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()

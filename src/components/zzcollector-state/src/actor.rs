@@ -82,7 +82,6 @@ impl CStateActor {
             heartbeats_failed: Arc::new(AtomicU64::new(0)),
             event_tx,
         };
-        // Initialize config-specific state
         if let Some(collector_id) = &actor.config.collector_id {
             actor.collector_state = Some(CollectorStateData::new(collector_id.clone()));
         }
@@ -139,7 +138,6 @@ impl Actor for CStateActor {
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("CStateActor started");
 
-        // If configured as a Collector, start heartbeat interval.
         if let Some(heartbeat_interval_ms) = self
             .config
             .collector_id
@@ -151,7 +149,6 @@ impl Actor for CStateActor {
             ctx.add_stream(IntervalStream::new(tokio::time::interval(interval)));
         }
 
-        // If configured to track collectors (database-like), periodically run stale-checks
         if self.config.track_collectors {
             // check interval = half of stale timeout, minimum 1s
             let check = std::cmp::max(1, self.config.stale_timeout_secs / 2);
@@ -193,7 +190,6 @@ impl Handler<InboundHeartbeat> for CStateActor {
     type Result = Result<crate::internal_messages::HeartbeatAckResponse, String>;
 
     fn handle(&mut self, msg: InboundHeartbeat, _ctx: &mut Context<Self>) -> Self::Result {
-        // Only database-like configurations process heartbeats
         if !self.config.track_collectors {
             return Err("Not configured to track collectors".to_string());
         }
@@ -201,7 +197,6 @@ impl Handler<InboundHeartbeat> for CStateActor {
         if let Some(state) = &mut self.database_state {
             debug!("Received heartbeat from collector: {}", msg.collector_id);
 
-            // Enforce max_collectors policy: reject new registrations if at capacity
             if let Some(max) = state.max_collectors
                 && !state.collectors.contains_key(&msg.collector_id)
                 && state.collectors.len() >= max
@@ -218,7 +213,6 @@ impl Handler<InboundHeartbeat> for CStateActor {
                 });
             }
 
-            // Register or update collector
             let collector = state
                 .collectors
                 .entry(msg.collector_id.clone())

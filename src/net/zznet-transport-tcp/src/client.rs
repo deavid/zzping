@@ -154,7 +154,9 @@ mod tests {
         let (tx, mut rx) = conn.start();
 
         // Send a message
-        tx.send(TransportFrame::new(b"test message".to_vec())).await.unwrap();
+        tx.send(TransportFrame::new(b"test message".to_vec()))
+            .await
+            .unwrap();
 
         // Receive echo
         let response = rx.recv().await.unwrap().unwrap();

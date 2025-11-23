@@ -5,21 +5,18 @@ use actix::prelude::*;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 
-/// Message type for inbound room payloads.
-///
-/// Room actors receive this message when data arrives from a peer.
-/// The payload contains raw bytes that the room actor deserializes.
+/// Carries raw bytes received from a room.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct InboundRoomPayload {
-    /// The serialized message payload.
+    /// The serialized message bytes.
     pub payload: Vec<u8>,
 }
 
 /// Alias for the recipient type used by Router ↔ RoomActor wiring.
 pub type RoomInboundRecipient = Recipient<InboundRoomPayload>;
 
-/// Handle peer connected event from PeerManager
+/// Signals a successful handshake and handover to the Router.
 #[derive(Message)]
 #[rtype(result = "Result<HashMap<RoomId, RoomInboundRecipient>, String>")]
 pub struct OnPeerConnected {

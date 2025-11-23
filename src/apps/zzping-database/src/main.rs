@@ -34,7 +34,6 @@ async fn main() -> Result<()> {
 
     let log_level = if debug { "debug" } else { "info" };
 
-    // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level)),
@@ -46,27 +45,22 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting ZZPing Database...");
 
-    // Load configuration
     let config_content = std::fs::read_to_string(config_path)?;
     let config: DatabaseConfig = ron::from_str(&config_content)?;
 
-    // Start Router
     let router_actor = zznet_router::RouterActor::new(vec![]).start();
 
-    // Start Intent Config
     let data_dir = std::path::PathBuf::from(&config.data_dir);
     let config_path = data_dir.join("intent.ron");
     let intent_builder =
         zzintent_config::builder::IntentConfigBuilder::new().config_for_database(config_path);
     let _intent_addr = intent_builder.router(router_actor.clone()).start()?;
 
-    // Start MemDB
     let memdb_builder = zzmem_db::builder::MemDBBuilder::new(
         zzmem_db::config::MemDBConfig::for_database(10000, None),
     );
     let _memdb_addr = memdb_builder.router(router_actor.clone()).build();
 
-    // Start Collector State
     let cstate_builder = zzcollector_state::builder::CStateBuilder::new(
         zzcollector_state::config::CStateConfig::for_database(
             config.components.stale_timeout_secs,
@@ -75,7 +69,6 @@ async fn main() -> Result<()> {
     );
     let _cstate_addr = cstate_builder.router(router_actor.clone()).build();
 
-    // Network setup
     let tls_cfg = if let Some(tls) = &config.tls {
         build_transport_tls_config(tls)?
     } else {
@@ -89,7 +82,6 @@ async fn main() -> Result<()> {
         zzping_database::network::DatabaseNetwork::bind(&bind_addr, tls_cfg, handshake_timeout)
             .await?;
 
-    // Spawn network task
     let router_for_network = router_actor.clone();
     tokio::spawn(async move {
         if let Err(e) = network.run(&router_for_network).await {
@@ -99,7 +91,6 @@ async fn main() -> Result<()> {
 
     tracing::info!("ZZPing Database running. Press Ctrl+C to exit.");
 
-    // Wait for shutdown signal
     match tokio::signal::ctrl_c().await {
         Ok(_) => tracing::info!("Ctrl+C received. Exiting."),
         Err(e) => tracing::error!("Error listening for signal: {}", e),

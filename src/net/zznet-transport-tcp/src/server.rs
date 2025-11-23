@@ -142,7 +142,9 @@ mod tests {
         let conn = client.connect().await.unwrap();
         let (tx, mut rx) = conn.start();
 
-        tx.send(TransportFrame::new(b"hello server".to_vec())).await.unwrap();
+        tx.send(TransportFrame::new(b"hello server".to_vec()))
+            .await
+            .unwrap();
 
         let response = rx.recv().await.unwrap().unwrap();
         assert_eq!(response.get_bytes().as_ref(), b"hello server");
@@ -179,7 +181,9 @@ mod tests {
                 let (tx, mut rx) = conn.start();
 
                 let msg = format!("client {}", i);
-                tx.send(TransportFrame::new(msg.as_bytes().to_vec())).await.unwrap();
+                tx.send(TransportFrame::new(msg.as_bytes().to_vec()))
+                    .await
+                    .unwrap();
 
                 let response = rx.recv().await.unwrap().unwrap();
                 assert_eq!(response.get_bytes().as_ref(), msg.as_bytes());

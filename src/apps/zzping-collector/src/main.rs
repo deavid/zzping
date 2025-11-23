@@ -35,7 +35,6 @@ async fn main() -> Result<()> {
 
     let log_level = if debug { "debug" } else { "info" };
 
-    // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level)),
@@ -47,19 +46,15 @@ async fn main() -> Result<()> {
 
     tracing::info!("Starting ZZPing Collector...");
 
-    // Load configuration
     let config_content = std::fs::read_to_string(config_path)?;
     let config: CollectorConfig = ron::from_str(&config_content)?;
 
-    // Start Router
     let router = zznet_router::RouterActor::new(vec![]).start();
 
-    // Start Intent Config
     let intent_builder =
         zzintent_config::builder::IntentConfigBuilder::new().config_for_collector();
     let intent_addr = intent_builder.router(router.clone()).start()?;
 
-    // Start MemDB
     let memdb_builder = zzmem_db::builder::MemDBBuilder::new(
         zzmem_db::config::MemDBConfig::for_collector(config.components.memdb_batch_size),
     );
@@ -67,7 +62,6 @@ async fn main() -> Result<()> {
     let memdb_recipient: actix::Recipient<zzmem_db::messages::StorePingResult> =
         memdb_addr.clone().recipient();
 
-    // Start Pinger
     let pinger_builder = zzpinger::builder::PingerBuilder {
         clock: None,
         spawn_strategy: zzpinger::builder::SpawnStrategy::NewArbiter,
@@ -87,7 +81,6 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Network setup
     let tls_cfg = if let Some(tls) = &config.tls {
         tracing::info!("TLS enabled - using mTLS connection");
         Some(convert_tls_config(tls)?)
@@ -114,7 +107,6 @@ async fn main() -> Result<()> {
         router_actor: router,
     };
 
-    // Spawn network task
     tokio::spawn(async move {
         if let Err(e) = network.connect(&started_components).await {
             tracing::error!("Collector network task failed: {}", e);
@@ -123,7 +115,6 @@ async fn main() -> Result<()> {
 
     tracing::info!("ZZPing Collector running. Press Ctrl+C to exit.");
 
-    // Wait for shutdown signal
     match tokio::signal::ctrl_c().await {
         Ok(_) => tracing::info!("Ctrl+C received. Exiting."),
         Err(e) => tracing::error!("Error listening for signal: {}", e),

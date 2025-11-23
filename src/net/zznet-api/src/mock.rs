@@ -208,18 +208,27 @@ mod tests {
         assert_eq!(conn_a.peer_addr(), Some("mock:test_basic_a".to_string()));
 
         // bidirectional
-        conn_a.send(TransportFrame::new(b"hello".to_vec())).await.unwrap();
+        conn_a
+            .send(TransportFrame::new(b"hello".to_vec()))
+            .await
+            .unwrap();
         let frame_b = conn_b.recv().await.unwrap();
         assert_eq!(frame_b.get_bytes().as_ref(), b"hello");
 
-        conn_b.send(TransportFrame::new(b"world".to_vec())).await.unwrap();
+        conn_b
+            .send(TransportFrame::new(b"world".to_vec()))
+            .await
+            .unwrap();
         let frame_a = conn_a.recv().await.unwrap();
         assert_eq!(frame_a.get_bytes().as_ref(), b"world");
 
         // multiple messages
         for i in 0..5 {
             let msg = format!("msg{}", i);
-            conn_a.send(TransportFrame::new(msg.as_bytes().to_vec())).await.unwrap();
+            conn_a
+                .send(TransportFrame::new(msg.as_bytes().to_vec()))
+                .await
+                .unwrap();
             let frame = conn_b.recv().await.unwrap();
             assert_eq!(frame.get_bytes().as_ref(), msg.as_bytes());
         }
@@ -257,7 +266,10 @@ mod tests {
             conn_a.send(TransportFrame::new(b"x".to_vec())).await,
             Err(TransportError::Timeout(_))
         ));
-        conn_a.send(TransportFrame::new(b"ok".to_vec())).await.unwrap();
+        conn_a
+            .send(TransportFrame::new(b"ok".to_vec()))
+            .await
+            .unwrap();
 
         // recv side (inject into self before waiting)
         conn_a.inject_error(TransportError::Timeout(io::Error::other("e2")));
