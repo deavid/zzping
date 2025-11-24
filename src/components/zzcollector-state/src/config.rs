@@ -32,10 +32,10 @@ pub struct CStateConfig {
     /// and maintains state about their health.
     pub track_collectors: bool,
 
-    /// Timeout in seconds for marking collectors as stale.
+    /// Timeout in milliseconds for marking collectors as stale.
     ///
     /// Only used when `track_collectors` is true.
-    pub stale_timeout_secs: u64,
+    pub stale_timeout_ms: u64,
 
     /// Maximum number of collectors to track (None = unlimited).
     ///
@@ -58,7 +58,7 @@ impl CStateConfig {
             collector_id: Some(collector_id),
             heartbeat_interval_ms,
             track_collectors: false,
-            stale_timeout_secs: 0,
+            stale_timeout_ms: 0,
             max_collectors: None,
             allow_queries: false,
         }
@@ -68,12 +68,12 @@ impl CStateConfig {
     /// - Does not send heartbeats
     /// - Tracks collector states
     /// - Provides query interface
-    pub fn for_database(stale_timeout_secs: u64, max_collectors: Option<usize>) -> Self {
+    pub fn for_database(stale_timeout_ms: u64, max_collectors: Option<usize>) -> Self {
         Self {
             collector_id: None,
             heartbeat_interval_ms: 0,
             track_collectors: true,
-            stale_timeout_secs,
+            stale_timeout_ms,
             max_collectors,
             allow_queries: true,
         }
@@ -88,7 +88,7 @@ impl CStateConfig {
             collector_id: None,
             heartbeat_interval_ms: 0,
             track_collectors: false,
-            stale_timeout_secs: 0,
+            stale_timeout_ms: 0,
             max_collectors: None,
             allow_queries: true,
         }
@@ -99,8 +99,8 @@ impl CStateConfig {
         if self.collector_id.is_some() && self.heartbeat_interval_ms == 0 {
             return Err("collector_id is set but heartbeat_interval_ms is 0".to_string());
         }
-        if self.track_collectors && self.stale_timeout_secs == 0 {
-            return Err("track_collectors is true but stale_timeout_secs is 0".to_string());
+        if self.track_collectors && self.stale_timeout_ms == 0 {
+            return Err("track_collectors is true but stale_timeout_ms is 0".to_string());
         }
         Ok(())
     }

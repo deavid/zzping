@@ -53,8 +53,8 @@ fn generate_connection_nonce() -> u64 {
 pub(crate) struct DatabaseStateData {
     /// A map of tracked collectors, keyed by their collector ID.
     pub collectors: HashMap<String, TrackedCollector>,
-    /// The number of seconds without a heartbeat before a collector is considered stale.
-    pub stale_timeout_secs: u64,
+    /// The number of milliseconds without a heartbeat before a collector is considered stale.
+    pub stale_timeout_ms: u64,
     /// The maximum number of collectors to track.
     pub max_collectors: Option<usize>,
 }
@@ -63,7 +63,7 @@ impl Default for DatabaseStateData {
     fn default() -> Self {
         Self {
             collectors: HashMap::new(),
-            stale_timeout_secs: 300, // 5 minutes default
+            stale_timeout_ms: 300_000, // 5 minutes default
             max_collectors: None,
         }
     }

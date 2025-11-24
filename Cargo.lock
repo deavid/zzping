@@ -2192,9 +2192,11 @@ name = "zzcollector-state"
 version = "0.3.0-dev"
 dependencies = [
  "actix",
+ "actix-rt",
  "anyhow",
  "async-trait",
  "chrono",
+ "env_logger",
  "log",
  "ntest",
  "rand",

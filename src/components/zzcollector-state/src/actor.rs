@@ -88,7 +88,7 @@ impl CStateActor {
 
         if actor.config.track_collectors {
             actor.database_state = Some(DatabaseStateData {
-                stale_timeout_secs: actor.config.stale_timeout_secs,
+                stale_timeout_ms: actor.config.stale_timeout_ms,
                 max_collectors: actor.config.max_collectors,
                 ..Default::default()
             });
@@ -150,9 +150,9 @@ impl Actor for CStateActor {
         }
 
         if self.config.track_collectors {
-            // check interval = half of stale timeout, minimum 1s
-            let check = std::cmp::max(1, self.config.stale_timeout_secs / 2);
-            let interval = Duration::from_secs(check);
+            // check interval = half of stale timeout, minimum 1ms
+            let check_ms = std::cmp::max(1, self.config.stale_timeout_ms / 2);
+            let interval = Duration::from_millis(check_ms);
             ctx.run_interval(interval, |_act, ctx| {
                 ctx.address()
                     .do_send(crate::messages::CleanupStaleCollectors);
@@ -349,7 +349,7 @@ impl Handler<crate::messages::CleanupStaleCollectors> for CStateActor {
                 .unwrap_or_default()
                 .as_millis() as u64;
 
-            let stale_timeout_ms = state.stale_timeout_secs * 1000;
+            let stale_timeout_ms = state.stale_timeout_ms;
             let mut to_remove = Vec::new();
 
             for (id, collector) in &state.collectors {

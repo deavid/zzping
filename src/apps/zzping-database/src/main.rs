@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
 
     let cstate_builder =
         zzcollector_state::CStateBuilder::new(zzcollector_state::CStateConfig::for_database(
-            config.components.stale_timeout_secs,
+            config.components.stale_timeout_secs * 1000, // Convert seconds to milliseconds
             Some(config.components.max_collectors),
         ));
     let _cstate_addr = cstate_builder.router(router_actor.clone()).build();
