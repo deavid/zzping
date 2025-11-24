@@ -9,3 +9,6 @@ mod server;
 pub use client::TcpTransportClient;
 pub use config::*;
 pub use server::TcpTransportServer;
+
+#[cfg(test)]
+mod tests;
