@@ -17,3 +17,6 @@ mod traits;
 pub use network_manager::GenericNetworkManager;
 pub use room_factory::GenericRoomFactory;
 pub use traits::NetComponent;
+
+#[cfg(test)]
+mod tests;

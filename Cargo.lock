@@ -2274,8 +2274,13 @@ name = "zznet-component"
 version = "0.3.0-dev"
 dependencies = [
  "actix",
+ "actix-rt",
+ "env_logger",
  "log",
+ "rmp-serde",
+ "serde",
  "tokio",
+ "tokio-stream",
  "tracing",
  "zznet-api",
  "zznet-room",

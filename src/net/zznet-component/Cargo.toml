@@ -21,3 +21,10 @@ log = { workspace = true }
 zznet-api = { workspace = true }
 zznet-room = { workspace = true }
 zznet-router = { workspace = true }
+
+[dev-dependencies]
+serde = { workspace = true, features = ["derive"] }
+rmp-serde = { workspace = true }
+tokio-stream = { workspace = true }
+env_logger = { workspace = true }
+actix-rt = { workspace = true }
