@@ -7,7 +7,10 @@ mod handshake;
 mod session_messages;
 
 #[cfg(test)]
-mod integration_tests;
+mod tests_integration;
+
+#[cfg(test)]
+mod tests_negotiation;
 
 pub use actor::HelloActor;
 pub use actor::HelloConfig;
