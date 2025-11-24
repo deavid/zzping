@@ -16,13 +16,13 @@ async fn test_harness_unauthorized_connection_is_rejected() {
             let (service_b, comp_b_addr) = spawn_demo_service(cfg_b.clone()).await;
 
             connect_services(&service_a, &cfg_a, &service_b, &cfg_b).await;
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
             comp_a_addr.do_send(SendPing {
                 data: "test".to_string(),
             });
 
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
             let counter = comp_b_addr.send(GetCounter).await.unwrap();
             assert_eq!(counter, 0);
@@ -41,13 +41,13 @@ async fn test_builder_multiple_components() {
             let (service_b, _comp_b_addr) = spawn_demo_service(cfg_b.clone()).await;
 
             connect_services(&service_a, &cfg_a, &service_b, &cfg_b).await;
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
             comp_a_addr.do_send(PublishToA {
                 data: "test".to_string(),
             });
 
-            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
             let counter = service_b
                 .component_b
@@ -72,7 +72,7 @@ async fn test_builder_component_b_sends_message_via_component_a() {
             let (service_b, _comp_b_addr) = spawn_demo_service(cfg_b.clone()).await;
 
             connect_services(&service_a, &cfg_a, &service_b, &cfg_b).await;
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
             service_b
                 .component_b
@@ -82,7 +82,7 @@ async fn test_builder_component_b_sends_message_via_component_a() {
                     data: "test".to_string(),
                 });
 
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
             let counter = comp_a_addr.send(GetCounter).await.unwrap();
             assert_eq!(counter, 1);
@@ -101,13 +101,13 @@ async fn test_builder_basic_connection() {
             let (service_b, _comp_b_addr) = spawn_demo_service(cfg_b.clone()).await;
 
             connect_services(&service_a, &cfg_a, &service_b, &cfg_b).await;
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
             comp_a_addr.do_send(SendPing {
                 data: "test".to_string(),
             });
 
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
             let counter = comp_a_addr.send(GetCounter).await.unwrap();
             assert_eq!(counter, 1);

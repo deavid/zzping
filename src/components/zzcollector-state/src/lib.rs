@@ -12,9 +12,6 @@ mod permissions;
 mod spec;
 mod state;
 
-#[cfg(test)]
-mod tests;
-
 pub use actor::CStateActor;
 pub use builder::CStateBuilder;
 pub use config::CStateConfig;

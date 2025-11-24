@@ -51,14 +51,14 @@ mod hello_session_integration {
         let client_config = HelloConfig {
             our_role: "collector".to_string(),
             offered_rooms: vec!["intentconfig".to_string(), "health".to_string()],
-            handshake_timeout: Duration::from_millis(10),
+            handshake_timeout: Duration::from_millis(1),
             hostname: "client-host".to_string(),
         };
 
         let server_config = HelloConfig {
             our_role: "database".to_string(),
             offered_rooms: vec!["intentconfig".to_string(), "memdb".to_string()],
-            handshake_timeout: Duration::from_millis(10),
+            handshake_timeout: Duration::from_millis(1),
             hostname: "server-host".to_string(),
         };
 
@@ -122,14 +122,14 @@ mod hello_session_integration {
         let client_config = HelloConfig {
             our_role: "collector".to_string(), // This does NOT match TLS CN "attacker"
             offered_rooms: vec!["intentconfig".to_string()],
-            handshake_timeout: Duration::from_millis(10),
+            handshake_timeout: Duration::from_millis(1),
             hostname: "client-host".to_string(),
         };
 
         let server_config = HelloConfig {
             our_role: "database".to_string(),
             offered_rooms: vec!["intentconfig".to_string()],
-            handshake_timeout: Duration::from_millis(10),
+            handshake_timeout: Duration::from_millis(1),
             hostname: "server-host".to_string(),
         };
 
@@ -148,7 +148,7 @@ mod hello_session_integration {
         );
 
         // Wait for handshake attempt
-        tokio::time::sleep(Duration::from_millis(10)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
 
         // Verify HandshakeComplete was NOT received (because TLS validation should fail)
         assert!(
@@ -193,14 +193,14 @@ mod hello_session_integration {
         let client_config = HelloConfig {
             our_role: "collector".to_string(), // This MATCHES TLS CN "collector"
             offered_rooms: vec!["intentconfig".to_string()],
-            handshake_timeout: Duration::from_millis(10),
+            handshake_timeout: Duration::from_millis(1),
             hostname: "client-host".to_string(),
         };
 
         let server_config = HelloConfig {
             our_role: "database".to_string(),
             offered_rooms: vec!["intentconfig".to_string()],
-            handshake_timeout: Duration::from_millis(10),
+            handshake_timeout: Duration::from_millis(1),
             hostname: "server-host".to_string(),
         };
 
@@ -219,11 +219,11 @@ mod hello_session_integration {
         );
 
         // Wait for handshake to complete
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::sleep(Duration::from_millis(1)).await;
 
         // Verify HandshakeComplete WAS received (because TLS validation should succeed)
         if let Ok(Some(handshake)) =
-            tokio::time::timeout(Duration::from_millis(50), handshake_rx.recv()).await
+            tokio::time::timeout(Duration::from_millis(1), handshake_rx.recv()).await
         {
             assert_eq!(handshake.peer_role_str, "database");
             assert!(!handshake.active_rooms.is_empty());
