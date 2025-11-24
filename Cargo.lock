@@ -2241,7 +2241,9 @@ name = "zzmem-db"
 version = "0.3.0-dev"
 dependencies = [
  "actix",
+ "actix-rt",
  "async-trait",
+ "env_logger",
  "log",
  "ntest",
  "rmp-serde",

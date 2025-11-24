@@ -19,3 +19,6 @@ pub use events::MemDBEvent;
 pub use messages::*;
 pub use network_messages::*;
 pub use permissions::MemDBPermissions;
+
+#[cfg(test)]
+mod tests;

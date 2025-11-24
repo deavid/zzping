@@ -323,6 +323,9 @@ impl Handler<StorePingResult> for MemDBActor {
     type Result = Result<(), MemDBError>;
 
     fn handle(&mut self, msg: StorePingResult, ctx: &mut Context<Self>) -> Self::Result {
+        // Always increment total_results counter regardless of mode
+        self.total_results.fetch_add(1, Ordering::Relaxed);
+
         if !self.config.accept_batches {
             // Collector mode: buffer the result
             let target = msg.result.target.clone();
@@ -331,7 +334,18 @@ impl Handler<StorePingResult> for MemDBActor {
 
             // Check if we should send a batch
             if self.config.buffer_size > 0 && self.buffer.len() >= self.config.buffer_size {
-                self.send_batch(ctx)?;
+                // Attempt to send batch, but don't propagate error if network is unavailable
+                if let Err(e) = self.send_batch(ctx) {
+                    log::debug!("Batch send deferred: {}", e);
+                    // Error is logged but not propagated - buffering continues
+
+                    // Enforce buffer limit (Ring Buffer: Drop Oldest)
+                    // If send failed, buffer was restored. We must prune to limit.
+                    while self.buffer.len() > self.config.buffer_size {
+                        self.buffer.remove(0); // Drop oldest
+                        // Note: We could log this drop or increment a "dropped" counter
+                    }
+                }
             }
         } else {
             // Database mode: store directly

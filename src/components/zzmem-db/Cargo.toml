@@ -33,3 +33,5 @@ zznet-router.workspace = true
 
 [dev-dependencies]
 ntest.workspace = true
+actix-rt.workspace = true
+env_logger.workspace = true
