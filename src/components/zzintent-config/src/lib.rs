@@ -11,6 +11,9 @@ mod network_messages;
 mod permissions;
 mod spec;
 
+#[cfg(test)]
+mod tests;
+
 pub use actor::IntentConfigActor;
 pub use builder::IntentConfigBuilder;
 pub use config::IntentConfigConfig;

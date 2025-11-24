@@ -47,8 +47,6 @@ impl IntentConfigData {
 pub struct UpdateConfig {
     /// The new configuration data
     pub data: IntentConfigData,
-    /// The ID of the peer that requested the change
-    pub peer_id: Option<u64>,
 }
 
 /// A command message for another actor to subscribe to config updates.

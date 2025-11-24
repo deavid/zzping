@@ -22,14 +22,6 @@ pub(crate) enum IntentConfigNetworkMsg {
         ping_rate_pps: u64,
     },
 
-    /// Configuration update from Database to Collectors.
-    ConfigUpdate {
-        /// Targets to configure for pinging.
-        targets: Vec<IpAddr>,
-        /// Ping rate in packets/sec.
-        ping_rate_pps: u64,
-    },
-
     /// Query for current configuration.
     QueryCurrentConfig,
 

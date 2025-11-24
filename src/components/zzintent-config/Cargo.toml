@@ -40,3 +40,4 @@ permissions = []
 [dev-dependencies]
 tempfile = { workspace = true }
 zznet-room = { workspace = true }
+actix-rt = { workspace = true }

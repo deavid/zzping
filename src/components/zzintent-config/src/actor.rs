@@ -66,15 +66,9 @@ impl IntentConfigActor {
         log::debug!("Broadcast completed to {} subscribers", sent);
     }
 
-    /// Send ConfigUpdate to all connected peers via network (Database role only)
-    /// Convenience method for types that implement PermissionCheck
-    fn send_config_update_to_peers(&self, ctx: &mut Context<Self>) {
-        self.send_config_update_to_peers_impl(ctx);
-    }
-
-    /// Send ConfigUpdate to all connected peers via event bus (Database role only)
-    fn send_config_update_to_peers_impl(&self, _ctx: &mut Context<Self>) {
-        // Only Database role should send ConfigUpdate (check persist_config)
+    /// Send RequestConfigChange to all connected peers via event bus (Database role only)
+    fn send_config_update_to_peers(&mut self, _ctx: &mut Context<Self>) {
+        // Only Database role should send RequestConfigChange (check persist_config)
         if !self.config.persist_config {
             return;
         }
@@ -187,7 +181,7 @@ impl Actor for IntentConfigActor {
             }
         }
         // Collector role should NOT proactively query peers on startup. Instead,
-        // Database actors are responsible for sending ConfigUpdate/CurrentConfig
+        // Database actors are responsible for sending RequestConfigChange/CurrentConfig
         // when their rooms become available. This avoids unnecessary traffic and
         // relies on the database to push state when it has joined rooms.
     }
@@ -201,11 +195,7 @@ impl Handler<UpdateConfig> for IntentConfigActor {
 
     fn handle(&mut self, msg: UpdateConfig, ctx: &mut Context<Self>) -> Self::Result {
         eprintln!("⚙️ UpdateConfig handler called!");
-        log::info!(
-            "Handling UpdateConfig message from peer {:?}: {:?}",
-            msg.peer_id,
-            msg.data
-        );
+        log::info!("Handling UpdateConfig message: {:?}", msg.data);
         if msg.data != self.current_config {
             self.current_config = msg.data.clone();
 

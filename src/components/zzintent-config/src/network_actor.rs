@@ -85,10 +85,88 @@ impl IntentConfigNetworkActor {
         }
 
         self.room_actor
-            .do_send(IntentConfigNetworkMsg::ConfigUpdate {
+            .do_send(IntentConfigNetworkMsg::RequestConfigChange {
+                sender_peer_id: self.peer_id.to_string(),
                 targets,
                 ping_rate_pps,
             });
+    }
+
+    fn handle_request_config_change(
+        &mut self,
+        sender_peer_id: String,
+        targets: Vec<IpAddr>,
+        ping_rate_pps: u64,
+    ) {
+        log::info!(
+            "Peer {} requesting config change (sender: {}): targets={:?}, rate={}",
+            self.peer_id,
+            sender_peer_id,
+            targets,
+            ping_rate_pps
+        );
+
+        if !self.permissions.can_write_config {
+            log::warn!(
+                "Peer {} is not authorized for config changes (requires can_write_config permission)",
+                self.peer_id
+            );
+            return;
+        }
+
+        log::debug!(
+            "Peer {} AUTHORIZED for config change (has write permission)",
+            self.peer_id
+        );
+
+        self.main_actor.do_send(InboundConfigChangeRequest {
+            peer_id: PeerId::from(sender_peer_id.as_str()),
+            targets,
+            ping_rate_pps,
+        });
+    }
+
+    fn handle_query_current_config(&mut self) {
+        log::debug!("Peer {} requesting current config", self.peer_id);
+
+        if !self.permissions.can_read_config {
+            log::warn!(
+                "Peer {} is not authorized to read config (requires can_read_config permission)",
+                self.peer_id
+            );
+            return;
+        }
+
+        let main_actor = self.main_actor.clone();
+        let peer_id = self.peer_id.clone();
+        let room_actor = self.room_actor.clone();
+
+        let fut = async move {
+            let config = main_actor
+                .send(InboundGetConfigRequest {
+                    peer_id: peer_id.clone(),
+                })
+                .await;
+
+            match config {
+                Ok(current) => {
+                    log::debug!("Got config from MainActor for peer: {}", peer_id);
+                    room_actor.do_send(IntentConfigNetworkMsg::CurrentConfig {
+                        targets: current.targets,
+                        ping_rate_pps: current.ping_rate_pps,
+                    });
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to get config from MainActor for peer {}: {}",
+                        peer_id,
+                        e
+                    );
+                }
+            }
+        };
+
+        actix::spawn(fut);
     }
 }
 
@@ -160,94 +238,13 @@ impl Handler<IntentConfigNetworkMsg> for IntentConfigNetworkActor {
         );
 
         match msg {
-            // ConfigUpdate from event listener - forward to room_actor
-            IntentConfigNetworkMsg::ConfigUpdate {
-                targets,
-                ping_rate_pps,
-            } => {
-                self.publish_config_update(targets, ping_rate_pps);
-            }
-
             IntentConfigNetworkMsg::RequestConfigChange {
                 sender_peer_id,
                 targets,
                 ping_rate_pps,
-            } => {
-                log::info!(
-                    "Peer {} requesting config change (sender: {}): targets={:?}, rate={}",
-                    self.peer_id,
-                    sender_peer_id,
-                    targets,
-                    ping_rate_pps
-                );
+            } => self.handle_request_config_change(sender_peer_id, targets, ping_rate_pps),
 
-                // Check authorization using stored permissions
-                if !self.permissions.can_write_config {
-                    log::warn!(
-                        "Peer {} is not authorized for config changes (requires can_write_config permission)",
-                        self.peer_id
-                    );
-                    return;
-                }
-
-                log::debug!(
-                    "Peer {} AUTHORIZED for config change (has write permission)",
-                    self.peer_id
-                );
-
-                // Translate to domain message and forward directly to MainActor
-                self.main_actor.do_send(InboundConfigChangeRequest {
-                    peer_id: PeerId::from(sender_peer_id.as_str()),
-                    targets,
-                    ping_rate_pps,
-                });
-            }
-
-            IntentConfigNetworkMsg::QueryCurrentConfig => {
-                log::debug!("Peer {} requesting current config", self.peer_id);
-
-                // Check authorization using stored permissions
-                if !self.permissions.can_read_config {
-                    log::warn!(
-                        "Peer {} is not authorized to read config (requires can_read_config permission)",
-                        self.peer_id
-                    );
-                    return;
-                }
-
-                // Forward directly to MainActor for processing
-                let main_actor = self.main_actor.clone();
-                let peer_id = self.peer_id.clone();
-                let room_actor = self.room_actor.clone();
-
-                let fut = async move {
-                    let config = main_actor
-                        .send(InboundGetConfigRequest {
-                            peer_id: peer_id.clone(),
-                        })
-                        .await;
-
-                    match config {
-                        Ok(current) => {
-                            log::debug!("Got config from MainActor for peer: {}", peer_id);
-                            room_actor.do_send(IntentConfigNetworkMsg::CurrentConfig {
-                                targets: current.targets,
-                                ping_rate_pps: current.ping_rate_pps,
-                            });
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "Failed to get config from MainActor for peer {}: {}",
-                                peer_id,
-                                e
-                            );
-                        }
-                    }
-                };
-
-                // Spawn as background task
-                actix::spawn(fut);
-            }
+            IntentConfigNetworkMsg::QueryCurrentConfig => self.handle_query_current_config(),
 
             IntentConfigNetworkMsg::CurrentConfig { .. } => {
                 log::warn!(
