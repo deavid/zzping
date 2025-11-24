@@ -17,6 +17,8 @@ rmp-serde = { workspace = true }
 zznet-api = { workspace = true }
 zznet-room = { workspace = true }
 
+[dev-dependencies]
+actix-rt = { workspace = true }
 
 [lints]
 # This makes the crate inherit all lints defined in [workspace.lints]

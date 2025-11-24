@@ -21,5 +21,8 @@ mod error;
 mod room_factory;
 mod router;
 
+#[cfg(test)]
+mod tests;
+
 pub use actor::{RegisterManager, RouterActor};
 pub use room_factory::{RoomFactory, RoomFactoryRef};

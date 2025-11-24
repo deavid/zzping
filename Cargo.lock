@@ -2342,6 +2342,7 @@ name = "zznet-router"
 version = "0.3.0-dev"
 dependencies = [
  "actix",
+ "actix-rt",
  "async-trait",
  "rmp-serde",
  "serde",
