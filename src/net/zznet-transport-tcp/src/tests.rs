@@ -29,10 +29,10 @@ async fn test_tcp_happy_path_conversation() {
     // Spawn server task to handle the incoming connection
     let server_handle = tokio::spawn(async move {
         // Accept the connection
-        let transport = server.accept().await.expect("Failed to accept connection");
+        let connection = server.accept().await.expect("Failed to accept connection");
 
-        // Start the transport to get channels
-        let (tx, mut rx) = transport.start();
+        // Connection is already established with I/O tasks running
+        let (tx, mut rx, _watcher) = (connection.tx, connection.rx, connection.watcher);
 
         // Wait for a frame from client
         let frame = rx
@@ -58,10 +58,10 @@ async fn test_tcp_happy_path_conversation() {
     let client =
         TcpTransportClient::new(server_addr.to_string(), None).expect("Failed to create client");
 
-    let transport = client.connect().await.expect("Failed to connect");
+    let connection = client.connect().await.expect("Failed to connect");
 
-    // Start the transport to get channels
-    let (tx, mut rx) = transport.start();
+    // Connection is already established with I/O tasks running
+    let (tx, mut rx, _watcher) = (connection.tx, connection.rx, connection.watcher);
 
     // Send "Ping" to server
     tx.send(TransportFrame::from(Bytes::from("Ping")))
@@ -105,8 +105,8 @@ async fn test_tcp_happy_path_boundary() {
 
     // Spawn server task
     let server_handle = tokio::spawn(async move {
-        let transport = server.accept().await.expect("Failed to accept connection");
-        let (tx, mut rx) = transport.start();
+        let connection = server.accept().await.expect("Failed to accept connection");
+        let (tx, mut rx, _watcher) = (connection.tx, connection.rx, connection.watcher);
 
         // Receive Frame 1
         let frame1 = rx
@@ -142,8 +142,8 @@ async fn test_tcp_happy_path_boundary() {
     let client =
         TcpTransportClient::new(server_addr.to_string(), None).expect("Failed to create client");
 
-    let transport = client.connect().await.expect("Failed to connect");
-    let (tx, mut rx) = transport.start();
+    let connection = client.connect().await.expect("Failed to connect");
+    let (tx, mut rx, _watcher) = (connection.tx, connection.rx, connection.watcher);
 
     // Send "Message A" immediately followed by "Message B"
     tx.send(TransportFrame::from(Bytes::from("Message A")))

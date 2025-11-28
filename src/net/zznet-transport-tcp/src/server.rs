@@ -9,7 +9,7 @@ use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, info};
 
-use zznet_api::{TransportError, TransportServer};
+use zznet_api::{EstablishedConnection, TransportError, TransportServer};
 
 use crate::config::TlsConfig;
 use crate::connection::TcpTransport;
@@ -68,11 +68,74 @@ impl TcpTransportServer {
     pub fn local_addr(&self) -> Result<SocketAddr, TransportError> {
         self.listener.local_addr().map_err(TransportError::IoError)
     }
+
+    /// Run the accept loop, sending accepted connections to the recipient.
+    pub fn serve(self, recipient: actix::Recipient<zznet_api::AcceptTransport>) {
+        let listener = self.listener;
+        let tls_acceptor = self.tls_acceptor;
+
+        tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((tcp_stream, peer_addr)) => {
+                        info!("Accepted connection from {}", peer_addr);
+
+                        let transport_result = if let Some(ref acceptor) = tls_acceptor {
+                            acceptor
+                                .accept(tcp_stream)
+                                .await
+                                .map_err(|e| {
+                                    error!("TLS handshake failed with {}: {}", peer_addr, e);
+                                    TransportError::IoError(std::io::Error::other(format!(
+                                        "TLS handshake failed: {}",
+                                        e
+                                    )))
+                                })
+                                .and_then(|tls_stream| {
+                                    TcpTransport::tls_server(tls_stream, peer_addr)
+                                })
+                        } else {
+                            Ok(TcpTransport::plain(tcp_stream, peer_addr))
+                        };
+
+                        match transport_result {
+                            Ok(transport) => {
+                                let connection = transport.into_established();
+                                let peer_addr_str = connection.peer_addr.clone();
+                                let peer_identity = connection.peer_identity.clone();
+                                let tx = connection.tx;
+                                let rx = connection.rx;
+                                let msg = zznet_api::AcceptTransport {
+                                    tx,
+                                    rx,
+                                    peer_addr: peer_addr_str,
+                                    peer_identity,
+                                };
+                                if recipient.send(msg).await.is_err() {
+                                    error!("Recipient closed, stopping accept loop");
+                                    break;
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to create transport for {}: {}", peer_addr, e);
+                                // Continue accepting other connections
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Accept error: {}", e);
+                        // Brief pause before retrying
+                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    }
+                }
+            }
+        });
+    }
 }
 
 #[async_trait]
 impl TransportServer for TcpTransportServer {
-    async fn accept(&mut self) -> Result<Box<dyn zznet_api::TransportConnection>, TransportError> {
+    async fn accept(&mut self) -> Result<EstablishedConnection, TransportError> {
         debug!("Waiting for incoming connection");
 
         let (tcp_stream, peer_addr) = self.listener.accept().await.map_err(|e| {
@@ -98,10 +161,10 @@ impl TransportServer for TcpTransportServer {
                     e
                 )))
             })?;
-            Ok(Box::new(transport))
+            Ok(transport.into_established())
         } else {
             debug!("Using plain TCP (no TLS) for {}", peer_addr);
-            Ok(Box::new(TcpTransport::plain(tcp_stream, peer_addr)))
+            Ok(TcpTransport::plain(tcp_stream, peer_addr).into_established())
         }
     }
 }

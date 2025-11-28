@@ -10,9 +10,8 @@ use std::collections::HashSet;
 use std::time::Duration;
 use zznet_api::Role;
 use zznet_api::TransportError;
-use zznet_api::TransportServer;
+use zznet_hello::ConnectionManager;
 use zznet_hello::HelloConfig;
-use zznet_hello::{ConnectionManager, HandleTransport};
 use zznet_transport_tcp::TcpTransportServer;
 use zznet_transport_tcp::TlsConfig;
 
@@ -67,7 +66,7 @@ impl DatabaseNetwork {
 
     /// Start the accept loop
     pub async fn run(
-        mut self,
+        self,
         router_actor: &actix::Addr<zznet_router::RouterActor>,
     ) -> Result<(), NetworkError> {
         let mut allowed_roles = HashSet::new();
@@ -75,60 +74,32 @@ impl DatabaseNetwork {
         allowed_roles.insert(Role::new("client-ro"));
         allowed_roles.insert(Role::new("client-admin"));
 
+        let hello_config = HelloConfig {
+            hostname: "database".to_string(),
+            our_role: "database".to_string(),
+            offered_rooms: vec![
+                "intent-config".to_string(),
+                "memdb".to_string(),
+                "query".to_string(),
+            ],
+            handshake_timeout: self.handshake_timeout,
+        };
+
         let connection_manager = ConnectionManager::new(
             router_actor.clone().recipient(),
-            "database".to_string(),
+            hello_config,
             allowed_roles,
         );
 
         let connection_manager_addr = connection_manager.start();
 
-        tracing::info!("ConnectionManager started, ready to accept connections");
+        tracing::info!("ConnectionManager started, calling server.serve");
 
-        loop {
-            match self.server.accept().await {
-                Ok(transport) => {
-                    tracing::info!("Accepted connection from {:?}", transport.peer_addr());
+        self.server.serve(connection_manager_addr.recipient());
 
-                    // Create HELLO configuration for this connection
-                    let hello_config = HelloConfig {
-                        hostname: "database".to_string(),
-                        our_role: "database".to_string(),
-                        offered_rooms: vec![
-                            "intent-config".to_string(),
-                            "memdb".to_string(),
-                            "query".to_string(),
-                        ],
-                        handshake_timeout: self.handshake_timeout,
-                    };
-
-                    // Send transport to ConnectionManager
-                    // ConnectionManager will:
-                    // 1. Spawn HelloActor for this transport
-                    // 2. Run HELLO handshake
-                    // 3. Register peer with PeerManagerActor
-                    // 4. Route messages to components via Room<T>
-                    let handle_msg = HandleTransport {
-                        transport,
-                        config: hello_config,
-                    };
-
-                    let cm_addr = connection_manager_addr.clone();
-                    actix::spawn(async move {
-                        if let Err(e) = cm_addr.send(handle_msg).await {
-                            tracing::error!(
-                                "Failed to send transport to ConnectionManager: {:?}",
-                                e
-                            );
-                        }
-                    });
-                }
-                Err(e) => {
-                    tracing::error!("Failed to accept connection: {:?}", e);
-                    // Brief pause before retrying to avoid tight error loop
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                }
-            }
-        }
+        // The serve method runs in the background, so we need to keep the task alive
+        // For now, just sleep forever
+        std::future::pending::<()>().await;
+        Ok(())
     }
 }

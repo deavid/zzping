@@ -68,6 +68,21 @@ pub struct TlsConfig {
     pub server_name: String,
 }
 
+/// Configuration for client reconnection behavior.
+#[derive(Debug, Clone)]
+pub struct ReconnectConfig {
+    /// Delay between reconnection attempts.
+    pub retry_delay: std::time::Duration,
+}
+
+impl Default for ReconnectConfig {
+    fn default() -> Self {
+        Self {
+            retry_delay: std::time::Duration::from_secs(5),
+        }
+    }
+}
+
 impl TlsConfig {
     /// Helper to construct TlsConfig from paths
     pub fn new(

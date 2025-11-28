@@ -2268,6 +2268,7 @@ dependencies = [
  "actix",
  "async-trait",
  "bytes",
+ "futures",
  "rmp-serde",
  "serde",
  "thiserror 2.0.17",
@@ -2367,10 +2368,12 @@ dependencies = [
 name = "zznet-transport-tcp"
 version = "0.3.0-dev"
 dependencies = [
+ "actix",
  "actix-rt",
  "async-trait",
  "byteorder",
  "bytes",
+ "futures",
  "rcgen",
  "rustls",
  "rustls-native-certs",

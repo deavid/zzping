@@ -22,6 +22,7 @@ thiserror = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 rmp-serde = { workspace = true }
 actix = { workspace = true }
+futures = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util", "sync"] }

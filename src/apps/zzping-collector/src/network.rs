@@ -4,13 +4,11 @@ use actix::Actor;
 use std::time::Duration;
 use zzintent_config::IntentConfigActor;
 use zzmem_db::MemDBActor;
-use zznet_api::TransportClient;
 use zznet_api::TransportError;
+use zznet_hello::ConnectionManager;
 use zznet_hello::HelloConfig;
-use zznet_hello::{ConnectionManager, HandleTransport};
 use zznet_router::RouterActor;
-use zznet_transport_tcp::TcpTransportClient;
-use zznet_transport_tcp::TlsConfig;
+use zznet_transport_tcp::{ReconnectConfig, TcpTransportClient, TlsConfig};
 use zzpinger::PingerSchedulerActor;
 
 /// Started components (running actors)
@@ -78,50 +76,6 @@ impl CollectorNetwork {
         allowed_roles.insert(zznet_api::Role::new("database"));
         allowed_roles.insert(zznet_api::Role::new("collector"));
 
-        // Step 2: Components are ready (peer_manager no longer needed by ConnectionManager)
-
-        let connection_manager = ConnectionManager::new(
-            components.router_actor.clone().recipient(),
-            "collector".to_string(),
-            allowed_roles,
-        );
-
-        let connection_manager_addr = connection_manager.start();
-
-        tracing::info!("ConnectionManager started, ready to connect");
-
-        // Step 4: Reconnection loop
-        loop {
-            match self.try_connect(&connection_manager_addr).await {
-                Ok(()) => {
-                    tracing::info!("Connection established successfully");
-                    // Connection succeeded, but may have closed - retry
-                }
-                Err(e) => {
-                    tracing::error!("Connection failed: {}", e);
-                }
-            }
-
-            tracing::info!("Reconnecting in {:?}...", self.reconnect_delay);
-            tokio::time::sleep(self.reconnect_delay).await;
-        }
-    }
-
-    /// Attempt a single connection to the database server
-    async fn try_connect(
-        &self,
-        connection_manager_addr: &actix::Addr<ConnectionManager>,
-    ) -> Result<(), NetworkError> {
-        // Step 1: Connect to server using pre-validated client
-        let transport = self
-            .client
-            .connect()
-            .await
-            .map_err(NetworkError::ConnectionFailed)?;
-
-        tracing::info!("TCP connection established to {}", self.client.addr());
-
-        // Step 2: Create HELLO configuration
         let hello_config = HelloConfig {
             hostname: "collector".to_string(),
             our_role: "collector".to_string(),
@@ -129,25 +83,27 @@ impl CollectorNetwork {
             handshake_timeout: self.handshake_timeout,
         };
 
-        // Step 3: Hand transport to ConnectionManager
-        let handle_msg = HandleTransport {
-            transport,
-            config: hello_config,
+        let connection_manager = ConnectionManager::new(
+            components.router_actor.clone().recipient(),
+            hello_config,
+            allowed_roles,
+        );
+
+        let connection_manager_addr = connection_manager.start();
+
+        let retry_config = ReconnectConfig {
+            retry_delay: self.reconnect_delay,
         };
 
-        let result = connection_manager_addr
-            .send(handle_msg)
-            .await
-            .map_err(|e| {
-                NetworkError::ConnectionManager(format!("Failed to send transport: {:?}", e))
-            })?;
+        tracing::info!("ConnectionManager started, calling client.maintain");
 
-        // Check if ConnectionManager accepted the transport
-        result
-            .map_err(|e| NetworkError::ConnectionManager(format!("Transport rejected: {}", e)))?;
+        self.client
+            .clone()
+            .maintain(connection_manager_addr.recipient(), retry_config);
 
-        // TODO: Wait for connection to close or error
-        // For now, return immediately and let reconnection loop handle it
+        // The maintain method runs in the background, so we need to keep the task alive
+        // For now, just sleep forever
+        std::future::pending::<()>().await;
         Ok(())
     }
 }

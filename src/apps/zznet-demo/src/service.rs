@@ -40,9 +40,16 @@ impl DemoAppService {
         let allowed_roles: HashSet<Role> =
             config.allowed_roles.iter().map(|r| Role::new(r)).collect();
 
+        let hello_config = zznet_hello::HelloConfig {
+            hostname: "demo".to_string(),
+            our_role: config.our_role.clone(),
+            offered_rooms: config.offered_rooms.clone(),
+            handshake_timeout: std::time::Duration::from_secs(30),
+        };
+
         let connection_manager = ConnectionManager::new(
             router.clone().recipient(),
-            config.our_role.clone(),
+            hello_config,
             allowed_roles,
         )
         .start();

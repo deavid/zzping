@@ -18,6 +18,10 @@ workspace = true
 # Internal dependencies
 zznet-api = { workspace = true }
 
+# Actor framework
+actix = { workspace = true }
+futures = { workspace = true }
+
 # Async runtime
 tokio.workspace = true
 async-trait.workspace = true

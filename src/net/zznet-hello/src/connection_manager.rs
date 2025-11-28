@@ -8,7 +8,8 @@ use crate::actor::{HelloActor, HelloConfig, start_hello_actor_with_handshake_rec
 use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
-use zznet_api::{OnPeerConnected, PeerId, Role, RoomId, TransportConnection};
+use tokio::sync::mpsc;
+use zznet_api::{AcceptTransport, OnPeerConnected, PeerId, Role, RoomId, TransportError, TransportFrame};
 
 /// Coordinates `HelloActor`s and authorizes peers.
 ///
@@ -24,20 +25,23 @@ pub struct ConnectionManager {
     pub our_role: String,
     /// The set of roles this service is allowed to connect with.
     allowed_roles: HashSet<Role>,
+    /// The HelloConfig for this manager (hostname, role, rooms).
+    hello_config: HelloConfig,
 }
 
 impl ConnectionManager {
     /// Creates a new `ConnectionManager`.
     pub fn new(
         handover_recipient: Recipient<OnPeerConnected>,
-        our_role: String,
+        hello_config: HelloConfig,
         allowed_roles: HashSet<Role>,
     ) -> Self {
         Self {
             handover_recipient,
             hello_actors: HashMap::new(),
-            our_role,
+            our_role: hello_config.our_role.clone(),
             allowed_roles,
+            hello_config,
         }
     }
 
@@ -45,14 +49,19 @@ impl ConnectionManager {
     pub(crate) fn spawn_hello_actor(
         &mut self,
         peer_id: PeerId,
-        transport: Box<dyn TransportConnection>,
-        config: HelloConfig,
+        tx: mpsc::Sender<TransportFrame>,
+        rx: mpsc::Receiver<Result<TransportFrame, TransportError>>,
+        peer_addr: String,
+        peer_identity: Option<zznet_api::PeerTLSIdentity>,
         ctx: &mut Context<Self>,
     ) -> Addr<HelloActor> {
         // Use the public API to start HelloActor with handshake recipient integration
         let addr = start_hello_actor_with_handshake_recipient(
-            transport,
-            config,
+            tx,
+            rx,
+            peer_addr,
+            peer_identity,
+            self.hello_config.clone(),
             Some(ctx.address().recipient()),
         );
 
@@ -66,29 +75,15 @@ impl Actor for ConnectionManager {
 }
 
 /// Handles a new transport connection.
-#[derive(Message)]
-#[rtype(result = "Result<(), String>")]
-pub struct HandleTransport {
-    /// The transport connection to manage.
-    pub transport: Box<dyn zznet_api::TransportConnection>,
-    /// The `HelloActor` configuration for this connection.
-    pub config: crate::actor::HelloConfig,
-}
+impl Handler<AcceptTransport> for ConnectionManager {
+    type Result = ();
 
-impl Handler<HandleTransport> for ConnectionManager {
-    type Result = Result<(), String>;
-
-    fn handle(&mut self, msg: HandleTransport, ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: AcceptTransport, ctx: &mut Context<Self>) {
         // Use peer_addr string as a temporary peer id until handshake provides canonical id
-        let peer_addr = msg
-            .transport
-            .peer_addr()
-            .unwrap_or_else(|| "unknown".to_string());
-        let peer_id = PeerId::from(peer_addr.as_str());
+        let peer_id = PeerId::from(msg.peer_addr.as_str());
 
         // Spawn HelloActor managed by this ConnectionManager (it will wire to handshake recipient)
-        let _addr = self.spawn_hello_actor(peer_id, msg.transport, msg.config, ctx);
-        Ok(())
+        let _addr = self.spawn_hello_actor(peer_id, msg.tx, msg.rx, msg.peer_addr, msg.peer_identity, ctx);
     }
 }
 

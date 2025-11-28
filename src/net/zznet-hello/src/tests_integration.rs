@@ -57,19 +57,27 @@ async fn test_hello_actor_notifies_session_manager_on_handshake() {
         our_role: "database".to_string(),
         offered_rooms: vec!["intentconfig".to_string(), "memdb".to_string()],
         handshake_timeout: Duration::from_millis(1),
-        hostname: "server-host".to_string(),
+        hostname: "client-host".to_string(),
     };
 
     // Start client HelloActor with handshake recipient integration
+    let client_conn = client_transport.into_established();
     let client_actor = crate::actor::start_hello_actor_with_handshake_recipient(
-        Box::new(client_transport),
+        client_conn.tx,
+        client_conn.rx,
+        "client".to_string(),
+        None,
         client_config,
         Some(session_manager.recipient()),
     );
 
     // Start server HelloActor
+    let server_conn = server_transport.into_established();
     let _server_actor = crate::actor::start_hello_actor_with_handshake_recipient(
-        Box::new(server_transport),
+        server_conn.tx,
+        server_conn.rx,
+        "server".to_string(),
+        None,
         server_config,
         None,
     );
@@ -128,19 +136,29 @@ async fn test_tls_validation_rejects_mismatched_cn() {
         our_role: "database".to_string(),
         offered_rooms: vec!["intentconfig".to_string()],
         handshake_timeout: Duration::from_millis(1),
-        hostname: "server-host".to_string(),
+        hostname: "client-host".to_string(),
     };
 
     // Start client HelloActor with handshake recipient integration
+    let client_conn = client_transport.into_established();
+    let client_tls_identity = client_conn.peer_identity.clone();
     let client_actor = crate::actor::start_hello_actor_with_handshake_recipient(
-        Box::new(client_transport),
+        client_conn.tx,
+        client_conn.rx,
+        "client".to_string(),
+        client_tls_identity,
         client_config,
         Some(session_manager.recipient()),
     );
 
     // Start server HelloActor
+    let server_conn = server_transport.into_established();
+    let server_tls_identity = server_conn.peer_identity.clone();
     let _server_actor = crate::actor::start_hello_actor_with_handshake_recipient(
-        Box::new(server_transport),
+        server_conn.tx,
+        server_conn.rx,
+        "server".to_string(),
+        server_tls_identity,
         server_config,
         None,
     );
@@ -192,7 +210,7 @@ async fn test_tls_validation_accepts_matching_cn() {
         our_role: "collector".to_string(), // This MATCHES TLS CN "collector"
         offered_rooms: vec!["intentconfig".to_string()],
         handshake_timeout: Duration::from_millis(1),
-        hostname: "client-host".to_string(),
+        hostname: "collector".to_string(),
     };
 
     let server_config = HelloConfig {
@@ -203,15 +221,23 @@ async fn test_tls_validation_accepts_matching_cn() {
     };
 
     // Start client HelloActor with handshake recipient integration
+    let client_conn = client_transport.into_established();
     let client_actor = crate::actor::start_hello_actor_with_handshake_recipient(
-        Box::new(client_transport),
+        client_conn.tx,
+        client_conn.rx,
+        "client".to_string(),
+        None,
         client_config,
         Some(session_manager.recipient()),
     );
 
     // Start server HelloActor
+    let server_conn = server_transport.into_established();
     let _server_actor = crate::actor::start_hello_actor_with_handshake_recipient(
-        Box::new(server_transport),
+        server_conn.tx,
+        server_conn.rx,
+        "server".to_string(),
+        None,
         server_config,
         None,
     );

@@ -4,38 +4,34 @@
 //! higher layers. Protocol logic and serialization belong to upper layers.
 
 use crate::error::TransportError;
-use crate::types::TransportFrame;
+use crate::types::{PeerTLSIdentity, TransportFrame};
 use async_trait::async_trait;
+use std::future::Future;
+use std::pin::Pin;
 use tokio::sync::mpsc;
 
-/// Low-level bidirectional transport connection.
+/// A future that resolves when the transport connection is closed.
 ///
-/// Implementations provide framed I/O for higher-level protocols.
-///
-/// Identity: TLS-backed connections expose a verified `peer_tls_identity`;
-/// raw transports may not provide cryptographic identity — use higher-layer
-/// validation for application-level trust decisions.
-#[async_trait]
-pub trait TransportConnection: Send {
-    /// Starts the transport's active I/O tasks and returns channels for communication.
-    ///
-    /// This method consumes the connection and spawns background tasks for reading
-    /// and writing. The returned sender is used to send outbound frames, and the
-    /// receiver yields inbound frames or errors.
-    ///
-    /// The lifecycle is: Configure -> Inspect Identity -> Start IO.
-    fn start(
-        self: Box<Self>,
-    ) -> (
-        mpsc::Sender<TransportFrame>,
-        mpsc::Receiver<Result<TransportFrame, TransportError>>,
-    );
+/// The transport layer provider is responsible for ensuring this future
+/// completes when the underlying I/O tasks terminate (either due to error,
+/// peer disconnect, or the local actor dropping the channels).
+pub type TransportWatcher = Pin<Box<dyn Future<Output = ()> + Send>>;
 
+/// An established transport connection with active I/O tasks.
+///
+/// This represents a bidirectional connection that is ready to exchange frames.
+/// The I/O tasks are already running in the background.
+pub struct EstablishedConnection {
+    /// Sender for outbound frames to the peer.
+    pub tx: mpsc::Sender<TransportFrame>,
+    /// Receiver for inbound frames from the peer.
+    pub rx: mpsc::Receiver<Result<TransportFrame, TransportError>>,
+    /// A future that resolves when the connection is closed.
+    pub watcher: TransportWatcher,
     /// Peer address for logging/metrics, if available.
-    fn peer_addr(&self) -> Option<String>;
-
+    pub peer_addr: String,
     /// Optional TLS-verified peer identity.
-    fn peer_tls_identity(&self) -> Option<crate::types::PeerTLSIdentity>;
+    pub peer_identity: Option<PeerTLSIdentity>,
 }
 
 /// Server that accepts incoming transport connections.
@@ -47,10 +43,10 @@ pub trait TransportConnection: Send {
 #[async_trait]
 pub trait TransportServer: Send {
     /// Accept a new established connection, or return a fatal error.
-    async fn accept(&mut self) -> Result<Box<dyn TransportConnection>, TransportError>;
+    async fn accept(&mut self) -> Result<EstablishedConnection, TransportError>;
 }
 
-/// Outgoing connection factory used to create new `TransportConnection`s.
+/// Outgoing connection factory used to create new connections.
 ///
 /// `connect()` establishes a new connection; clients are configuration
 /// wrappers and may be called repeatedly to create multiple connections.
@@ -59,5 +55,5 @@ pub trait TransportServer: Send {
 #[async_trait]
 pub trait TransportClient: Send {
     /// Establish a new connection to the configured server.
-    async fn connect(&self) -> Result<Box<dyn TransportConnection>, TransportError>;
+    async fn connect(&self) -> Result<EstablishedConnection, TransportError>;
 }

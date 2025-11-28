@@ -1,8 +1,7 @@
 //! TCP transport connection implementation.
 //!
-//! This module provides TcpTransport which implements the TransportConnection trait.
+//! This module provides TcpTransport which creates EstablishedConnection instances.
 
-use async_trait::async_trait;
 use std::net::SocketAddr;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
@@ -10,14 +9,14 @@ use tokio::sync::mpsc;
 use tracing::{debug, error};
 use x509_parser::prelude::*;
 
-use zznet_api::{PeerTLSIdentity, TransportConnection, TransportError, TransportFrame};
+use zznet_api::{EstablishedConnection, PeerTLSIdentity, TransportError, TransportFrame};
 
 use crate::framing;
 
 /// TCP transport connection with optional TLS.
 ///
 /// This wraps either a plain TCP stream or a TLS-encrypted stream and
-/// implements the TransportConnection trait for use with zznet-hello.
+/// provides the `into_established()` method for creating EstablishedConnection instances.
 pub(crate) struct TcpTransport {
     /// The actual stream (plain or TLS).
     stream: TcpTransportStream,
@@ -74,6 +73,49 @@ impl TcpTransport {
             peer_addr,
             peer_identity,
         })
+    }
+
+    /// Convert this TcpTransport into an EstablishedConnection by spawning I/O tasks.
+    pub(crate) fn into_established(self) -> EstablishedConnection {
+        let (tx, rx): (mpsc::Sender<TransportFrame>, mpsc::Receiver<TransportFrame>) =
+            mpsc::channel(32);
+        let (result_tx, result_rx) = mpsc::channel(32);
+
+        // Spawn transport tasks and get their handles
+        let (writer_handle, reader_handle) = match self.stream {
+            TcpTransportStream::Plain(stream) => spawn_transport_tasks(stream, rx, result_tx),
+            TcpTransportStream::TlsClient(stream) => spawn_transport_tasks(*stream, rx, result_tx),
+            TcpTransportStream::TlsServer(stream) => spawn_transport_tasks(*stream, rx, result_tx),
+        };
+
+        // Create a watcher that resolves when EITHER task finishes.
+        // We use select! to detect the first failure/completion, then abort the other
+        // task to ensure we don't leak resources (e.g. a reader blocked on socket).
+        let watcher = Box::pin(async move {
+            use std::pin::pin;
+
+            let mut writer = pin!(writer_handle);
+            let mut reader = pin!(reader_handle);
+
+            tokio::select! {
+                _ = &mut writer => {
+                    // Local shutdown (Actor dropped channel)
+                    reader.abort();
+                },
+                _ = &mut reader => {
+                    // Remote shutdown (Peer closed connection or Error)
+                    writer.abort();
+                },
+            }
+        });
+
+        EstablishedConnection {
+            tx,
+            rx: result_rx,
+            watcher,
+            peer_addr: self.peer_addr.to_string(),
+            peer_identity: self.peer_identity,
+        }
     }
 
     /// Extracts peer identity from a TLS connection's certificate.
@@ -220,13 +262,14 @@ fn spawn_transport_tasks<S>(
     stream: S,
     mut rx: mpsc::Receiver<TransportFrame>,
     result_tx: mpsc::Sender<Result<TransportFrame, TransportError>>,
-) where
+) -> (tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)
+where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let (mut read_half, mut write_half) = tokio::io::split(stream);
 
     // Spawn writer task
-    tokio::spawn(async move {
+    let writer_handle = tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
             if let Err(e) = framing::write_frame(&mut write_half, frame.get_bytes()).await {
                 error!("Write error: {}", e);
@@ -236,7 +279,7 @@ fn spawn_transport_tasks<S>(
     });
 
     // Spawn reader task
-    tokio::spawn(async move {
+    let reader_handle = tokio::spawn(async move {
         loop {
             match framing::read_frame(&mut read_half).await {
                 Ok(bytes) => {
@@ -255,43 +298,8 @@ fn spawn_transport_tasks<S>(
             }
         }
     });
-}
 
-#[async_trait]
-impl TransportConnection for TcpTransport {
-    fn start(
-        self: Box<Self>,
-    ) -> (
-        mpsc::Sender<TransportFrame>,
-        mpsc::Receiver<Result<TransportFrame, TransportError>>,
-    ) {
-        let (tx, rx): (mpsc::Sender<TransportFrame>, mpsc::Receiver<TransportFrame>) =
-            mpsc::channel(32);
-        let (result_tx, result_rx) = mpsc::channel(32);
-
-        // Split the stream into read and write halves
-        match self.stream {
-            TcpTransportStream::Plain(stream) => {
-                spawn_transport_tasks(stream, rx, result_tx);
-            }
-            TcpTransportStream::TlsClient(stream) => {
-                spawn_transport_tasks(*stream, rx, result_tx);
-            }
-            TcpTransportStream::TlsServer(stream) => {
-                spawn_transport_tasks(*stream, rx, result_tx);
-            }
-        }
-
-        (tx, result_rx)
-    }
-
-    fn peer_addr(&self) -> Option<String> {
-        Some(self.peer_addr.to_string())
-    }
-
-    fn peer_tls_identity(&self) -> Option<PeerTLSIdentity> {
-        self.peer_identity.clone()
-    }
+    (writer_handle, reader_handle)
 }
 
 #[cfg(test)]

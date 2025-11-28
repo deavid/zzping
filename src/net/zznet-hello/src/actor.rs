@@ -12,8 +12,7 @@ use tracing::{debug, error, info, warn};
 
 use tokio_stream::wrappers::ReceiverStream;
 use zznet_api::{
-    Frame, HandshakeFrame, InboundRoomPayload, RoomFrame, RoomId, TransportConnection,
-    TransportError, TransportFrame,
+    Frame, HandshakeFrame, InboundRoomPayload, RoomFrame, RoomId, TransportError, TransportFrame,
 };
 
 // The HELLO protocol is application-agnostic; it uses a role string, not a concrete enum.
@@ -525,24 +524,20 @@ impl Handler<GetTransportTx> for HelloActor {
 
 /// Starts a HelloActor that will report handshake completion to the provided recipient (usually ConnectionManager).
 pub(crate) fn start_hello_actor_with_handshake_recipient(
-    transport: Box<dyn TransportConnection>,
+    transport_tx: mpsc::Sender<TransportFrame>,
+    transport_rx: mpsc::Receiver<Result<TransportFrame, TransportError>>,
+    peer_addr: String,
+    tls_peer_identity: Option<zznet_api::PeerTLSIdentity>,
     config: HelloConfig,
     handshake_recipient: Option<Recipient<HandshakeComplete>>,
 ) -> Addr<HelloActor> {
-    let peer_addr = transport.peer_addr();
-    // Extract TLS peer identity from transport (if available)
-    let tls_peer_identity = transport.peer_tls_identity();
+    debug!("Starting HelloActor for peer at '{}'", peer_addr);
     if let Some(ref identity) = tls_peer_identity {
         debug!(
-            "TLS connection detected: role='{}', username='{}', addr='{:?}'",
-            identity.role, identity.username, peer_addr
+            "TLS connection detected: role='{}', username='{}'",
+            identity.role, identity.username
         );
-    } else {
-        debug!("Connection with no TLS identity, addr='{peer_addr:?}'");
     }
-
-    // Start the transport and get channels
-    let (transport_tx, transport_rx) = transport.start();
 
     let mut actor = HelloActor::new(config, tls_peer_identity, transport_tx, transport_rx);
     if let Some(sm) = handshake_recipient {

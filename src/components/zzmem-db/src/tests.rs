@@ -20,7 +20,7 @@ use crate::permissions::MemDBPermissions;
 use actix::prelude::*;
 use std::collections::HashMap;
 use zznet_api::{
-    Frame, OnPeerConnected, PeerId, Role, RoomFrame, RoomId, TransportConnection, TransportFrame,
+    Frame, OnPeerConnected, PeerId, Role, RoomFrame, RoomId, TransportFrame,
     create_mock_pair,
 };
 use zznet_router::RouterActor;
@@ -163,7 +163,8 @@ async fn test_pipeline_flow() {
     let (trans_coll_to_db, trans_db_to_coll) = create_mock_pair("coll_db_link");
 
     // 6. Connect Database side (Database receives batches from Collector)
-    let (db_send_tx, db_recv_rx) = Box::new(trans_db_to_coll).start();
+    let db_conn = trans_db_to_coll.into_established();
+    let (db_send_tx, db_recv_rx, _watcher) = (db_conn.tx, db_conn.rx, db_conn.watcher);
 
     let db_routing_map = db_router
         .send(OnPeerConnected {
@@ -182,7 +183,8 @@ async fn test_pipeline_flow() {
     );
 
     // 7. Connect Collector side (Collector sends to Database)
-    let (coll_send_tx, coll_recv_rx) = Box::new(trans_coll_to_db).start();
+    let coll_conn = trans_coll_to_db.into_established();
+    let (coll_send_tx, coll_recv_rx, _watcher) = (coll_conn.tx, coll_conn.rx, coll_conn.watcher);
 
     let coll_routing_map = coll_router
         .send(OnPeerConnected {
@@ -345,7 +347,8 @@ async fn test_pipeline_flow() {
     let (_trans_admin_to_db, trans_db_to_admin) = create_mock_pair("admin_db_link");
 
     // 12. Connect Database side (Database sees Admin connection)
-    let (db_admin_tx, _db_admin_rx) = Box::new(trans_db_to_admin).start();
+    let admin_conn = trans_db_to_admin.into_established();
+    let (db_admin_tx, _db_admin_rx, _watcher) = (admin_conn.tx, admin_conn.rx, admin_conn.watcher);
 
     let db_admin_routing_map = db_router
         .send(OnPeerConnected {
@@ -492,7 +495,8 @@ async fn test_disconnect_buffering() {
     // 6. Wire them together
     let (trans_coll_to_db, trans_db_to_coll) = create_mock_pair("reconnect_link");
 
-    let (db_send_tx, db_recv_rx) = Box::new(trans_db_to_coll).start();
+    let db_conn = trans_db_to_coll.into_established();
+    let (db_send_tx, db_recv_rx, _watcher) = (db_conn.tx, db_conn.rx, db_conn.watcher);
 
     let db_routing_map = db_router
         .send(OnPeerConnected {
@@ -505,7 +509,8 @@ async fn test_disconnect_buffering() {
         .expect("Router should respond")
         .expect("Connection should succeed");
 
-    let (coll_send_tx, _coll_recv_rx) = Box::new(trans_coll_to_db).start();
+    let coll_conn = trans_coll_to_db.into_established();
+    let (coll_send_tx, _coll_recv_rx, _watcher) = (coll_conn.tx, coll_conn.rx, coll_conn.watcher);
 
     let _coll_routing_map = coll_router
         .send(OnPeerConnected {

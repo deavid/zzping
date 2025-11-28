@@ -3,9 +3,7 @@
 use crate::config::DemoAppConfig;
 use crate::service::DemoAppService;
 use actix::Addr;
-use zznet_api::create_mock_pair;
-use zznet_hello::HandleTransport;
-use zznet_hello::HelloConfig;
+use zznet_api::{AcceptTransport, create_mock_pair};
 
 /// Spawns a `DemoAppService` and returns the service and the address of ComponentA.
 pub async fn spawn_demo_service(
@@ -19,45 +17,30 @@ pub async fn spawn_demo_service(
 }
 
 /// Wires two demo services together using a mock transport for integration testing.
-pub async fn connect_services(
-    service_a: &DemoAppService,
-    config_a: &DemoAppConfig,
-    service_b: &DemoAppService,
-    config_b: &DemoAppConfig,
-) {
+pub async fn connect_services(service_a: &DemoAppService, service_b: &DemoAppService) {
     let (transport_a, transport_b) = create_mock_pair("test");
 
-    let hello_config_a = HelloConfig {
-        our_role: config_a.our_role.clone(),
-        offered_rooms: config_a.offered_rooms.clone(),
-        hostname: format!("service_a_host_{}", config_a.our_role), // Example hostname
-        handshake_timeout: std::time::Duration::from_secs(1),
-    };
-
-    let hello_config_b = HelloConfig {
-        our_role: config_b.our_role.clone(),
-        offered_rooms: config_b.offered_rooms.clone(),
-        hostname: format!("service_b_host_{}", config_b.our_role), // Example hostname
-        handshake_timeout: std::time::Duration::from_secs(1),
-    };
-
+    let conn_a = transport_a.into_established();
     service_a
         .connection_manager
-        .send(HandleTransport {
-            transport: Box::new(transport_a),
-            config: hello_config_a,
+        .send(AcceptTransport {
+            tx: conn_a.tx,
+            rx: conn_a.rx,
+            peer_addr: conn_a.peer_addr,
+            peer_identity: conn_a.peer_identity,
         })
         .await
-        .unwrap()
         .unwrap();
 
+    let conn_b = transport_b.into_established();
     service_b
         .connection_manager
-        .send(HandleTransport {
-            transport: Box::new(transport_b),
-            config: hello_config_b,
+        .send(AcceptTransport {
+            tx: conn_b.tx,
+            rx: conn_b.rx,
+            peer_addr: conn_b.peer_addr,
+            peer_identity: conn_b.peer_identity,
         })
         .await
-        .unwrap()
         .unwrap();
 }

@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use tokio::sync::mpsc;
 use zznet_api::{
-    Frame, OnPeerConnected, PeerId, Role, RoomFrame, RoomId, TransportConnection, TransportFrame,
+    Frame, OnPeerConnected, PeerId, Role, RoomFrame, RoomId, TransportFrame,
     create_mock_pair,
 };
 use zznet_router::RouterActor;
@@ -176,7 +176,8 @@ async fn test_intent_propagation() {
     let (trans_db_to_coll, trans_coll_to_db) = create_mock_pair("db_coll_link");
 
     // 6. Connect Collector side (Collector connects TO Database)
-    let (coll_send_tx, coll_recv_rx) = Box::new(trans_coll_to_db).start();
+    let coll_conn = trans_coll_to_db.into_established();
+    let (coll_send_tx, coll_recv_rx, _watcher) = (coll_conn.tx, coll_conn.rx, coll_conn.watcher);
 
     let coll_routing_map = coll_router
         .send(OnPeerConnected {
@@ -196,7 +197,8 @@ async fn test_intent_propagation() {
 
     // 7. Connect Database side (Database sees Collector connection)
     // Database broadcasts will go through db_send_tx and arrive on coll_recv_rx
-    let (db_send_tx, _db_recv_rx) = Box::new(trans_db_to_coll).start();
+    let db_conn = trans_db_to_coll.into_established();
+    let (db_send_tx, _db_recv_rx, _watcher) = (db_conn.tx, db_conn.rx, db_conn.watcher);
 
     let db_routing_map = db_router
         .send(OnPeerConnected {
@@ -267,7 +269,8 @@ async fn test_intent_propagation() {
 
     // 9. Connect Database side (Database sees Admin connection)
     let (db_admin_tx, _db_admin_rx) = mpsc::channel::<TransportFrame>(32);
-    let (_admin_tx, _admin_rx) = Box::new(trans_db_admin_side).start();
+    let admin_conn = trans_db_admin_side.into_established();
+    let (_admin_tx, _admin_rx, _watcher) = (admin_conn.tx, admin_conn.rx, admin_conn.watcher);
 
     let db_admin_routing_map = db_router
         .send(OnPeerConnected {
@@ -404,7 +407,8 @@ async fn test_unauthorized_write() {
 
     // 2. First, set an initial config as admin
     let (_trans_admin, trans_db_admin) = create_mock_pair("admin_link");
-    let (_admin_tx, _admin_rx) = Box::new(trans_db_admin).start();
+    let admin_conn = trans_db_admin.into_established();
+    let (_admin_tx, _admin_rx, _watcher) = (admin_conn.tx, admin_conn.rx, admin_conn.watcher);
 
     let db_admin_routing_map = db_router
         .send(OnPeerConnected {
@@ -451,7 +455,8 @@ async fn test_unauthorized_write() {
 
     // 3. Connect a "rogue" collector
     let (_trans_rogue, trans_db_rogue) = create_mock_pair("rogue_link");
-    let (_rogue_tx, _rogue_rx) = Box::new(trans_db_rogue).start();
+    let rogue_conn = trans_db_rogue.into_established();
+    let (_rogue_tx, _rogue_rx, _watcher) = (rogue_conn.tx, rogue_conn.rx, rogue_conn.watcher);
 
     let db_rogue_routing_map = db_router
         .send(OnPeerConnected {

@@ -1,5 +1,6 @@
 //! Actix mesages for zznet
 
+use crate::error::TransportError;
 use crate::types::{PeerId, Role, RoomId, TransportFrame};
 use actix::prelude::*;
 use std::collections::HashMap;
@@ -28,4 +29,18 @@ pub struct OnPeerConnected {
     pub negotiated_rooms: Vec<RoomId>,
     /// Direct transport write handle - writes raw frames to network
     pub transport_tx: mpsc::Sender<TransportFrame>,
+}
+
+/// Carries a raw, authenticated connection from Transport to Session layer.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct AcceptTransport {
+    /// Sender for outbound frames to the peer.
+    pub tx: mpsc::Sender<TransportFrame>,
+    /// Receiver for inbound frames from the peer.
+    pub rx: mpsc::Receiver<Result<TransportFrame, TransportError>>,
+    /// Peer address for logging/metrics.
+    pub peer_addr: String,
+    /// Optional TLS-verified peer identity.
+    pub peer_identity: Option<crate::types::PeerTLSIdentity>,
 }

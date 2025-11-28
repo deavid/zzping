@@ -34,7 +34,7 @@ async fn test_negotiation_intersection() {
     // ═════════════════════════════════════════════════════════════════════════
 
     // 1. Channel: Create the mpsc channel for the result
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut handshake_rx) = mpsc::unbounded_channel();
 
     // 2. Observer: Spawn MockSessionManager
     let session_manager = MockSessionManager {
@@ -55,8 +55,12 @@ async fn test_negotiation_intersection() {
     };
 
     // 5. Execution: Spawn the actor
+    let local_conn = local_transport.into_established();
     let _hello_actor = crate::actor::start_hello_actor_with_handshake_recipient(
-        Box::new(local_transport),
+        local_conn.tx,
+        local_conn.rx,
+        "server".to_string(),
+        None,
         config,
         Some(session_recipient),
     );
@@ -144,7 +148,7 @@ async fn test_negotiation_intersection() {
     // ═════════════════════════════════════════════════════════════════════════
 
     // 1. Await Result
-    let result = rx.recv().await.expect("HandshakeComplete was not received");
+    let result: HandshakeComplete = handshake_rx.recv().await.expect("HandshakeComplete was not received");
 
     // 2. Assert Intersection
     assert_eq!(

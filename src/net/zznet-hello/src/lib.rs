@@ -14,4 +14,4 @@ mod tests_negotiation;
 
 pub use actor::HelloActor;
 pub use actor::HelloConfig;
-pub use connection_manager::{ConnectionManager, HandleTransport};
+pub use connection_manager::ConnectionManager;

@@ -4,7 +4,7 @@
 //! client/server helpers without network I/O.
 
 use crate::error::TransportError;
-use crate::transport::{TransportClient, TransportConnection, TransportServer};
+use crate::transport::{EstablishedConnection, TransportClient, TransportServer};
 use crate::types::{PeerTLSIdentity, TransportFrame};
 use async_trait::async_trait;
 use std::io;
@@ -65,26 +65,20 @@ impl MockConnection {
             ))),
         }
     }
-}
 
-#[async_trait]
-impl TransportConnection for MockConnection {
-    fn start(
-        self: Box<Self>,
-    ) -> (
-        mpsc::Sender<TransportFrame>,
-        mpsc::Receiver<Result<TransportFrame, TransportError>>,
-    ) {
+    /// Convert this MockConnection into an EstablishedConnection by starting the I/O loop.
+    pub fn into_established(self) -> EstablishedConnection {
         let MockConnection {
             tx,
             rx,
+            peer_id,
             inject_error,
-            ..
-        } = *self;
+            peer_identity,
+        } = self;
         let (result_tx, result_rx) = mpsc::channel(32);
 
         // Spawn a task to convert TransportFrame to Result<TransportFrame, TransportError>
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             let mut rx = rx;
             if let Some(error) = inject_error {
                 let _ = result_tx.send(Err(error)).await;
@@ -97,15 +91,24 @@ impl TransportConnection for MockConnection {
             }
         });
 
-        (tx, result_rx)
-    }
+        let watcher = Box::pin(async move {
+            let _ = handle.await;
+        });
 
-    fn peer_addr(&self) -> Option<String> {
-        Some(format!("mock:{}", self.peer_id))
+        EstablishedConnection {
+            tx,
+            rx: result_rx,
+            watcher,
+            peer_addr: format!("mock:{}", peer_id),
+            peer_identity,
+        }
     }
+}
 
-    fn peer_tls_identity(&self) -> Option<PeerTLSIdentity> {
-        self.peer_identity.clone()
+#[async_trait]
+impl TransportServer for MockConnection {
+    async fn accept(&mut self) -> Result<EstablishedConnection, TransportError> {
+        unimplemented!("MockConnection does not implement TransportServer")
     }
 }
 
@@ -136,19 +139,19 @@ pub fn create_mock_pair(base_id: &str) -> (MockConnection, MockConnection) {
 /// Server that returns provided connections on `accept()`.
 pub struct MockServer {
     /// Queue of connections to return from accept().
-    connections: Vec<Box<dyn TransportConnection>>,
+    connections: Vec<EstablishedConnection>,
 }
 
 impl MockServer {
     /// Construct a new `MockServer` returning the supplied connections.
-    pub fn new(connections: Vec<Box<dyn TransportConnection>>) -> Self {
+    pub fn new(connections: Vec<EstablishedConnection>) -> Self {
         Self { connections }
     }
 }
 
 #[async_trait]
 impl TransportServer for MockServer {
-    async fn accept(&mut self) -> Result<Box<dyn TransportConnection>, TransportError> {
+    async fn accept(&mut self) -> Result<EstablishedConnection, TransportError> {
         match self.connections.pop() {
             Some(conn) => Ok(conn),
             None => Err(TransportError::ConnectionClosed(std::io::Error::other(
@@ -158,7 +161,7 @@ impl TransportServer for MockServer {
     }
 }
 
-type ConnectionResult = Result<Box<dyn TransportConnection>, TransportError>;
+type ConnectionResult = Result<EstablishedConnection, TransportError>;
 
 /// Client that returns a preconfigured connection or error on `connect()`.
 pub struct MockClient {
@@ -168,7 +171,7 @@ pub struct MockClient {
 
 impl MockClient {
     /// Create a client that yields `connection` once from `connect()`.
-    pub fn with_connection(connection: Box<dyn TransportConnection>) -> Self {
+    pub fn with_connection(connection: EstablishedConnection) -> Self {
         Self {
             connection: Mutex::new(Some(Ok(connection))),
         }
@@ -184,7 +187,7 @@ impl MockClient {
 
 #[async_trait]
 impl TransportClient for MockClient {
-    async fn connect(&self) -> Result<Box<dyn TransportConnection>, TransportError> {
+    async fn connect(&self) -> Result<EstablishedConnection, TransportError> {
         // Return an error instead of panicking when there's no configured
         // connection to return. Tests expect an Err rather than a panic.
         match self.connection.lock().await.take() {
