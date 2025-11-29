@@ -8,8 +8,10 @@ use clap::Parser;
 use surge_ping::{Client, ConfigBuilder};
 use tracing_subscriber::EnvFilter;
 use zzping_collector::config::CollectorConfig;
-use zzping_collector::network::StartedComponents;
 use zzpinger::MockPingerClient;
+use zznet_transport_tcp::TcpTransportClient;
+use zznet_api::{maintain_connection, ReconnectConfig};
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -52,7 +54,7 @@ async fn main() -> Result<()> {
     let router = zznet_router::RouterActor::new(vec![]).start();
 
     let intent_builder = zzintent_config::IntentConfigBuilder::new().config_for_collector();
-    let intent_addr = intent_builder.router(router.clone()).start()?;
+    let _intent_addr = intent_builder.router(router.clone()).start()?;
 
     let memdb_builder = zzmem_db::MemDBBuilder::new(zzmem_db::MemDBConfig::for_collector(
         config.components.memdb_batch_size,
@@ -65,7 +67,7 @@ async fn main() -> Result<()> {
         clock: None,
         spawn_strategy: zzpinger::SpawnStrategy::NewArbiter,
     };
-    let pinger_addr = match config.components.pinger_backend {
+    let _pinger_addr = match config.components.pinger_backend {
         zzping_collector::config::PingerBackend::Real => {
             let ping_config = ConfigBuilder::default().build();
             tracing::info!("Creating surge_ping client...");
@@ -89,28 +91,39 @@ async fn main() -> Result<()> {
     };
 
     let addr = format!("{}:{}", config.database_host, config.database_port);
-    let reconnect_delay = std::time::Duration::from_millis(config.reconnect_delay_ms);
-    let handshake_timeout = std::time::Duration::from_secs(10);
+    let reconnect_delay = Duration::from_millis(config.reconnect_delay_ms);
+    let handshake_timeout = Duration::from_secs(10);
 
-    let network = zzping_collector::network::CollectorNetwork::new(
-        &addr,
-        tls_cfg,
-        reconnect_delay,
+    // Create TCP transport client
+    let client = TcpTransportClient::new(addr.clone(), tls_cfg)?;
+
+    // Build allowed roles set for HELLO authentication
+    let mut allowed_roles = std::collections::HashSet::new();
+    allowed_roles.insert(zznet_api::Role::new("database"));
+    allowed_roles.insert(zznet_api::Role::new("collector"));
+
+    let hello_config = zznet_hello::HelloConfig {
+        hostname: "collector".to_string(),
+        our_role: "collector".to_string(),
+        offered_rooms: vec!["intent-config".to_string(), "memdb".to_string()],
         handshake_timeout,
-    )?;
-
-    let started_components = StartedComponents {
-        intent_config: intent_addr,
-        pinger: pinger_addr,
-        memdb_addr,
-        router_actor: router,
     };
 
-    tokio::spawn(async move {
-        if let Err(e) = network.connect(&started_components).await {
-            tracing::error!("Collector network task failed: {}", e);
-        }
-    });
+    let connection_manager = zznet_hello::ConnectionManager::new(
+        router.clone().recipient(),
+        hello_config,
+        allowed_roles,
+    );
+
+    let connection_manager_addr = connection_manager.start();
+
+    let retry_config = ReconnectConfig {
+        retry_delay: reconnect_delay,
+    };
+
+    tracing::info!("ConnectionManager started, calling maintain_connection");
+
+    maintain_connection(client, connection_manager_addr.recipient(), retry_config);
 
     tracing::info!("ZZPing Collector running. Press Ctrl+C to exit.");
 
@@ -121,3 +134,4 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
+

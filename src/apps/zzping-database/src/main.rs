@@ -8,6 +8,9 @@ use clap::Parser;
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 use zzping_database::config::DatabaseConfig;
+use zznet_transport_tcp::TcpTransportServer;
+use zznet_api::{serve_connections, Role};
+use std::collections::HashSet;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -75,16 +78,37 @@ async fn main() -> Result<()> {
     let bind_addr = format!("{}:{}", config.bind_host, config.bind_port);
     let handshake_timeout = Duration::from_secs(config.handshake_timeout_secs);
 
-    let network =
-        zzping_database::network::DatabaseNetwork::bind(&bind_addr, tls_cfg, handshake_timeout)
-            .await?;
+    // Create TCP transport server
+    let server = TcpTransportServer::new(&bind_addr, tls_cfg).await?;
 
-    let router_for_network = router_actor.clone();
-    tokio::spawn(async move {
-        if let Err(e) = network.run(&router_for_network).await {
-            tracing::error!("Database network task failed: {}", e);
-        }
-    });
+    // Setup connection manager
+    let mut allowed_roles = HashSet::new();
+    allowed_roles.insert(Role::new("collector"));
+    allowed_roles.insert(Role::new("client-ro"));
+    allowed_roles.insert(Role::new("client-admin"));
+
+    let hello_config = zznet_hello::HelloConfig {
+        hostname: "database".to_string(),
+        our_role: "database".to_string(),
+        offered_rooms: vec![
+            "intent-config".to_string(),
+            "memdb".to_string(),
+            "query".to_string(),
+        ],
+        handshake_timeout,
+    };
+
+    let connection_manager = zznet_hello::ConnectionManager::new(
+        router_actor.clone().recipient(),
+        hello_config,
+        allowed_roles,
+    );
+
+    let connection_manager_addr = connection_manager.start();
+
+    tracing::info!("ConnectionManager started, calling serve_connections");
+
+    serve_connections(server, connection_manager_addr.recipient());
 
     tracing::info!("ZZPing Database running. Press Ctrl+C to exit.");
 

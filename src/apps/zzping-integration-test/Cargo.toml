@@ -1,0 +1,57 @@
+[package]
+name = "zzping-integration-test"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+# Workspace-wide linting: Since collaborators here (read, AI agents) are too happy to just allow a lint and move on, we
+# are adding here a workspace wide forbid on the lints that must not be overriden. Do not be even tempted to change this!
+# If you think you have a legitimate reason for one of these, think again: YOU DON'T. DO NOT TOUCH THESE LINT CONFIGS!
+[lints]
+# This makes the crate inherit all lints defined in [workspace.lints]
+workspace = true
+
+[[test]]
+name = "hermetic_test"
+path = "tests/hermetic_test.rs"
+
+[dependencies]
+# Network layer dependencies
+zznet-api.workspace = true
+zznet-hello.workspace = true
+zznet-room.workspace = true
+zznet-router.workspace = true
+
+# Component dependencies
+zzintent-config.workspace = true
+zzmem-db.workspace = true
+zzcollector-state.workspace = true
+
+# Runtime dependencies
+tokio.workspace = true
+actix.workspace = true
+clap.workspace = true
+
+# Configuration and serialization
+ron.workspace = true
+serde.workspace = true
+
+# Logging and tracing
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+
+# TLS/crypto
+rustls.workspace = true
+rustls-pemfile.workspace = true
+tokio-rustls.workspace = true
+
+# Utilities
+chrono.workspace = true
+
+[dev-dependencies]
+tokio-test.workspace = true

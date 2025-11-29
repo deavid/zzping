@@ -2273,6 +2273,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.17",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2454,6 +2455,34 @@ dependencies = [
  "zznet-router",
  "zznet-transport-tcp",
  "zzpinger",
+]
+
+[[package]]
+name = "zzping-integration-test"
+version = "0.3.0-dev"
+dependencies = [
+ "actix",
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "clap",
+ "ron",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-rustls",
+ "tokio-test",
+ "tracing",
+ "tracing-subscriber",
+ "zzcollector-state",
+ "zzintent-config",
+ "zzmem-db",
+ "zznet-api",
+ "zznet-hello",
+ "zznet-room",
+ "zznet-router",
 ]
 
 [[package]]

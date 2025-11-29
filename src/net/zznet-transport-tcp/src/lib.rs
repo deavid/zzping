@@ -7,7 +7,7 @@ mod framing;
 mod server;
 
 pub use client::TcpTransportClient;
-pub use config::*;
+pub use config::TlsConfig;
 pub use server::TcpTransportServer;
 
 #[cfg(test)]
