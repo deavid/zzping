@@ -80,7 +80,7 @@ async fn test_collector_database_handshake() -> Result<()> {
             "memdb".to_string(),
             "query".to_string(),
         ],
-        handshake_timeout: Duration::from_secs(10),
+        handshake_timeout: Duration::from_millis(1),
     };
 
     let db_connection_manager = ConnectionManager::new(
@@ -115,7 +115,7 @@ async fn test_collector_database_handshake() -> Result<()> {
         hostname: "collector".to_string(),
         our_role: "collector".to_string(),
         offered_rooms: vec!["intent-config".to_string(), "memdb".to_string()],
-        handshake_timeout: Duration::from_secs(10),
+        handshake_timeout: Duration::from_millis(1),
     };
 
     let coll_connection_manager = ConnectionManager::new(
@@ -132,7 +132,7 @@ async fn test_collector_database_handshake() -> Result<()> {
     let mock_client = zznet_api::MockClient::with_connection(client_conn);
 
     let reconnect_config = ReconnectConfig {
-        retry_delay: Duration::from_millis(100),
+        retry_delay: Duration::from_millis(1),
     };
 
     // Use the generic maintain_connection function with the mock client
@@ -144,7 +144,7 @@ async fn test_collector_database_handshake() -> Result<()> {
     tracing::info!("Waiting for handshake to complete...");
 
     // Give some time for the handshake protocol to run
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    tokio::time::sleep(Duration::from_millis(1)).await;
 
     tracing::info!("Test completed successfully!");
 
