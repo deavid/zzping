@@ -2462,6 +2462,7 @@ name = "zzping-integration-test"
 version = "0.3.0-dev"
 dependencies = [
  "actix",
+ "actix-rt",
  "anyhow",
  "async-trait",
  "chrono",
@@ -2483,6 +2484,7 @@ dependencies = [
  "zznet-hello",
  "zznet-room",
  "zznet-router",
+ "zzpinger",
 ]
 
 [[package]]

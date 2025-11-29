@@ -77,7 +77,9 @@ pub(crate) async fn run_backend(
 
                 // High-precision wait
                 let sleep_until = tokio::time::Instant::from_std(message.instant) + message.fire_duration;
+                log::debug!("Pinger backend: sleeping until {:?} (now: {:?}, fire_duration: {:?})", sleep_until, Instant::now(), message.fire_duration);
                 tokio::time::sleep_until(sleep_until).await;
+                log::debug!("Pinger backend: woke for scheduled instant {:?} (now: {:?})", message.instant, Instant::now());
 
                 // Concurrent spawning
                 for target in message.targets {

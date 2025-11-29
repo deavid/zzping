@@ -79,11 +79,30 @@ impl MemDBNetworkActor {
             return;
         }
 
+        tracing::trace!(
+            "MemDBNetworkActor.enqueue_batch: peer {} timestamp={} results={} -> RoomActor",
+            self.peer_id,
+            timestamp_ms,
+            results.len()
+        );
+
+        tracing::debug!(
+            "MemDBNetworkActor.enqueue_batch: enqueuing SubmitBatch -> peer={} timestamp={} results={}",
+            self.peer_id,
+            timestamp_ms,
+            results.len()
+        );
+
         self.room_actor.do_send(MemDBMessage::SubmitBatch {
             sender_peer_id: String::new(),
             timestamp_ms,
             results,
         });
+
+        tracing::trace!(
+            "MemDBNetworkActor.enqueue_batch: peer {} handed SubmitBatch to RoomActor",
+            self.peer_id
+        );
     }
 }
 
@@ -91,8 +110,16 @@ impl Actor for MemDBNetworkActor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        tracing::trace!("MemDBNetworkActor started for peer {}", self.peer_id);
-        ctx.add_stream(BroadcastStream::new(self.event_rx.resubscribe()));
+        tracing::debug!(
+            "MemDBNetworkActor started for peer {}; subscribing to event bus",
+            self.peer_id
+        );
+        let stream = BroadcastStream::new(self.event_rx.resubscribe());
+        tracing::trace!(
+            "MemDBNetworkActor peer {} attaching BroadcastStream subscriber",
+            self.peer_id
+        );
+        ctx.add_stream(stream);
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -115,6 +142,12 @@ impl StreamHandler<Result<MemDBEvent, BroadcastStreamRecvError>> for MemDBNetwor
                 timestamp_ms,
                 results,
             }) => {
+                tracing::trace!(
+                    "MemDBNetworkActor peer {} received BatchReady event (timestamp={} results={})",
+                    self.peer_id,
+                    timestamp_ms,
+                    results.len()
+                );
                 self.enqueue_batch(timestamp_ms, results);
             }
             Err(BroadcastStreamRecvError::Lagged(skipped)) => {
@@ -140,8 +173,8 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
     type Result = ResponseFuture<()>;
 
     fn handle(&mut self, msg: MemDBMessage, _ctx: &mut Self::Context) -> Self::Result {
-        tracing::trace!(
-            "NetworkActor received message from peer {}: {:?}",
+        tracing::debug!(
+            "MemDBNetworkActor.handle(MemDBMessage) from peer {}: {:?}",
             self.peer_id,
             msg
         );
@@ -163,6 +196,13 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                         results,
                     };
 
+                    tracing::debug!(
+                        "MemDBNetworkActor -> forwarding SubmitBatch to MainActor for peer {}: timestamp={} results={} ",
+                        peer_id,
+                        timestamp_ms,
+                        request.results.len()
+                    );
+
                     match main_actor.send(request).await {
                         Ok(Ok(ack_response)) => {
                             tracing::debug!(
@@ -173,6 +213,11 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                                 received_count: ack_response.received_count,
                                 timestamp_ms: ack_response.timestamp_ms,
                             });
+                            tracing::debug!(
+                                "MemDBNetworkActor -> enqueued BatchAck to room for peer {} timestamp={}",
+                                peer_id,
+                                ack_response.timestamp_ms
+                            );
                         }
                         Ok(Err(e)) => {
                             tracing::warn!("Batch rejected: {}", e);

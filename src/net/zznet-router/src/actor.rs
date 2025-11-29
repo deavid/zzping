@@ -83,6 +83,7 @@ impl Handler<OnPeerConnected> for RouterActor {
                 ) {
                     Ok(Some(room_recipient)) => {
                         // Store the room recipient for returning
+                        tracing::debug!("RouterActor: created room route for peer={} room={}", peer_id, room_id);
                         room_routes.insert(room_id.clone(), room_recipient);
                     }
                     Ok(None) => {

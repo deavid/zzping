@@ -51,15 +51,27 @@ where
     type Result = ();
 
     fn handle(&mut self, msg: InboundRoomPayload, _ctx: &mut Context<Self>) -> Self::Result {
+        tracing::trace!("RoomActor inbound: room={} payload_bytes={}", self.room_id, msg.payload.len());
+        // Add compact hex prefix for better tracing of failed decodes
+        let prefix: String = msg
+            .payload
+            .iter()
+            .take(32)
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join("");
+
         match T::deserialize_for_room(&self.room_id, &msg.payload) {
             Ok(typed) => {
+                tracing::debug!("RoomActor inbound: decoded typed message for room {} (prefix={}...)", self.room_id, prefix);
                 self.component_recipient.do_send(typed);
             }
             Err(error) => {
                 tracing::warn!(
-                    "RoomActor inbound decode failed for room {}: {}",
+                    "RoomActor inbound decode failed for room {}: {} (payload_prefix={}...)",
                     self.room_id,
-                    error
+                    error,
+                    prefix
                 );
             }
         }
@@ -97,10 +109,22 @@ where
                         let transport_tx = self.transport_tx.clone();
                         let transport_frame = TransportFrame::new(frame_bytes);
 
+                        // Add compact hex prefix for better tracing of outbound frames
+                        let bytes = transport_frame.get_bytes();
+                        let prefix: String = bytes
+                            .iter()
+                            .take(32)
+                            .map(|b| format!("{:02x}", b))
+                            .collect::<Vec<_>>()
+                            .join("");
+
+                        tracing::trace!("RoomActor outbound: sending transport frame for room {} (bytes={} prefix={}...)", self.room_id, bytes.len(), prefix);
                         if let Err(error) = transport_tx.try_send(transport_frame) {
-                            tracing::error!("RoomActor transport send failed: {:?}", error);
+                            tracing::error!("RoomActor transport send failed for room {}: {:?}", self.room_id, error);
                             ctx.stop();
                             // TODO: Ensure transport connection teardown propagates when this actor stops.
+                        } else {
+                            tracing::debug!("RoomActor outbound: transport send succeeded for room {}", self.room_id);
                         }
                     }
                     Err(error) => {

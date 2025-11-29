@@ -5,6 +5,7 @@ mod builder;
 mod client;
 mod messages;
 mod mock;
+mod clock;
 mod scheduler;
 mod traits;
 
@@ -15,3 +16,5 @@ pub use builder::*;
 pub use messages::*;
 pub use mock::*;
 pub use scheduler::PingerSchedulerActor;
+pub use traits::Clock;
+pub use clock::TokioAlignedClock;

@@ -95,6 +95,9 @@ impl Actor for PingerSchedulerActor {
 
 impl PingerSchedulerActor {
     fn handle_tick(&mut self) {
+        // Log current timestamps for diagnostics: Instant (wall/Arbiter) and clock.now() (Clock impl)
+        log::debug!("PingerSchedulerActor::handle_tick - Instant::now()={:?}, clock.now()={:?}", Instant::now(), self.clock.now());
+
         // Flush pending results at the start
         self.flush_pending_results();
 

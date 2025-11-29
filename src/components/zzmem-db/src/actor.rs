@@ -236,14 +236,11 @@ impl Handler<InboundSubmitBatch> for MemDBActor {
             self.successful_batches.fetch_add(1, Ordering::Relaxed);
         }
 
-        let ack_timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-
         Ok(crate::internal_messages::BatchAckResponse {
             received_count,
-            timestamp_ms: ack_timestamp,
+            // Echo the batch timestamp so the collector can positively
+            // identify which outstanding batch has been acknowledged.
+            timestamp_ms: msg.timestamp_ms,
         })
     }
 }
@@ -276,10 +273,11 @@ impl Handler<InboundBatchAck> for MemDBActor {
 
     fn handle(&mut self, msg: InboundBatchAck, _ctx: &mut Context<Self>) {
         log::debug!(
-            "Collector received BatchAck for {} results at {} from peer {}",
+            "Collector received BatchAck for {} results at {} from peer {} (outstanding before={:?})",
             msg.received_count,
             msg.timestamp_ms,
-            msg.peer_id
+            msg.peer_id,
+            self.outstanding_batch
         );
 
         // Handle acknowledgment: clear outstanding batch and update metrics
@@ -330,7 +328,12 @@ impl Handler<StorePingResult> for MemDBActor {
             // Collector mode: buffer the result
             let target = msg.result.target.clone();
             self.buffer.push(msg.result);
-            log::debug!("Buffered ping result for {}", target);
+            log::debug!(
+                "Buffered ping result for {} (buffer.len={} outstanding={:?})",
+                target,
+                self.buffer.len(),
+                self.outstanding_batch
+            );
 
             // Check if we should send a batch
             if self.config.buffer_size > 0 && self.buffer.len() >= self.config.buffer_size {

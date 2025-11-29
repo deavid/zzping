@@ -21,6 +21,8 @@ zznet-api.workspace = true
 zznet-hello.workspace = true
 zznet-room.workspace = true
 zznet-router.workspace = true
+zzpinger.workspace = true
+actix-rt.workspace = true
 
 # Component dependencies
 zzintent-config.workspace = true

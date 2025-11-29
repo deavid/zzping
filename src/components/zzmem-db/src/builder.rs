@@ -21,10 +21,12 @@ impl MemDBBuilder {
     /// Creates a new `MemDBBuilder`.
     pub fn new(config: MemDBConfig) -> Self {
         // Default permissions map for common roles
+        // Role strings provided by zznet_api::Role are lowercase (e.g. "collector").
+        // Use lowercase keys here so default permissions apply without extra adapters.
         let mut permissions_map = HashMap::new();
-        permissions_map.insert("Collector".to_string(), MemDBPermissions::collector());
-        permissions_map.insert("Database".to_string(), MemDBPermissions::database());
-        permissions_map.insert("Admin".to_string(), MemDBPermissions::admin());
+        permissions_map.insert("collector".to_string(), MemDBPermissions::collector());
+        permissions_map.insert("database".to_string(), MemDBPermissions::database());
+        permissions_map.insert("admin".to_string(), MemDBPermissions::admin());
 
         Self {
             config,
@@ -44,10 +46,10 @@ impl MemDBBuilder {
 
     /// Set custom permissions map for role-to-permissions translation.
     ///
-    /// If not set, a default map is used with:
-    /// - "Collector" -> can submit batches
-    /// - "Database" -> can receive batches and query
-    /// - "Admin" -> full access
+    /// If not set, a default map is used with lowercase role keys:
+    /// - "collector" -> can submit batches
+    /// - "database" -> can receive batches and query
+    /// - "admin" -> full access
     pub fn permissions_map(mut self, permissions_map: HashMap<String, MemDBPermissions>) -> Self {
         self.permissions_map = permissions_map;
         self
