@@ -105,3 +105,13 @@ pub struct InboundQueryResponse {
     /// The query results
     pub results: Vec<StoredPingResult>,
 }
+
+// ============================================================================
+// INTERNAL HEARTBEAT MESSAGES
+// ============================================================================
+
+/// Periodic timeout check for outstanding batches.
+/// Triggered by an interval timer to detect lost ACKs and trigger resends.
+#[derive(Message, Debug, Clone)]
+#[rtype(result = "()")]
+pub struct CheckOutstandingBatchTimeout;

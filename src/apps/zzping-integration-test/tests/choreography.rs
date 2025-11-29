@@ -1,6 +1,6 @@
 //! Full choreography test (Acts I: Obedience, II: Disaster, III: Recovery)
-use std::net::IpAddr;
 use anyhow::Result;
+use std::net::IpAddr;
 
 use tracing::info;
 
@@ -12,7 +12,9 @@ async fn choreography_full() -> Result<()> {
     tokio::time::pause();
 
     // Enable TRACE during debug runs so test-only trace instrumentation appears.
-    tracing_subscriber::fmt().with_max_level(tracing::Level::TRACE).init();
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .init();
 
     info!("Starting choreography test (full)");
 
@@ -46,9 +48,15 @@ async fn choreography_full() -> Result<()> {
     }
 
     let coll_health = harness.collector_health().await.unwrap();
-    assert!(coll_health.buffer_size > 0, "collector should have buffered results when disconnected");
+    assert!(
+        coll_health.buffer_size > 0,
+        "collector should have buffered results when disconnected"
+    );
 
-    info!("Act II complete: buffered {} results", coll_health.buffer_size);
+    info!(
+        "Act II complete: buffered {} results",
+        coll_health.buffer_size
+    );
 
     // Act III - Recovery: restore connection and verify buffered results flushed to DB
     harness.restore_connection().await;
@@ -60,9 +68,19 @@ async fn choreography_full() -> Result<()> {
 
     // The database should have received at least some results
     let db_health = harness.database_health().await.unwrap();
-    assert!(db_health.total_results > 0, "database should have received flushed results");
+    // We expect significantly more than just the initial pings.
+    // Act I produced ~20-40. Act II buffered ~80. Act III produced ~80.
+    // So we should see > 100 results easily if recovery works.
+    assert!(
+        db_health.total_results > 100,
+        "database should have received flushed results (got {})",
+        db_health.total_results
+    );
 
-    info!("Act III complete: DB total_results={}", db_health.total_results);
+    info!(
+        "Act III complete: DB total_results={}",
+        db_health.total_results
+    );
 
     Ok(())
 }
