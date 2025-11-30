@@ -46,6 +46,11 @@ impl FileHeader {
     }
 }
 
+// FIXME: This function currently re-scans the entire file from the beginning on every
+// startup. For large files (e.g., >1GB), this can cause a significant startup delay.
+// A future optimization could be to trust the header's `blob_count` if the file size
+// seems consistent, or to use a separate index file to avoid the full scan.
+// For v0.3, correctness is prioritized over startup performance, so this is acceptable.
 /// Scans a storage file from the beginning to find all valid blobs and truncates any
 /// partially written data at the end.
 ///

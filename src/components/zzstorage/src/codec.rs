@@ -47,6 +47,16 @@ pub struct PingResult {
 /// This is the input to the compression function.
 pub type PingBatch = Vec<PingResult>;
 
+/// The strategy for encoding ping send times.
+enum SendTimeStrategy {
+    ConstantRate {
+        base_interval_ns: u64,
+    },
+    VariableRate {
+        timing_symbols: Vec<u16>,
+    },
+}
+
 /// Compresses a batch of `PingResult`s into a compressed blob.
 pub fn compress_batch(batch: &PingBatch) -> Result<Vec<u8>> {
     if batch.is_empty() {
@@ -95,9 +105,84 @@ pub fn decompress_batch(data: &[u8]) -> Result<PingBatch> {
     Ok(batch)
 }
 
+/// Analyzes the send times of a chunk of records to determine the best encoding strategy.
+fn analyze_send_times(records: &[&PingResult]) -> SendTimeStrategy {
+    if records.len() < 2 {
+        return SendTimeStrategy::ConstantRate {
+            base_interval_ns: 0,
+        };
+    }
+
+    let intervals: Vec<u64> = records
+        .windows(2)
+        .map(|w| w[1].sent_time_ns - w[0].sent_time_ns)
+        .collect();
+
+    let mut sorted_intervals = intervals.to_vec();
+    sorted_intervals.sort_unstable();
+    let base_interval_ns = sorted_intervals[sorted_intervals.len() / 2];
+
+    if base_interval_ns == 0 {
+        return SendTimeStrategy::ConstantRate {
+            base_interval_ns: 0,
+        };
+    }
+
+    let tolerance_ns = 1_000_000; // 1ms
+    let constant_count = intervals
+        .iter()
+        .filter(|&&interval| (interval as i64 - base_interval_ns as i64).abs() <= tolerance_ns)
+        .count();
+
+    if (constant_count as f64 / intervals.len() as f64) >= 0.95 {
+        return SendTimeStrategy::ConstantRate { base_interval_ns };
+    }
+
+    const QUANTUM_NS: u64 = 100_000; // 0.1ms
+    let timing_symbols = intervals
+        .iter()
+        .map(|&interval| (interval / QUANTUM_NS) as u16)
+        .collect();
+
+    SendTimeStrategy::VariableRate { timing_symbols }
+}
+
 /// Compresses the data for a single target.
 fn compress_target_data(records: &[&PingResult]) -> Result<Vec<u8>> {
     let quantizer = Quantizer::new();
+
+    // 1. Compress Timestamps
+    let time_strategy = analyze_send_times(records);
+    let (time_header, time_data) = match time_strategy {
+        SendTimeStrategy::ConstantRate { base_interval_ns } => {
+            let mut header = vec![0u8]; // Strategy 0: Constant
+            header.write_u64::<BigEndian>(base_interval_ns)?;
+            (header, vec![])
+        }
+        SendTimeStrategy::VariableRate { timing_symbols } => {
+            let (symbols, probs) = build_rtt_model(&timing_symbols)?;
+            let encoded_data = if !symbols.is_empty() {
+                let model = DefaultNonContiguousCategoricalEncoderModel::from_symbols_and_floating_point_probabilities_fast(
+                    symbols.clone(), &probs, None
+                ).map_err(|()| anyhow::anyhow!("Failed to create time model"))?;
+                let mut encoder = DefaultAnsCoder::new();
+                encoder.encode_iid_symbols_reverse(&timing_symbols, &model)?;
+                encoder.into_compressed()?.iter().flat_map(|w| w.to_be_bytes()).collect()
+            } else {
+                vec![]
+            };
+
+            let mut header = vec![1u8]; // Strategy 1: Variable
+            header.write_u32::<BigEndian>(symbols.len() as u32)?;
+            for symbol in symbols { header.write_u16::<BigEndian>(symbol)?; }
+            header.write_u32::<BigEndian>(probs.len() as u32)?;
+            for prob in probs { header.write_f64::<BigEndian>(prob)?; }
+            header.write_u32::<BigEndian>(encoded_data.len() as u32)?;
+            (header, encoded_data)
+        }
+    };
+
+    // 2. Compress RTTs
     let rtt_symbols: Vec<u16> = records
         .iter()
         .map(|r| quantizer.status_to_symbol(&r.status))
@@ -118,21 +203,16 @@ fn compress_target_data(records: &[&PingResult]) -> Result<Vec<u8>> {
     };
 
     let mut data = Vec::new();
-    // Write sent times (uncompressed for now)
     data.write_u32::<BigEndian>(records.len() as u32)?;
-    for record in records {
-        data.write_u64::<BigEndian>(record.sent_time_ns)?;
-    }
+    data.write_u64::<BigEndian>(records.first().map_or(0, |r| r.sent_time_ns))?;
 
-    // Write RTTs
+    data.extend(&time_header);
+    data.extend(&time_data);
+
     data.write_u32::<BigEndian>(model_symbols.len() as u32)?;
-    for symbol in model_symbols {
-        data.write_u16::<BigEndian>(symbol)?;
-    }
+    for symbol in model_symbols { data.write_u16::<BigEndian>(symbol)?; }
     data.write_u32::<BigEndian>(model_probs.len() as u32)?;
-    for prob in model_probs {
-        data.write_f64::<BigEndian>(prob)?;
-    }
+    for prob in model_probs { data.write_f64::<BigEndian>(prob)?; }
     data.write_u32::<BigEndian>(rtt_encoded_data.len() as u32)?;
     data.extend(&rtt_encoded_data);
 
@@ -141,51 +221,76 @@ fn compress_target_data(records: &[&PingResult]) -> Result<Vec<u8>> {
 
 fn decompress_target_data(cursor: &mut Cursor<&[u8]>) -> Result<(Vec<u64>, Vec<PingStatus>)> {
     let quantizer = Quantizer::new();
-
-    // Read sent times
     let num_records = cursor.read_u32::<BigEndian>()? as usize;
+    let first_sent_time = cursor.read_u64::<BigEndian>()?;
+
+    // 1. Decompress Timestamps
+    let time_strategy = cursor.read_u8()?;
     let mut sent_times = Vec::with_capacity(num_records);
-    for _ in 0..num_records {
-        sent_times.push(cursor.read_u64::<BigEndian>()?);
+    sent_times.push(first_sent_time);
+
+    match time_strategy {
+        0 => { // ConstantRate
+            let base_interval_ns = cursor.read_u64::<BigEndian>()?;
+            for i in 1..num_records {
+                sent_times.push(sent_times[i-1] + base_interval_ns);
+            }
+        },
+        1 => { // VariableRate
+            let num_symbols = cursor.read_u32::<BigEndian>()? as usize;
+            let mut model_symbols = Vec::with_capacity(num_symbols);
+            for _ in 0..num_symbols { model_symbols.push(cursor.read_u16::<BigEndian>()?); }
+            let num_probs = cursor.read_u32::<BigEndian>()? as usize;
+            let mut model_probs = Vec::with_capacity(num_probs);
+            for _ in 0..num_probs { model_probs.push(cursor.read_f64::<BigEndian>()?); }
+            let data_len = cursor.read_u32::<BigEndian>()? as usize;
+            let pos = cursor.position() as usize;
+            let data = &cursor.get_ref()[pos..pos + data_len];
+            cursor.set_position((pos + data_len) as u64);
+
+            let timing_symbols = if !model_symbols.is_empty() {
+                let model: NonContiguousCategoricalDecoderModel<u16, u32, _, 24> = NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast(
+                    model_symbols, &model_probs, None
+                ).map_err(|()| anyhow::anyhow!("Failed to create time decoder model"))?;
+                let compressed_words: Vec<u32> = data.chunks_exact(4).map(|c| u32::from_be_bytes(c.try_into().unwrap())).collect();
+                if compressed_words.is_empty() { vec![] } else {
+                    let mut decoder = DefaultAnsCoder::from_compressed(compressed_words).map_err(|e| anyhow::anyhow!("Failed to create time decoder: {:?}", e))?;
+                    decoder.decode_iid_symbols(num_records - 1, &model).collect::<Result<Vec<_>,_>>()?
+                }
+            } else { vec![] };
+
+            const QUANTUM_NS: u64 = 100_000; // 0.1ms
+            for (i, &symbol) in timing_symbols.iter().enumerate() {
+                let interval = symbol as u64 * QUANTUM_NS;
+                sent_times.push(sent_times[i] + interval);
+            }
+        },
+        _ => return Err(anyhow::anyhow!("Unknown time strategy")),
     }
 
-    // Read RTTs
+    // 2. Decompress RTTs
     let num_symbols = cursor.read_u32::<BigEndian>()? as usize;
     let mut model_symbols = Vec::with_capacity(num_symbols);
-    for _ in 0..num_symbols {
-        model_symbols.push(cursor.read_u16::<BigEndian>()?);
-    }
+    for _ in 0..num_symbols { model_symbols.push(cursor.read_u16::<BigEndian>()?); }
     let num_probs = cursor.read_u32::<BigEndian>()? as usize;
     let mut model_probs = Vec::with_capacity(num_probs);
-    for _ in 0..num_probs {
-        model_probs.push(cursor.read_f64::<BigEndian>()?);
-    }
-    let rtt_data_len = cursor.read_u32::<BigEndian>()? as usize;
+    for _ in 0..num_probs { model_probs.push(cursor.read_f64::<BigEndian>()?); }
+    let data_len = cursor.read_u32::<BigEndian>()? as usize;
     let pos = cursor.position() as usize;
-    let rtt_encoded_data = &cursor.get_ref()[pos..pos + rtt_data_len];
-    cursor.set_position((pos + rtt_data_len) as u64);
+    let data = &cursor.get_ref()[pos..pos + data_len];
+    cursor.set_position((pos + data_len) as u64);
 
     let rtt_symbols = if !model_symbols.is_empty() {
-        let rtt_model: NonContiguousCategoricalDecoderModel<u16, u32, Vec<(u32, u16)>, 24> =
+        let rtt_model: NonContiguousCategoricalDecoderModel<u16, u32, _, 24> =
             NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast(
                 model_symbols, &model_probs, None
             ).map_err(|()| anyhow::anyhow!("Failed to create categorical decoder model"))?;
-
-        let compressed_words: Vec<u32> = rtt_encoded_data
-            .chunks_exact(4)
-            .map(|chunk| u32::from_be_bytes(chunk.try_into().unwrap()))
-            .collect();
-
-        if compressed_words.is_empty() {
-            vec![]
-        } else {
-            let mut decoder = DefaultAnsCoder::from_compressed(compressed_words)
-                .map_err(|e| anyhow::anyhow!("Failed to create decoder: {:?}", e))?;
+        let compressed_words: Vec<u32> = data.chunks_exact(4).map(|c| u32::from_be_bytes(c.try_into().unwrap())).collect();
+        if compressed_words.is_empty() { vec![] } else {
+            let mut decoder = DefaultAnsCoder::from_compressed(compressed_words).map_err(|e| anyhow::anyhow!("Failed to create decoder: {:?}", e))?;
             decoder.decode_iid_symbols(num_records, &rtt_model).collect::<Result<Vec<_>,_>>()?
         }
-    } else {
-        vec![]
-    };
+    } else { vec![] };
 
     let statuses = rtt_symbols.iter().map(|&s| quantizer.symbol_to_status(s)).collect();
     Ok((sent_times, statuses))
@@ -370,17 +475,17 @@ mod tests {
         let batch = vec![
             PingResult {
                 target: "8.8.8.8".to_string(),
-                sent_time_ns: 100,
+                sent_time_ns: 1_000_000_000,
                 status: PingStatus::Success(50_000),
             },
             PingResult {
                 target: "8.8.8.8".to_string(),
-                sent_time_ns: 200,
+                sent_time_ns: 1_033_000_000, // 33ms interval
                 status: PingStatus::Success(52_000),
             },
             PingResult {
                 target: "8.8.8.8".to_string(),
-                sent_time_ns: 300,
+                sent_time_ns: 1_066_000_000, // 33ms interval
                 status: PingStatus::Timeout,
             },
         ];
@@ -388,12 +493,13 @@ mod tests {
         let compressed = compress_batch(&batch).unwrap();
         let decompressed = decompress_batch(&compressed).unwrap();
 
-        // Quantization is lossy for the Success status, so we can't do a direct comparison.
-        // We will check length and then compare fields individually.
         assert_eq!(batch.len(), decompressed.len());
         for (original, recovered) in batch.iter().zip(decompressed.iter()) {
             assert_eq!(original.target, recovered.target);
-            assert_eq!(original.sent_time_ns, recovered.sent_time_ns);
+            // Timestamps for variable rate are quantized, so we need to allow a small error margin.
+            let time_diff = (original.sent_time_ns as i64 - recovered.sent_time_ns as i64).abs();
+            assert!(time_diff < 100_000, "Timestamp quantization error too high: {}", time_diff);
+
             match (&original.status, &recovered.status) {
                 (PingStatus::Success(original_ns), PingStatus::Success(recovered_ns)) => {
                     let diff = (*original_ns as i64 - *recovered_ns as i64).abs();
