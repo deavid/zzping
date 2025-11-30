@@ -1,0 +1,22 @@
+[package]
+name = "zzstorage"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+
+[dependencies]
+actix.workspace = true
+anyhow = { workspace = true }
+constriction = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+byteorder = { workspace = true }
+
+[dev-dependencies]
+actix-rt = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

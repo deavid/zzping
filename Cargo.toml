@@ -21,7 +21,7 @@ members = [
     "src/apps/zzping-collector",
     "src/apps/zzping-database",
     "src/apps/zzping-integration-test",
-    "src/apps/zznet-demo",
+    "src/apps/zznet-demo", "src/components/zzstorage",
 
 ]
 
