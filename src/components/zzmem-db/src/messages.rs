@@ -3,7 +3,7 @@
 //! These messages are used for communication within the same process,
 //! typically between components or for internal actor coordination.
 
-use crate::network_messages::PingResult;
+use crate::types::PingResult;
 use actix::Message;
 
 /// Request current health status of the MemDB component.

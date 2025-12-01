@@ -15,8 +15,9 @@
 use crate::builder::MemDBBuilder;
 use crate::config::MemDBConfig;
 use crate::messages::{GetHealth, StorePingResult};
-use crate::network_messages::{MemDBMessage, PingResult};
+use crate::network_messages::MemDBMessage;
 use crate::permissions::MemDBPermissions;
+use crate::types::PingResult;
 use actix::prelude::*;
 use std::collections::HashMap;
 use zznet_api::{
@@ -84,8 +85,11 @@ fn unwrap_message(transport_frame: TransportFrame) -> MemDBMessage {
 fn create_ping_result(target: &str, timestamp_ms: u64, rtt_us: Option<u32>) -> PingResult {
     PingResult {
         target: target.to_string(),
-        timestamp_ms,
-        rtt_us,
+        sent_time_ns: timestamp_ms * 1_000_000,
+        status: match rtt_us {
+            Some(us) => crate::types::PingStatus::Success(us as u64 * 1000),
+            None => crate::types::PingStatus::Timeout,
+        },
     }
 }
 

@@ -4,7 +4,8 @@
 //! in the Database role. It handles insertion, querying, and maintenance
 //! of stored ping data.
 
-use crate::network_messages::{PingResult, StoredPingResult};
+use crate::network_messages::StoredPingResult;
+use crate::types::PingResult;
 use std::collections::HashMap;
 
 /// Storage backend for ping results in Database role.
@@ -40,10 +41,17 @@ impl StorageBackend {
     /// Insert a single ping result into storage.
     fn insert_single(&mut self, result: PingResult, batch_timestamp_ms: u64) {
         let target = result.target.clone();
+
+        // TODO(v0.3-phase3): This conversion is a temporary shim.
+        // This entire StorageBackend will be removed and replaced with a
+        // flush-to-zzstorage mechanism.
         let stored = StoredPingResult {
             target: result.target,
-            timestamp_ms: result.timestamp_ms,
-            rtt_us: result.rtt_us,
+            timestamp_ms: result.sent_time_ns / 1_000_000, // ns to ms
+            rtt_us: match result.status {
+                crate::types::PingStatus::Success(ns) => Some((ns / 1000) as u32), // ns to us
+                _ => None,
+            },
             stored_at_ms: batch_timestamp_ms,
         };
 

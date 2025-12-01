@@ -7,8 +7,8 @@ use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch};
-use zzmem_db::PingResult;
-use zzmem_db::StorePingResult;
+use zzmem_db::types::{PingResult, PingStatus};
+use zzmem_db::messages::StorePingResult;
 
 use crate::messages::{PingEvent, PingState, SchedulePings, UpdateCState, UpdateIntentConfig};
 use crate::traits::{Clock, SystemClock};
@@ -212,20 +212,21 @@ impl Handler<PingEvent> for PingerSchedulerActor {
     type Result = ();
 
     fn handle(&mut self, msg: PingEvent, _ctx: &mut Self::Context) {
-        // We only populate rtt_us for ReceivedRTT; otherwise it's None.
-        let rtt_us = match msg.state {
-            PingState::ReceivedRTT(duration) => Some(duration.as_micros() as u32),
-            _ => None,
+        let status = match msg.state {
+            PingState::ReceivedRTT(duration) => PingStatus::Success(duration.as_nanos() as u64),
+            PingState::TimedOut => PingStatus::Timeout,
+            PingState::NetworkError => PingStatus::IOError,
+            PingState::InFlight => return, // Don't record InFlight events yet.
         };
 
         let ping_result = PingResult {
             target: msg.target_host.to_string(),
-            timestamp_ms: msg
+            sent_time_ns: msg
                 .sent_time
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap_or(Duration::ZERO)
-                .as_millis() as u64,
-            rtt_us,
+                .as_nanos() as u64,
+            status,
         };
 
         let store_msg = StorePingResult {

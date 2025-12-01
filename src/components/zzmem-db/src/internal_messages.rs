@@ -24,7 +24,8 @@
 //! SendSubmitBatch → MemDBMessage::SubmitBatch
 //! ```
 
-use crate::network_messages::{PingResult, StoredPingResult};
+use crate::network_messages::StoredPingResult;
+use crate::types::PingResult;
 use actix::prelude::*;
 use zznet_api::PeerId;
 

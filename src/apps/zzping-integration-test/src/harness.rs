@@ -7,7 +7,12 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 use std::net::IpAddr;
-use zzmem_db::GetHealth;
+use zzmem_db::{
+    actor::MemDBActor,
+    builder::MemDBBuilder,
+    config::MemDBConfig,
+    messages::{GetHealth, MemDBHealth},
+};
 use zznet_api::{
     EstablishedConnection, KillSwitch, MockClient, ReconnectConfig, TransportServer,
     create_controlled_pair, maintain_connection, serve_connections,
@@ -52,9 +57,9 @@ pub struct SystemHarness {
     server_sender: mpsc::Sender<EstablishedConnection>,
     kill_switch: Option<KillSwitch>,
     /// Address of the collector MemDB actor (we query it for buffered results)
-    coll_memdb: actix::Addr<zzmem_db::MemDBActor>,
+    coll_memdb: actix::Addr<MemDBActor>,
     /// Address of the database MemDB actor
-    db_memdb: actix::Addr<zzmem_db::MemDBActor>,
+    db_memdb: actix::Addr<MemDBActor>,
     /// Pinger scheduler address so we can configure intent
     scheduler: actix::Addr<zzpinger::PingerSchedulerActor>,
 }
@@ -73,7 +78,7 @@ impl SystemHarness {
         let _db_intent = intent_builder.router(db_router.clone()).start()?;
 
         let memdb_builder =
-            zzmem_db::MemDBBuilder::new(zzmem_db::MemDBConfig::for_database(10000, None));
+            MemDBBuilder::new(MemDBConfig::for_database(10000, None));
         let db_memdb = memdb_builder.router(db_router.clone()).build();
 
         let cstate_builder = zzcollector_state::CStateBuilder::new(
@@ -87,7 +92,7 @@ impl SystemHarness {
 
         // Use a smaller collector buffer in tests so batches flush quickly
         // and Act I can verify DB ingestion before the disaster phase.
-        let coll_memdb = zzmem_db::MemDBBuilder::new(zzmem_db::MemDBConfig::for_collector(25))
+        let coll_memdb = MemDBBuilder::new(MemDBConfig::for_collector(25))
             .router(coll_router.clone())
             .build();
 
@@ -279,13 +284,13 @@ impl SystemHarness {
     }
 
     /// Query collector MemDB health
-    pub async fn collector_health(&self) -> anyhow::Result<zzmem_db::MemDBHealth> {
+    pub async fn collector_health(&self) -> anyhow::Result<MemDBHealth> {
         let res = self.coll_memdb.send(GetHealth).await?;
         res.map_err(|e| anyhow::anyhow!("MemDB health error: {:?}", e))
     }
 
     /// Query database MemDB health
-    pub async fn database_health(&self) -> anyhow::Result<zzmem_db::MemDBHealth> {
+    pub async fn database_health(&self) -> anyhow::Result<MemDBHealth> {
         let res = self.db_memdb.send(GetHealth).await?;
         res.map_err(|e| anyhow::anyhow!("MemDB health error: {:?}", e))
     }

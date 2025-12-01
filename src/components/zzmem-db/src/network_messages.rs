@@ -3,6 +3,7 @@
 //! These messages are sent over the network via ZZNet rooms.
 //! They are serialized/deserialized at the transport boundary.
 
+use crate::types::PingResult;
 use actix::prelude::*;
 use serde::{Deserialize, Serialize};
 use zznet_api::RoomId;
@@ -47,17 +48,6 @@ pub enum MemDBMessage {
         /// The query results
         results: Vec<StoredPingResult>,
     },
-}
-
-/// A single ping result from the collector.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PingResult {
-    /// Target host that was pinged
-    pub target: String,
-    /// Timestamp when ping was sent (milliseconds since epoch)
-    pub timestamp_ms: u64,
-    /// Round-trip time in microseconds (None if packet lost)
-    pub rtt_us: Option<u32>,
 }
 
 /// A stored ping result in the database.

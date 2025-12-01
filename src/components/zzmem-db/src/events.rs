@@ -4,7 +4,7 @@
 //! the event bus. This enables a clean separation between business logic and
 //! networking concerns while keeping the fan-out mechanism simple.
 
-use crate::network_messages::PingResult;
+use crate::types::PingResult;
 use actix::Message;
 
 /// Events that MemDB publishes on its broadcast bus.

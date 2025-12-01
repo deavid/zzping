@@ -7,7 +7,8 @@
 use actix::prelude::*;
 use anyhow::Result;
 use std::time::Duration;
-use zznet_api::{ReconnectConfig, create_mock_pair, maintain_connection, serve_connections};
+use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig};
+use zznet_api::{create_mock_pair, maintain_connection, serve_connections, ReconnectConfig};
 use zznet_hello::{ConnectionManager, HelloConfig};
 use zznet_router::RouterActor;
 
@@ -29,8 +30,7 @@ async fn test_collector_database_handshake() -> Result<()> {
         .config_for_database(std::path::PathBuf::from("/tmp/test_intent.ron"));
     let _db_intent = intent_builder.router(db_router.clone()).start()?;
 
-    let memdb_builder =
-        zzmem_db::MemDBBuilder::new(zzmem_db::MemDBConfig::for_database(10000, None));
+    let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None));
     let _db_memdb = memdb_builder.router(db_router.clone()).build();
 
     let cstate_builder = zzcollector_state::CStateBuilder::new(
@@ -48,7 +48,7 @@ async fn test_collector_database_handshake() -> Result<()> {
     let intent_builder = zzintent_config::IntentConfigBuilder::new().config_for_collector();
     let _coll_intent = intent_builder.router(coll_router.clone()).start()?;
 
-    let memdb_builder = zzmem_db::MemDBBuilder::new(zzmem_db::MemDBConfig::for_collector(100));
+    let memdb_builder = MemDBBuilder::new(MemDBConfig::for_collector(100));
     let _coll_memdb = memdb_builder.router(coll_router.clone()).build();
 
     tracing::info!("Collector actors spawned");
