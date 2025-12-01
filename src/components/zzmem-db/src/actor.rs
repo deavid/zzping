@@ -316,7 +316,7 @@ impl Handler<InboundHelloCollector> for MemDBActor {
         let start_index = buffer
             .iter()
             .position(|r| r.sent_time_ns > msg.last_persisted_ts)
-            .unwrap_or(0);
+            .unwrap_or(buffer.len());
 
         let to_replay: Vec<PingResult> = buffer.range(start_index..).cloned().collect();
 
