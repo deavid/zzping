@@ -12,6 +12,7 @@ zzintent-config.workspace = true
 zzmem-db.workspace = true
 zzcollector-state.workspace = true
 zzpinger.workspace = true
+zzstorage = { path = "../../components/zzstorage" }
 
 # Network layer dependencies
 zznet-api.workspace = true

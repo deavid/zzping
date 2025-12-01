@@ -21,6 +21,7 @@ use zzpinger::PingerBuilder;
 use zzpinger::SpawnStrategy;
 use zzpinger::UpdateCState;
 use zzpinger::UpdateIntentConfig;
+use zzstorage::actor::{GetStoredBlobs, StorageActor, StorageConfig};
 
 /// A simple TransportServer implementation that yields connections pushed
 /// into an internal queue. Tests can send `EstablishedConnection`s into the
@@ -62,6 +63,8 @@ pub struct SystemHarness {
     db_memdb: actix::Addr<MemDBActor>,
     /// Pinger scheduler address so we can configure intent
     scheduler: actix::Addr<zzpinger::PingerSchedulerActor>,
+    /// Address of the storage actor
+    storage: actix::Addr<StorageActor>,
 }
 
 impl SystemHarness {
@@ -77,8 +80,10 @@ impl SystemHarness {
             .config_for_database(std::path::PathBuf::from("/tmp/test_intent.ron"));
         let _db_intent = intent_builder.router(db_router.clone()).start()?;
 
+        let storage = StorageActor::new(StorageConfig::Ephemeral).start();
         let memdb_builder =
-            MemDBBuilder::new(MemDBConfig::for_database(10000, None));
+            MemDBBuilder::new(MemDBConfig::for_database(10000, None))
+                .with_storage_actor(storage.clone());
         let db_memdb = memdb_builder.router(db_router.clone()).build();
 
         let cstate_builder = zzcollector_state::CStateBuilder::new(
@@ -213,6 +218,7 @@ impl SystemHarness {
             coll_memdb,
             db_memdb,
             scheduler,
+            storage,
         })
     }
 
@@ -293,6 +299,12 @@ impl SystemHarness {
     pub async fn database_health(&self) -> anyhow::Result<MemDBHealth> {
         let res = self.db_memdb.send(GetHealth).await?;
         res.map_err(|e| anyhow::anyhow!("MemDB health error: {:?}", e))
+    }
+
+    /// Get the stored blobs from the storage actor.
+    pub async fn get_stored_blobs(&self) -> anyhow::Result<Vec<Vec<u8>>> {
+        let res = self.storage.send(GetStoredBlobs).await?;
+        res.map_err(|e| anyhow::anyhow!("Storage error: {:?}", e))
     }
 
     /// Wait until the database MemDB reports at least `count` total_results.
