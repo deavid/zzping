@@ -9,7 +9,9 @@ use crate::session_messages::HandshakeComplete;
 use actix::prelude::*;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::mpsc;
-use zznet_api::{AcceptTransport, OnPeerConnected, PeerId, Role, RoomId, TransportError, TransportFrame};
+use zznet_api::{
+    AcceptTransport, OnPeerConnected, PeerId, Role, RoomId, TransportError, TransportFrame,
+};
 
 /// Coordinates `HelloActor`s and authorizes peers.
 ///
@@ -83,7 +85,14 @@ impl Handler<AcceptTransport> for ConnectionManager {
         let peer_id = PeerId::from(msg.peer_addr.as_str());
 
         // Spawn HelloActor managed by this ConnectionManager (it will wire to handshake recipient)
-        let _addr = self.spawn_hello_actor(peer_id, msg.tx, msg.rx, msg.peer_addr, msg.peer_identity, ctx);
+        let _addr = self.spawn_hello_actor(
+            peer_id,
+            msg.tx,
+            msg.rx,
+            msg.peer_addr,
+            msg.peer_identity,
+            ctx,
+        );
     }
 }
 

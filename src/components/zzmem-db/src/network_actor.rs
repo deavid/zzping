@@ -123,9 +123,10 @@ impl Actor for MemDBNetworkActor {
         ctx.add_stream(stream);
 
         // Notify the main actor of the new connection, so it can initiate a handshake.
-        self.main_actor.do_send(crate::internal_messages::NewCollector {
-            peer_id: self.peer_id.clone(),
-        });
+        self.main_actor
+            .do_send(crate::internal_messages::NewCollector {
+                peer_id: self.peer_id.clone(),
+            });
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -156,11 +157,13 @@ impl StreamHandler<Result<MemDBEvent, BroadcastStreamRecvError>> for MemDBNetwor
                 );
                 self.enqueue_batch(timestamp_ms, results);
             }
-            Ok(MemDBEvent::HelloCollector { peer_id, last_persisted_ts }) => {
+            Ok(MemDBEvent::HelloCollector {
+                peer_id,
+                last_persisted_ts,
+            }) => {
                 if self.peer_id == peer_id {
-                    self.room_actor.do_send(MemDBMessage::HelloCollector {
-                        last_persisted_ts,
-                    });
+                    self.room_actor
+                        .do_send(MemDBMessage::HelloCollector { last_persisted_ts });
                 }
             }
             Err(BroadcastStreamRecvError::Lagged(skipped)) => {
@@ -260,7 +263,10 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                     match main_actor.send(request).await {
                         Ok(Ok(results)) => {
                             tracing::debug!("Query returned {} results", results.len());
-                            room_actor.do_send(MemDBMessage::QueryResponse { peer_id: peer_id.clone(), results });
+                            room_actor.do_send(MemDBMessage::QueryResponse {
+                                peer_id: peer_id.clone(),
+                                results,
+                            });
                         }
                         Ok(Err(e)) => {
                             tracing::warn!("Query rejected: {}", e);
@@ -286,7 +292,10 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                     });
                 Box::pin(async {})
             }
-            MemDBMessage::QueryResponse { peer_id: _, results } => {
+            MemDBMessage::QueryResponse {
+                peer_id: _,
+                results,
+            } => {
                 // Unsolicited response from database
                 self.main_actor
                     .do_send(crate::internal_messages::InboundQueryResponse {
@@ -296,9 +305,8 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                 Box::pin(async {})
             }
             MemDBMessage::HelloCollector { last_persisted_ts } => {
-                self.main_actor.do_send(crate::internal_messages::InboundHelloCollector {
-                    last_persisted_ts,
-                });
+                self.main_actor
+                    .do_send(crate::internal_messages::InboundHelloCollector { last_persisted_ts });
                 Box::pin(async {})
             }
         }

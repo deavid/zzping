@@ -40,11 +40,7 @@ fn database_permissions() -> MemDBPermissions {
 }
 
 /// Helper to create a PingResult with specified target and timestamp
-fn create_ping_result(
-    target: &str,
-    time_offset_ms: u64,
-    rtt_us: Option<u32>,
-) -> PingResult {
+fn create_ping_result(target: &str, time_offset_ms: u64, rtt_us: Option<u32>) -> PingResult {
     let now_ns = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -109,21 +105,32 @@ async fn test_rewind_and_flush() {
     let db_conn = trans_db_to_coll.into_established();
     let coll_conn = trans_coll_to_db.into_established();
 
-    let db_routing_map = db_router.send(OnPeerConnected {
-        peer_id: PeerId::new("collector-01"),
-        role: Role::new("collector"),
-        negotiated_rooms: vec![RoomId::from("memdb")],
-        transport_tx: db_conn.tx.clone(),
-    }).await.unwrap().unwrap();
-    let db_room_recipient = db_routing_map.get(&RoomId::from("memdb")).unwrap().clone();
+    let db_routing_map = db_router
+        .send(OnPeerConnected {
+            peer_id: PeerId::new("collector-01"),
+            role: Role::new("collector"),
+            negotiated_rooms: vec![RoomId::from("memdb")],
+            transport_tx: db_conn.tx.clone(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    let _db_room_recipient = db_routing_map.get(&RoomId::from("memdb")).unwrap().clone();
 
-    let coll_routing_map = coll_router.send(OnPeerConnected {
-        peer_id: PeerId::new("database"),
-        role: Role::new("database"),
-        negotiated_rooms: vec![RoomId::from("memdb")],
-        transport_tx: coll_conn.tx.clone(),
-    }).await.unwrap().unwrap();
-    let coll_room_recipient = coll_routing_map.get(&RoomId::from("memdb")).unwrap().clone();
+    let coll_routing_map = coll_router
+        .send(OnPeerConnected {
+            peer_id: PeerId::new("database"),
+            role: Role::new("database"),
+            negotiated_rooms: vec![RoomId::from("memdb")],
+            transport_tx: coll_conn.tx.clone(),
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    let _coll_room_recipient = coll_routing_map
+        .get(&RoomId::from("memdb"))
+        .unwrap()
+        .clone();
 
     let mut db_rx = db_conn.rx;
     let db_actor_clone = db_actor.clone();
@@ -156,21 +163,21 @@ async fn test_rewind_and_flush() {
             if let Frame::Room(RoomFrame::Message { payload, .. }) = inner_frame {
                 let msg: MemDBMessage = rmp_serde::from_slice(&payload).unwrap();
                 match msg {
-                    MemDBMessage::HelloCollector {
-                        last_persisted_ts,
-                    } => {
-                        coll_actor_clone.do_send(
-                            crate::internal_messages::InboundHelloCollector {
-                                last_persisted_ts,
-                            },
-                        );
+                    MemDBMessage::HelloCollector { last_persisted_ts } => {
+                        coll_actor_clone.do_send(crate::internal_messages::InboundHelloCollector {
+                            last_persisted_ts,
+                        });
                     }
-                    MemDBMessage::BatchAck { peer_id, received_count, timestamp_ms } => {
-                        coll_actor_clone.do_send(
-                            crate::internal_messages::InboundBatchAck {
-                                peer_id, received_count, timestamp_ms
-                            },
-                        );
+                    MemDBMessage::BatchAck {
+                        peer_id,
+                        received_count,
+                        timestamp_ms,
+                    } => {
+                        coll_actor_clone.do_send(crate::internal_messages::InboundBatchAck {
+                            peer_id,
+                            received_count,
+                            timestamp_ms,
+                        });
                     }
                     _ => {}
                 }

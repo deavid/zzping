@@ -27,8 +27,7 @@ use std::collections::HashMap;
 use std::net::IpAddr;
 use tokio::sync::mpsc;
 use zznet_api::{
-    Frame, OnPeerConnected, PeerId, Role, RoomFrame, RoomId, TransportFrame,
-    create_mock_pair,
+    Frame, OnPeerConnected, PeerId, Role, RoomFrame, RoomId, TransportFrame, create_mock_pair,
 };
 use zznet_router::RouterActor;
 

@@ -6,8 +6,8 @@
 use crate::config::MemDBConfig;
 use crate::events::MemDBEvent;
 use crate::internal_messages::{
-    CheckOutstandingBatchTimeout, InboundBatchAck, InboundQuery, InboundQueryResponse,
-    InboundSubmitBatch, FlushToStorage, NewCollector, InboundHelloCollector
+    CheckOutstandingBatchTimeout, FlushToStorage, InboundBatchAck, InboundHelloCollector,
+    InboundQuery, InboundQueryResponse, InboundSubmitBatch, NewCollector,
 };
 use crate::messages::{
     ClearBuffer, GetHealth, GetStats, MemDBError, MemDBHealth, StorePingResult, TargetStats,
@@ -15,8 +15,8 @@ use crate::messages::{
 use crate::types::PingResult;
 use actix::prelude::*;
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast;
 use zzstorage::actor::StorageActor;
@@ -98,25 +98,33 @@ impl MemDBActor {
     }
 
     fn check_and_resend_timed_out_batch(&mut self) {
-        if self.config.accept_batches { return; }
-        if let Some(batch_ts) = self.outstanding_batch {
-            if let Some(sent_time) = self.outstanding_batch_sent_time {
-                let elapsed = sent_time.elapsed();
-                let timeout_by_time = elapsed >= Duration::from_secs(OUTSTANDING_BATCH_TIMEOUT_SECS);
-                let timeout_by_count = self.outstanding_batch_buffered_count >= 100;
-                if timeout_by_time || timeout_by_count {
-                    log::warn!("Outstanding batch {} timed out. Resending.", batch_ts);
-                    if let Some(cached_data) = self.outstanding_batch_data.take() {
-                        let new_timestamp_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
-                        let event_payload = cached_data.clone();
-                        if let Ok(subscribers) = self.event_tx.send(MemDBEvent::BatchReady { timestamp_ms: new_timestamp_ms, results: event_payload }) {
-                            if subscribers > 0 {
-                                self.outstanding_batch = Some(new_timestamp_ms);
-                                self.outstanding_batch_sent_time = Some(Instant::now());
-                                self.outstanding_batch_data = Some(cached_data);
-                            } else {
-                                self.outstanding_batch_data = Some(cached_data);
-                            }
+        if self.config.accept_batches {
+            return;
+        }
+        if let Some(batch_ts) = self.outstanding_batch
+            && let Some(sent_time) = self.outstanding_batch_sent_time
+        {
+            let elapsed = sent_time.elapsed();
+            let timeout_by_time = elapsed >= Duration::from_secs(OUTSTANDING_BATCH_TIMEOUT_SECS);
+            let timeout_by_count = self.outstanding_batch_buffered_count >= 100;
+            if timeout_by_time || timeout_by_count {
+                log::warn!("Outstanding batch {} timed out. Resending.", batch_ts);
+                if let Some(cached_data) = self.outstanding_batch_data.take() {
+                    let new_timestamp_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as u64)
+                        .unwrap_or(0);
+                    let event_payload = cached_data.clone();
+                    if let Ok(subscribers) = self.event_tx.send(MemDBEvent::BatchReady {
+                        timestamp_ms: new_timestamp_ms,
+                        results: event_payload,
+                    }) {
+                        if subscribers > 0 {
+                            self.outstanding_batch = Some(new_timestamp_ms);
+                            self.outstanding_batch_sent_time = Some(Instant::now());
+                            self.outstanding_batch_data = Some(cached_data);
+                        } else {
+                            self.outstanding_batch_data = Some(cached_data);
                         }
                     }
                 }
@@ -125,16 +133,28 @@ impl MemDBActor {
     }
 
     fn send_batch(&mut self, _ctx: &mut Context<Self>) -> Result<(), MemDBError> {
-        if self.config.accept_batches { return Err(MemDBError::WrongRole); }
+        if self.config.accept_batches {
+            return Err(MemDBError::WrongRole);
+        }
         let buffer = self.registry.entry("collector".to_string()).or_default();
-        if buffer.is_empty() { return Ok(()); }
-        if self.outstanding_batch.is_some() { return Ok(()); }
+        if buffer.is_empty() {
+            return Ok(());
+        }
+        if self.outstanding_batch.is_some() {
+            return Ok(());
+        }
 
         let results: Vec<PingResult> = buffer.drain(..).collect();
-        let timestamp_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let event_payload = results.clone();
 
-        match self.event_tx.send(MemDBEvent::BatchReady { timestamp_ms, results: event_payload }) {
+        match self.event_tx.send(MemDBEvent::BatchReady {
+            timestamp_ms,
+            results: event_payload,
+        }) {
             Ok(subscribers) if subscribers > 0 => {
                 self.outstanding_batch = Some(timestamp_ms);
                 self.outstanding_batch_buffered_count = 0;
@@ -144,9 +164,13 @@ impl MemDBActor {
             }
             _ => {
                 let buffer = self.registry.entry("collector".to_string()).or_default();
-                for result in results { buffer.push_back(result); }
+                for result in results {
+                    buffer.push_back(result);
+                }
                 self.failed_batches.fetch_add(1, Ordering::Relaxed);
-                return Err(MemDBError::NetworkError("No network subscribers".to_string()));
+                return Err(MemDBError::NetworkError(
+                    "No network subscribers".to_string(),
+                ));
             }
         }
         Ok(())
@@ -169,10 +193,14 @@ impl Actor for MemDBActor {
     fn started(&mut self, ctx: &mut Context<Self>) {
         if self.config.accept_batches {
             let flush_interval = Duration::from_secs(10);
-            ctx.run_interval(flush_interval, |_, ctx| { ctx.address().do_send(FlushToStorage); });
+            ctx.run_interval(flush_interval, |_, ctx| {
+                ctx.address().do_send(FlushToStorage);
+            });
         } else {
             let check_interval = Duration::from_millis(500);
-            ctx.run_interval(check_interval, |_, ctx| { ctx.address().do_send(CheckOutstandingBatchTimeout); });
+            ctx.run_interval(check_interval, |_, ctx| {
+                ctx.address().do_send(CheckOutstandingBatchTimeout);
+            });
         }
     }
 }
@@ -224,12 +252,13 @@ impl Handler<StorePingResult> for MemDBActor {
         if !self.config.accept_batches {
             let buffer = self.registry.entry("collector".to_string()).or_default();
             buffer.push_back(msg.result);
-            if self.config.buffer_size > 0 && buffer.len() >= self.config.buffer_size {
-                if self.send_batch(ctx).is_err() {
-                    let buffer = self.registry.entry("collector".to_string()).or_default();
-                    while buffer.len() > self.config.buffer_size {
-                        buffer.pop_front();
-                    }
+            if self.config.buffer_size > 0
+                && buffer.len() >= self.config.buffer_size
+                && self.send_batch(ctx).is_err()
+            {
+                let buffer = self.registry.entry("collector".to_string()).or_default();
+                while buffer.len() > self.config.buffer_size {
+                    buffer.pop_front();
                 }
             }
         } else {
@@ -244,8 +273,13 @@ impl Handler<StorePingResult> for MemDBActor {
 impl Handler<ClearBuffer> for MemDBActor {
     type Result = Result<(), MemDBError>;
     fn handle(&mut self, _msg: ClearBuffer, _ctx: &mut Context<Self>) -> Self::Result {
-        if self.config.accept_batches { return Err(MemDBError::WrongRole); }
-        self.registry.entry("collector".to_string()).or_default().clear();
+        if self.config.accept_batches {
+            return Err(MemDBError::WrongRole);
+        }
+        self.registry
+            .entry("collector".to_string())
+            .or_default()
+            .clear();
         Ok(())
     }
 }
@@ -254,7 +288,12 @@ impl Handler<GetHealth> for MemDBActor {
     type Result = Result<MemDBHealth, MemDBError>;
     fn handle(&mut self, _msg: GetHealth, _ctx: &mut Context<Self>) -> Self::Result {
         Ok(MemDBHealth {
-            role: if self.config.accept_batches { "database" } else { "collector" }.to_string(),
+            role: if self.config.accept_batches {
+                "database"
+            } else {
+                "collector"
+            }
+            .to_string(),
             buffer_size: self.registry.values().map(|b| b.len()).sum(),
             total_results: self.total_results.load(Ordering::Relaxed),
             successful_batches: self.successful_batches.load(Ordering::Relaxed),
@@ -267,7 +306,9 @@ impl Handler<GetHealth> for MemDBActor {
 impl Handler<GetStats> for MemDBActor {
     type Result = Result<TargetStats, MemDBError>;
     fn handle(&mut self, msg: GetStats, _ctx: &mut Context<Self>) -> Self::Result {
-        if !self.config.accept_batches { return Err(MemDBError::WrongRole); }
+        if !self.config.accept_batches {
+            return Err(MemDBError::WrongRole);
+        }
         Ok(self.get_target_stats(&msg.target))
     }
 }
@@ -289,7 +330,9 @@ impl Handler<FlushToStorage> for MemDBActor {
                     target: r.target,
                     sent_time_ns: r.sent_time_ns,
                     status: match r.status {
-                        crate::types::PingStatus::Success(ns) => zzstorage::codec::PingStatus::Success(ns),
+                        crate::types::PingStatus::Success(ns) => {
+                            zzstorage::codec::PingStatus::Success(ns)
+                        }
                         crate::types::PingStatus::Timeout => zzstorage::codec::PingStatus::Timeout,
                         crate::types::PingStatus::IOError => zzstorage::codec::PingStatus::IOError,
                         crate::types::PingStatus::Partial => zzstorage::codec::PingStatus::Partial,
@@ -307,7 +350,7 @@ impl Handler<FlushToStorage> for MemDBActor {
 
 impl Handler<InboundHelloCollector> for MemDBActor {
     type Result = ();
-    fn handle(&mut self, msg: InboundHelloCollector, ctx: &mut Self::Context) {
+    fn handle(&mut self, msg: InboundHelloCollector, _ctx: &mut Self::Context) {
         if self.config.accept_batches {
             return;
         }
@@ -355,7 +398,12 @@ impl Handler<NewCollector> for MemDBActor {
 
         Box::pin(async move {
             let last_persisted_ts = if let Some(actor) = storage_actor {
-                match actor.send(zzstorage::actor::GetLastTimestamp { target: msg.peer_id.to_string() }).await {
+                match actor
+                    .send(zzstorage::actor::GetLastTimestamp {
+                        target: msg.peer_id.to_string(),
+                    })
+                    .await
+                {
                     Ok(Ok(ts)) => ts,
                     _ => 0,
                 }
@@ -363,7 +411,15 @@ impl Handler<NewCollector> for MemDBActor {
                 0
             };
 
-            event_tx.send(MemDBEvent::HelloCollector { peer_id: msg.peer_id, last_persisted_ts }).unwrap_or_else(|e| { log::error!("Failed to send HelloCollector: {}", e); 0 });
+            event_tx
+                .send(MemDBEvent::HelloCollector {
+                    peer_id: msg.peer_id,
+                    last_persisted_ts,
+                })
+                .unwrap_or_else(|e| {
+                    log::error!("Failed to send HelloCollector: {}", e);
+                    0
+                });
         })
     }
 }

@@ -8,7 +8,7 @@ use actix::prelude::*;
 use anyhow::Result;
 use std::time::Duration;
 use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig};
-use zznet_api::{create_mock_pair, maintain_connection, serve_connections, ReconnectConfig};
+use zznet_api::{ReconnectConfig, create_mock_pair, maintain_connection, serve_connections};
 use zznet_hello::{ConnectionManager, HelloConfig};
 use zznet_router::RouterActor;
 

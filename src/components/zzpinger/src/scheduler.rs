@@ -7,8 +7,8 @@ use std::collections::VecDeque;
 use std::net::IpAddr;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, watch};
-use zzmem_db::types::{PingResult, PingStatus};
 use zzmem_db::messages::StorePingResult;
+use zzmem_db::types::{PingResult, PingStatus};
 
 use crate::messages::{PingEvent, PingState, SchedulePings, UpdateCState, UpdateIntentConfig};
 use crate::traits::{Clock, SystemClock};
@@ -96,7 +96,11 @@ impl Actor for PingerSchedulerActor {
 impl PingerSchedulerActor {
     fn handle_tick(&mut self) {
         // Log current timestamps for diagnostics: Instant (wall/Arbiter) and clock.now() (Clock impl)
-        log::debug!("PingerSchedulerActor::handle_tick - Instant::now()={:?}, clock.now()={:?}", Instant::now(), self.clock.now());
+        log::debug!(
+            "PingerSchedulerActor::handle_tick - Instant::now()={:?}, clock.now()={:?}",
+            Instant::now(),
+            self.clock.now()
+        );
 
         // Flush pending results at the start
         self.flush_pending_results();

@@ -2,10 +2,10 @@
 
 //! The main actor for the storage engine.
 
-use crate::codec::{compress_batch, PingBatch};
-use crate::fs::{FileHeader, FILE_MAGIC, FORMAT_VERSION};
+use crate::codec::{PingBatch, compress_batch};
+use crate::fs::{FILE_MAGIC, FORMAT_VERSION, FileHeader};
 use actix::{Actor, Context, Handler, Message};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use byteorder::{BigEndian, WriteBytesExt};
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
@@ -61,6 +61,7 @@ impl Actor for StorageActor {
                 .read(true)
                 .write(true)
                 .create(true)
+                .truncate(false)
                 .open(&file_path)
                 .expect("Failed to open storage file");
 
@@ -70,13 +71,18 @@ impl Actor for StorageActor {
                     format_version: FORMAT_VERSION,
                     blob_count: 0,
                 };
-                header.write(&mut file).expect("Failed to write new file header");
+                header
+                    .write(&mut file)
+                    .expect("Failed to write new file header");
                 self.blob_count = 0;
             } else {
-                self.blob_count = crate::fs::scan_and_recover(&mut file).expect("Failed to scan and recover storage file");
+                self.blob_count = crate::fs::scan_and_recover(&mut file)
+                    .expect("Failed to scan and recover storage file");
                 // Update the header with the correct count.
-                file.seek(SeekFrom::Start(6)).expect("Failed to seek to update blob count");
-                file.write_u64::<BigEndian>(self.blob_count).expect("Failed to write updated blob count");
+                file.seek(SeekFrom::Start(6))
+                    .expect("Failed to seek to update blob count");
+                file.write_u64::<BigEndian>(self.blob_count)
+                    .expect("Failed to write updated blob count");
             }
 
             self.file_handle = Some(file);
@@ -84,16 +90,16 @@ impl Actor for StorageActor {
     }
 
     fn stopping(&mut self, _ctx: &mut Self::Context) -> actix::Running {
-        if let Some(mut file) = self.file_handle.take() {
-            if let StorageConfig::FileSystem { .. } = &self.config {
-                file.seek(SeekFrom::Start(6))
-                    .and_then(|_| file.write_u64::<BigEndian>(self.blob_count))
-                    .and_then(|_| file.sync_all())
-                    .unwrap_or_else(|e| {
-                        // In a real application, this should log an error.
-                        eprintln!("Failed to write final header: {}", e);
-                    });
-            }
+        if let Some(mut file) = self.file_handle.take()
+            && let StorageConfig::FileSystem { .. } = &self.config
+        {
+            file.seek(SeekFrom::Start(6))
+                .and_then(|_| file.write_u64::<BigEndian>(self.blob_count))
+                .and_then(|_| file.sync_all())
+                .unwrap_or_else(|e| {
+                    // In a real application, this should log an error.
+                    eprintln!("Failed to write final header: {}", e);
+                });
         }
         actix::Running::Stop
     }
@@ -109,7 +115,10 @@ impl Handler<StoreBatch> for StorageActor {
 
     fn handle(&mut self, msg: StoreBatch, _ctx: &mut Self::Context) -> Self::Result {
         for result in &msg.0 {
-            let entry = self.last_timestamps.entry(result.target.clone()).or_insert(0);
+            let entry = self
+                .last_timestamps
+                .entry(result.target.clone())
+                .or_insert(0);
             *entry = (*entry).max(result.sent_time_ns);
         }
 
@@ -123,7 +132,10 @@ impl Handler<StoreBatch> for StorageActor {
                 self.ephemeral_blobs.push(compressed_blob);
             }
             StorageConfig::FileSystem { .. } => {
-                let handle = self.file_handle.as_mut().ok_or_else(|| anyhow!("File handle not available"))?;
+                let handle = self
+                    .file_handle
+                    .as_mut()
+                    .ok_or_else(|| anyhow!("File handle not available"))?;
 
                 // Append the blob to the end of the file.
                 handle.seek(SeekFrom::End(0))?;
@@ -152,6 +164,7 @@ pub struct GetBlobCount;
 #[derive(Message)]
 #[rtype(result = "Result<u64>")]
 pub struct GetLastTimestamp {
+    /// The target to query for (e.g., IP address or hostname).
     pub target: String,
 }
 
@@ -161,9 +174,9 @@ impl Handler<GetStoredBlobs> for StorageActor {
     fn handle(&mut self, _msg: GetStoredBlobs, _ctx: &mut Self::Context) -> Self::Result {
         match self.config {
             StorageConfig::Ephemeral => Ok(self.ephemeral_blobs.clone()),
-            StorageConfig::FileSystem { .. } => {
-                Err(anyhow::anyhow!("GetStoredBlobs is only supported in Ephemeral mode."))
-            }
+            StorageConfig::FileSystem { .. } => Err(anyhow::anyhow!(
+                "GetStoredBlobs is only supported in Ephemeral mode."
+            )),
         }
     }
 }
@@ -279,7 +292,12 @@ mod tests {
         let file_path = dir.path().join("storage.zzs2");
 
         // --- Manually create a corrupted file ---
-        let mut file = OpenOptions::new().write(true).create(true).open(&file_path).unwrap();
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&file_path)
+            .unwrap();
 
         // Write a header with an incorrect blob count (0, when there will be 2).
         let bad_header = FileHeader {

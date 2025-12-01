@@ -4,9 +4,9 @@
 use anyhow::Result;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use constriction::stream::{
+    Decode,
     model::{DefaultNonContiguousCategoricalEncoderModel, NonContiguousCategoricalDecoderModel},
     stack::DefaultAnsCoder,
-    Decode,
 };
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
@@ -49,12 +49,8 @@ pub type PingBatch = Vec<PingResult>;
 
 /// The strategy for encoding ping send times.
 enum SendTimeStrategy {
-    ConstantRate {
-        base_interval_ns: u64,
-    },
-    VariableRate {
-        timing_symbols: Vec<u16>,
-    },
+    ConstantRate { base_interval_ns: u64 },
+    VariableRate { timing_symbols: Vec<u16> },
 }
 
 /// Compresses a batch of `PingResult`s into a compressed blob.
@@ -168,16 +164,24 @@ fn compress_target_data(records: &[&PingResult]) -> Result<Vec<u8>> {
                 ).map_err(|()| anyhow::anyhow!("Failed to create time model"))?;
                 let mut encoder = DefaultAnsCoder::new();
                 encoder.encode_iid_symbols_reverse(&timing_symbols, &model)?;
-                encoder.into_compressed()?.iter().flat_map(|w| w.to_be_bytes()).collect()
+                encoder
+                    .into_compressed()?
+                    .iter()
+                    .flat_map(|w| w.to_be_bytes())
+                    .collect()
             } else {
                 vec![]
             };
 
             let mut header = vec![1u8]; // Strategy 1: Variable
             header.write_u32::<BigEndian>(symbols.len() as u32)?;
-            for symbol in symbols { header.write_u16::<BigEndian>(symbol)?; }
+            for symbol in symbols {
+                header.write_u16::<BigEndian>(symbol)?;
+            }
             header.write_u32::<BigEndian>(probs.len() as u32)?;
-            for prob in probs { header.write_f64::<BigEndian>(prob)?; }
+            for prob in probs {
+                header.write_f64::<BigEndian>(prob)?;
+            }
             header.write_u32::<BigEndian>(encoded_data.len() as u32)?;
             (header, encoded_data)
         }
@@ -198,7 +202,11 @@ fn compress_target_data(records: &[&PingResult]) -> Result<Vec<u8>> {
         ).map_err(|()| anyhow::anyhow!("Failed to create categorical model"))?;
         let mut rtt_encoder = DefaultAnsCoder::new();
         rtt_encoder.encode_iid_symbols_reverse(&rtt_symbols, &rtt_model)?;
-        rtt_encoder.into_compressed()?.iter().flat_map(|w| w.to_be_bytes()).collect()
+        rtt_encoder
+            .into_compressed()?
+            .iter()
+            .flat_map(|w| w.to_be_bytes())
+            .collect()
     } else {
         Vec::new()
     };
@@ -211,9 +219,13 @@ fn compress_target_data(records: &[&PingResult]) -> Result<Vec<u8>> {
     data.extend(&time_data);
 
     data.write_u32::<BigEndian>(model_symbols.len() as u32)?;
-    for symbol in model_symbols { data.write_u16::<BigEndian>(symbol)?; }
+    for symbol in model_symbols {
+        data.write_u16::<BigEndian>(symbol)?;
+    }
     data.write_u32::<BigEndian>(model_probs.len() as u32)?;
-    for prob in model_probs { data.write_f64::<BigEndian>(prob)?; }
+    for prob in model_probs {
+        data.write_f64::<BigEndian>(prob)?;
+    }
     data.write_u32::<BigEndian>(rtt_encoded_data.len() as u32)?;
     data.extend(&rtt_encoded_data);
 
@@ -231,19 +243,25 @@ fn decompress_target_data(cursor: &mut Cursor<&[u8]>) -> Result<(Vec<u64>, Vec<P
     sent_times.push(first_sent_time);
 
     match time_strategy {
-        0 => { // ConstantRate
+        0 => {
+            // ConstantRate
             let base_interval_ns = cursor.read_u64::<BigEndian>()?;
             for i in 1..num_records {
-                sent_times.push(sent_times[i-1] + base_interval_ns);
+                sent_times.push(sent_times[i - 1] + base_interval_ns);
             }
-        },
-        1 => { // VariableRate
+        }
+        1 => {
+            // VariableRate
             let num_symbols = cursor.read_u32::<BigEndian>()? as usize;
             let mut model_symbols = Vec::with_capacity(num_symbols);
-            for _ in 0..num_symbols { model_symbols.push(cursor.read_u16::<BigEndian>()?); }
+            for _ in 0..num_symbols {
+                model_symbols.push(cursor.read_u16::<BigEndian>()?);
+            }
             let num_probs = cursor.read_u32::<BigEndian>()? as usize;
             let mut model_probs = Vec::with_capacity(num_probs);
-            for _ in 0..num_probs { model_probs.push(cursor.read_f64::<BigEndian>()?); }
+            for _ in 0..num_probs {
+                model_probs.push(cursor.read_f64::<BigEndian>()?);
+            }
             let data_len = cursor.read_u32::<BigEndian>()? as usize;
             let pos = cursor.position() as usize;
             let data = &cursor.get_ref()[pos..pos + data_len];
@@ -253,29 +271,43 @@ fn decompress_target_data(cursor: &mut Cursor<&[u8]>) -> Result<(Vec<u64>, Vec<P
                 let model: NonContiguousCategoricalDecoderModel<u16, u32, _, 24> = NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast(
                     model_symbols, &model_probs, None
                 ).map_err(|()| anyhow::anyhow!("Failed to create time decoder model"))?;
-                let compressed_words: Vec<u32> = data.chunks_exact(4).map(|c| u32::from_be_bytes(c.try_into().unwrap())).collect();
-                if compressed_words.is_empty() { vec![] } else {
-                    let mut decoder = DefaultAnsCoder::from_compressed(compressed_words).map_err(|e| anyhow::anyhow!("Failed to create time decoder: {:?}", e))?;
-                    decoder.decode_iid_symbols(num_records - 1, &model).collect::<Result<Vec<_>,_>>()?
+                let compressed_words: Vec<u32> = data
+                    .chunks_exact(4)
+                    .map(|c| u32::from_be_bytes(c.try_into().unwrap()))
+                    .collect();
+                if compressed_words.is_empty() {
+                    vec![]
+                } else {
+                    let mut decoder = DefaultAnsCoder::from_compressed(compressed_words)
+                        .map_err(|e| anyhow::anyhow!("Failed to create time decoder: {:?}", e))?;
+                    decoder
+                        .decode_iid_symbols(num_records - 1, &model)
+                        .collect::<Result<Vec<_>, _>>()?
                 }
-            } else { vec![] };
+            } else {
+                vec![]
+            };
 
             const QUANTUM_NS: u64 = 100_000; // 0.1ms
             for (i, &symbol) in timing_symbols.iter().enumerate() {
                 let interval = symbol as u64 * QUANTUM_NS;
                 sent_times.push(sent_times[i] + interval);
             }
-        },
+        }
         _ => return Err(anyhow::anyhow!("Unknown time strategy")),
     }
 
     // 2. Decompress RTTs
     let num_symbols = cursor.read_u32::<BigEndian>()? as usize;
     let mut model_symbols = Vec::with_capacity(num_symbols);
-    for _ in 0..num_symbols { model_symbols.push(cursor.read_u16::<BigEndian>()?); }
+    for _ in 0..num_symbols {
+        model_symbols.push(cursor.read_u16::<BigEndian>()?);
+    }
     let num_probs = cursor.read_u32::<BigEndian>()? as usize;
     let mut model_probs = Vec::with_capacity(num_probs);
-    for _ in 0..num_probs { model_probs.push(cursor.read_f64::<BigEndian>()?); }
+    for _ in 0..num_probs {
+        model_probs.push(cursor.read_f64::<BigEndian>()?);
+    }
     let data_len = cursor.read_u32::<BigEndian>()? as usize;
     let pos = cursor.position() as usize;
     let data = &cursor.get_ref()[pos..pos + data_len];
@@ -286,17 +318,29 @@ fn decompress_target_data(cursor: &mut Cursor<&[u8]>) -> Result<(Vec<u64>, Vec<P
             NonContiguousCategoricalDecoderModel::from_symbols_and_floating_point_probabilities_fast(
                 model_symbols, &model_probs, None
             ).map_err(|()| anyhow::anyhow!("Failed to create categorical decoder model"))?;
-        let compressed_words: Vec<u32> = data.chunks_exact(4).map(|c| u32::from_be_bytes(c.try_into().unwrap())).collect();
-        if compressed_words.is_empty() { vec![] } else {
-            let mut decoder = DefaultAnsCoder::from_compressed(compressed_words).map_err(|e| anyhow::anyhow!("Failed to create decoder: {:?}", e))?;
-            decoder.decode_iid_symbols(num_records, &rtt_model).collect::<Result<Vec<_>,_>>()?
+        let compressed_words: Vec<u32> = data
+            .chunks_exact(4)
+            .map(|c| u32::from_be_bytes(c.try_into().unwrap()))
+            .collect();
+        if compressed_words.is_empty() {
+            vec![]
+        } else {
+            let mut decoder = DefaultAnsCoder::from_compressed(compressed_words)
+                .map_err(|e| anyhow::anyhow!("Failed to create decoder: {:?}", e))?;
+            decoder
+                .decode_iid_symbols(num_records, &rtt_model)
+                .collect::<Result<Vec<_>, _>>()?
         }
-    } else { vec![] };
+    } else {
+        vec![]
+    };
 
-    let statuses = rtt_symbols.iter().map(|&s| quantizer.symbol_to_status(s)).collect();
+    let statuses = rtt_symbols
+        .iter()
+        .map(|&s| quantizer.symbol_to_status(s))
+        .collect();
     Ok((sent_times, statuses))
 }
-
 
 fn build_rtt_model(rtt_symbols: &[u16]) -> Result<(Vec<u16>, Vec<f64>)> {
     if rtt_symbols.is_empty() {
@@ -325,6 +369,12 @@ fn build_rtt_model(rtt_symbols: &[u16]) -> Result<(Vec<u16>, Vec<f64>)> {
 /// A quantizer for converting between nanosecond RTTs and symbols.
 #[derive(Debug, Clone, Copy)]
 pub struct Quantizer;
+
+impl Default for Quantizer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Quantizer {
     /// Creates a new `Quantizer`.
@@ -499,7 +549,11 @@ mod tests {
             assert_eq!(original.target, recovered.target);
             // Timestamps for variable rate are quantized, so we need to allow a small error margin.
             let time_diff = (original.sent_time_ns as i64 - recovered.sent_time_ns as i64).abs();
-            assert!(time_diff < 100_000, "Timestamp quantization error too high: {}", time_diff);
+            assert!(
+                time_diff < 100_000,
+                "Timestamp quantization error too high: {}",
+                time_diff
+            );
 
             match (&original.status, &recovered.status) {
                 (PingStatus::Success(original_ns), PingStatus::Success(recovered_ns)) => {

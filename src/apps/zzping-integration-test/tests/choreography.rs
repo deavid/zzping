@@ -87,7 +87,10 @@ async fn choreography_full() -> Result<()> {
     tokio::time::advance(std::time::Duration::from_secs(11)).await;
 
     let stored_blobs = harness.get_stored_blobs().await?;
-    assert!(!stored_blobs.is_empty(), "storage actor should have persisted blobs");
+    assert!(
+        !stored_blobs.is_empty(),
+        "storage actor should have persisted blobs"
+    );
 
     info!("Epilogue complete: data persisted to storage");
 

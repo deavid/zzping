@@ -3,9 +3,9 @@
 mod backend;
 mod builder;
 mod client;
+mod clock;
 mod messages;
 mod mock;
-mod clock;
 mod scheduler;
 mod traits;
 
@@ -13,8 +13,8 @@ mod traits;
 mod tests;
 
 pub use builder::*;
+pub use clock::TokioAlignedClock;
 pub use messages::*;
 pub use mock::*;
 pub use scheduler::PingerSchedulerActor;
 pub use traits::Clock;
-pub use clock::TokioAlignedClock;

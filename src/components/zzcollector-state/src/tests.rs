@@ -26,8 +26,7 @@ use crate::permissions::CStatePermissions;
 use actix::prelude::*;
 use std::collections::HashMap;
 use zznet_api::{
-    Frame, OnPeerConnected, PeerId, Role, RoomFrame, RoomId, TransportFrame,
-    create_mock_pair,
+    Frame, OnPeerConnected, PeerId, Role, RoomFrame, RoomId, TransportFrame, create_mock_pair,
 };
 use zznet_router::RouterActor;
 
@@ -191,7 +190,8 @@ async fn test_roll_call() {
 
     // 6. Start collector transport (to send messages)
     let coll_conn = trans_coll_to_db.into_established();
-    let (coll_send_tx, mut coll_recv_rx, _watcher) = (coll_conn.tx, coll_conn.rx, coll_conn.watcher);
+    let (coll_send_tx, mut coll_recv_rx, _watcher) =
+        (coll_conn.tx, coll_conn.rx, coll_conn.watcher);
 
     // 7. Route incoming messages from collector to database
     actix::spawn(async move {
@@ -273,7 +273,8 @@ async fn test_roll_call() {
 
     // 11. Connect Admin to Database
     let db_admin_conn = trans_db_to_admin.into_established();
-    let (db_admin_tx, db_admin_recv_rx, _watcher) = (db_admin_conn.tx, db_admin_conn.rx, db_admin_conn.watcher);
+    let (db_admin_tx, db_admin_recv_rx, _watcher) =
+        (db_admin_conn.tx, db_admin_conn.rx, db_admin_conn.watcher);
 
     let db_admin_routing_map = db_router
         .send(OnPeerConnected {
@@ -297,7 +298,8 @@ async fn test_roll_call() {
         .clone();
 
     let admin_conn = trans_admin_to_db.into_established();
-    let (admin_send_tx, mut admin_recv_rx, _watcher) = (admin_conn.tx, admin_conn.rx, admin_conn.watcher);
+    let (admin_send_tx, mut admin_recv_rx, _watcher) =
+        (admin_conn.tx, admin_conn.rx, admin_conn.watcher);
 
     // Route incoming messages from admin to database
     actix::spawn(async move {
@@ -417,7 +419,8 @@ async fn test_stale_cleanup() {
     let (trans_zombie_to_db, trans_db_to_zombie) = create_mock_pair("zombie_link");
 
     let zombie_conn = trans_db_to_zombie.into_established();
-    let (db_zombie_tx, db_zombie_recv_rx, _watcher) = (zombie_conn.tx, zombie_conn.rx, zombie_conn.watcher);
+    let (db_zombie_tx, db_zombie_recv_rx, _watcher) =
+        (zombie_conn.tx, zombie_conn.rx, zombie_conn.watcher);
 
     let db_routing_map = db_router
         .send(OnPeerConnected {
@@ -436,7 +439,11 @@ async fn test_stale_cleanup() {
         .clone();
 
     let zombie_send_conn = trans_zombie_to_db.into_established();
-    let (zombie_send_tx, mut zombie_recv_rx, _watcher) = (zombie_send_conn.tx, zombie_send_conn.rx, zombie_send_conn.watcher);
+    let (zombie_send_tx, mut zombie_recv_rx, _watcher) = (
+        zombie_send_conn.tx,
+        zombie_send_conn.rx,
+        zombie_send_conn.watcher,
+    );
 
     // Route messages to database
     actix::spawn(async move {
@@ -495,7 +502,8 @@ async fn test_stale_cleanup() {
     let (trans_admin_to_db, trans_db_to_admin) = create_mock_pair("admin_link");
 
     let db_admin_conn = trans_db_to_admin.into_established();
-    let (db_admin_tx, db_admin_recv_rx, _watcher) = (db_admin_conn.tx, db_admin_conn.rx, db_admin_conn.watcher);
+    let (db_admin_tx, db_admin_recv_rx, _watcher) =
+        (db_admin_conn.tx, db_admin_conn.rx, db_admin_conn.watcher);
 
     let db_admin_routing_map = db_router
         .send(OnPeerConnected {
@@ -514,7 +522,8 @@ async fn test_stale_cleanup() {
         .clone();
 
     let admin_conn = trans_admin_to_db.into_established();
-    let (admin_send_tx, mut admin_recv_rx, _watcher) = (admin_conn.tx, admin_conn.rx, admin_conn.watcher);
+    let (admin_send_tx, mut admin_recv_rx, _watcher) =
+        (admin_conn.tx, admin_conn.rx, admin_conn.watcher);
 
     actix::spawn(async move {
         let mut rx = db_admin_recv_rx;
@@ -630,7 +639,8 @@ async fn test_authorization() {
         .clone();
 
     let spy_send_conn = trans_spy_to_db.into_established();
-    let (spy_send_tx, mut spy_recv_rx, _watcher) = (spy_send_conn.tx, spy_send_conn.rx, spy_send_conn.watcher);
+    let (spy_send_tx, mut spy_recv_rx, _watcher) =
+        (spy_send_conn.tx, spy_send_conn.rx, spy_send_conn.watcher);
 
     // Route messages to database
     actix::spawn(async move {
@@ -683,7 +693,8 @@ async fn test_authorization() {
     let (trans_admin_to_db, trans_db_to_admin) = create_mock_pair("admin_link");
 
     let db_admin_conn = trans_db_to_admin.into_established();
-    let (db_admin_tx, db_admin_recv_rx, _watcher) = (db_admin_conn.tx, db_admin_conn.rx, db_admin_conn.watcher);
+    let (db_admin_tx, db_admin_recv_rx, _watcher) =
+        (db_admin_conn.tx, db_admin_conn.rx, db_admin_conn.watcher);
 
     let db_admin_routing_map = db_router
         .send(OnPeerConnected {
@@ -702,7 +713,8 @@ async fn test_authorization() {
         .clone();
 
     let admin_conn = trans_admin_to_db.into_established();
-    let (admin_send_tx, mut admin_recv_rx, _watcher) = (admin_conn.tx, admin_conn.rx, admin_conn.watcher);
+    let (admin_send_tx, mut admin_recv_rx, _watcher) =
+        (admin_conn.tx, admin_conn.rx, admin_conn.watcher);
 
     actix::spawn(async move {
         let mut rx = db_admin_recv_rx;
@@ -799,7 +811,8 @@ async fn test_capacity_limit() {
     let (trans_coll1_to_db, trans_db_to_coll1) = create_mock_pair("coll1_link");
 
     let coll1_conn = trans_db_to_coll1.into_established();
-    let (db_coll1_tx, db_coll1_recv_rx, _watcher) = (coll1_conn.tx, coll1_conn.rx, coll1_conn.watcher);
+    let (db_coll1_tx, db_coll1_recv_rx, _watcher) =
+        (coll1_conn.tx, coll1_conn.rx, coll1_conn.watcher);
 
     let db_routing_map_1 = db_router
         .send(OnPeerConnected {
@@ -818,7 +831,11 @@ async fn test_capacity_limit() {
         .clone();
 
     let coll1_send_conn = trans_coll1_to_db.into_established();
-    let (coll1_send_tx, mut coll1_recv_rx, _watcher) = (coll1_send_conn.tx, coll1_send_conn.rx, coll1_send_conn.watcher);
+    let (coll1_send_tx, mut coll1_recv_rx, _watcher) = (
+        coll1_send_conn.tx,
+        coll1_send_conn.rx,
+        coll1_send_conn.watcher,
+    );
 
     actix::spawn(async move {
         let mut rx = db_coll1_recv_rx;
@@ -862,7 +879,8 @@ async fn test_capacity_limit() {
     let (trans_coll2_to_db, trans_db_to_coll2) = create_mock_pair("coll2_link");
 
     let coll2_conn = trans_db_to_coll2.into_established();
-    let (db_coll2_tx, db_coll2_recv_rx, _watcher) = (coll2_conn.tx, coll2_conn.rx, coll2_conn.watcher);
+    let (db_coll2_tx, db_coll2_recv_rx, _watcher) =
+        (coll2_conn.tx, coll2_conn.rx, coll2_conn.watcher);
 
     let db_routing_map_2 = db_router
         .send(OnPeerConnected {
@@ -881,7 +899,11 @@ async fn test_capacity_limit() {
         .clone();
 
     let coll2_send_conn = trans_coll2_to_db.into_established();
-    let (coll2_send_tx, mut coll2_recv_rx, _watcher) = (coll2_send_conn.tx, coll2_send_conn.rx, coll2_send_conn.watcher);
+    let (coll2_send_tx, mut coll2_recv_rx, _watcher) = (
+        coll2_send_conn.tx,
+        coll2_send_conn.rx,
+        coll2_send_conn.watcher,
+    );
 
     actix::spawn(async move {
         let mut rx = db_coll2_recv_rx;
@@ -932,7 +954,8 @@ async fn test_capacity_limit() {
     let (trans_admin_to_db, trans_db_to_admin) = create_mock_pair("admin_link");
 
     let db_admin_conn = trans_db_to_admin.into_established();
-    let (db_admin_tx, db_admin_recv_rx, _watcher) = (db_admin_conn.tx, db_admin_conn.rx, db_admin_conn.watcher);
+    let (db_admin_tx, db_admin_recv_rx, _watcher) =
+        (db_admin_conn.tx, db_admin_conn.rx, db_admin_conn.watcher);
 
     let db_admin_routing_map = db_router
         .send(OnPeerConnected {
@@ -951,7 +974,11 @@ async fn test_capacity_limit() {
         .clone();
 
     let admin_send_conn = trans_admin_to_db.into_established();
-    let (admin_send_tx, mut admin_recv_rx, _watcher) = (admin_send_conn.tx, admin_send_conn.rx, admin_send_conn.watcher);
+    let (admin_send_tx, mut admin_recv_rx, _watcher) = (
+        admin_send_conn.tx,
+        admin_send_conn.rx,
+        admin_send_conn.watcher,
+    );
 
     actix::spawn(async move {
         let mut rx = db_admin_recv_rx;

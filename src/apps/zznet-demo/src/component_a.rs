@@ -63,7 +63,8 @@ impl Handler<SendPingToRoom> for ComponentANetworkActor {
     type Result = ();
 
     fn handle(&mut self, msg: SendPingToRoom, _ctx: &mut Self::Context) {
-        self.room_actor.do_send(ComponentAMessage::Ping((msg.0, msg.1)));
+        self.room_actor
+            .do_send(ComponentAMessage::Ping((msg.0, msg.1)));
     }
 }
 
@@ -71,7 +72,8 @@ impl Handler<SendPongToRoom> for ComponentANetworkActor {
     type Result = ();
 
     fn handle(&mut self, msg: SendPongToRoom, _ctx: &mut Self::Context) {
-        self.room_actor.do_send(ComponentAMessage::Pong((msg.0, msg.1)));
+        self.room_actor
+            .do_send(ComponentAMessage::Pong((msg.0, msg.1)));
     }
 }
 
@@ -325,10 +327,7 @@ impl StreamHandler<Result<crate::messages::ComponentAEvent, BroadcastStreamRecvE
     }
 
     fn finished(&mut self, _ctx: &mut Context<Self>) {
-        tracing::debug!(
-            "Event bus stream finished for peer {:?}",
-            self.peer_id
-        );
+        tracing::debug!("Event bus stream finished for peer {:?}", self.peer_id);
     }
 }
 

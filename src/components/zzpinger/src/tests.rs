@@ -336,27 +336,30 @@ async fn epic_2_unreliable_narrator() {
         .count();
 
     // We expect 1x result per call now that InFlight is ignored
-    assert!(
-        results_a >= calls_a,
-        "Target A results should be >= calls"
-    );
-    assert!(
-        results_b >= calls_b,
-        "Target B results should be >= calls"
-    );
+    assert!(results_a >= calls_a, "Target A results should be >= calls");
+    assert!(results_b >= calls_b, "Target B results should be >= calls");
 
     // Verify content of results
     let r_a_success = received
         .iter()
-        .filter(|r| r.result.target == target_a.to_string() && matches!(r.result.status, zzmem_db::types::PingStatus::Success(_)))
+        .filter(|r| {
+            r.result.target == target_a.to_string()
+                && matches!(r.result.status, zzmem_db::types::PingStatus::Success(_))
+        })
         .count();
     assert_eq!(r_a_success, 0, "Target A should have no successful RTTs");
 
     let r_b_success = received
         .iter()
-        .filter(|r| r.result.target == target_b.to_string() && matches!(r.result.status, zzmem_db::types::PingStatus::Success(_)))
+        .filter(|r| {
+            r.result.target == target_b.to_string()
+                && matches!(r.result.status, zzmem_db::types::PingStatus::Success(_))
+        })
         .count();
-    assert!(r_b_success >= calls_b, "Target B should have successful RTT results");
+    assert!(
+        r_b_success >= calls_b,
+        "Target B should have successful RTT results"
+    );
 }
 
 #[actix::test]

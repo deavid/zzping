@@ -81,9 +81,8 @@ impl SystemHarness {
         let _db_intent = intent_builder.router(db_router.clone()).start()?;
 
         let storage = StorageActor::new(StorageConfig::Ephemeral).start();
-        let memdb_builder =
-            MemDBBuilder::new(MemDBConfig::for_database(10000, None))
-                .with_storage_actor(storage.clone());
+        let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
+            .with_storage_actor(storage.clone());
         let db_memdb = memdb_builder.router(db_router.clone()).build();
 
         let cstate_builder = zzcollector_state::CStateBuilder::new(

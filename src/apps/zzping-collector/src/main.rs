@@ -8,10 +8,8 @@ use clap::Parser;
 use std::time::Duration;
 use surge_ping::{Client, ConfigBuilder};
 use tracing_subscriber::EnvFilter;
-use zzmem_db::{
-    builder::MemDBBuilder, config::MemDBConfig, messages::StorePingResult,
-};
-use zznet_api::{maintain_connection, ReconnectConfig};
+use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig, messages::StorePingResult};
+use zznet_api::{ReconnectConfig, maintain_connection};
 use zznet_transport_tcp::TcpTransportClient;
 use zzping_collector::config::CollectorConfig;
 use zzpinger::MockPingerClient;
@@ -63,8 +61,7 @@ async fn main() -> Result<()> {
         config.components.memdb_batch_size,
     ));
     let memdb_addr = memdb_builder.router(router.clone()).build();
-    let memdb_recipient: actix::Recipient<StorePingResult> =
-        memdb_addr.clone().recipient();
+    let memdb_recipient: actix::Recipient<StorePingResult> = memdb_addr.clone().recipient();
 
     let pinger_builder = zzpinger::PingerBuilder {
         clock: None,
@@ -137,4 +134,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

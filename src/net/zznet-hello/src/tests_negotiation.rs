@@ -148,7 +148,10 @@ async fn test_negotiation_intersection() {
     // ═════════════════════════════════════════════════════════════════════════
 
     // 1. Await Result
-    let result: HandshakeComplete = handshake_rx.recv().await.expect("HandshakeComplete was not received");
+    let result: HandshakeComplete = handshake_rx
+        .recv()
+        .await
+        .expect("HandshakeComplete was not received");
 
     // 2. Assert Intersection
     assert_eq!(

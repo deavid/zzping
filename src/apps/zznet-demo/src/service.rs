@@ -47,12 +47,8 @@ impl DemoAppService {
             handshake_timeout: std::time::Duration::from_secs(30),
         };
 
-        let connection_manager = ConnectionManager::new(
-            router.clone().recipient(),
-            hello_config,
-            allowed_roles,
-        )
-        .start();
+        let connection_manager =
+            ConnectionManager::new(router.clone().recipient(), hello_config, allowed_roles).start();
 
         let component_a = ComponentAActor::new().start();
 

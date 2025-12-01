@@ -3,7 +3,7 @@
 //! Defines the file format for the append-only storage log.
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Read, Write, Result, Seek};
+use std::io::{Read, Result, Seek, Write};
 
 /// Magic bytes to identify a `zzstorage` v2 file.
 pub const FILE_MAGIC: &[u8; 4] = b"ZZS2";
