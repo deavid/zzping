@@ -12,8 +12,8 @@ use crate::internal_messages::{
 use crate::messages::{
     ClearBuffer, GetHealth, GetStats, MemDBError, MemDBHealth, StorePingResult, TargetStats,
 };
-use crate::network_messages::PingResult;
 use crate::storage::StorageBackend;
+use crate::types::PingResult;
 use actix::prelude::*;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};

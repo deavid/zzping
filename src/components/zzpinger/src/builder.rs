@@ -3,7 +3,7 @@
 use actix::Recipient;
 use actix::prelude::*;
 use tokio::sync::{mpsc, watch};
-use zzmem_db::StorePingResult;
+use zzmem_db::messages::StorePingResult;
 
 use crate::backend;
 use crate::scheduler::PingerSchedulerActor;

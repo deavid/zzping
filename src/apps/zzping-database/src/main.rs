@@ -5,12 +5,13 @@
 use actix::prelude::*;
 use anyhow::Result;
 use clap::Parser;
+use std::collections::HashSet;
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
-use zzping_database::config::DatabaseConfig;
-use zznet_transport_tcp::TcpTransportServer;
+use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig};
 use zznet_api::{serve_connections, Role};
-use std::collections::HashSet;
+use zznet_transport_tcp::TcpTransportServer;
+use zzping_database::config::DatabaseConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -58,8 +59,7 @@ async fn main() -> Result<()> {
         zzintent_config::IntentConfigBuilder::new().config_for_database(config_path);
     let _intent_addr = intent_builder.router(router_actor.clone()).start()?;
 
-    let memdb_builder =
-        zzmem_db::MemDBBuilder::new(zzmem_db::MemDBConfig::for_database(10000, None));
+    let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None));
     let _memdb_addr = memdb_builder.router(router_actor.clone()).build();
 
     let cstate_builder =

@@ -25,8 +25,9 @@ use zznet_room::RoomActor;
 
 use crate::actor::MemDBActor;
 use crate::events::MemDBEvent;
-use crate::network_messages::{MemDBMessage, PingResult};
+use crate::network_messages::MemDBMessage;
 use crate::permissions::MemDBPermissions;
+use crate::types::PingResult;
 
 /// NetworkActor handles protocol translation for a single peer.
 ///

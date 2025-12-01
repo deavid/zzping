@@ -5,13 +5,16 @@
 use actix::prelude::*;
 use anyhow::Result;
 use clap::Parser;
+use std::time::Duration;
 use surge_ping::{Client, ConfigBuilder};
 use tracing_subscriber::EnvFilter;
+use zzmem_db::{
+    builder::MemDBBuilder, config::MemDBConfig, messages::StorePingResult,
+};
+use zznet_api::{maintain_connection, ReconnectConfig};
+use zznet_transport_tcp::TcpTransportClient;
 use zzping_collector::config::CollectorConfig;
 use zzpinger::MockPingerClient;
-use zznet_transport_tcp::TcpTransportClient;
-use zznet_api::{maintain_connection, ReconnectConfig};
-use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -56,11 +59,11 @@ async fn main() -> Result<()> {
     let intent_builder = zzintent_config::IntentConfigBuilder::new().config_for_collector();
     let _intent_addr = intent_builder.router(router.clone()).start()?;
 
-    let memdb_builder = zzmem_db::MemDBBuilder::new(zzmem_db::MemDBConfig::for_collector(
+    let memdb_builder = MemDBBuilder::new(MemDBConfig::for_collector(
         config.components.memdb_batch_size,
     ));
     let memdb_addr = memdb_builder.router(router.clone()).build();
-    let memdb_recipient: actix::Recipient<zzmem_db::StorePingResult> =
+    let memdb_recipient: actix::Recipient<StorePingResult> =
         memdb_addr.clone().recipient();
 
     let pinger_builder = zzpinger::PingerBuilder {

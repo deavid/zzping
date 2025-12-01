@@ -10,7 +10,7 @@ use std::net::IpAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
-use zzmem_db::StorePingResult;
+use zzmem_db::messages::{MemDBError, StorePingResult};
 
 // --- Mock Infrastructure ---
 
@@ -147,7 +147,7 @@ impl Handler<ClearReceived> for MockMemDB {
 }
 
 impl Handler<StorePingResult> for MockMemDB {
-    type Result = ResponseActFuture<Self, Result<(), zzmem_db::MemDBError>>;
+    type Result = ResponseActFuture<Self, Result<(), MemDBError>>;
 
     fn handle(&mut self, msg: StorePingResult, _ctx: &mut Self::Context) -> Self::Result {
         let blocked = self.blocked.load(Ordering::Relaxed);
@@ -228,10 +228,10 @@ async fn epic_1_clockwork_orange() {
         calls.len()
     );
 
-    // Filter for actual results (rtt_us is Some)
+    // Filter for actual results (Status is Success)
     let results: Vec<_> = received
         .iter()
-        .filter(|r| r.result.rtt_us.is_some())
+        .filter(|r| matches!(r.result.status, zzmem_db::types::PingStatus::Success(_)))
         .collect();
     assert!(
         results.len() >= 18 && results.len() <= 22,
@@ -335,28 +335,28 @@ async fn epic_2_unreliable_narrator() {
         .filter(|r| r.result.target == target_b.to_string())
         .count();
 
-    // We expect 2x results per call
+    // We expect 1x result per call now that InFlight is ignored
     assert!(
-        results_a >= calls_a * 2,
-        "Target A results should be >= 2x calls"
+        results_a >= calls_a,
+        "Target A results should be >= calls"
     );
     assert!(
-        results_b >= calls_b * 2,
-        "Target B results should be >= 2x calls"
+        results_b >= calls_b,
+        "Target B results should be >= calls"
     );
 
     // Verify content of results
-    let r_a_some = received
+    let r_a_success = received
         .iter()
-        .filter(|r| r.result.target == target_a.to_string() && r.result.rtt_us.is_some())
+        .filter(|r| r.result.target == target_a.to_string() && matches!(r.result.status, zzmem_db::types::PingStatus::Success(_)))
         .count();
-    assert_eq!(r_a_some, 0, "Target A should have no RTT");
+    assert_eq!(r_a_success, 0, "Target A should have no successful RTTs");
 
-    let r_b_some = received
+    let r_b_success = received
         .iter()
-        .filter(|r| r.result.target == target_b.to_string() && r.result.rtt_us.is_some())
+        .filter(|r| r.result.target == target_b.to_string() && matches!(r.result.status, zzmem_db::types::PingStatus::Success(_)))
         .count();
-    assert!(r_b_some >= calls_b, "Target B should have RTT results");
+    assert!(r_b_success >= calls_b, "Target B should have successful RTT results");
 }
 
 #[actix::test]
