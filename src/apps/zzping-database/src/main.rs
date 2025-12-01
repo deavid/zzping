@@ -10,6 +10,7 @@ use std::time::Duration;
 use tracing_subscriber::EnvFilter;
 use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig};
 use zznet_api::{serve_connections, Role};
+use zzstorage::actor::{StorageActor, StorageConfig};
 use zznet_transport_tcp::TcpTransportServer;
 use zzping_database::config::DatabaseConfig;
 
@@ -59,7 +60,9 @@ async fn main() -> Result<()> {
         zzintent_config::IntentConfigBuilder::new().config_for_database(config_path);
     let _intent_addr = intent_builder.router(router_actor.clone()).start()?;
 
-    let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None));
+    let storage_actor = StorageActor::new(StorageConfig::FileSystem { path: data_dir.clone() }).start();
+    let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
+        .with_storage_actor(storage_actor.clone());
     let _memdb_addr = memdb_builder.router(router_actor.clone()).build();
 
     let cstate_builder =

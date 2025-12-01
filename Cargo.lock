@@ -2524,6 +2524,7 @@ dependencies = [
  "zznet-router",
  "zznet-transport-tcp",
  "zzpinger",
+ "zzstorage",
 ]
 
 [[package]]
@@ -2554,6 +2555,7 @@ dependencies = [
  "zznet-room",
  "zznet-router",
  "zzpinger",
+ "zzstorage",
 ]
 
 [[package]]

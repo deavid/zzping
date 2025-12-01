@@ -1,6 +1,0 @@
-(
-    collector_uuid: "test-collector-uuid",
-    database_addr: "http://127.0.0.1:50051", // This will be replaced by the test
-    auth_token: "test-token",
-    use_mock_ping_client: true,
-)

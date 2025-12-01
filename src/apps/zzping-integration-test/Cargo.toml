@@ -28,6 +28,7 @@ actix-rt.workspace = true
 zzintent-config.workspace = true
 zzmem-db.workspace = true
 zzcollector-state.workspace = true
+zzstorage = { path = "../../components/zzstorage" }
 
 # Runtime dependencies
 tokio.workspace = true
