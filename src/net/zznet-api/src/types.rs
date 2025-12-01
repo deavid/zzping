@@ -100,7 +100,7 @@ impl From<String> for Role {
 }
 
 /// Unique identifier for a peer
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PeerId(String);
 
 impl PeerId {

@@ -32,6 +32,8 @@ pub struct StorageActor {
     file_handle: Option<File>,
     /// The number of blobs stored in the file.
     blob_count: u64,
+    /// The last timestamp seen for each target.
+    last_timestamps: std::collections::HashMap<String, u64>,
 }
 
 impl StorageActor {
@@ -42,6 +44,7 @@ impl StorageActor {
             ephemeral_blobs: Vec::new(),
             file_handle: None,
             blob_count: 0,
+            last_timestamps: std::collections::HashMap::new(),
         }
     }
 }
@@ -105,6 +108,11 @@ impl Handler<StoreBatch> for StorageActor {
     type Result = Result<()>;
 
     fn handle(&mut self, msg: StoreBatch, _ctx: &mut Self::Context) -> Self::Result {
+        for result in &msg.0 {
+            let entry = self.last_timestamps.entry(result.target.clone()).or_insert(0);
+            *entry = (*entry).max(result.sent_time_ns);
+        }
+
         let compressed_blob = compress_batch(&msg.0)?;
         if compressed_blob.is_empty() {
             return Ok(());
@@ -140,6 +148,13 @@ pub struct GetStoredBlobs;
 #[rtype(result = "Result<u64>")]
 pub struct GetBlobCount;
 
+/// A message to get the last persisted timestamp for a given target.
+#[derive(Message)]
+#[rtype(result = "Result<u64>")]
+pub struct GetLastTimestamp {
+    pub target: String,
+}
+
 impl Handler<GetStoredBlobs> for StorageActor {
     type Result = Result<Vec<Vec<u8>>>;
 
@@ -158,6 +173,14 @@ impl Handler<GetBlobCount> for StorageActor {
 
     fn handle(&mut self, _msg: GetBlobCount, _ctx: &mut Self::Context) -> Self::Result {
         Ok(self.blob_count)
+    }
+}
+
+impl Handler<GetLastTimestamp> for StorageActor {
+    type Result = Result<u64>;
+
+    fn handle(&mut self, msg: GetLastTimestamp, _ctx: &mut Self::Context) -> Self::Result {
+        Ok(*self.last_timestamps.get(&msg.target).unwrap_or(&0))
     }
 }
 

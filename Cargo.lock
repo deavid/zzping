@@ -2313,7 +2313,6 @@ dependencies = [
  "actix",
  "actix-rt",
  "async-trait",
- "env_logger",
  "log",
  "ntest",
  "rmp-serde",
@@ -2323,10 +2322,12 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "tracing-subscriber",
  "zznet-api",
  "zznet-component",
  "zznet-room",
  "zznet-router",
+ "zzstorage",
 ]
 
 [[package]]

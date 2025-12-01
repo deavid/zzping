@@ -72,7 +72,8 @@ pub fn compress_batch(batch: &PingBatch) -> Result<Vec<u8>> {
     }
 
     let mut compressed_blob = Vec::new();
-    for (target, records) in records_by_target {
+    for (target, mut records) in records_by_target {
+        records.sort_by_key(|r| r.sent_time_ns);
         compressed_blob.write_u16::<BigEndian>(target.len() as u16)?;
         compressed_blob.extend(target.as_bytes());
         let target_data = compress_target_data(&records)?;

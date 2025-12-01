@@ -44,3 +44,4 @@ src/apps/*/config/
 # e.g. !/test_certs/ca.pem
 
 lcov.info
+*.zzs2

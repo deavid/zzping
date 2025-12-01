@@ -9,12 +9,14 @@ use crate::{actor::MemDBActor, config::MemDBConfig, permissions::MemDBPermission
 use actix::prelude::*;
 use std::collections::HashMap;
 use zznet_router::RouterActor;
+use zzstorage::actor::StorageActor;
 
 /// A builder for constructing `MemDBActor` instances.
 pub struct MemDBBuilder {
     config: MemDBConfig,
     router_actor: Option<Addr<RouterActor>>,
     permissions_map: HashMap<String, MemDBPermissions>,
+    storage_actor: Option<Addr<StorageActor>>,
 }
 
 impl MemDBBuilder {
@@ -32,6 +34,7 @@ impl MemDBBuilder {
             config,
             router_actor: None,
             permissions_map,
+            storage_actor: None,
         }
     }
 
@@ -55,6 +58,12 @@ impl MemDBBuilder {
         self
     }
 
+    /// (Test only) Inject a pre-built storage actor.
+    pub fn with_storage_actor(mut self, storage_actor: Addr<StorageActor>) -> Self {
+        self.storage_actor = Some(storage_actor);
+        self
+    }
+
     /// Builds and starts the `MemDBActor` along with its NetworkManager.
     ///
     /// This creates the complete three-actor system:
@@ -65,7 +74,10 @@ impl MemDBBuilder {
     /// Returns the address of the MainActor.
     pub fn build(self) -> Addr<MemDBActor> {
         // Instantiate the MainActor so we can clone its event bus before starting it
-        let actor = MemDBActor::new(self.config);
+        let mut actor = MemDBActor::new(self.config);
+        if let Some(storage_actor) = self.storage_actor {
+            actor.set_storage_actor(storage_actor);
+        }
         let event_bus = actor.event_bus();
         let actor_addr = actor.start();
 
