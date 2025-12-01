@@ -18,4 +18,11 @@ pub enum MemDBEvent {
         /// The ping results contained in the batch.
         results: Vec<PingResult>,
     },
+    /// Database sends a handshake to a newly connected Collector.
+    HelloCollector {
+        /// The peer ID of the collector to send this message to.
+        peer_id: zznet_api::PeerId,
+        /// The last timestamp the database has persisted for this collector.
+        last_persisted_ts: u64,
+    },
 }

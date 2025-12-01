@@ -27,6 +27,7 @@
 use crate::network_messages::StoredPingResult;
 use crate::types::PingResult;
 use actix::prelude::*;
+use serde::{Deserialize, Serialize};
 use zznet_api::PeerId;
 
 // ============================================================================
@@ -40,7 +41,7 @@ use zznet_api::PeerId;
 /// Response: BatchAckResponse or error string
 ///
 /// NetworkActor now awaits response and sends directly to room_actor
-#[derive(Message, Debug, Clone)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "Result<BatchAckResponse, String>")]
 pub struct InboundSubmitBatch {
     /// Peer ID of the collector who sent the batch
@@ -83,7 +84,7 @@ pub struct InboundQuery {
 /// This message is still sent by MainActor but goes to NetworkActor
 /// (not through NetworkManager). NetworkActor sends it directly to room_actor.
 /// Stored in MainActor's peer tracking for async broadcast capability.
-#[derive(Message, Debug, Clone)]
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct InboundBatchAck {
     /// Peer ID of the database who sent the ack
@@ -116,3 +117,24 @@ pub struct InboundQueryResponse {
 #[derive(Message, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct CheckOutstandingBatchTimeout;
+
+/// Database is notified of a new collector connection.
+#[derive(Message, Debug, Clone)]
+#[rtype(result = "()")]
+pub struct NewCollector {
+    /// Peer ID of the new collector.
+    pub peer_id: PeerId,
+}
+
+/// Collector receives a handshake from the Database.
+#[derive(Message, Debug, Clone, Serialize, Deserialize)]
+#[rtype(result = "()")]
+pub struct InboundHelloCollector {
+    /// The last timestamp the database has persisted for this collector.
+    pub last_persisted_ts: u64,
+}
+
+/// Internal message to trigger flushing the in-memory buffers to the storage actor.
+#[derive(Message, Debug, Clone)]
+#[rtype(result = "()")]
+pub struct FlushToStorage;

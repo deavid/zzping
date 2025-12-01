@@ -95,7 +95,7 @@ impl MemDBNetworkActor {
         );
 
         self.room_actor.do_send(MemDBMessage::SubmitBatch {
-            sender_peer_id: String::new(),
+            peer_id: self.peer_id.clone(),
             timestamp_ms,
             results,
         });
@@ -121,6 +121,11 @@ impl Actor for MemDBNetworkActor {
             self.peer_id
         );
         ctx.add_stream(stream);
+
+        // Notify the main actor of the new connection, so it can initiate a handshake.
+        self.main_actor.do_send(crate::internal_messages::NewCollector {
+            peer_id: self.peer_id.clone(),
+        });
     }
 
     fn stopped(&mut self, _ctx: &mut Self::Context) {
@@ -150,6 +155,13 @@ impl StreamHandler<Result<MemDBEvent, BroadcastStreamRecvError>> for MemDBNetwor
                     results.len()
                 );
                 self.enqueue_batch(timestamp_ms, results);
+            }
+            Ok(MemDBEvent::HelloCollector { peer_id, last_persisted_ts }) => {
+                if self.peer_id == peer_id {
+                    self.room_actor.do_send(MemDBMessage::HelloCollector {
+                        last_persisted_ts,
+                    });
+                }
             }
             Err(BroadcastStreamRecvError::Lagged(skipped)) => {
                 tracing::warn!(
@@ -186,7 +198,7 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
 
         match msg {
             MemDBMessage::SubmitBatch {
-                sender_peer_id: _,
+                peer_id: _,
                 timestamp_ms,
                 results,
             } => {
@@ -211,6 +223,7 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                                 ack_response.received_count
                             );
                             room_actor.do_send(MemDBMessage::BatchAck {
+                                peer_id: peer_id.clone(),
                                 received_count: ack_response.received_count,
                                 timestamp_ms: ack_response.timestamp_ms,
                             });
@@ -231,7 +244,7 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                 Box::pin(fut)
             }
             MemDBMessage::Query {
-                sender_peer_id: _,
+                peer_id: _,
                 target,
                 from_ms,
                 to_ms,
@@ -247,7 +260,7 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                     match main_actor.send(request).await {
                         Ok(Ok(results)) => {
                             tracing::debug!("Query returned {} results", results.len());
-                            room_actor.do_send(MemDBMessage::QueryResponse { results });
+                            room_actor.do_send(MemDBMessage::QueryResponse { peer_id: peer_id.clone(), results });
                         }
                         Ok(Err(e)) => {
                             tracing::warn!("Query rejected: {}", e);
@@ -260,6 +273,7 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                 Box::pin(fut)
             }
             MemDBMessage::BatchAck {
+                peer_id: _,
                 received_count,
                 timestamp_ms,
             } => {
@@ -272,13 +286,19 @@ impl Handler<MemDBMessage> for MemDBNetworkActor {
                     });
                 Box::pin(async {})
             }
-            MemDBMessage::QueryResponse { results } => {
+            MemDBMessage::QueryResponse { peer_id: _, results } => {
                 // Unsolicited response from database
                 self.main_actor
                     .do_send(crate::internal_messages::InboundQueryResponse {
                         peer_id: peer_id.clone(),
                         results,
                     });
+                Box::pin(async {})
+            }
+            MemDBMessage::HelloCollector { last_persisted_ts } => {
+                self.main_actor.do_send(crate::internal_messages::InboundHelloCollector {
+                    last_persisted_ts,
+                });
                 Box::pin(async {})
             }
         }

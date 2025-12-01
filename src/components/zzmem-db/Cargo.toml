@@ -30,8 +30,9 @@ zznet-api.workspace = true
 zznet-component.workspace = true
 zznet-room.workspace = true
 zznet-router.workspace = true
+zzstorage = { path = "../zzstorage" }
 
 [dev-dependencies]
 ntest.workspace = true
 actix-rt.workspace = true
-env_logger.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
