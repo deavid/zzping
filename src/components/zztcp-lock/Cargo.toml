@@ -4,12 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-actix = "0.13"
-tokio = { version = "1", features = ["net", "sync", "rt", "macros", "time"] }
-tracing = "0.1"
-thiserror = "1.0"
-anyhow = "1.0"
-log = "0.4"
+actix.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+log.workspace = true
 
 [lints]
 workspace = true

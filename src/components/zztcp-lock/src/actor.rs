@@ -1,3 +1,9 @@
+//! This module implements the `TcpLockActor` for TCP-based locking.
+//!
+//! The actor attempts to bind to a specified TCP address. If successful, it holds the
+//! listener open, signifying that the lock is acquired. It notifies a recipient
+//! about the lock status changes.
+
 use crate::messages::UpdateLockStatus;
 use actix::prelude::*;
 use std::time::Duration;
@@ -79,10 +85,13 @@ impl Actor for TcpLockActor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        info!("TcpLockActor started. Attempting to lock {}", self.bind_addr);
+        info!(
+            "TcpLockActor started. Attempting to lock {}",
+            self.bind_addr
+        );
         if self.last_reported_locked_status.is_none() {
-             self.recipient.do_send(UpdateLockStatus { locked: false });
-             self.last_reported_locked_status = Some(false);
+            self.recipient.do_send(UpdateLockStatus { locked: false });
+            self.last_reported_locked_status = Some(false);
         }
         self.heartbeat(ctx);
     }

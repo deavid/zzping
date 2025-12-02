@@ -15,8 +15,8 @@ use zzmem_db::{
     messages::{GetHealth, MemDBHealth},
 };
 use zznet_api::{
-    create_controlled_pair, maintain_connection, serve_connections, EstablishedConnection,
-    KillSwitch, MockClient, ReconnectConfig, TransportServer,
+    EstablishedConnection, KillSwitch, MockClient, ReconnectConfig, TransportServer,
+    create_controlled_pair, maintain_connection, serve_connections,
 };
 use zzpinger::PingerBuilder;
 use zzpinger::SpawnStrategy;
@@ -97,7 +97,8 @@ impl SystemHarness {
         let db_memdb = db_memdb_builder.router(db_router.clone()).build();
 
         // Collector-side Intent
-        let coll_intent_builder = zzintent_config::IntentConfigBuilder::new().config_for_collector();
+        let coll_intent_builder =
+            zzintent_config::IntentConfigBuilder::new().config_for_collector();
         let _coll_intent = coll_intent_builder.router(coll_router.clone()).start()?;
 
         // Collector-side MemDB
@@ -114,10 +115,7 @@ impl SystemHarness {
             clock: Some(clock.clone()),
             spawn_strategy: SpawnStrategy::Current,
         };
-        let scheduler = pinger_builder.start(
-            mock_ping_client,
-            coll_memdb.clone().recipient(),
-        );
+        let scheduler = pinger_builder.start(mock_ping_client, coll_memdb.clone().recipient());
         // --- End Pinger wiring ---
 
         // --- Collector State and Lock (Optional) ---
@@ -126,8 +124,7 @@ impl SystemHarness {
             let cstate_addr = CStateActor::new(cstate_config).start();
 
             let lock_bind_addr = format!("127.0.0.1:{}", port);
-            let lock_actor =
-                TcpLockActor::new(cstate_addr.clone().recipient(), lock_bind_addr);
+            let lock_actor = TcpLockActor::new(cstate_addr.clone().recipient(), lock_bind_addr);
             lock_actor.start();
 
             cstate_addr.do_send(SetPinger {
@@ -201,7 +198,6 @@ impl SystemHarness {
 
         tokio::time::sleep(std::time::Duration::from_millis(1)).await;
 
-
         Ok(Self {
             mock_client,
             server_sender: server_tx,
@@ -250,10 +246,10 @@ impl SystemHarness {
         let mut attempts = 0u32;
         loop {
             let res = self.coll_memdb.send(GetHealth).await;
-            if let Ok(Ok(health)) = res {
-                if health.buffer_size >= count as usize {
-                    return Ok(());
-                }
+            if let Ok(Ok(health)) = res
+                && health.buffer_size >= count as usize
+            {
+                return Ok(());
             }
             attempts += 1;
             if attempts > 10_000 {
@@ -287,10 +283,10 @@ impl SystemHarness {
         let _start = Instant::now();
         loop {
             let res = self.db_memdb.send(GetHealth).await;
-            if let Ok(Ok(health)) = res {
-                if health.total_results >= count {
-                    return Ok(());
-                }
+            if let Ok(Ok(health)) = res
+                && health.total_results >= count
+            {
+                return Ok(());
             }
 
             attempts += 1;

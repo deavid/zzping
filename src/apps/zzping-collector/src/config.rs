@@ -108,7 +108,7 @@ impl CollectorConfig {
             tls: None, // TCP-only
             components: ComponentConfig::fast_timing(),
             reconnect_delay_ms: 100, // Fast reconnect for testing
-            lock_port: 12345, // Use a non-default port for tests
+            lock_port: 12345,        // Use a non-default port for tests
         }
     }
 }

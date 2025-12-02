@@ -18,8 +18,8 @@ use crate::{
         InboundRegistrationRejected, InboundUnauthorized,
     },
     messages::{
-        CStateError, CStateHealth, ForceHeartbeat, GetCollectorState, GetHealth,
-        UpdateHealthMetrics, SetPinger,
+        CStateError, CStateHealth, ForceHeartbeat, GetCollectorState, GetHealth, SetPinger,
+        UpdateHealthMetrics,
     },
     state::{CollectorStateData, DatabaseStateData, TrackedCollector},
 };
@@ -380,12 +380,12 @@ impl Handler<UpdateLockStatus> for CStateActor {
     type Result = ();
 
     fn handle(&mut self, msg: UpdateLockStatus, _ctx: &mut Context<Self>) {
-        if let Some(state) = &mut self.collector_state {
-            if state.has_local_lock != msg.locked {
-                debug!("Lock status updated to: {}", msg.locked);
-                state.has_local_lock = msg.locked;
-                self.evaluate_mastership();
-            }
+        if let Some(state) = &mut self.collector_state
+            && state.has_local_lock != msg.locked
+        {
+            debug!("Lock status updated to: {}", msg.locked);
+            state.has_local_lock = msg.locked;
+            self.evaluate_mastership();
         }
     }
 }

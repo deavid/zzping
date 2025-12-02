@@ -19,7 +19,9 @@ async fn choreography_full() -> Result<()> {
     info!("Starting choreography test (full)");
 
     // Create the harness (actors will use Arbiter::current())
-    let mut harness = SystemHarness::new(Default::default()).await.expect("harness start");
+    let mut harness = SystemHarness::new(Default::default())
+        .await
+        .expect("harness start");
 
     // Act I - Obedience: configure pinger and verify pings flow into collector MemDB
     let target1: IpAddr = "192.168.2.1".parse().unwrap();

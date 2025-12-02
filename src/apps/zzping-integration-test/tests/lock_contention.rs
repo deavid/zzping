@@ -12,7 +12,9 @@ use zzping_integration_test::harness::{HarnessConfig, SystemHarness};
 #[ctor::ctor]
 fn init() {
     tracing_subscriber::fmt()
-        .with_env_filter("info,zzping_integration_test=debug,zztcp_lock=debug,zzcollector_state=debug")
+        .with_env_filter(
+            "info,zzping_integration_test=debug,zztcp_lock=debug,zzcollector_state=debug",
+        )
         .with_target(true)
         .with_thread_ids(true)
         .with_line_number(true)
@@ -28,7 +30,10 @@ async fn test_lock_contention_highlander_rule() {
     // 1. Setup Lock: Manually bind the lock port to simulate "Process A"
     let lock_port = 9000;
     let bind_addr = format!("127.0.0.1:{}", lock_port);
-    info!("Manually binding TCP listener to {} to simulate an existing process.", bind_addr);
+    info!(
+        "Manually binding TCP listener to {} to simulate an existing process.",
+        bind_addr
+    );
     let _process_a_lock = TcpListener::bind(&bind_addr).expect("Failed to bind manual TCP lock");
 
     // 2. Start Harness: "Process B" starts up and tries to get the same lock
@@ -37,7 +42,9 @@ async fn test_lock_contention_highlander_rule() {
         lock_port: Some(lock_port),
         collector_id: "process-b".to_string(),
     };
-    let harness = SystemHarness::new(harness_config).await.expect("Failed to create SystemHarness");
+    let harness = SystemHarness::new(harness_config)
+        .await
+        .expect("Failed to create SystemHarness");
 
     // 3. Configure Intent: Give the pinger a task.
     let target: IpAddr = "8.8.8.8".parse().unwrap();
@@ -48,7 +55,10 @@ async fn test_lock_contention_highlander_rule() {
 
     // 4. Expectation: Pinger should NOT have generated data
     let health = harness.collector_health().await.unwrap();
-    assert_eq!(health.buffer_size, 0, "Pinger should NOT have stored any pings while the lock was held by another process.");
+    assert_eq!(
+        health.buffer_size, 0,
+        "Pinger should NOT have stored any pings while the lock was held by another process."
+    );
     info!("Verified: Pinger is correctly disabled while lock is contended.");
 
     // 5. Transition: Drop the manual listener
@@ -58,7 +68,10 @@ async fn test_lock_contention_highlander_rule() {
     // 6. Advance time & Verify
     info!("Advancing time to allow Process B to acquire the lock and start pinging.");
     // Wait for pings. This helper advances time internally, so we don't need a separate advance call.
-    harness.wait_for_pings(1).await.expect("Pinger should have generated results after acquiring lock.");
+    harness
+        .wait_for_pings(1)
+        .await
+        .expect("Pinger should have generated results after acquiring lock.");
 
     info!("Verified: Pinger started generating data after acquiring the lock. Test passed.");
 }

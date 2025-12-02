@@ -10,7 +10,7 @@ use surge_ping::{Client, ConfigBuilder};
 use tracing_subscriber::EnvFilter;
 use zzcollector_state::{CStateActor, CStateConfig, SetPinger};
 use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig, messages::StorePingResult};
-use zznet_api::{maintain_connection, ReconnectConfig};
+use zznet_api::{ReconnectConfig, maintain_connection};
 use zznet_transport_tcp::TcpTransportClient;
 use zzping_collector::config::CollectorConfig;
 use zzpinger::MockPingerClient;
