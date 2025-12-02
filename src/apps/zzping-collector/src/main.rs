@@ -8,11 +8,13 @@ use clap::Parser;
 use std::time::Duration;
 use surge_ping::{Client, ConfigBuilder};
 use tracing_subscriber::EnvFilter;
+use zzcollector_state::{CStateActor, CStateConfig, SetPinger};
 use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig, messages::StorePingResult};
-use zznet_api::{ReconnectConfig, maintain_connection};
+use zznet_api::{maintain_connection, ReconnectConfig};
 use zznet_transport_tcp::TcpTransportClient;
 use zzping_collector::config::CollectorConfig;
 use zzpinger::MockPingerClient;
+use zztcp_lock::actor::TcpLockActor;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -52,22 +54,37 @@ async fn main() -> Result<()> {
     let config_content = std::fs::read_to_string(config_path)?;
     let config: CollectorConfig = ron::from_str(&config_content)?;
 
+    // =======================================================================
+    // Actor Initialization
+    // =======================================================================
+
+    // 1. CState Actor (The Brain)
+    let cstate_config = CStateConfig::for_collector(
+        config.collector_id.clone(),
+        config.components.heartbeat_interval_ms,
+    );
+    let cstate_addr = CStateActor::new(cstate_config).start();
+
+    // 2. Router
     let router = zznet_router::RouterActor::new(vec![]).start();
 
+    // 3. Intent Configuration
     let intent_builder = zzintent_config::IntentConfigBuilder::new().config_for_collector();
     let _intent_addr = intent_builder.router(router.clone()).start()?;
 
+    // 4. In-Memory Database
     let memdb_builder = MemDBBuilder::new(MemDBConfig::for_collector(
         config.components.memdb_batch_size,
     ));
     let memdb_addr = memdb_builder.router(router.clone()).build();
     let memdb_recipient: actix::Recipient<StorePingResult> = memdb_addr.clone().recipient();
 
+    // 5. Pinger
     let pinger_builder = zzpinger::PingerBuilder {
         clock: None,
         spawn_strategy: zzpinger::SpawnStrategy::NewArbiter,
     };
-    let _pinger_addr = match config.components.pinger_backend {
+    let pinger_addr = match config.components.pinger_backend {
         zzping_collector::config::PingerBackend::Real => {
             let ping_config = ConfigBuilder::default().build();
             tracing::info!("Creating surge_ping client...");
@@ -81,6 +98,20 @@ async fn main() -> Result<()> {
             pinger_builder.start(client, memdb_recipient.clone())
         }
     };
+
+    // --- Wire Pinger into CState for control ---
+    cstate_addr.do_send(SetPinger {
+        pinger: pinger_addr.recipient(),
+    });
+
+    // 6. TCP Lock Actor
+    let lock_bind_addr = format!("127.0.0.1:{}", config.lock_port);
+    let lock_actor = TcpLockActor::new(cstate_addr.clone().recipient(), lock_bind_addr);
+    lock_actor.start();
+
+    // =======================================================================
+    // Network Initialization
+    // =======================================================================
 
     let tls_cfg = if let Some(tls) = &config.tls {
         tracing::info!("TLS enabled - using mTLS connection");

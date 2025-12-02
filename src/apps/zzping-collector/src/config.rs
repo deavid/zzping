@@ -23,6 +23,14 @@ pub struct CollectorConfig {
     /// Delay in milliseconds between reconnection attempts (default: 5000ms)
     #[serde(default = "default_reconnect_delay_ms")]
     pub reconnect_delay_ms: u64,
+
+    /// TCP port to bind for the local mastership lock (default: 7879)
+    #[serde(default = "default_lock_port")]
+    pub lock_port: u16,
+}
+
+fn default_lock_port() -> u16 {
+    7879
 }
 
 fn default_reconnect_delay_ms() -> u64 {
@@ -100,6 +108,7 @@ impl CollectorConfig {
             tls: None, // TCP-only
             components: ComponentConfig::fast_timing(),
             reconnect_delay_ms: 100, // Fast reconnect for testing
+            lock_port: 12345, // Use a non-default port for tests
         }
     }
 }

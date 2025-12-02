@@ -1,8 +1,17 @@
-//! Defines the internal messages used by the `CStateActor`.
+//! Defines the public messages exposed by the `zzcollector-state` component.
 
 use crate::state::CollectorStateData;
-use actix::Message;
+use actix::{Message, Recipient};
 use thiserror::Error;
+use zzpinger::UpdateCState;
+
+/// Command to provide the Pinger actor's address to CState.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct SetPinger {
+    /// The recipient address of the pinger actor.
+    pub pinger: Recipient<UpdateCState>,
+}
 
 /// A comprehensive error type for the `zzcollector-state` component.
 #[derive(Error, Debug)]
