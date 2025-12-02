@@ -5,12 +5,22 @@ use actix::{Message, Recipient};
 use thiserror::Error;
 use zzpinger::UpdateCState;
 
+use zztcp_lock::messages::SetLockDesired;
+
 /// Command to provide the Pinger actor's address to CState.
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct SetPinger {
     /// The recipient address of the pinger actor.
     pub pinger: Recipient<UpdateCState>,
+}
+
+/// Command to provide the TcpLock actor's address to CState.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct SetTcpLock {
+    /// The recipient address of the tcp_lock actor.
+    pub tcp_lock: Recipient<SetLockDesired>,
 }
 
 /// A comprehensive error type for the `zzcollector-state` component.

@@ -5,7 +5,7 @@ mod builder;
 mod config;
 mod events;
 mod internal_messages;
-mod messages;
+pub mod messages;
 mod network_actor;
 mod network_messages;
 mod permissions;
