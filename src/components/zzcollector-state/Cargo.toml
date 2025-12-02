@@ -26,6 +26,8 @@ zznet-api = { workspace = true }
 zznet-component = { workspace = true }
 zznet-room = { workspace = true }
 zznet-router = { workspace = true }
+zzpinger = { path = "../zzpinger" }
+zztcp-lock = { path = "../zztcp-lock" }
 
 [dev-dependencies]
 ntest = { workspace = true }

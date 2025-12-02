@@ -19,7 +19,7 @@ use crate::{
     },
     messages::{
         CStateError, CStateHealth, ForceHeartbeat, GetCollectorState, GetHealth,
-        UpdateHealthMetrics,
+        UpdateHealthMetrics, SetPinger,
     },
     state::{CollectorStateData, DatabaseStateData, TrackedCollector},
 };
@@ -33,6 +33,8 @@ use std::{
     time::Duration,
 };
 use tokio_stream::wrappers::IntervalStream;
+use zzpinger::UpdateCState;
+use zztcp_lock::messages::UpdateLockStatus;
 
 /// The main actor for the `zzcollector-state` component.
 ///
@@ -64,6 +66,12 @@ pub struct CStateActor {
 
     /// Event bus for broadcasting heartbeat events to all NetworkActors
     event_tx: tokio::sync::broadcast::Sender<CStateEvent>,
+
+    /// Recipient for sending control messages to the Pinger actor.
+    pinger: Option<Recipient<UpdateCState>>,
+
+    /// Tracks the last known state of the pinger.
+    pinger_is_active: bool,
 }
 
 impl CStateActor {
@@ -81,6 +89,8 @@ impl CStateActor {
             heartbeats_acked: Arc::new(AtomicU64::new(0)),
             heartbeats_failed: Arc::new(AtomicU64::new(0)),
             event_tx,
+            pinger: None,
+            pinger_is_active: false,
         };
         if let Some(collector_id) = &actor.config.collector_id {
             actor.collector_state = Some(CollectorStateData::new(collector_id.clone()));
@@ -130,6 +140,30 @@ impl CStateActor {
         }
         Ok(())
     }
+
+    /// Evaluates the mastership status and enables/disables the pinger accordingly.
+    /// This is the critical logic that combines local lock and database authorization.
+    fn evaluate_mastership(&mut self) {
+        if let Some(state) = &self.collector_state {
+            let should_be_active = state.has_local_lock && state.database_authorized;
+
+            if self.pinger_is_active != should_be_active {
+                info!(
+                    "Mastership status changed. Pinger active: {} -> {}",
+                    self.pinger_is_active, should_be_active
+                );
+                self.pinger_is_active = should_be_active;
+
+                if let Some(pinger) = &self.pinger {
+                    pinger.do_send(UpdateCState {
+                        enable: should_be_active,
+                    });
+                } else {
+                    warn!("Cannot update pinger state: Pinger recipient not set.");
+                }
+            }
+        }
+    }
 }
 
 impl Actor for CStateActor {
@@ -137,6 +171,9 @@ impl Actor for CStateActor {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("CStateActor started");
+
+        // Initial evaluation of mastership
+        self.evaluate_mastership();
 
         if let Some(heartbeat_interval_ms) = self
             .config
@@ -338,6 +375,31 @@ impl Handler<InboundUnauthorized> for CStateActor {
 // ============================================================================
 // Message Handlers
 // ============================================================================
+
+impl Handler<UpdateLockStatus> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: UpdateLockStatus, _ctx: &mut Context<Self>) {
+        if let Some(state) = &mut self.collector_state {
+            if state.has_local_lock != msg.locked {
+                debug!("Lock status updated to: {}", msg.locked);
+                state.has_local_lock = msg.locked;
+                self.evaluate_mastership();
+            }
+        }
+    }
+}
+
+impl Handler<SetPinger> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: SetPinger, _ctx: &mut Context<Self>) {
+        info!("Pinger recipient has been set.");
+        self.pinger = Some(msg.pinger);
+        // Re-evaluate mastership now that we have a pinger to control
+        self.evaluate_mastership();
+    }
+}
 
 impl Handler<crate::messages::CleanupStaleCollectors> for CStateActor {
     type Result = ();

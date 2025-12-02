@@ -24,6 +24,10 @@ pub struct CollectorStateData {
     pub last_heartbeat_sent_ms: u64,
     /// The timestamp of the last heartbeat acknowledgment received from the database.
     pub last_heartbeat_ack_ms: u64,
+    /// True if the collector physically holds the TCP port lock on the host machine.
+    pub has_local_lock: bool,
+    /// True if the database has authorized this collector to be the master.
+    pub database_authorized: bool,
 }
 
 impl CollectorStateData {
@@ -39,6 +43,8 @@ impl CollectorStateData {
             last_config_update_ms: 0,
             last_heartbeat_sent_ms: 0,
             last_heartbeat_ack_ms: 0,
+            has_local_lock: false,
+            database_authorized: true, // Default to true as per directive
         }
     }
 }

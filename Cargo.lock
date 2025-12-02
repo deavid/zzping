@@ -445,6 +445,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
 
 [[package]]
+name = "ctor"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32a2785755761f3ddc1492979ce1e48d2c00d09311c39e4466429188f3dd6501"
+dependencies = [
+ "quote",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2281,6 +2291,8 @@ dependencies = [
  "zznet-component",
  "zznet-room",
  "zznet-router",
+ "zzpinger",
+ "zztcp-lock",
 ]
 
 [[package]]
@@ -2537,6 +2549,7 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
+ "ctor",
  "ron",
  "rustls",
  "rustls-pemfile",
@@ -2556,6 +2569,7 @@ dependencies = [
  "zznet-router",
  "zzpinger",
  "zzstorage",
+ "zztcp-lock",
 ]
 
 [[package]]
@@ -2587,4 +2601,16 @@ dependencies = [
  "constriction",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "zztcp-lock"
+version = "0.1.0"
+dependencies = [
+ "actix",
+ "anyhow",
+ "log",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
 ]
