@@ -1,6 +1,7 @@
+//! Messages for the `zztcp-lock` component.
 use actix::prelude::*;
 
-/// Notification sent to CState when the lock status changes.
+/// Notification sent to `CState` when the lock status changes.
 #[derive(Message, Debug, Clone, PartialEq)]
 #[rtype(result = "()")]
 pub struct UpdateLockStatus {

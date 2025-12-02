@@ -12,6 +12,7 @@ zzintent-config.workspace = true
 zzpinger.workspace = true
 zzmem-db.workspace = true
 zzcollector-state.workspace = true
+zztcp-lock = { path = "../../components/zztcp-lock" }
 
 # Network layer dependencies
 zznet-api.workspace = true

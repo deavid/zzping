@@ -57,6 +57,7 @@ impl TransportServer for ControlledServer {
 pub struct HarnessConfig {
     /// If Some, enables the CState/TcpLock actors and binds to the given port.
     pub lock_port: Option<u16>,
+    /// The collector ID to use when instantiating the `CStateActor`.
     pub collector_id: String,
 }
 

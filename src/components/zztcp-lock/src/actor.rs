@@ -4,15 +4,29 @@ use std::time::Duration;
 use tokio::net::TcpListener;
 use tracing::info;
 
+/// An actor that attempts to acquire and hold a TCP port lock.
+///
+/// This actor periodically tries to bind to a configured TCP address.
+/// If it succeeds, it holds the `TcpListener` open, effectively holding the lock.
+/// If it fails (e.g., address in use), it continues to retry.
+///
+/// It sends `UpdateLockStatus` messages to a recipient whenever the lock status
+/// changes (acquired or lost).
 pub struct TcpLockActor {
     recipient: Recipient<UpdateLockStatus>,
     bind_addr: String,
     listener: Option<TcpListener>,
     last_reported_locked_status: Option<bool>,
-    bind_in_progress: bool, // Flag to prevent concurrent bind attempts
+    bind_in_progress: bool,
 }
 
 impl TcpLockActor {
+    /// Creates a new `TcpLockActor`.
+    ///
+    /// # Arguments
+    ///
+    /// * `recipient` - The recipient to notify of lock status changes.
+    /// * `bind_addr` - The TCP address to bind to (e.g., "127.0.0.1:7879").
     pub fn new(recipient: Recipient<UpdateLockStatus>, bind_addr: String) -> Self {
         Self {
             recipient,
@@ -25,7 +39,6 @@ impl TcpLockActor {
 
     fn heartbeat(&mut self, ctx: &mut Context<Self>) {
         ctx.run_interval(Duration::from_secs(1), |act, ctx| {
-            // Only attempt to bind if we don't have the lock AND a bind is not already in progress.
             if act.listener.is_none() && !act.bind_in_progress {
                 act.bind_in_progress = true;
                 let bind_addr = act.bind_addr.clone();
@@ -33,7 +46,6 @@ impl TcpLockActor {
                 let fut = async move { TcpListener::bind(&bind_addr).await };
 
                 let fut = fut.into_actor(act).map(|result, act, _ctx| {
-                    // Reset the flag once the operation is complete.
                     act.bind_in_progress = false;
 
                     match result {
@@ -68,7 +80,6 @@ impl Actor for TcpLockActor {
 
     fn started(&mut self, ctx: &mut Self::Context) {
         info!("TcpLockActor started. Attempting to lock {}", self.bind_addr);
-        // On startup, we don't have the lock. Report this immediately.
         if self.last_reported_locked_status.is_none() {
              self.recipient.do_send(UpdateLockStatus { locked: false });
              self.last_reported_locked_status = Some(false);

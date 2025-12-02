@@ -8,11 +8,7 @@ use clap::Parser;
 use std::time::Duration;
 use surge_ping::{Client, ConfigBuilder};
 use tracing_subscriber::EnvFilter;
-use zzcollector_state::{
-    actor::CStateActor,
-    config::CStateConfig,
-    messages::SetPinger,
-};
+use zzcollector_state::{CStateActor, CStateConfig, SetPinger};
 use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig, messages::StorePingResult};
 use zznet_api::{maintain_connection, ReconnectConfig};
 use zznet_transport_tcp::TcpTransportClient;
@@ -63,13 +59,10 @@ async fn main() -> Result<()> {
     // =======================================================================
 
     // 1. CState Actor (The Brain)
-    let cstate_config = CStateConfig {
-        collector_id: Some(config.collector_id.clone()),
-        heartbeat_interval_ms: config.components.heartbeat_interval_ms,
-        track_collectors: false, // A collector does not track other collectors
-        stale_timeout_ms: 0,     // Not applicable for collector role
-        max_collectors: None,    // Not applicable for collector role
-    };
+    let cstate_config = CStateConfig::for_collector(
+        config.collector_id.clone(),
+        config.components.heartbeat_interval_ms,
+    );
     let cstate_addr = CStateActor::new(cstate_config).start();
 
     // 2. Router
