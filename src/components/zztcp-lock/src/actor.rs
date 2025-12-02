@@ -1,88 +1,130 @@
 //! This module implements the `TcpLockActor` for TCP-based locking.
 //!
-//! The actor attempts to bind to a specified TCP address. If successful, it holds the
-//! listener open, signifying that the lock is acquired. It notifies a recipient
-//! about the lock status changes.
+//! The actor uses a configurable backend (TCP socket or in-memory) to acquire a lock.
+//! Lock acquisition is attempted periodically via the `CheckLock` message.
+//! Tests can manually send `CheckLock` messages to force immediate retry without
+//! waiting for timers, enabling deterministic testing in `tokio::time::pause()` mode.
 
-use crate::messages::{SetLockDesired, UpdateLockStatus};
+use crate::backend::LockBackend;
+use crate::config::TcpLockConfig;
+use crate::messages::{CheckLock, SetLockDesired, UpdateLockStatus};
 use actix::prelude::*;
 use std::time::Duration;
-use tokio::net::TcpListener;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
-/// An actor that attempts to acquire and hold a TCP port lock.
+/// An actor that attempts to acquire and hold a lock using configurable backends.
 ///
-/// This actor periodically tries to bind to a configured TCP address.
-/// If it succeeds, it holds the `TcpListener` open, effectively holding the lock.
-/// If it fails (e.g., address in use), it continues to retry.
+/// This actor can use either:
+/// - **Real TCP Socket (Production):** Binds to a configured TCP address.
+/// - **In-Memory Registry (Testing):** Uses a thread-safe atomic set.
 ///
-/// It sends `UpdateLockStatus` messages to a recipient whenever the lock status
-/// changes (acquired or lost).
+/// The actor periodically attempts to acquire the lock by sending itself a `CheckLock`
+/// message. This design allows tests to manually send `CheckLock` messages in a
+/// `tokio::time::pause()` environment, ensuring deterministic behavior.
+///
+/// Lock status changes are reported to a recipient via `UpdateLockStatus` messages.
 pub struct TcpLockActor {
     recipient: Recipient<UpdateLockStatus>,
-    bind_addr: String,
-    listener: Option<TcpListener>,
+    config: TcpLockConfig,
+    backend: Option<LockBackend>,
     last_reported_locked_status: Option<bool>,
-    bind_in_progress: bool,
     /// Whether the actor should be attempting to hold the lock.
     desired: bool,
 }
 
 impl TcpLockActor {
-    /// Creates a new `TcpLockActor`.
+    /// Creates a new `TcpLockActor` with the given configuration.
     ///
     /// # Arguments
     ///
     /// * `recipient` - The recipient to notify of lock status changes.
-    /// * `bind_addr` - The TCP address to bind to (e.g., "127.0.0.1:7879").
-    pub fn new(recipient: Recipient<UpdateLockStatus>, bind_addr: String) -> Self {
+    /// * `config` - The lock configuration (strategy and retry interval).
+    pub fn new(recipient: Recipient<UpdateLockStatus>, config: TcpLockConfig) -> Self {
         Self {
             recipient,
-            bind_addr,
-            listener: None,
+            config,
+            backend: None,
             last_reported_locked_status: None,
-            bind_in_progress: false,
             desired: true, // By default, we desire the lock.
         }
     }
 
-    fn heartbeat(&mut self, ctx: &mut Context<Self>) {
-        ctx.run_interval(Duration::from_secs(1), |act, ctx| {
-            // Only attempt to bind if we are supposed to, don't have the lock, and are not already trying.
-            if act.desired && act.listener.is_none() && !act.bind_in_progress {
-                act.bind_in_progress = true;
-                let bind_addr = act.bind_addr.clone();
+    /// Log the current lock strategy for debugging purposes.
+    fn log_strategy(&self) {
+        match &self.config.strategy {
+            crate::config::LockStrategy::Tcp(addr) => {
+                info!("Using TCP lock strategy on {}", addr);
+            }
+            crate::config::LockStrategy::Memory(id) => {
+                info!("Using Memory lock strategy with ID: {}", id);
+            }
+        }
+    }
 
-                let fut = async move { TcpListener::bind(&bind_addr).await };
+    /// Schedule the next `CheckLock` message.
+    /// In production, this fires after retry_interval_ms.
+    /// In tests with `tokio::time::pause()`, advancing time triggers this.
+    fn schedule_next_check(&self, ctx: &mut Context<Self>) {
+        let retry_interval = Duration::from_millis(self.config.retry_interval_ms);
+        ctx.run_later(retry_interval, |_act, ctx| {
+            // Send CheckLock to trigger the next acquisition attempt.
+            ctx.address().do_send(CheckLock);
+        });
+    }
 
-                let fut = fut.into_actor(act).map(|result, act, _ctx| {
-                    act.bind_in_progress = false;
+    /// Attempt to acquire the lock and report status changes.
+    fn process_lock_check(&mut self, ctx: &mut Context<Self>) {
+        if self.desired && self.backend.is_none() {
+            // We want the lock and don't have it. Try to acquire.
+            let config = self.config.clone();
 
+            let fut = async move { LockBackend::try_acquire(&config.strategy).await }
+                .into_actor(self)
+                .map(|result, act, ctx| {
                     match result {
-                        Ok(listener) => {
-                            act.listener = Some(listener);
+                        Ok(backend) => {
+                            act.backend = Some(backend);
                             let new_status = true;
                             if act.last_reported_locked_status != Some(new_status) {
-                                info!("TCP lock acquired on {}", act.bind_addr);
-                                act.recipient.do_send(UpdateLockStatus { locked: new_status });
+                                info!(
+                                    "Lock acquired using {:?}",
+                                    match &act.config.strategy {
+                                        crate::config::LockStrategy::Tcp(addr) =>
+                                            format!("TCP ({})", addr),
+                                        crate::config::LockStrategy::Memory(id) =>
+                                            format!("Memory ({})", id),
+                                    }
+                                );
+                                act.recipient
+                                    .do_send(UpdateLockStatus { locked: new_status });
                                 act.last_reported_locked_status = Some(new_status);
                             }
+                            act.schedule_next_check(ctx);
                         }
-                        Err(_e) => {
-                            // This is an expected failure if another process holds the lock.
-                            act.listener = None;
+                        Err(e) => {
+                            // Lock acquisition failed (expected if another holder exists).
+                            debug!("Lock acquisition failed: {}", e);
+                            act.backend = None;
                             let new_status = false;
                             if act.last_reported_locked_status != Some(new_status) {
-                                info!("Could not acquire TCP lock on {}. It may be held by another process.", act.bind_addr);
-                                act.recipient.do_send(UpdateLockStatus { locked: new_status });
+                                info!("Could not acquire lock: {}", e);
+                                act.recipient
+                                    .do_send(UpdateLockStatus { locked: new_status });
                                 act.last_reported_locked_status = Some(new_status);
                             }
+                            act.schedule_next_check(ctx);
                         }
                     }
                 });
-                ctx.wait(fut);
-            }
-        });
+            ctx.wait(fut);
+        } else if !self.desired {
+            // We don't want the lock anymore. Just schedule the next check in case
+            // we want it again later.
+            self.schedule_next_check(ctx);
+        } else {
+            // We already have the lock. Just schedule the next check.
+            self.schedule_next_check(ctx);
+        }
     }
 }
 
@@ -90,29 +132,35 @@ impl Actor for TcpLockActor {
     type Context = Context<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        info!(
-            "TcpLockActor started. Attempting to lock {}",
-            self.bind_addr
-        );
+        self.log_strategy();
         if self.last_reported_locked_status.is_none() {
             self.recipient.do_send(UpdateLockStatus { locked: false });
             self.last_reported_locked_status = Some(false);
         }
-        self.heartbeat(ctx);
+        // Send the first CheckLock immediately to start the acquisition loop.
+        ctx.address().do_send(CheckLock);
+    }
+}
+
+impl Handler<CheckLock> for TcpLockActor {
+    type Result = ();
+
+    fn handle(&mut self, _msg: CheckLock, ctx: &mut Context<Self>) {
+        self.process_lock_check(ctx);
     }
 }
 
 impl Handler<SetLockDesired> for TcpLockActor {
     type Result = ();
 
-    fn handle(&mut self, msg: SetLockDesired, _ctx: &mut Context<Self>) {
-        info!("Setting lock desire to: {}", msg.required);
+    fn handle(&mut self, msg: SetLockDesired, ctx: &mut Context<Self>) {
+        debug!("Setting lock desire to: {}", msg.required);
         self.desired = msg.required;
 
         // If we no longer desire the lock and we currently hold it, release it.
-        if !self.desired && self.listener.is_some() {
-            warn!("Voluntarily releasing TCP lock on {}", self.bind_addr);
-            self.listener = None;
+        if !self.desired && self.backend.is_some() {
+            warn!("Voluntarily releasing lock");
+            self.backend = None; // Dropping the backend releases the resource (socket or memory ID).
             let new_status = false;
             if self.last_reported_locked_status != Some(new_status) {
                 self.recipient
@@ -120,5 +168,7 @@ impl Handler<SetLockDesired> for TcpLockActor {
                 self.last_reported_locked_status = Some(new_status);
             }
         }
+        // Immediately schedule the next check so we can respond to the desire change.
+        ctx.address().do_send(CheckLock);
     }
 }

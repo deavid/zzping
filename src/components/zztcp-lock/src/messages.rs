@@ -16,3 +16,9 @@ pub struct SetLockDesired {
     /// True if the actor should attempt to hold the lock.
     pub required: bool,
 }
+
+/// Internal message to trigger a lock acquisition check.
+/// This allows both automatic (via run_later) and manual (via tests) retry attempts.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct CheckLock;

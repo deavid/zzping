@@ -2610,7 +2610,9 @@ version = "0.1.0"
 dependencies = [
  "actix",
  "anyhow",
+ "futures",
  "log",
+ "serde",
  "thiserror 2.0.17",
  "tokio",
  "tracing",

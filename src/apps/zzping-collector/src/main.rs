@@ -15,6 +15,7 @@ use zznet_transport_tcp::TcpTransportClient;
 use zzping_collector::config::CollectorConfig;
 use zzpinger::MockPingerClient;
 use zztcp_lock::actor::TcpLockActor;
+use zztcp_lock::config::TcpLockConfig;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -105,8 +106,11 @@ async fn main() -> Result<()> {
     });
 
     // 6. TCP Lock Actor
-    let lock_bind_addr = format!("127.0.0.1:{}", config.lock_port);
-    let lock_actor = TcpLockActor::new(cstate_addr.clone().recipient(), lock_bind_addr);
+    let lock_config = TcpLockConfig::tcp(
+        format!("127.0.0.1:{}", config.lock_port),
+        1000, // Standard retry interval: 1 second
+    );
+    let lock_actor = TcpLockActor::new(cstate_addr.clone().recipient(), lock_config);
     lock_actor.start();
 
     // =======================================================================

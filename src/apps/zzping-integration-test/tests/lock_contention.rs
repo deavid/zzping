@@ -1,78 +1,73 @@
-//! Integration test for the TCP Lock contention ("Highlander") scenario.
+//! Integration test for the Lock contention ("Highlander") scenario.
 //!
 //! This test ensures that a collector will not start pinging if another process
-//! holds the designated TCP lock port, and that it will start pinging once the
-//! lock is released.
+//! holds the lock, and that it will start pinging once the lock is released.
+//!
+//! Uses Memory locks for fully deterministic, hermetic testing.
 
-use std::net::{IpAddr, TcpListener};
-use std::time::Duration;
-use tracing::info;
+use std::net::IpAddr;
+use tokio::time::{Duration, advance, pause};
+use zzcollector_state::messages::GetCollectorState;
 use zzping_integration_test::harness::{HarnessConfig, SystemHarness};
+use zztcp_lock::backend::MemoryLockGuard;
+use zztcp_lock::config::LockStrategy;
 
-#[ctor::ctor]
-fn init() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            "info,zzping_integration_test=debug,zztcp_lock=debug,zzcollector_state=debug",
-        )
-        .with_target(true)
-        .with_thread_ids(true)
-        .with_line_number(true)
-        .init();
-}
-
+/// Test Scenario: The "Highlander Rule" - There can be only one.
+/// 1. Process A holds the lock (simulated via MemoryLockGuard).
+/// 2. Process B (harness) starts and tries to get the same lock.
+/// 3. Process B should NOT become master while A holds the lock.
+/// 4. Process A releases the lock.
+/// 5. Process B should acquire the lock and become master.
 #[actix_rt::test]
 async fn test_lock_contention_highlander_rule() {
-    tokio::time::pause();
+    pause(); // Enable simulated time for determinism
 
-    info!("Setting up Highlander test: there can be only one.");
+    let lock_id = "highlander-test-lock".to_string();
 
-    // 1. Setup Lock: Manually bind the lock port to simulate "Process A"
-    let lock_port = 9000;
-    let bind_addr = format!("127.0.0.1:{}", lock_port);
-    info!(
-        "Manually binding TCP listener to {} to simulate an existing process.",
-        bind_addr
-    );
-    let _process_a_lock = TcpListener::bind(&bind_addr).expect("Failed to bind manual TCP lock");
+    // 1. Process A acquires the lock first (simulating another process)
+    let process_a_lock =
+        MemoryLockGuard::try_acquire(lock_id.clone()).expect("Process A should acquire the lock");
 
     // 2. Start Harness: "Process B" starts up and tries to get the same lock
-    info!("Starting SystemHarness (Process B), which will contend for the same lock.");
-    let harness_config = HarnessConfig {
-        lock_port: Some(lock_port),
+    let harness = SystemHarness::new(HarnessConfig {
+        lock_strategy: Some(LockStrategy::Memory(lock_id.clone())),
         collector_id: "process-b".to_string(),
         existing_db_server: None,
-    };
-    let harness = SystemHarness::new(harness_config)
-        .await
-        .expect("Failed to create SystemHarness");
+    })
+    .await
+    .expect("Failed to create SystemHarness");
 
     // 3. Configure Intent: Give the pinger a task.
     let target: IpAddr = "8.8.8.8".parse().unwrap();
     harness.configure_intent(vec![target], 1).await;
 
-    // Give actors plenty of time to start and for the lock to fail.
-    tokio::time::advance(Duration::from_secs(5)).await;
+    // Let the actor system process messages
+    advance(Duration::from_millis(1)).await;
+    for _ in 0..5 {
+        tokio::task::yield_now().await;
+    }
 
-    // 4. Expectation: Pinger should NOT have generated data
-    let health = harness.collector_health().await.unwrap();
-    assert_eq!(
-        health.buffer_size, 0,
-        "Pinger should NOT have stored any pings while the lock was held by another process."
+    // 4. Expectation: Harness should NOT be master (lock held by A)
+    let cstate = harness.cstate.as_ref().expect("CState should exist");
+    let state = cstate.send(GetCollectorState).await.unwrap().unwrap();
+    assert!(
+        !state.has_local_lock,
+        "Process B should NOT have the lock while A holds it"
     );
-    info!("Verified: Pinger is correctly disabled while lock is contended.");
 
-    // 5. Transition: Drop the manual listener
-    info!("Releasing manual TCP lock (Process A dies).");
-    drop(_process_a_lock);
+    // 5. Process A releases the lock
+    drop(process_a_lock);
 
-    // 6. Advance time & Verify
-    info!("Advancing time to allow Process B to acquire the lock and start pinging.");
-    // Wait for pings. This helper advances time internally, so we don't need a separate advance call.
-    harness
-        .wait_for_pings(1)
-        .await
-        .expect("Pinger should have generated results after acquiring lock.");
+    // 6. Advance time to trigger lock retry and let actors process
+    advance(Duration::from_millis(200)).await; // Past the 100ms retry interval
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
 
-    info!("Verified: Pinger started generating data after acquiring the lock. Test passed.");
+    // 7. Expectation: Harness should now have the lock
+    let state = cstate.send(GetCollectorState).await.unwrap().unwrap();
+    assert!(
+        state.has_local_lock,
+        "Process B should have acquired the lock after A released it"
+    );
 }

@@ -27,6 +27,7 @@ use zzpinger::UpdateCState;
 use zzpinger::UpdateIntentConfig;
 use zzstorage::actor::{GetStoredBlobs, StorageActor, StorageConfig};
 use zztcp_lock::actor::TcpLockActor;
+use zztcp_lock::config::{LockStrategy, TcpLockConfig};
 
 /// A simple TransportServer implementation that yields connections pushed
 /// into an internal queue. Tests can send `EstablishedConnection`s into the
@@ -58,8 +59,8 @@ impl TransportServer for ControlledServer {
 /// Configuration for the SystemHarness.
 #[derive(Default)]
 pub struct HarnessConfig {
-    /// If Some, enables the CState/TcpLock actors and binds to the given port.
-    pub lock_port: Option<u16>,
+    /// If Some, enables the CState/TcpLock actors with the given lock strategy.
+    pub lock_strategy: Option<LockStrategy>,
     /// The collector ID to use when instantiating the `CStateActor`.
     pub collector_id: String,
     /// If provided, this harness will NOT spawn a database.
@@ -113,7 +114,7 @@ impl SystemHarness {
                 .config_for_database(std::path::PathBuf::from("/tmp/test_intent.ron"));
             let _db_intent = db_intent_builder.router(db_router.clone()).start()?;
 
-            let db_cstate = if config.lock_port.is_some() {
+            let db_cstate = if config.lock_strategy.is_some() {
                 let cstate_config = CStateConfig::for_database(1000, Some(10));
                 // Allow collectors to send heartbeats to the database
                 let mut permissions_map = HashMap::new();
@@ -179,7 +180,7 @@ impl SystemHarness {
         let scheduler = pinger_builder.start(mock_ping_client, coll_memdb.clone().recipient());
 
         // 3. Setup CState & Lock
-        let cstate_addr = if let Some(port) = config.lock_port {
+        let cstate_addr = if let Some(lock_strategy) = config.lock_strategy {
             let cstate_config = CStateConfig::for_collector(config.collector_id.clone(), 1000);
             // Allow database to send commands to the collector (for mastership control)
             let mut coll_permissions_map = HashMap::new();
@@ -192,9 +193,12 @@ impl SystemHarness {
                 .permissions_map(coll_permissions_map)
                 .build();
 
-            let lock_bind_addr = format!("127.0.0.1:{}", port);
-            let lock_actor =
-                TcpLockActor::new(cstate_addr.clone().recipient(), lock_bind_addr).start();
+            // Create lock config with test retry interval (much faster than production)
+            let lock_config = TcpLockConfig {
+                strategy: lock_strategy,
+                retry_interval_ms: 100, // Fast retries for tests
+            };
+            let lock_actor = TcpLockActor::new(cstate_addr.clone().recipient(), lock_config).start();
 
             cstate_addr.do_send(SetPinger {
                 pinger: scheduler.clone().recipient(),
