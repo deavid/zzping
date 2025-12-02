@@ -75,8 +75,10 @@ impl Default for DatabaseStateData {
     }
 }
 
+use actix::Recipient;
+
 /// Represents a collector being tracked by the database.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(crate) struct TrackedCollector {
     /// The unique ID of the collector.
     pub id: String,
@@ -92,6 +94,24 @@ pub(crate) struct TrackedCollector {
     pub batches_sent: u64,
     /// The connection nonce of the collector.
     pub connection_nonce: u64,
+    /// The recipient for sending messages directly to the peer's network actor.
+    pub recipient: Option<Recipient<crate::network_messages::CStateMessage>>,
+}
+
+// Manual Debug implementation because Recipient does not implement Debug.
+impl std::fmt::Debug for TrackedCollector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TrackedCollector")
+            .field("id", &self.id)
+            .field("last_seen_ms", &self.last_seen_ms)
+            .field("uptime_secs", &self.uptime_secs)
+            .field("pings_sent", &self.pings_sent)
+            .field("pings_received", &self.pings_received)
+            .field("batches_sent", &self.batches_sent)
+            .field("connection_nonce", &self.connection_nonce)
+            .field("has_recipient", &self.recipient.is_some())
+            .finish()
+    }
 }
 
 impl TrackedCollector {
@@ -108,6 +128,7 @@ impl TrackedCollector {
             pings_received: 0,
             batches_sent: 0,
             connection_nonce,
+            recipient: None,
         }
     }
 

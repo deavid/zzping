@@ -60,6 +60,16 @@ pub(crate) enum CStateMessage {
 
     /// Admin -> Database: Request collector list.
     QueryCollectors,
+
+    // Database -> Collector
+    PrepareToSwap {
+        swap_time_ms: u64,
+    },
+
+    // Database -> Collector
+    SetMastership {
+        is_primary: bool, // true = Primary (Acquire Lock), false = Standby (Release Lock)
+    },
 }
 
 /// Information about a single collector, used in `CollectorList`.

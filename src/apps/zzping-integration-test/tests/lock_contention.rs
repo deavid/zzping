@@ -41,6 +41,7 @@ async fn test_lock_contention_highlander_rule() {
     let harness_config = HarnessConfig {
         lock_port: Some(lock_port),
         collector_id: "process-b".to_string(),
+        existing_db_server: None,
     };
     let harness = SystemHarness::new(harness_config)
         .await

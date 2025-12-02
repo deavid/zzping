@@ -19,7 +19,7 @@ use crate::{
     },
     messages::{
         CStateError, CStateHealth, ForceHeartbeat, GetCollectorState, GetHealth, SetPinger,
-        UpdateHealthMetrics,
+        SetTcpLock, UpdateHealthMetrics,
     },
     state::{CollectorStateData, DatabaseStateData, TrackedCollector},
 };
@@ -34,7 +34,7 @@ use std::{
 };
 use tokio_stream::wrappers::IntervalStream;
 use zzpinger::UpdateCState;
-use zztcp_lock::messages::UpdateLockStatus;
+use zztcp_lock::messages::{SetLockDesired, UpdateLockStatus};
 
 /// The main actor for the `zzcollector-state` component.
 ///
@@ -70,6 +70,9 @@ pub struct CStateActor {
     /// Recipient for sending control messages to the Pinger actor.
     pinger: Option<Recipient<UpdateCState>>,
 
+    /// Recipient for sending control messages to the TcpLock actor.
+    tcp_lock: Option<Recipient<SetLockDesired>>,
+
     /// Tracks the last known state of the pinger.
     pinger_is_active: bool,
 }
@@ -90,6 +93,7 @@ impl CStateActor {
             heartbeats_failed: Arc::new(AtomicU64::new(0)),
             event_tx,
             pinger: None,
+            tcp_lock: None,
             pinger_is_active: false,
         };
         if let Some(collector_id) = &actor.config.collector_id {
@@ -145,6 +149,15 @@ impl CStateActor {
     /// This is the critical logic that combines local lock and database authorization.
     fn evaluate_mastership(&mut self) {
         if let Some(state) = &self.collector_state {
+            // A collector should desire the lock if it is authorized by the database.
+            if let Some(tcp_lock) = &self.tcp_lock {
+                tcp_lock.do_send(SetLockDesired {
+                    required: state.database_authorized,
+                });
+            } else {
+                warn!("Cannot update tcp_lock state: TcpLock recipient not set.");
+            }
+
             let should_be_active = state.has_local_lock && state.database_authorized;
 
             if self.pinger_is_active != should_be_active {
@@ -223,62 +236,189 @@ impl Handler<ForceHeartbeat> for CStateActor {
 // Inbound Message Handlers (NetworkActor → MainActor)
 // ============================================================================
 
+impl Handler<crate::internal_messages::InboundPrepareToSwap> for CStateActor {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: crate::internal_messages::InboundPrepareToSwap,
+        _ctx: &mut Context<Self>,
+    ) {
+        if self.config.collector_id.is_some() {
+            info!(
+                "Received PrepareToSwap from peer {:?} for time {}",
+                msg.peer_id, msg.swap_time_ms
+            );
+            // In the future, this could trigger buffer flushing.
+        }
+    }
+}
+
+impl Handler<crate::internal_messages::InboundSetMastership> for CStateActor {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: crate::internal_messages::InboundSetMastership,
+        _ctx: &mut Context<Self>,
+    ) {
+        if let Some(state) = &mut self.collector_state {
+            info!(
+                "Received SetMastership from peer {:?}: is_primary={}",
+                msg.peer_id, msg.is_primary
+            );
+            state.database_authorized = msg.is_primary;
+            self.evaluate_mastership();
+        }
+    }
+}
+
+use crate::internal_messages::HandoffOrder;
+use crate::network_messages::CStateMessage;
+
+impl Handler<HandoffOrder> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: HandoffOrder, _ctx: &mut Context<Self>) {
+        info!("Executing handoff for collector ID: {}", msg.collector_id);
+
+        // 1. Tell the old collector to release the lock and become standby.
+        msg.old_recipient
+            .do_send(CStateMessage::SetMastership { is_primary: false });
+
+        // 2. Tell the new collector to acquire the lock and become primary.
+        msg.new_recipient
+            .do_send(CStateMessage::SetMastership { is_primary: true });
+
+        // 3. Update the registry to point to the new collector's recipient and nonce.
+        if let Some(state) = &mut self.database_state
+            && let Some(collector) = state.collectors.get_mut(&msg.collector_id)
+        {
+            collector.recipient = Some(msg.new_recipient);
+            collector.connection_nonce = msg.new_nonce;
+            info!(
+                "Updated collector registry for {} to new nonce {}",
+                msg.collector_id, msg.new_nonce
+            );
+        }
+    }
+}
+
 impl Handler<InboundHeartbeat> for CStateActor {
     type Result = Result<crate::internal_messages::HeartbeatAckResponse, String>;
 
-    fn handle(&mut self, msg: InboundHeartbeat, _ctx: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: InboundHeartbeat, ctx: &mut Context<Self>) -> Self::Result {
         if !self.config.track_collectors {
             return Err("Not configured to track collectors".to_string());
         }
 
-        if let Some(state) = &mut self.database_state {
-            debug!("Received heartbeat from collector: {}", msg.collector_id);
+        let state = self
+            .database_state
+            .as_mut()
+            .ok_or("Database state not initialized")?;
 
-            if let Some(max) = state.max_collectors
-                && !state.collectors.contains_key(&msg.collector_id)
-                && state.collectors.len() >= max
-            {
+        debug!("Received heartbeat from collector: {}", msg.collector_id);
+
+        // --- Handoff Logic ---
+        if let Some(existing_collector) = state.collectors.get(&msg.collector_id)
+            && existing_collector.connection_nonce != msg.connection_nonce
+        {
+            info!(
+                "Handoff detected for collector ID: {}. Old nonce: {}, New nonce: {}",
+                msg.collector_id, existing_collector.connection_nonce, msg.connection_nonce
+            );
+
+            if let Some(old_recipient) = existing_collector.recipient.clone() {
+                let swap_time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    + Duration::from_secs(5);
+
+                // 1. Tell the old collector to prepare for the swap.
+                old_recipient.do_send(CStateMessage::PrepareToSwap {
+                    swap_time_ms: swap_time.as_millis() as u64,
+                });
+
+                // First, update the heartbeat to prevent stale cleanup before the handoff.
+                if let Some(collector) = state.collectors.get_mut(&msg.collector_id) {
+                    collector.update_heartbeat(
+                        msg.uptime_secs,
+                        msg.pings_sent,
+                        msg.pings_received,
+                        msg.batches_sent,
+                        msg.last_config_update_ms,
+                    );
+                }
+
+                // Then, schedule the actual swap to happen in 5 seconds.
+                ctx.run_later(Duration::from_secs(5), move |_act, ctx| {
+                    ctx.address().do_send(HandoffOrder {
+                        collector_id: msg.collector_id,
+                        old_recipient,
+                        new_recipient: msg.recipient,
+                        new_nonce: msg.connection_nonce,
+                    });
+                });
+
+                // Acknowledge the heartbeat immediately but don't update the registry.
                 let timestamp_ms = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_millis() as u64;
-
                 return Ok(crate::internal_messages::HeartbeatAckResponse {
                     timestamp_ms,
                     server_time_ms: timestamp_ms,
-                    rejection: Some(format!("Database at capacity (max {})", max)),
+                    rejection: None,
                 });
             }
+        }
+        // --- End Handoff Logic ---
 
-            let collector = state
-                .collectors
-                .entry(msg.collector_id.clone())
-                .or_insert_with(|| {
-                    info!("Registered new collector: {}", msg.collector_id);
-                    TrackedCollector::new(msg.collector_id.clone(), msg.connection_nonce)
-                });
-
-            collector.update_heartbeat(
-                msg.uptime_secs,
-                msg.pings_sent,
-                msg.pings_received,
-                msg.batches_sent,
-                msg.last_config_update_ms,
-            );
-
+        if let Some(max) = state.max_collectors
+            && !state.collectors.contains_key(&msg.collector_id)
+            && state.collectors.len() >= max
+        {
             let timestamp_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
 
-            Ok(crate::internal_messages::HeartbeatAckResponse {
+            return Ok(crate::internal_messages::HeartbeatAckResponse {
                 timestamp_ms,
                 server_time_ms: timestamp_ms,
-                rejection: None,
-            })
-        } else {
-            Err("Database state not initialized".to_string())
+                rejection: Some(format!("Database at capacity (max {})", max)),
+            });
         }
+
+        let collector = state
+            .collectors
+            .entry(msg.collector_id.clone())
+            .or_insert_with(|| {
+                info!("Registered new collector: {}", msg.collector_id);
+                TrackedCollector::new(msg.collector_id.clone(), msg.connection_nonce)
+            });
+
+        // This is a new collector or a heartbeat from the existing primary. Update everything.
+        collector.recipient = Some(msg.recipient);
+        collector.connection_nonce = msg.connection_nonce;
+        collector.update_heartbeat(
+            msg.uptime_secs,
+            msg.pings_sent,
+            msg.pings_received,
+            msg.batches_sent,
+            msg.last_config_update_ms,
+        );
+
+        let timestamp_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        Ok(crate::internal_messages::HeartbeatAckResponse {
+            timestamp_ms,
+            server_time_ms: timestamp_ms,
+            rejection: None,
+        })
     }
 }
 
@@ -397,6 +537,17 @@ impl Handler<SetPinger> for CStateActor {
         info!("Pinger recipient has been set.");
         self.pinger = Some(msg.pinger);
         // Re-evaluate mastership now that we have a pinger to control
+        self.evaluate_mastership();
+    }
+}
+
+impl Handler<SetTcpLock> for CStateActor {
+    type Result = ();
+
+    fn handle(&mut self, msg: SetTcpLock, _ctx: &mut Context<Self>) {
+        info!("TcpLock recipient has been set.");
+        self.tcp_lock = Some(msg.tcp_lock);
+        // Re-evaluate mastership now that we have a tcp_lock to control
         self.evaluate_mastership();
     }
 }

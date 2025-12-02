@@ -183,7 +183,6 @@ impl Handler<CStateMessage> for CStateNetworkActor {
 
                 let fut = async move {
                     let request = InboundHeartbeat {
-                        peer_id: peer_id.clone(),
                         collector_id,
                         uptime_secs,
                         pings_sent,
@@ -191,6 +190,7 @@ impl Handler<CStateMessage> for CStateNetworkActor {
                         batches_sent,
                         last_config_update_ms,
                         connection_nonce,
+                        recipient: room_actor.clone().recipient(),
                     };
 
                     match main_actor.send(request).await {
@@ -283,6 +283,22 @@ impl Handler<CStateMessage> for CStateNetworkActor {
 
             CStateMessage::Unauthorized { reason } => {
                 main_actor.do_send(InboundUnauthorized { peer_id, reason });
+                Box::pin(async {})
+            }
+
+            CStateMessage::PrepareToSwap { swap_time_ms } => {
+                main_actor.do_send(crate::internal_messages::InboundPrepareToSwap {
+                    peer_id,
+                    swap_time_ms,
+                });
+                Box::pin(async {})
+            }
+
+            CStateMessage::SetMastership { is_primary } => {
+                main_actor.do_send(crate::internal_messages::InboundSetMastership {
+                    peer_id,
+                    is_primary,
+                });
                 Box::pin(async {})
             }
         }

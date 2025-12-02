@@ -29,11 +29,11 @@ pub struct HeartbeatAckResponse {
 /// A heartbeat message received from a collector peer.
 ///
 /// Now returns Result with acknowledgment or rejection
+use crate::network_messages::CStateMessage;
+
 #[derive(Message)]
 #[rtype(result = "Result<HeartbeatAckResponse, String>")]
-pub struct InboundHeartbeat {
-    /// The peer ID of the sender.
-    pub peer_id: PeerId,
+pub(crate) struct InboundHeartbeat {
     /// The unique ID of the collector.
     pub collector_id: String,
     /// The uptime of the collector in seconds.
@@ -48,6 +48,8 @@ pub struct InboundHeartbeat {
     pub last_config_update_ms: u64,
     /// A unique nonce for the collector's connection.
     pub connection_nonce: u64,
+    /// The recipient for sending messages back to the network actor.
+    pub recipient: Recipient<CStateMessage>,
 }
 
 /// A heartbeat acknowledgment received from the database.
@@ -106,4 +108,34 @@ pub struct InboundUnauthorized {
     pub peer_id: PeerId,
     /// Human-readable reason for denial.
     pub reason: String,
+}
+
+/// Inbound: Prepare to swap command received from the database.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub(crate) struct InboundPrepareToSwap {
+    pub peer_id: PeerId,
+    pub swap_time_ms: u64,
+}
+
+/// Inbound: Set mastership command received from the database.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub(crate) struct InboundSetMastership {
+    pub peer_id: PeerId,
+    pub is_primary: bool,
+}
+
+/// Internal command to execute the mastership swap.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub(crate) struct HandoffOrder {
+    /// The ID of the collector being handed off.
+    pub collector_id: String,
+    /// The recipient of the old primary collector.
+    pub old_recipient: Recipient<CStateMessage>,
+    /// The recipient of the new primary collector.
+    pub new_recipient: Recipient<CStateMessage>,
+    /// The connection nonce of the new primary collector.
+    pub new_nonce: u64,
 }

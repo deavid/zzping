@@ -2,10 +2,13 @@
 
 use actix::prelude::*;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use zzcollector_state::{CStateActor, CStateConfig, SetPinger};
+use zzcollector_state::{
+    CStateActor, CStateBuilder, CStateConfig, CStatePermissions, SetPinger, SetTcpLock,
+};
 
 use std::net::IpAddr;
 use zzmem_db::{
@@ -59,6 +62,9 @@ pub struct HarnessConfig {
     pub lock_port: Option<u16>,
     /// The collector ID to use when instantiating the `CStateActor`.
     pub collector_id: String,
+    /// If provided, this harness will NOT spawn a database.
+    /// Instead, it will connect its collector to this existing server input.
+    pub existing_db_server: Option<mpsc::Sender<EstablishedConnection>>,
 }
 
 /// SystemHarness sets up a minimal collector+database environment for tests.
@@ -66,7 +72,8 @@ pub struct HarnessConfig {
 pub struct SystemHarness {
     /// Client-side transport FIFO used by `maintain_connection`
     pub mock_client: Arc<MockClient>,
-    server_sender: mpsc::Sender<EstablishedConnection>,
+    /// The sender for the server-side transport.
+    pub server_sender: mpsc::Sender<EstablishedConnection>,
     kill_switch: Option<KillSwitch>,
     /// Address of the collector MemDB actor (we query it for buffered results)
     pub coll_memdb: actix::Addr<MemDBActor>,
@@ -76,37 +83,91 @@ pub struct SystemHarness {
     pub scheduler: actix::Addr<zzpinger::PingerSchedulerActor>,
     /// Address of the storage actor
     pub storage: actix::Addr<StorageActor>,
+    /// The collector's CStateActor address.
+    pub cstate: Option<Addr<CStateActor>>,
+    /// The database's CStateActor address.
+    pub db_cstate: Option<Addr<CStateActor>>,
 }
 
 impl SystemHarness {
     /// Spawn core actors and start client+server lifecycles. Returns an instance
     /// that allows tests to sever/restore the transport and configure pinger.
     pub async fn new(config: HarnessConfig) -> Result<Self> {
-        // Routers
-        let db_router = zznet_router::RouterActor::new(vec![]).start();
+        let (server_sender, db_memdb, storage, db_cstate) = if let Some(tx) =
+            config.existing_db_server
+        {
+            // SATELLITE MODE: We are connecting to an existing DB.
+            let storage = StorageActor::new(StorageConfig::Ephemeral).start();
+            let db_memdb = MemDBBuilder::new(MemDBConfig::for_database(1, None)).build();
+            (tx, db_memdb, storage, None)
+        } else {
+            // PRIMARY MODE: Spawn the full Database stack.
+            let db_router = zznet_router::RouterActor::new(vec![]).start();
+
+            let storage = StorageActor::new(StorageConfig::Ephemeral).start();
+            let db_memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
+                .with_storage_actor(storage.clone());
+            let db_memdb = db_memdb_builder.router(db_router.clone()).build();
+
+            let db_intent_builder = zzintent_config::IntentConfigBuilder::new()
+                .config_for_database(std::path::PathBuf::from("/tmp/test_intent.ron"));
+            let _db_intent = db_intent_builder.router(db_router.clone()).start()?;
+
+            let db_cstate = if config.lock_port.is_some() {
+                let cstate_config = CStateConfig::for_database(1000, Some(10));
+                // Allow collectors to send heartbeats to the database
+                let mut permissions_map = HashMap::new();
+                permissions_map.insert("collector".to_string(), CStatePermissions::for_collector());
+                Some(
+                    CStateBuilder::new(cstate_config)
+                        .router(db_router.clone())
+                        .permissions_map(permissions_map)
+                        .build(),
+                )
+            } else {
+                None
+            };
+
+            let db_hello_config = zznet_hello::HelloConfig {
+                hostname: "database".to_string(),
+                our_role: "database".to_string(),
+                offered_rooms: vec![
+                    "intent-config".to_string(),
+                    "memdb".to_string(),
+                    "cstate".to_string(),
+                ],
+                handshake_timeout: Duration::from_millis(100),
+            };
+            let db_allowed_roles = {
+                let mut s = std::collections::HashSet::new();
+                s.insert(zznet_api::Role::new("collector"));
+                s
+            };
+            let db_cm = zznet_hello::ConnectionManager::new(
+                db_router.clone().recipient(),
+                db_hello_config,
+                db_allowed_roles,
+            )
+            .start();
+
+            let (server_tx, server_rx) = mpsc::channel(8);
+            let controlled_server = ControlledServer::new(server_rx);
+            serve_connections(controlled_server, db_cm.recipient());
+
+            (server_tx, db_memdb, storage, db_cstate)
+        };
+
+        // 2. Setup Collector Stack (Always)
         let coll_router = zznet_router::RouterActor::new(vec![]).start();
 
-        // Database-side Intent and MemDB
-        let db_intent_builder = zzintent_config::IntentConfigBuilder::new()
-            .config_for_database(std::path::PathBuf::from("/tmp/test_intent.ron"));
-        let _db_intent = db_intent_builder.router(db_router.clone()).start()?;
-
-        let storage = StorageActor::new(StorageConfig::Ephemeral).start();
-        let db_memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
-            .with_storage_actor(storage.clone());
-        let db_memdb = db_memdb_builder.router(db_router.clone()).build();
-
-        // Collector-side Intent
         let coll_intent_builder =
             zzintent_config::IntentConfigBuilder::new().config_for_collector();
         let _coll_intent = coll_intent_builder.router(coll_router.clone()).start()?;
 
-        // Collector-side MemDB
         let coll_memdb = MemDBBuilder::new(MemDBConfig::for_collector(25))
             .router(coll_router.clone())
             .build();
 
-        // --- Pinger wiring ---
         let mock_ping_client =
             zzpinger::MockPingerClient::new_succeeding(std::time::Duration::from_millis(5));
 
@@ -116,52 +177,41 @@ impl SystemHarness {
             spawn_strategy: SpawnStrategy::Current,
         };
         let scheduler = pinger_builder.start(mock_ping_client, coll_memdb.clone().recipient());
-        // --- End Pinger wiring ---
 
-        // --- Collector State and Lock (Optional) ---
-        if let Some(port) = config.lock_port {
-            let cstate_config = CStateConfig::for_collector(config.collector_id, 1000);
-            let cstate_addr = CStateActor::new(cstate_config).start();
+        // 3. Setup CState & Lock
+        let cstate_addr = if let Some(port) = config.lock_port {
+            let cstate_config = CStateConfig::for_collector(config.collector_id.clone(), 1000);
+            // Allow database to send commands to the collector (for mastership control)
+            let mut coll_permissions_map = HashMap::new();
+            // Database peers need permissions to send control messages (PrepareToSwap, SetMastership)
+            // These are handled as regular CStateMessage, so we use deny_all() but the network actor
+            // will still forward them. The deny_all just means the DB can't send heartbeats or query.
+            coll_permissions_map.insert("database".to_string(), CStatePermissions::deny_all());
+            let cstate_addr = CStateBuilder::new(cstate_config)
+                .router(coll_router.clone())
+                .permissions_map(coll_permissions_map)
+                .build();
 
             let lock_bind_addr = format!("127.0.0.1:{}", port);
-            let lock_actor = TcpLockActor::new(cstate_addr.clone().recipient(), lock_bind_addr);
-            lock_actor.start();
+            let lock_actor =
+                TcpLockActor::new(cstate_addr.clone().recipient(), lock_bind_addr).start();
 
             cstate_addr.do_send(SetPinger {
                 pinger: scheduler.clone().recipient(),
             });
+            cstate_addr.do_send(SetTcpLock {
+                tcp_lock: lock_actor.recipient(),
+            });
+            Some(cstate_addr)
         } else {
-            // If lock is disabled, pinger is enabled by default for old tests.
             let _ = scheduler
                 .send(zzpinger::UpdateCState { enable: true })
                 .await;
-        }
-
-        // --- Network Setup ---
-        // ... (rest of the network setup is unchanged)
-        let db_allowed_roles = {
-            let mut s = std::collections::HashSet::new();
-            s.insert(zznet_api::Role::new("collector"));
-            s
+            None
         };
 
-        let db_hello_config = zznet_hello::HelloConfig {
-            hostname: "database".to_string(),
-            our_role: "database".to_string(),
-            offered_rooms: vec!["intent-config".to_string(), "memdb".to_string()],
-            handshake_timeout: Duration::from_millis(100),
-        };
-
-        let db_cm = zznet_hello::ConnectionManager::new(
-            db_router.clone().recipient(),
-            db_hello_config,
-            db_allowed_roles,
-        );
-        let db_cm_addr = db_cm.start();
-
-        let (server_tx, server_rx) = mpsc::channel(8);
-        let controlled_server = ControlledServer::new(server_rx);
-        serve_connections(controlled_server, db_cm_addr.recipient());
+        // 4. Connect
+        let mock_client = Arc::new(MockClient::new());
 
         let coll_allowed_roles = {
             let mut s = std::collections::HashSet::new();
@@ -171,7 +221,11 @@ impl SystemHarness {
         let coll_hello_config = zznet_hello::HelloConfig {
             hostname: "collector".to_string(),
             our_role: "collector".to_string(),
-            offered_rooms: vec!["intent-config".to_string(), "memdb".to_string()],
+            offered_rooms: vec![
+                "intent-config".to_string(),
+                "memdb".to_string(),
+                "cstate".to_string(),
+            ],
             handshake_timeout: Duration::from_millis(100),
         };
 
@@ -181,10 +235,9 @@ impl SystemHarness {
             coll_allowed_roles,
         );
         let coll_cm_addr = coll_cm.start();
-        let mock_client = Arc::new(MockClient::new());
 
-        let (server_conn, client_conn, kill_switch) = create_controlled_pair("harness_init");
-        let _ = server_tx.clone().try_send(server_conn);
+        let (server_conn, client_conn, kill_switch) = create_controlled_pair("harness");
+        let _ = server_sender.clone().try_send(server_conn);
         mock_client.push_connection(client_conn).await;
 
         let reconnect_config = ReconnectConfig {
@@ -200,12 +253,14 @@ impl SystemHarness {
 
         Ok(Self {
             mock_client,
-            server_sender: server_tx,
+            server_sender,
             kill_switch: Some(kill_switch),
             coll_memdb,
             db_memdb,
             scheduler,
             storage,
+            cstate: cstate_addr,
+            db_cstate,
         })
     }
 
