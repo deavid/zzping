@@ -239,7 +239,11 @@ impl Handler<ForceHeartbeat> for CStateActor {
 impl Handler<crate::internal_messages::InboundPrepareToSwap> for CStateActor {
     type Result = ();
 
-    fn handle(&mut self, msg: crate::internal_messages::InboundPrepareToSwap, _ctx: &mut Context<Self>) {
+    fn handle(
+        &mut self,
+        msg: crate::internal_messages::InboundPrepareToSwap,
+        _ctx: &mut Context<Self>,
+    ) {
         if self.config.collector_id.is_some() {
             info!(
                 "Received PrepareToSwap from peer {:?} for time {}",
@@ -253,7 +257,11 @@ impl Handler<crate::internal_messages::InboundPrepareToSwap> for CStateActor {
 impl Handler<crate::internal_messages::InboundSetMastership> for CStateActor {
     type Result = ();
 
-    fn handle(&mut self, msg: crate::internal_messages::InboundSetMastership, _ctx: &mut Context<Self>) {
+    fn handle(
+        &mut self,
+        msg: crate::internal_messages::InboundSetMastership,
+        _ctx: &mut Context<Self>,
+    ) {
         if let Some(state) = &mut self.collector_state {
             info!(
                 "Received SetMastership from peer {:?}: is_primary={}",
@@ -275,25 +283,23 @@ impl Handler<HandoffOrder> for CStateActor {
         info!("Executing handoff for collector ID: {}", msg.collector_id);
 
         // 1. Tell the old collector to release the lock and become standby.
-        msg.old_recipient.do_send(CStateMessage::SetMastership {
-            is_primary: false,
-        });
+        msg.old_recipient
+            .do_send(CStateMessage::SetMastership { is_primary: false });
 
         // 2. Tell the new collector to acquire the lock and become primary.
-        msg.new_recipient.do_send(CStateMessage::SetMastership {
-            is_primary: true,
-        });
+        msg.new_recipient
+            .do_send(CStateMessage::SetMastership { is_primary: true });
 
         // 3. Update the registry to point to the new collector's recipient and nonce.
-        if let Some(state) = &mut self.database_state {
-            if let Some(collector) = state.collectors.get_mut(&msg.collector_id) {
-                collector.recipient = Some(msg.new_recipient);
-                collector.connection_nonce = msg.new_nonce;
-                info!(
-                    "Updated collector registry for {} to new nonce {}",
-                    msg.collector_id, msg.new_nonce
-                );
-            }
+        if let Some(state) = &mut self.database_state
+            && let Some(collector) = state.collectors.get_mut(&msg.collector_id)
+        {
+            collector.recipient = Some(msg.new_recipient);
+            collector.connection_nonce = msg.new_nonce;
+            info!(
+                "Updated collector registry for {} to new nonce {}",
+                msg.collector_id, msg.new_nonce
+            );
         }
     }
 }
@@ -314,56 +320,56 @@ impl Handler<InboundHeartbeat> for CStateActor {
         debug!("Received heartbeat from collector: {}", msg.collector_id);
 
         // --- Handoff Logic ---
-        if let Some(existing_collector) = state.collectors.get(&msg.collector_id) {
-            if existing_collector.connection_nonce != msg.connection_nonce {
-                info!(
-                    "Handoff detected for collector ID: {}. Old nonce: {}, New nonce: {}",
-                    msg.collector_id, existing_collector.connection_nonce, msg.connection_nonce
-                );
+        if let Some(existing_collector) = state.collectors.get(&msg.collector_id)
+            && existing_collector.connection_nonce != msg.connection_nonce
+        {
+            info!(
+                "Handoff detected for collector ID: {}. Old nonce: {}, New nonce: {}",
+                msg.collector_id, existing_collector.connection_nonce, msg.connection_nonce
+            );
 
-                if let Some(old_recipient) = existing_collector.recipient.clone() {
-                    let swap_time = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        + Duration::from_secs(5);
+            if let Some(old_recipient) = existing_collector.recipient.clone() {
+                let swap_time = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    + Duration::from_secs(5);
 
-                    // 1. Tell the old collector to prepare for the swap.
-                    old_recipient.do_send(CStateMessage::PrepareToSwap {
-                        swap_time_ms: swap_time.as_millis() as u64,
-                    });
+                // 1. Tell the old collector to prepare for the swap.
+                old_recipient.do_send(CStateMessage::PrepareToSwap {
+                    swap_time_ms: swap_time.as_millis() as u64,
+                });
 
-                    // First, update the heartbeat to prevent stale cleanup before the handoff.
-                    if let Some(collector) = state.collectors.get_mut(&msg.collector_id) {
-                        collector.update_heartbeat(
-                            msg.uptime_secs,
-                            msg.pings_sent,
-                            msg.pings_received,
-                            msg.batches_sent,
-                            msg.last_config_update_ms,
-                        );
-                    }
-
-                    // Then, schedule the actual swap to happen in 5 seconds.
-                    ctx.run_later(Duration::from_secs(5), move |_act, ctx| {
-                        ctx.address().do_send(HandoffOrder {
-                            collector_id: msg.collector_id,
-                            old_recipient,
-                            new_recipient: msg.recipient,
-                            new_nonce: msg.connection_nonce,
-                        });
-                    });
-
-                    // Acknowledge the heartbeat immediately but don't update the registry.
-                    let timestamp_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis() as u64;
-                    return Ok(crate::internal_messages::HeartbeatAckResponse {
-                        timestamp_ms,
-                        server_time_ms: timestamp_ms,
-                        rejection: None,
-                    });
+                // First, update the heartbeat to prevent stale cleanup before the handoff.
+                if let Some(collector) = state.collectors.get_mut(&msg.collector_id) {
+                    collector.update_heartbeat(
+                        msg.uptime_secs,
+                        msg.pings_sent,
+                        msg.pings_received,
+                        msg.batches_sent,
+                        msg.last_config_update_ms,
+                    );
                 }
+
+                // Then, schedule the actual swap to happen in 5 seconds.
+                ctx.run_later(Duration::from_secs(5), move |_act, ctx| {
+                    ctx.address().do_send(HandoffOrder {
+                        collector_id: msg.collector_id,
+                        old_recipient,
+                        new_recipient: msg.recipient,
+                        new_nonce: msg.connection_nonce,
+                    });
+                });
+
+                // Acknowledge the heartbeat immediately but don't update the registry.
+                let timestamp_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                return Ok(crate::internal_messages::HeartbeatAckResponse {
+                    timestamp_ms,
+                    server_time_ms: timestamp_ms,
+                    rejection: None,
+                });
             }
         }
         // --- End Handoff Logic ---

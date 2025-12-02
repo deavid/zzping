@@ -1,9 +1,9 @@
 //! Integration test for the zero-downtime handoff protocol.
 
 use anyhow::Result;
-use zzping_integration_test::harness::{HarnessConfig, SystemHarness};
+use tokio::time::{Duration, advance, pause};
 use zzcollector_state::messages::GetCollectorState;
-use tokio::time::{advance, pause, Duration};
+use zzping_integration_test::harness::{HarnessConfig, SystemHarness};
 
 /// Test Scenario: The "Smooth Operator"
 /// 1. Collector A connects and becomes the primary.
@@ -25,7 +25,9 @@ async fn test_smooth_operator_handoff() -> Result<()> {
     })
     .await?;
 
-    advance(Duration::from_millis(100)).await; // Let startup and first heartbeat settle
+    // TCP lock actor has a 1-second retry interval, so we need to advance at least that much
+    // for the first lock acquisition attempt.
+    advance(Duration::from_millis(1100)).await; // Let startup and first lock acquisition settle
     assert_mastership(&harness_a, true).await?;
     println!("Act 1 Complete: Harness A is Primary.");
 
@@ -37,7 +39,10 @@ async fn test_smooth_operator_handoff() -> Result<()> {
     })
     .await?;
 
-    advance(Duration::from_millis(100)).await; // Let handshake and heartbeat from B complete
+    // B's heartbeat interval is 1 second. We need to advance enough for:
+    // 1. B's first heartbeat to be sent (after 1s)
+    // 2. The network message to be processed
+    advance(Duration::from_millis(1100)).await; // Let handshake and heartbeat from B complete
 
     // After B's first heartbeat, the 5s handoff timer has started, but A is still primary.
     assert_mastership(&harness_a, true).await?;
@@ -46,6 +51,18 @@ async fn test_smooth_operator_handoff() -> Result<()> {
 
     // --- Act 3: The Jump.
     advance(Duration::from_secs(6)).await; // Jump past the 5s timer
+
+    // Allow the actor system to process the run_later callback and network messages.
+    // In paused time mode, we need to yield several times to let all the actors
+    // process their mailboxes and propagate the SetMastership message.
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    // A small time advance helps process any pending timers
+    advance(Duration::from_millis(10)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
 
     // The `run_later` block in the DB actor has now executed. A is now standby.
     assert_mastership(&harness_a, false).await?;
@@ -65,7 +82,10 @@ async fn test_smooth_operator_handoff() -> Result<()> {
 
 /// Helper function to assert the mastership state of a harness's CState actor.
 async fn assert_mastership(harness: &SystemHarness, should_be_master: bool) -> Result<()> {
-    let cstate = harness.cstate.as_ref().expect("CState not configured for this harness");
+    let cstate = harness
+        .cstate
+        .as_ref()
+        .expect("CState not configured for this harness");
     // In a paused-time test, the actor's mailbox is processed on the next tick,
     // so we don't need to loop/wait. A simple yield is enough.
     tokio::task::yield_now().await;

@@ -115,7 +115,8 @@ impl Handler<SetLockDesired> for TcpLockActor {
             self.listener = None;
             let new_status = false;
             if self.last_reported_locked_status != Some(new_status) {
-                self.recipient.do_send(UpdateLockStatus { locked: new_status });
+                self.recipient
+                    .do_send(UpdateLockStatus { locked: new_status });
                 self.last_reported_locked_status = Some(new_status);
             }
         }

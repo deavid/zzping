@@ -2,10 +2,13 @@
 
 use actix::prelude::*;
 use anyhow::Result;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
-use zzcollector_state::{CStateActor, CStateBuilder, CStateConfig, SetPinger, SetTcpLock};
+use zzcollector_state::{
+    CStateActor, CStateBuilder, CStateConfig, CStatePermissions, SetPinger, SetTcpLock,
+};
 
 use std::net::IpAddr;
 use zzmem_db::{
@@ -90,64 +93,69 @@ impl SystemHarness {
     /// Spawn core actors and start client+server lifecycles. Returns an instance
     /// that allows tests to sever/restore the transport and configure pinger.
     pub async fn new(config: HarnessConfig) -> Result<Self> {
-        let (server_sender, db_memdb, storage, db_cstate) =
-            if let Some(tx) = config.existing_db_server {
-                // SATELLITE MODE: We are connecting to an existing DB.
-                let storage = StorageActor::new(StorageConfig::Ephemeral).start();
-                let db_memdb = MemDBBuilder::new(MemDBConfig::for_database(1, None)).build();
-                (tx, db_memdb, storage, None)
-            } else {
-                // PRIMARY MODE: Spawn the full Database stack.
-                let db_router = zznet_router::RouterActor::new(vec![]).start();
+        let (server_sender, db_memdb, storage, db_cstate) = if let Some(tx) =
+            config.existing_db_server
+        {
+            // SATELLITE MODE: We are connecting to an existing DB.
+            let storage = StorageActor::new(StorageConfig::Ephemeral).start();
+            let db_memdb = MemDBBuilder::new(MemDBConfig::for_database(1, None)).build();
+            (tx, db_memdb, storage, None)
+        } else {
+            // PRIMARY MODE: Spawn the full Database stack.
+            let db_router = zznet_router::RouterActor::new(vec![]).start();
 
-                let storage = StorageActor::new(StorageConfig::Ephemeral).start();
-                let db_memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
-                    .with_storage_actor(storage.clone());
-                let db_memdb = db_memdb_builder.router(db_router.clone()).build();
+            let storage = StorageActor::new(StorageConfig::Ephemeral).start();
+            let db_memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
+                .with_storage_actor(storage.clone());
+            let db_memdb = db_memdb_builder.router(db_router.clone()).build();
 
-                let db_intent_builder = zzintent_config::IntentConfigBuilder::new()
-                    .config_for_database(std::path::PathBuf::from("/tmp/test_intent.ron"));
-                let _db_intent = db_intent_builder.router(db_router.clone()).start()?;
+            let db_intent_builder = zzintent_config::IntentConfigBuilder::new()
+                .config_for_database(std::path::PathBuf::from("/tmp/test_intent.ron"));
+            let _db_intent = db_intent_builder.router(db_router.clone()).start()?;
 
-                let db_cstate = if config.lock_port.is_some() {
-                    let cstate_config = CStateConfig::for_database(1000, Some(10));
-                    Some(
-                        CStateBuilder::new(cstate_config)
-                            .router(db_router.clone())
-                            .start(),
-                    )
-                } else {
-                    None
-                };
-
-                let db_hello_config = zznet_hello::HelloConfig {
-                    hostname: "database".to_string(),
-                    our_role: "database".to_string(),
-                    offered_rooms: vec![
-                        "intent-config".to_string(),
-                        "memdb".to_string(),
-                        "cstate".to_string(),
-                    ],
-                    handshake_timeout: Duration::from_millis(100),
-                };
-                let db_allowed_roles = {
-                    let mut s = std::collections::HashSet::new();
-                    s.insert(zznet_api::Role::new("collector"));
-                    s
-                };
-                let db_cm = zznet_hello::ConnectionManager::new(
-                    db_router.clone().recipient(),
-                    db_hello_config,
-                    db_allowed_roles,
+            let db_cstate = if config.lock_port.is_some() {
+                let cstate_config = CStateConfig::for_database(1000, Some(10));
+                // Allow collectors to send heartbeats to the database
+                let mut permissions_map = HashMap::new();
+                permissions_map.insert("collector".to_string(), CStatePermissions::for_collector());
+                Some(
+                    CStateBuilder::new(cstate_config)
+                        .router(db_router.clone())
+                        .permissions_map(permissions_map)
+                        .build(),
                 )
-                .start();
-
-                let (server_tx, server_rx) = mpsc::channel(8);
-                let controlled_server = ControlledServer::new(server_rx);
-                serve_connections(controlled_server, db_cm.recipient());
-
-                (server_tx, db_memdb, storage, db_cstate)
+            } else {
+                None
             };
+
+            let db_hello_config = zznet_hello::HelloConfig {
+                hostname: "database".to_string(),
+                our_role: "database".to_string(),
+                offered_rooms: vec![
+                    "intent-config".to_string(),
+                    "memdb".to_string(),
+                    "cstate".to_string(),
+                ],
+                handshake_timeout: Duration::from_millis(100),
+            };
+            let db_allowed_roles = {
+                let mut s = std::collections::HashSet::new();
+                s.insert(zznet_api::Role::new("collector"));
+                s
+            };
+            let db_cm = zznet_hello::ConnectionManager::new(
+                db_router.clone().recipient(),
+                db_hello_config,
+                db_allowed_roles,
+            )
+            .start();
+
+            let (server_tx, server_rx) = mpsc::channel(8);
+            let controlled_server = ControlledServer::new(server_rx);
+            serve_connections(controlled_server, db_cm.recipient());
+
+            (server_tx, db_memdb, storage, db_cstate)
+        };
 
         // 2. Setup Collector Stack (Always)
         let coll_router = zznet_router::RouterActor::new(vec![]).start();
@@ -173,9 +181,16 @@ impl SystemHarness {
         // 3. Setup CState & Lock
         let cstate_addr = if let Some(port) = config.lock_port {
             let cstate_config = CStateConfig::for_collector(config.collector_id.clone(), 1000);
+            // Allow database to send commands to the collector (for mastership control)
+            let mut coll_permissions_map = HashMap::new();
+            // Database peers need permissions to send control messages (PrepareToSwap, SetMastership)
+            // These are handled as regular CStateMessage, so we use deny_all() but the network actor
+            // will still forward them. The deny_all just means the DB can't send heartbeats or query.
+            coll_permissions_map.insert("database".to_string(), CStatePermissions::deny_all());
             let cstate_addr = CStateBuilder::new(cstate_config)
                 .router(coll_router.clone())
-                .start();
+                .permissions_map(coll_permissions_map)
+                .build();
 
             let lock_bind_addr = format!("127.0.0.1:{}", port);
             let lock_actor =
