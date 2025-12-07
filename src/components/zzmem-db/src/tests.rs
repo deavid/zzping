@@ -14,7 +14,7 @@
 
 use crate::builder::MemDBBuilder;
 use crate::config::MemDBConfig;
-use crate::messages::{GetHealth, StorePingResult};
+use crate::messages::{ForceFlush, GetHealth, StorePingResult};
 use crate::network_messages::MemDBMessage;
 use crate::permissions::MemDBPermissions;
 use crate::types::{PingResult, PingStatus};
@@ -208,4 +208,40 @@ async fn test_rewind_and_flush() {
     let stored_blobs = storage_actor.send(GetStoredBlobs).await.unwrap().unwrap();
     log::info!("Stored blobs: {:?}", stored_blobs.len());
     assert_eq!(stored_blobs.len(), 1);
+}
+
+#[actix::test]
+async fn test_force_flush_collector() {
+    // Test ForceFlush for collector role
+    let config = MemDBConfig::for_collector(10); // batch_size = 10
+    let builder = MemDBBuilder::new(config);
+    let addr = builder.build();
+
+    // Fill buffer with 5 items (less than batch_size)
+    for i in 0..5 {
+        let result = create_ping_result("test.com", i * 1000, Some(1000));
+        addr.do_send(StorePingResult { result });
+    }
+    tokio::time::sleep(Duration::from_millis(10)).await; // Allow processing
+
+    // Send ForceFlush
+    let result = addr.send(ForceFlush).await.unwrap();
+    assert!(result.is_ok());
+}
+
+#[actix::test]
+async fn test_force_flush_database() {
+    // Test ForceFlush for database role
+    let config = MemDBConfig::for_database(1000, None);
+    let builder = MemDBBuilder::new(config);
+    let addr = builder.build();
+
+    // Fill buffer with some items
+    let result = create_ping_result("test.com", 0, Some(1000));
+    addr.do_send(StorePingResult { result });
+    tokio::time::sleep(Duration::from_millis(10)).await; // Allow processing
+
+    // Send ForceFlush
+    let result = addr.send(ForceFlush).await.unwrap();
+    assert!(result.is_ok());
 }

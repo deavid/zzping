@@ -24,6 +24,13 @@ pub struct GetStats {
 #[rtype(result = "Result<(), MemDBError>")]
 pub struct ClearBuffer;
 
+/// Command to force an immediate flush of the buffer.
+/// - Collector: Sends pending pings to the Network immediately.
+/// - Database: Sends pending batches to Storage immediately.
+#[derive(Message)]
+#[rtype(result = "Result<(), MemDBError>")]
+pub struct ForceFlush;
+
 /// Store a ping result (internal use).
 #[derive(Message, Clone)]
 #[rtype(result = "Result<(), MemDBError>")]

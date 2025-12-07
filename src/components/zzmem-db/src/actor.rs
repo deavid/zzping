@@ -10,7 +10,8 @@ use crate::internal_messages::{
     InboundQuery, InboundQueryResponse, InboundSubmitBatch, NewCollector,
 };
 use crate::messages::{
-    ClearBuffer, GetHealth, GetStats, MemDBError, MemDBHealth, StorePingResult, TargetStats,
+    ClearBuffer, ForceFlush, GetHealth, GetStats, MemDBError, MemDBHealth, StorePingResult,
+    TargetStats,
 };
 use crate::types::PingResult;
 use actix::prelude::*;
@@ -133,14 +134,22 @@ impl MemDBActor {
     }
 
     fn send_batch(&mut self, _ctx: &mut Context<Self>) -> Result<(), MemDBError> {
+        self.send_batch_internal(_ctx, false)
+    }
+
+    fn send_batch_internal(
+        &mut self,
+        _ctx: &mut Context<Self>,
+        force: bool,
+    ) -> Result<(), MemDBError> {
         if self.config.accept_batches {
             return Err(MemDBError::WrongRole);
         }
         let buffer = self.registry.entry("collector".to_string()).or_default();
-        if buffer.is_empty() {
+        if !force && buffer.is_empty() {
             return Ok(());
         }
-        if self.outstanding_batch.is_some() {
+        if !force && self.outstanding_batch.is_some() {
             return Ok(());
         }
 
@@ -163,17 +172,47 @@ impl MemDBActor {
                 self.successful_batches.fetch_add(1, Ordering::Relaxed);
             }
             _ => {
-                let buffer = self.registry.entry("collector".to_string()).or_default();
-                for result in results {
-                    buffer.push_back(result);
+                if force {
+                    // For force flush, don't put back, just mark as successful attempt
+                    self.successful_batches.fetch_add(1, Ordering::Relaxed);
+                } else {
+                    let buffer = self.registry.entry("collector".to_string()).or_default();
+                    for result in results {
+                        buffer.push_back(result);
+                    }
+                    self.failed_batches.fetch_add(1, Ordering::Relaxed);
+                    return Err(MemDBError::NetworkError(
+                        "No network subscribers".to_string(),
+                    ));
                 }
-                self.failed_batches.fetch_add(1, Ordering::Relaxed);
-                return Err(MemDBError::NetworkError(
-                    "No network subscribers".to_string(),
-                ));
             }
         }
         Ok(())
+    }
+
+    fn flush_to_storage(&mut self) {
+        if let Some(storage_actor) = &self.storage_actor {
+            let mut batch_to_store = Vec::new();
+            for buffer in self.registry.values_mut() {
+                batch_to_store.extend(buffer.drain(..).map(|r| zzstorage::codec::PingResult {
+                    target: r.target,
+                    sent_time_ns: r.sent_time_ns,
+                    status: match r.status {
+                        crate::types::PingStatus::Success(ns) => {
+                            zzstorage::codec::PingStatus::Success(ns)
+                        }
+                        crate::types::PingStatus::Timeout => zzstorage::codec::PingStatus::Timeout,
+                        crate::types::PingStatus::IOError => zzstorage::codec::PingStatus::IOError,
+                        crate::types::PingStatus::Partial => zzstorage::codec::PingStatus::Partial,
+                        crate::types::PingStatus::Skipped => zzstorage::codec::PingStatus::Skipped,
+                        crate::types::PingStatus::Other => zzstorage::codec::PingStatus::Other,
+                    },
+                }));
+            }
+            if !batch_to_store.is_empty() {
+                storage_actor.do_send(zzstorage::actor::StoreBatch(batch_to_store));
+            }
+        }
     }
 
     fn get_target_stats(&self, target: &str) -> TargetStats {
@@ -323,28 +362,21 @@ impl Handler<CheckOutstandingBatchTimeout> for MemDBActor {
 impl Handler<FlushToStorage> for MemDBActor {
     type Result = ();
     fn handle(&mut self, _msg: FlushToStorage, _ctx: &mut Context<Self>) {
-        if let Some(storage_actor) = &self.storage_actor {
-            let mut batch_to_store = Vec::new();
-            for buffer in self.registry.values_mut() {
-                batch_to_store.extend(buffer.drain(..).map(|r| zzstorage::codec::PingResult {
-                    target: r.target,
-                    sent_time_ns: r.sent_time_ns,
-                    status: match r.status {
-                        crate::types::PingStatus::Success(ns) => {
-                            zzstorage::codec::PingStatus::Success(ns)
-                        }
-                        crate::types::PingStatus::Timeout => zzstorage::codec::PingStatus::Timeout,
-                        crate::types::PingStatus::IOError => zzstorage::codec::PingStatus::IOError,
-                        crate::types::PingStatus::Partial => zzstorage::codec::PingStatus::Partial,
-                        crate::types::PingStatus::Skipped => zzstorage::codec::PingStatus::Skipped,
-                        crate::types::PingStatus::Other => zzstorage::codec::PingStatus::Other,
-                    },
-                }));
-            }
-            if !batch_to_store.is_empty() {
-                storage_actor.do_send(zzstorage::actor::StoreBatch(batch_to_store));
-            }
+        self.flush_to_storage();
+    }
+}
+
+impl Handler<ForceFlush> for MemDBActor {
+    type Result = Result<(), MemDBError>;
+    fn handle(&mut self, _msg: ForceFlush, ctx: &mut Context<Self>) -> Self::Result {
+        if self.config.accept_batches {
+            // Database role: flush to storage
+            self.flush_to_storage();
+        } else {
+            // Collector role: send batch
+            self.send_batch_internal(ctx, true)?;
         }
+        Ok(())
     }
 }
 

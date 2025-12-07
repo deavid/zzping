@@ -9,7 +9,11 @@ use std::time::Duration;
 use surge_ping::{Client, ConfigBuilder};
 use tracing_subscriber::EnvFilter;
 use zzcollector_state::{CStateActor, CStateConfig, SetPinger};
-use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig, messages::StorePingResult};
+use zzmem_db::{
+    builder::MemDBBuilder,
+    config::MemDBConfig,
+    messages::{ForceFlush, StorePingResult},
+};
 use zznet_api::{ReconnectConfig, maintain_connection};
 use zznet_transport_tcp::TcpTransportClient;
 use zzping_collector::config::CollectorConfig;
@@ -163,7 +167,16 @@ async fn main() -> Result<()> {
     tracing::info!("ZZPing Collector running. Press Ctrl+C to exit.");
 
     match tokio::signal::ctrl_c().await {
-        Ok(_) => tracing::info!("Ctrl+C received. Exiting."),
+        Ok(_) => {
+            tracing::info!("Ctrl+C received. Initiating graceful shutdown...");
+            let flush_result =
+                tokio::time::timeout(Duration::from_secs(1), memdb_addr.send(ForceFlush)).await;
+            match flush_result {
+                Ok(Ok(_)) => tracing::info!("Buffer flushed. Exiting."),
+                Ok(Err(e)) => tracing::warn!("Flush failed: {}. Exiting anyway.", e),
+                Err(_) => tracing::warn!("Flush timed out. Exiting anyway."),
+            }
+        }
         Err(e) => tracing::error!("Error listening for signal: {}", e),
     }
 

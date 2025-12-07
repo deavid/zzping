@@ -8,7 +8,7 @@ use clap::Parser;
 use std::collections::HashSet;
 use std::time::Duration;
 use tracing_subscriber::EnvFilter;
-use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig};
+use zzmem_db::{builder::MemDBBuilder, config::MemDBConfig, messages::ForceFlush};
 use zznet_api::{Role, serve_connections};
 use zznet_transport_tcp::TcpTransportServer;
 use zzping_database::config::DatabaseConfig;
@@ -66,7 +66,7 @@ async fn main() -> Result<()> {
     .start();
     let memdb_builder = MemDBBuilder::new(MemDBConfig::for_database(10000, None))
         .with_storage_actor(storage_actor.clone());
-    let _memdb_addr = memdb_builder.router(router_actor.clone()).build();
+    let memdb_addr = memdb_builder.router(router_actor.clone()).build();
 
     let cstate_builder =
         zzcollector_state::CStateBuilder::new(zzcollector_state::CStateConfig::for_database(
@@ -119,7 +119,18 @@ async fn main() -> Result<()> {
     tracing::info!("ZZPing Database running. Press Ctrl+C to exit.");
 
     match tokio::signal::ctrl_c().await {
-        Ok(_) => tracing::info!("Ctrl+C received. Exiting."),
+        Ok(_) => {
+            tracing::info!("Ctrl+C received. Initiating graceful shutdown...");
+            let flush_result = tokio::time::timeout(
+                Duration::from_secs(1),
+                memdb_addr.send(ForceFlush)
+            ).await;
+            match flush_result {
+                Ok(Ok(_)) => tracing::info!("Buffer flushed. Exiting."),
+                Ok(Err(e)) => tracing::warn!("Flush failed: {}. Exiting anyway.", e),
+                Err(_) => tracing::warn!("Flush timed out. Exiting anyway."),
+            }
+        }
         Err(e) => tracing::error!("Error listening for signal: {}", e),
     }
 
