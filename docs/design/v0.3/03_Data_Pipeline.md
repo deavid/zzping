@@ -68,7 +68,7 @@ What happens if the Collector restarts while the Database is down?
 
 - The In-Memory buffer is lost.
 - **Mitigation:** We accept this loss. We do _not_ persist the high-frequency buffer to disk on the Collector (e.g. to
-  save SD card life on Pis).
+  save flash/SD card life on Collector Nodes).
 - **Exception:** `IntentConfig` _is_ cached to disk, so the Collector knows _what_ to ping even if the DB is down.
 
 ## 4. Real-Time Monitoring

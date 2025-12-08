@@ -46,8 +46,8 @@ ZZPing has moved away from monolithic RPC services to a pure **Actor Model** arc
 
 ### The Nodes
 
-1. **The Collector:** A lightweight agent (often running on Raspberry Pis) that generates ICMP traffic. It is stateless
-   regarding long-term storage but stateful regarding short-term buffering.
+1. **The Collector:** A lightweight agent (often running on Collector Nodes) that generates ICMP traffic. It is
+   stateless regarding long-term storage but stateful regarding short-term buffering.
 2. **The Database:** The central server that ingests streams from Collectors, persists data to disk, and serves queries
    to the GUI.
 

@@ -76,7 +76,7 @@ Before any application data flows, a metadata handshake occurs at the Transport 
 - **Collector Sends:**
   - `Protocol Version`
   - `Role` ("collector")
-  - `Hostname` ("living-room-pi") <- **This is the Identity**
+  - `Hostname` ("living-room-collector") <- **This is the Identity**
   - `Offered Rooms` (["memdb", "cstate", "intent-config"])
 - **Database Responds:**
   - `Offered Rooms` (["memdb", "cstate", "intent-config", "admin"])

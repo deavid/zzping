@@ -42,9 +42,10 @@ The system recognizes four distinct certificate roles (via `CN`):
 ### Deployment Example
 
 - **User generates:** `ca.pem`, `collector.pem`, `database.pem`.
-- **User deploys:** Copies `collector.pem` to 5 different Raspberry Pis.
-- **Security:** All 5 Pis are authenticated as "A Valid Collector". They are authorized to submit data.
-- **Identity:** Each Pi is distinguished by its `installation_id` in `collector.ron`, NOT by its certificate.
+- **User deploys:** Copies `collector.pem` to 5 different Collector Nodes.
+- **Security:** All 5 Collector Nodes are authenticated as "A Valid Collector". They are authorized to submit data.
+- **Identity:** Each Collector Node is distinguished by its `installation_id` in `collector.ron`, NOT by its
+  certificate.
 
 ## 3. Authorization Enforcement
 

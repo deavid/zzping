@@ -1123,19 +1123,19 @@ background processes or driver issues).
 **The zzping Solution:**
 
 1. **Multi-Collector Setup:** The user is already running a zzping-collector on their gaming PC. To isolate the problem,
-   they run the simple install.sh script on a low-power, always-on device on their network (like a Raspberry Pi),
+   they run the simple install.sh script on a low-power, always-on device on their network (like a Collector Node),
    configuring it to connect to the same zzping-database.
 2. **Automatic Load Balancing:** The database detects the new collector. The user has a rule to ping the game server at
    50 pps total. The database automatically splits the load, instructing the PC collector to ping at 25 pps and the
-   Raspberry Pi collector to ping at 25 pps.
+   Collector Node to ping at 25 pps.
 3. **Comparative Analysis:** In the zzping-gui, the user can now view two graphs side-by-side for the same destination:
    - **Graph 1:** Pings sourced from the Gaming PC.
-   - **Graph 2:** Pings sourced from the Raspberry Pi.
-4. **Actionable Conclusion:** During the next lag spike, the user observes that the graph from the Raspberry Pi remains
-   perfectly stable, while the graph from their gaming PC shows a massive RTT spike. This provides conclusive evidence
-   that the network and internet connection are fine. The problem is localized to the gaming PC itself, allowing the
-   user to focus their troubleshooting efforts on system performance (CPU, drivers, background tasks) instead of
-   incorrectly blaming their ISP.
+   - **Graph 2:** Pings sourced from the Collector Node.
+4. **Actionable Conclusion:** During the next lag spike, the user observes that the graph from the Collector Node
+   remains perfectly stable, while the graph from their gaming PC shows a massive RTT spike. This provides conclusive
+   evidence that the network and internet connection are fine. The problem is localized to the gaming PC itself,
+   allowing the user to focus their troubleshooting efforts on system performance (CPU, drivers, background tasks)
+   instead of incorrectly blaming their ISP.
 
 # Appendix: Frequently Asked Questions (FAQ)
 
